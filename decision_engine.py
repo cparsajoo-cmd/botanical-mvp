@@ -1,24 +1,17 @@
 def analyze_evidence(df, product_type, dosage_form, indication, market):
     result = df[
-        (df["product_type"] == product_type)
-        & (df["dosage_form"] == dosage_form)
-        & (df["indication"] == indication)
-        & (df["market"] == market)
+        (df["Product_Type"] == product_type)
+        & (df["Dosage_Form"] == dosage_form)
+        & (df["Target_Indication"] == indication)
+        & (df["Target_Market"] == market)
     ].copy()
 
     if result.empty:
         return result
 
-    priority_order = {
-        "Priority candidate": 1,
-        "Conditional candidate": 2,
-        "Combination candidate": 3,
-        "Supportive ingredient": 4,
-        "Evidence gap": 5,
-        "Not recommended": 6,
-    }
+    result = result.sort_values(
+        by=["Evidence_Score"],
+        ascending=False
+    )
 
-    result["rank"] = result["decision_class"].map(priority_order).fillna(99)
-    result = result.sort_values(["rank", "commercial_value"])
-
-    return result.drop(columns=["rank"])
+    return result

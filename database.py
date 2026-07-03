@@ -57,11 +57,9 @@ def save_evidence_record(record):
         "evidence_level": record.get("Evidence_Level", ""),
         "dosage_form_relevance": record.get("Dosage_Form_Relevance", ""),
         "study_model": record.get("Study_Model", ""),
+        "detected_dosage_forms": record.get("Detected_Dosage_Forms", ""),
+        "detected_indications": record.get("Detected_Indications", ""),
         "regulatory_evidence": record.get("Regulatory_Evidence", ""),
-        "safety_confidence": record.get("Safety_Confidence", ""),
-        "commercial_confidence": record.get("Commercial_Confidence", ""),
-        "extracted_indication": record.get("Extracted_Indication", ""),
-        "extracted_dosage_form": record.get("Extracted_Dosage_Form", ""),
         "evidence_score": int(record.get("Evidence_Score", 0) or 0),
     }).execute()
 
@@ -114,11 +112,9 @@ def load_evidence_records():
             "Evidence_Level": item.get("evidence_level", ""),
             "Dosage_Form_Relevance": item.get("dosage_form_relevance", ""),
             "Study_Model": item.get("study_model", ""),
+            "Detected_Dosage_Forms": item.get("detected_dosage_forms", ""),
+            "Detected_Indications": item.get("detected_indications", ""),
             "Regulatory_Evidence": item.get("regulatory_evidence", ""),
-            "Safety_Confidence": item.get("safety_confidence", ""),
-            "Commercial_Confidence": item.get("commercial_confidence", ""),
-            "Extracted_Indication": item.get("extracted_indication", ""),
-            "Extracted_Dosage_Form": item.get("extracted_dosage_form", ""),
             "Evidence_Score": item.get("evidence_score", 0),
 
             "Reference_Count": 1,

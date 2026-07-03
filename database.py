@@ -1,63 +1,29 @@
-import os
 import pandas as pd
-from supabase import create_client
-
-try:
-    import streamlit as st
-except Exception:
-    st = None
-
-
-def get_secret(name):
-    if st is not None and name in st.secrets:
-        return st.secrets[name]
-    return os.getenv(name)
-
-
-def get_client():
-    url = get_secret("SUPABASE_URL")
-    key = get_secret("SUPABASE_KEY")
-
-    if not url or not key:
-        raise ValueError("SUPABASE_URL or SUPABASE_KEY is missing.")
-
-    return create_client(url, key)
+from supabase_client import get_supabase_client
 
 
 def save_evidence_record(record):
-    supabase = get_client()
+    supabase = get_supabase_client()
 
-    plant_data = {
+    plant_result = supabase.table("plants").insert({
         "scientific_name": record.get("Scientific_Name", ""),
         "common_name": record.get("Common_Name", ""),
-    }
-
-    plant_result = (
-        supabase.table("plants")
-        .insert(plant_data)
-        .execute()
-    )
+    }).execute()
 
     plant_id = plant_result.data[0]["id"]
 
-    source_data = {
+    source_result = supabase.table("sources").insert({
         "source_type": record.get("Source_Type", ""),
         "organization": record.get("Source_Organization", ""),
         "title": record.get("Source_Title", ""),
         "year": record.get("Source_Year", ""),
         "url": record.get("Source_URL", ""),
         "raw_text": record.get("Notes", ""),
-    }
-
-    source_result = (
-        supabase.table("sources")
-        .insert(source_data)
-        .execute()
-    )
+    }).execute()
 
     source_id = source_result.data[0]["id"]
 
-    evidence_data = {
+    evidence_result = supabase.table("evidence_records").insert({
         "plant_id": plant_id,
         "source_id": source_id,
         "product_type": record.get("Product_Type", ""),
@@ -78,29 +44,21 @@ def save_evidence_record(record):
         "regulatory_status": record.get("Regulatory_Status", ""),
         "novel_food_status": record.get("Novel_Food_Status", ""),
         "notes": record.get("Notes", ""),
-    }
-
-    evidence_result = (
-        supabase.table("evidence_records")
-        .insert(evidence_data)
-        .execute()
-    )
+    }).execute()
 
     return evidence_result.data[0]["id"]
 
 
 def load_evidence_records():
-    supabase = get_client()
+    supabase = get_supabase_client()
 
-    evidence = (
-        supabase.table("evidence_records")
-        .select("*, plants(scientific_name, common_name), sources(*)")
-        .execute()
-    )
+    response = supabase.table("evidence_records").select(
+        "*, plants(scientific_name, common_name), sources(*)"
+    ).execute()
 
     rows = []
 
-    for item in evidence.data:
+    for item in response.data:
         plant = item.get("plants") or {}
         source = item.get("sources") or {}
 

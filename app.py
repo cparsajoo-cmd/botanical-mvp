@@ -1,6 +1,7 @@
 import streamlit as st
 from evidence_database import load_evidence_database
 from decision_engine import analyze_evidence
+from report_generator import generate_report
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -88,7 +89,6 @@ if st.button("Analyze evidence"):
             st.markdown(f"**Decision reason:** {reason}")
 
         st.markdown("## Full decision table")
-
         st.dataframe(result, use_container_width=True)
 
         csv = result.to_csv(index=False).encode("utf-8")
@@ -98,6 +98,21 @@ if st.button("Analyze evidence"):
             data=csv,
             file_name="botanical_decision_output.csv",
             mime="text/csv"
+        )
+
+        report_text = generate_report(
+            result=result,
+            product_type=product_type,
+            dosage_form=dosage_form,
+            indication=indication,
+            market=market
+        )
+
+        st.download_button(
+            label="Download decision report as TXT",
+            data=report_text.encode("utf-8"),
+            file_name="botanical_decision_report.txt",
+            mime="text/plain"
         )
 
 st.divider()

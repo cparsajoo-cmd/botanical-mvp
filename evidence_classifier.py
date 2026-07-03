@@ -1,273 +1,158 @@
-"""
-Evidence Classification Engine
-Botanical Product Intelligence Platform
-
-This module classifies the strength of scientific evidence
-independently from the data source (PubMed, EMA, WHO, ESCOP,
-ClinicalTrials, PDF, etc.).
-"""
+def _text(record):
+    return (
+        str(record.get("Source_Title", "")) + " " +
+        str(record.get("Notes", "")) + " " +
+        str(record.get("Dosage_Form", "")) + " " +
+        str(record.get("Target_Indication", ""))
+    ).lower()
 
 
 def classify_evidence(record):
+    text = _text(record)
 
-    evidence_type = classify_evidence_type(record)
+    evidence_type = "Unknown"
+    evidence_level = "Unknown"
+    study_model = "Unknown"
 
-    evidence_level = classify_evidence_level(evidence_type)
+    if "meta-analysis" in text or "meta analysis" in text:
+        evidence_type = "Meta-analysis"
+        evidence_level = "Very High"
+        study_model = "Human"
 
-    dosage_relevance = classify_dosage_form_relevance(record)
+    elif "systematic review" in text:
+        evidence_type = "Systematic Review"
+        evidence_level = "High"
+        study_model = "Human"
 
-    regulatory = classify_regulatory_support(record)
+    elif "randomized" in text or "randomised" in text or "rct" in text:
+        evidence_type = "Randomized Controlled Trial"
+        evidence_level = "High"
+        study_model = "Human"
 
-    safety = classify_safety(record)
+    elif "clinical trial" in text or "patients" in text or "subjects" in text:
+        evidence_type = "Clinical Study"
+        evidence_level = "Moderate"
+        study_model = "Human"
 
-    commercial = classify_commercial(record)
+    elif "animal" in text or "mice" in text or "mouse" in text or "rat" in text:
+        evidence_type = "Animal Study"
+        evidence_level = "Low"
+        study_model = "Animal"
 
-    score = calculate_evidence_score(
+    elif "in vitro" in text or "cell line" in text:
+        evidence_type = "In Vitro"
+        evidence_level = "Very Low"
+        study_model = "In vitro"
+
+    elif "traditional use" in text or "monograph" in text:
+        evidence_type = "Traditional / Regulatory"
+        evidence_level = "Traditional"
+        study_model = "Traditional use"
+
+    dosage_form = str(record.get("Dosage_Form", "")).lower()
+
+    if dosage_form and dosage_form in text:
+        dosage_relevance = "Direct"
+    elif any(x in text for x in ["extract", "oil", "capsule", "tablet", "infusion", "tea", "cream", "gel", "syrup"]):
+        dosage_relevance = "Indirect"
+    else:
+        dosage_relevance = "Unknown"
+
+    regulatory_sources = []
+
+    if str(record.get("EMA_Status", "")).lower() == "yes":
+        regulatory_sources.append("EMA")
+    if str(record.get("WHO_Status", "")).lower() == "yes":
+        regulatory_sources.append("WHO")
+    if str(record.get("ESCOP_Status", "")).lower() == "yes":
+        regulatory_sources.append("ESCOP")
+
+    regulatory_evidence = ", ".join(regulatory_sources) if regulatory_sources else "None"
+
+    safety_text = str(record.get("Safety_Level", "")).lower()
+
+    if safety_text in ["good", "acceptable", "high"]:
+        safety_confidence = "High"
+    elif safety_text in ["caution", "moderate"]:
+        safety_confidence = "Moderate"
+    elif safety_text in ["high risk", "low"]:
+        safety_confidence = "Low"
+    else:
+        safety_confidence = "Unknown"
+
+    commercial_text = str(record.get("Commercial_Level", "")).lower()
+
+    if commercial_text in ["high", "strong"]:
+        commercial_confidence = "High"
+    elif commercial_text in ["moderate", "medium"]:
+        commercial_confidence = "Moderate"
+    elif commercial_text == "low":
+        commercial_confidence = "Low"
+    else:
+        commercial_confidence = "Unknown"
+
+    score = calculate_score(
         evidence_level=evidence_level,
         dosage_relevance=dosage_relevance,
-        regulatory=regulatory,
-        safety=safety,
-        commercial=commercial,
+        regulatory_evidence=regulatory_evidence,
+        safety_confidence=safety_confidence,
+        commercial_confidence=commercial_confidence,
     )
 
     record["Evidence_Type"] = evidence_type
     record["Evidence_Level"] = evidence_level
     record["Dosage_Form_Relevance"] = dosage_relevance
-    record["Regulatory_Evidence"] = regulatory
-    record["Safety_Confidence"] = safety
-    record["Commercial_Confidence"] = commercial
+    record["Study_Model"] = study_model
+    record["Regulatory_Evidence"] = regulatory_evidence
+    record["Safety_Confidence"] = safety_confidence
+    record["Commercial_Confidence"] = commercial_confidence
+    record["Extracted_Indication"] = record.get("Target_Indication", "")
+    record["Extracted_Dosage_Form"] = record.get("Dosage_Form", "")
     record["Evidence_Score"] = score
 
     return record
 
 
-# -------------------------------------------------------
-# Evidence Type
-# -------------------------------------------------------
-
-def classify_evidence_type(record):
-
-    text = (
-        str(record.get("Notes", "")) + " " +
-        str(record.get("Source_Title", ""))
-    ).lower()
-
-    if "meta-analysis" in text or "meta analysis" in text:
-        return "Meta-analysis"
-
-    if "systematic review" in text:
-        return "Systematic Review"
-
-    if "randomized" in text or "randomised" in text:
-        return "Randomized Controlled Trial"
-
-    if "clinical trial" in text:
-        return "Clinical Trial"
-
-    if "cohort" in text:
-        return "Cohort Study"
-
-    if "case report" in text:
-        return "Case Report"
-
-    if "animal" in text or "rat" in text or "mouse" in text:
-        return "Animal Study"
-
-    if "in vitro" in text:
-        return "In Vitro"
-
-    if "traditional use" in text:
-        return "Traditional Use"
-
-    return "Unknown"
-
-
-# -------------------------------------------------------
-# Evidence Level
-# -------------------------------------------------------
-
-def classify_evidence_level(evidence_type):
-
-    table = {
-
-        "Meta-analysis": "Very High",
-
-        "Systematic Review": "High",
-
-        "Randomized Controlled Trial": "High",
-
-        "Clinical Trial": "Moderate",
-
-        "Cohort Study": "Moderate",
-
-        "Case Report": "Low",
-
-        "Animal Study": "Very Low",
-
-        "In Vitro": "Very Low",
-
-        "Traditional Use": "Traditional",
-
-        "Unknown": "Unknown"
-
-    }
-
-    return table.get(evidence_type, "Unknown")
-
-
-# -------------------------------------------------------
-# Dosage Form Relevance
-# -------------------------------------------------------
-
-def classify_dosage_form_relevance(record):
-
-    evidence = str(
-        record.get(
-            "Dosage_Form_Evidence",
-            record.get("Infusion_Evidence", "")
-        )
-    ).lower()
-
-    if evidence == "direct":
-        return "Direct"
-
-    if evidence == "indirect":
-        return "Indirect"
-
-    return "Unknown"
-
-
-# -------------------------------------------------------
-# Regulatory
-# -------------------------------------------------------
-
-def classify_regulatory_support(record):
-
-    agencies = []
-
-    if str(record.get("EMA_Status", "")).lower() == "yes":
-        agencies.append("EMA")
-
-    if str(record.get("WHO_Status", "")).lower() == "yes":
-        agencies.append("WHO")
-
-    if str(record.get("ESCOP_Status", "")).lower() == "yes":
-        agencies.append("ESCOP")
-
-    if len(agencies) == 0:
-        return "None"
-
-    return ", ".join(agencies)
-
-
-# -------------------------------------------------------
-# Safety
-# -------------------------------------------------------
-
-def classify_safety(record):
-
-    safety = str(record.get("Safety_Level", "")).lower()
-
-    if safety in ["good", "high"]:
-        return "High"
-
-    if safety in ["acceptable", "moderate"]:
-        return "Moderate"
-
-    if safety in ["caution", "low"]:
-        return "Low"
-
-    return "Unknown"
-
-
-# -------------------------------------------------------
-# Commercial
-# -------------------------------------------------------
-
-def classify_commercial(record):
-
-    commercial = str(record.get("Commercial_Level", "")).lower()
-
-    if commercial in ["high", "strong"]:
-        return "High"
-
-    if commercial in ["medium", "moderate"]:
-        return "Moderate"
-
-    if commercial in ["low"]:
-        return "Low"
-
-    return "Unknown"
-
-
-# -------------------------------------------------------
-# Evidence Score
-# -------------------------------------------------------
-
-def calculate_evidence_score(
-        evidence_level,
-        dosage_relevance,
-        regulatory,
-        safety,
-        commercial):
-
+def calculate_score(
+    evidence_level,
+    dosage_relevance,
+    regulatory_evidence,
+    safety_confidence,
+    commercial_confidence,
+):
     score = 0
 
-    evidence_points = {
-
+    score += {
         "Very High": 40,
-
         "High": 35,
-
         "Moderate": 25,
-
         "Low": 15,
-
         "Very Low": 8,
+        "Traditional": 10,
+        "Unknown": 0,
+    }.get(evidence_level, 0)
 
-        "Traditional": 5,
+    score += {
+        "Direct": 25,
+        "Indirect": 10,
+        "Unknown": 0,
+    }.get(dosage_relevance, 0)
 
-        "Unknown": 0
-
-    }
-
-    score += evidence_points.get(evidence_level, 0)
-
-    if dosage_relevance == "Direct":
+    if regulatory_evidence != "None":
         score += 20
 
-    elif dosage_relevance == "Indirect":
-        score += 10
-
-    if regulatory != "None":
-        score += 20
-
-    safety_points = {
-
+    score += {
         "High": 10,
-
-        "Moderate": 7,
-
-        "Low": 3,
-
-        "Unknown": 0
-
-    }
-
-    score += safety_points.get(safety, 0)
-
-    commercial_points = {
-
-        "High": 10,
-
         "Moderate": 6,
-
         "Low": 2,
+        "Unknown": 0,
+    }.get(safety_confidence, 0)
 
-        "Unknown": 0
-
-    }
-
-    score += commercial_points.get(commercial, 0)
+    score += {
+        "High": 5,
+        "Moderate": 3,
+        "Low": 1,
+        "Unknown": 0,
+    }.get(commercial_confidence, 0)
 
     return min(score, 100)

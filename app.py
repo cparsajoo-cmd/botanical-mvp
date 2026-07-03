@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("MVP demo — evidence-based botanical product decision support")
+st.caption("MVP demo — connected to Excel evidence database")
 
 df = load_evidence_database()
 
@@ -18,22 +18,22 @@ st.sidebar.title("New Project")
 
 product_type = st.sidebar.selectbox(
     "Product type",
-    ["Herbal product"]
+    sorted(df["Product_Type"].dropna().unique())
 )
 
 dosage_form = st.sidebar.selectbox(
     "Dosage form",
-    ["Infusion", "Capsule", "Tablet", "Cream", "Syrup"]
+    sorted(df["Dosage_Form"].dropna().unique())
 )
 
 indication = st.sidebar.selectbox(
     "Target indication",
-    ["Sleep and relaxation", "Constipation", "Cough", "Digestive comfort"]
+    sorted(df["Target_Indication"].dropna().unique())
 )
 
 market = st.sidebar.selectbox(
     "Target market",
-    ["European Union", "United States", "Canada", "Iran"]
+    sorted(df["Target_Market"].dropna().unique())
 )
 
 st.markdown("## Input question")
@@ -56,34 +56,41 @@ if st.button("Analyze evidence"):
     st.markdown("## Output decision")
 
     if result.empty:
-        st.warning("No evidence record found for this product question in the current MVP database.")
-        st.info("Next step: add structured evidence records for this product form, indication, and market.")
+        st.warning("No evidence record found for this product question in the current Excel database.")
     else:
         st.success(f"{len(result)} relevant plant records found.")
 
+        columns_to_show = [
+            "Scientific_Name",
+            "Common_Name",
+            "Decision_Class",
+            "Evidence_Score",
+            "EMA_Status",
+            "WHO_Status",
+            "ESCOP_Status",
+            "Clinical_Evidence",
+            "Infusion_Specific_Evidence",
+            "Safety",
+            "Commercial_Potential",
+            "Decision_Reason",
+        ]
+
+        available_columns = [c for c in columns_to_show if c in result.columns]
+
         st.dataframe(
-            result[
-                [
-                    "plant",
-                    "common_name",
-                    "decision_class",
-                    "ema_status",
-                    "infusion_specific",
-                    "safety_level",
-                    "commercial_value",
-                    "reason",
-                ]
-            ],
+            result[available_columns],
             use_container_width=True
         )
 
         st.markdown("### Recommended interpretation")
 
-        for decision_class in result["decision_class"].unique():
-            subset = result[result["decision_class"] == decision_class]
-            st.markdown(f"#### {decision_class}")
-            for _, row in subset.iterrows():
-                st.write(f"**{row['plant']}** ({row['common_name']}) — {row['reason']}")
+        for _, row in result.iterrows():
+            st.write(
+                f"**{row['Scientific_Name']}** "
+                f"({row.get('Common_Name', '')}) — "
+                f"**{row.get('Decision_Class', '')}**. "
+                f"{row.get('Decision_Reason', '')}"
+            )
 
         csv = result.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -96,6 +103,6 @@ if st.button("Analyze evidence"):
 st.divider()
 
 st.caption(
-    "MVP note: This version separates the user interface, evidence database, "
-    "and decision engine. The next version will expand the database and add source-level evidence."
-                    )
+    "MVP note: The app now reads evidence records from the Excel database. "
+    "To add plants or evidence, update the Excel file and commit it to GitHub."
+)

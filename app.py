@@ -12,37 +12,38 @@ st.set_page_config(
     layout="wide"
 )
 
-
 df = load_evidence_database()
-
 
 st.title("🌿 Botanical Product Intelligence Platform")
 st.caption("Evidence-based decision support for botanical product development")
 
+st.markdown("## Product project inputs")
 
-st.sidebar.title("Product Project")
+col1, col2 = st.columns(2)
 
-product_type = st.sidebar.selectbox(
-    "Product type",
-    sorted(df["Product_Type"].dropna().astype(str).unique())
-)
+with col1:
+    product_type = st.selectbox(
+        "Product type",
+        sorted(df["Product_Type"].dropna().astype(str).unique())
+    )
 
-dosage_form = st.sidebar.selectbox(
-    "Dosage form",
-    sorted(df["Dosage_Form"].dropna().astype(str).unique())
-)
+    indication = st.selectbox(
+        "Target indication",
+        sorted(df["Target_Indication"].dropna().astype(str).unique())
+    )
 
-indication = st.sidebar.selectbox(
-    "Target indication",
-    sorted(df["Target_Indication"].dropna().astype(str).unique())
-)
+with col2:
+    dosage_form = st.selectbox(
+        "Dosage form",
+        sorted(df["Dosage_Form"].dropna().astype(str).unique())
+    )
 
-market = st.sidebar.selectbox(
-    "Target market",
-    sorted(df["Target_Market"].dropna().astype(str).unique())
-)
+    market = st.selectbox(
+        "Target market",
+        sorted(df["Target_Market"].dropna().astype(str).unique())
+    )
 
-evidence_strictness = st.sidebar.selectbox(
+evidence_strictness = st.selectbox(
     "Evidence strictness",
     [
         "Dosage-form specific only",
@@ -52,7 +53,6 @@ evidence_strictness = st.sidebar.selectbox(
     ]
 )
 
-
 st.markdown("## Product development question")
 
 st.info(
@@ -61,8 +61,7 @@ st.info(
     f"in **{market}**?"
 )
 
-
-if st.button("Analyze evidence"):
+if st.button("Analyze evidence", type="primary"):
 
     retrieved = retrieve_knowledge(
         df=df,
@@ -97,54 +96,30 @@ if st.button("Analyze evidence"):
         if not priority.empty:
             st.markdown("## Priority candidates")
             for _, row in priority.iterrows():
-                st.markdown(
-                    f"### 🌿 {row.get('Scientific_Name', '')}"
-                )
-                st.write(
-                    f"**Score:** {row.get('Evidence_Score', '')}/100"
-                )
-                st.write(
-                    f"**Reason:** {row.get('Notes', '')}"
-                )
+                st.markdown(f"### 🌿 {row.get('Scientific_Name', '')}")
+                st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not conditional.empty:
             st.markdown("## Conditional candidates")
             for _, row in conditional.iterrows():
-                st.markdown(
-                    f"### 🌱 {row.get('Scientific_Name', '')}"
-                )
-                st.write(
-                    f"**Score:** {row.get('Evidence_Score', '')}/100"
-                )
-                st.write(
-                    f"**Reason:** {row.get('Notes', '')}"
-                )
+                st.markdown(f"### 🌱 {row.get('Scientific_Name', '')}")
+                st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not supportive.empty:
             st.markdown("## Supportive candidates")
             for _, row in supportive.iterrows():
-                st.markdown(
-                    f"### 🍃 {row.get('Scientific_Name', '')}"
-                )
-                st.write(
-                    f"**Score:** {row.get('Evidence_Score', '')}/100"
-                )
-                st.write(
-                    f"**Reason:** {row.get('Notes', '')}"
-                )
+                st.markdown(f"### 🍃 {row.get('Scientific_Name', '')}")
+                st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not gaps.empty:
             st.markdown("## Evidence gaps")
             for _, row in gaps.iterrows():
-                st.markdown(
-                    f"### ⚠️ {row.get('Scientific_Name', '')}"
-                )
-                st.write(
-                    f"**Score:** {row.get('Evidence_Score', '')}/100"
-                )
-                st.write(
-                    f"**Gap:** {row.get('Notes', '')}"
-                )
+                st.markdown(f"### ⚠️ {row.get('Scientific_Name', '')}")
+                st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Gap:** {row.get('Notes', '')}")
 
         st.markdown("## Full evidence table")
         st.dataframe(result, use_container_width=True)

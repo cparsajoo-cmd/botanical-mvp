@@ -9,7 +9,6 @@ def save_evidence_record(record):
         "scientific_name": record.get("Scientific_Name", ""),
         "common_name": record.get("Common_Name", ""),
     }).execute()
-
     plant_id = plant_result.data[0]["id"]
 
     source_result = supabase.table("sources").insert({
@@ -20,7 +19,6 @@ def save_evidence_record(record):
         "url": record.get("Source_URL", ""),
         "raw_text": record.get("Notes", ""),
     }).execute()
-
     source_id = source_result.data[0]["id"]
 
     evidence_result = supabase.table("evidence_records").insert({
@@ -41,11 +39,7 @@ def save_evidence_record(record):
         "meta_level": record.get("Meta_Level", ""),
         "meta_count": int(record.get("Meta_Count", 0) or 0),
 
-        "dosage_form_evidence": record.get(
-            "Dosage_Form_Evidence",
-            record.get("Infusion_Evidence", "")
-        ),
-
+        "dosage_form_evidence": record.get("Dosage_Form_Evidence", record.get("Infusion_Evidence", "")),
         "safety_level": record.get("Safety_Level", ""),
         "drug_interaction_level": record.get("Drug_Interaction_Level", ""),
         "commercial_level": record.get("Commercial_Level", ""),
@@ -61,6 +55,19 @@ def save_evidence_record(record):
         "detected_indications": record.get("Detected_Indications", ""),
         "regulatory_evidence": record.get("Regulatory_Evidence", ""),
         "evidence_score": int(record.get("Evidence_Score", 0) or 0),
+
+        "plant": record.get("Plant", ""),
+        "study_type": record.get("Study_Type", ""),
+        "dosage_form_detected": record.get("Dosage_Form_Detected", ""),
+        "target_indication_detected": record.get("Target_Indication_Detected", ""),
+        "population": record.get("Population", ""),
+        "sample_size": record.get("Sample_Size", ""),
+        "comparator": record.get("Comparator", ""),
+        "primary_outcome": record.get("Primary_Outcome", ""),
+        "result_direction": record.get("Result_Direction", ""),
+        "safety_signal": record.get("Safety_Signal", ""),
+        "direct_for_selected_product": record.get("Direct_For_Selected_Product", ""),
+        "directness_reason": record.get("Directness_Reason", ""),
     }).execute()
 
     return evidence_result.data[0]["id"]
@@ -116,6 +123,19 @@ def load_evidence_records():
             "Detected_Indications": item.get("detected_indications", ""),
             "Regulatory_Evidence": item.get("regulatory_evidence", ""),
             "Evidence_Score": item.get("evidence_score", 0),
+
+            "Plant": item.get("plant", ""),
+            "Study_Type": item.get("study_type", ""),
+            "Dosage_Form_Detected": item.get("dosage_form_detected", ""),
+            "Target_Indication_Detected": item.get("target_indication_detected", ""),
+            "Population": item.get("population", ""),
+            "Sample_Size": item.get("sample_size", ""),
+            "Comparator": item.get("comparator", ""),
+            "Primary_Outcome": item.get("primary_outcome", ""),
+            "Result_Direction": item.get("result_direction", ""),
+            "Safety_Signal": item.get("safety_signal", ""),
+            "Direct_For_Selected_Product": item.get("direct_for_selected_product", ""),
+            "Directness_Reason": item.get("directness_reason", ""),
 
             "Reference_Count": 1,
             "Source_Type": source.get("source_type", ""),

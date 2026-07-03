@@ -1,148 +1,83 @@
-# knowledge_retrieval_engine.py
-
-from typing import Dict, List, Any
+import pandas as pd
 
 
-def create_evidence_object(
-    source: str,
-    plant: str,
-    botanical_name: str,
-    dosage_form: str,
-    route: str,
-    indication: str,
-    evidence_type: str,
-    evidence_level: str,
-    regulatory_relevance: str,
-    safety_relevance: str,
-    confidence: float,
-    notes: str
-) -> Dict[str, Any]:
-
-    return {
-        "source": source,
-        "plant": plant,
-        "botanical_name": botanical_name,
-        "dosage_form": dosage_form,
-        "route": route,
-        "indication": indication,
-        "evidence_type": evidence_type,
-        "evidence_level": evidence_level,
-        "regulatory_relevance": regulatory_relevance,
-        "safety_relevance": safety_relevance,
-        "confidence": confidence,
-        "notes": notes
-    }
+def _text(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip().lower()
 
 
-def retrieve_evidence(standardized_project: Dict[str, Any]) -> List[Dict[str, Any]]:
+def retrieve_knowledge(
+    df,
+    product_type,
+    dosage_form,
+    indication,
+    market,
+    evidence_strictness="Dosage-form specific only"
+):
+    result = df.copy()
 
-    indication = standardized_project.get("target_indication", "")
-    dosage_form = standardized_project.get("dosage_form", "")
-    route = standardized_project.get("route", "")
-    market = standardized_project.get("target_market", "")
+    if "Product_Type" in result.columns:
+        result = result[
+            result["Product_Type"].astype(str).str.lower()
+            == str(product_type).lower()
+        ]
 
-    evidence_objects = []
+    if "Target_Indication" in result.columns:
+        result = result[
+            result["Target_Indication"].astype(str).str.lower()
+            == str(indication).lower()
+        ]
 
-    # Placeholder evidence objects
-    # Later, these will be replaced by real connectors:
-    # EMA connector
-    # WHO connector
-    # ESCOP connector
-    # PubMed connector
-    # ClinicalTrials connector
-    # Internal curated database connector
+    if "Target_Market" in result.columns:
+        result = result[
+            result["Target_Market"].astype(str).str.lower()
+            == str(market).lower()
+        ]
 
-    if "Sleep" in indication or "Insomnia" in indication:
+    if evidence_strictness == "Dosage-form specific only":
+        if "Dosage_Form" in result.columns:
+            result = result[
+                result["Dosage_Form"].astype(str).str.lower()
+                == str(dosage_form).lower()
+            ]
 
-        evidence_objects.append(
-            create_evidence_object(
-                source="EMA-HMPC",
-                plant="Valerian",
-                botanical_name="Valeriana officinalis",
-                dosage_form=dosage_form,
-                route=route,
-                indication=indication,
-                evidence_type="Regulatory Monograph",
-                evidence_level="Traditional Use",
-                regulatory_relevance="High for EU herbal medicinal product assessment",
-                safety_relevance="Requires review of CNS depression and sedative interactions",
-                confidence=0.90,
-                notes="Placeholder object for Module 3 architecture. Replace with real EMA retrieval later."
-            )
-        )
+        if "Infusion_Evidence" in result.columns and str(dosage_form).lower() == "infusion":
+            result = result[
+                result["Infusion_Evidence"].astype(str).str.lower().isin(
+                    ["direct", "yes", "supported"]
+                )
+            ]
 
-        evidence_objects.append(
-            create_evidence_object(
-                source="EMA-HMPC",
-                plant="Passionflower",
-                botanical_name="Passiflora incarnata",
-                dosage_form=dosage_form,
-                route=route,
-                indication=indication,
-                evidence_type="Regulatory Monograph",
-                evidence_level="Traditional Use",
-                regulatory_relevance="Relevant for sleep and mild stress positioning in EU",
-                safety_relevance="Safety profile requires review before product decision",
-                confidence=0.85,
-                notes="Placeholder object for Module 3 architecture. Replace with real EMA retrieval later."
-            )
-        )
+    elif evidence_strictness == "Regulatory-first":
+        if "Dosage_Form" in result.columns:
+            result = result[
+                result["Dosage_Form"].astype(str).str.lower()
+                == str(dosage_form).lower()
+            ]
 
-    elif "Stress" in indication or "Anxiety" in indication:
+        regulatory_cols = [
+            col for col in ["EMA_Status", "WHO_Status", "ESCOP_Status"]
+            if col in result.columns
+        ]
 
-        evidence_objects.append(
-            create_evidence_object(
-                source="EMA-HMPC",
-                plant="Passionflower",
-                botanical_name="Passiflora incarnata",
-                dosage_form=dosage_form,
-                route=route,
-                indication=indication,
-                evidence_type="Regulatory Monograph",
-                evidence_level="Traditional Use",
-                regulatory_relevance="Relevant for mild symptoms of mental stress",
-                safety_relevance="Requires review of sedative effects and interactions",
-                confidence=0.85,
-                notes="Placeholder object for Module 3 architecture. Replace with real EMA retrieval later."
-            )
-        )
+        if regulatory_cols:
+            mask = False
+            for col in regulatory_cols:
+                mask = mask | result[col].astype(str).str.lower().isin(
+                    ["yes", "positive", "supported", "traditional use", "well-established use"]
+                )
+            result = result[mask]
 
-    elif "Allergic Rhinitis" in indication or "Rhinitis" in indication:
+    elif evidence_strictness == "Clinical-first":
+        if "Clinical_Level" in result.columns:
+            result = result[
+                result["Clinical_Level"].astype(str).str.lower().isin(
+                    ["strong", "moderate"]
+                )
+            ]
 
-        evidence_objects.append(
-            create_evidence_object(
-                source="Scientific Literature",
-                plant="Butterbur",
-                botanical_name="Petasites hybridus",
-                dosage_form=dosage_form,
-                route=route,
-                indication=indication,
-                evidence_type="Clinical Evidence",
-                evidence_level="Indirect / Requires verification",
-                regulatory_relevance="Requires strong regulatory screening due to safety concerns",
-                safety_relevance="High safety concern; pyrrolizidine alkaloids must be assessed",
-                confidence=0.60,
-                notes="Placeholder object. Must be verified against real literature and regulatory sources."
-            )
-        )
+    elif evidence_strictness == "Flexible":
+        pass
 
-    else:
-
-        evidence_objects.append(
-            create_evidence_object(
-                source="System",
-                plant="No candidate identified",
-                botanical_name="Not available",
-                dosage_form=dosage_form,
-                route=route,
-                indication=indication,
-                evidence_type="No retrieval result",
-                evidence_level="Evidence not found",
-                regulatory_relevance="Not assessed",
-                safety_relevance="Not assessed",
-                confidence=0.0,
-                notes="No placeholder candidate available for this indication."
-            )
-        )
-
-    return evidence_objects
+    return result

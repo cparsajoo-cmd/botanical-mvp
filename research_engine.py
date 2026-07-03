@@ -1,75 +1,108 @@
-from knowledge_retrieval_engine import get_candidate_plants
 from evidence_collector import collect_pubmed_evidence
-from evidence_database import load_evidence_database
-from knowledge_retrieval_engine import retrieve_knowledge
-from evidence_filtering_engine import apply_evidence_filters
-from decision_engine import analyze_evidence
 
 
-def run_research(
+FALLBACK_CANDIDATE_PLANTS = {
+    "Sleep and relaxation": [
+        "Melissa officinalis",
+        "Valeriana officinalis",
+        "Passiflora incarnata",
+        "Lavandula angustifolia",
+        "Humulus lupulus",
+        "Matricaria chamomilla",
+    ],
+    "Constipation": [
+        "Plantago ovata",
+        "Linum usitatissimum",
+        "Senna alexandrina",
+        "Rhamnus frangula",
+    ],
+    "Cough": [
+        "Thymus vulgaris",
+        "Althaea officinalis",
+        "Plantago lanceolata",
+        "Hedera helix",
+    ],
+    "Digestive comfort": [
+        "Mentha piperita",
+        "Foeniculum vulgare",
+        "Zingiber officinale",
+        "Matricaria chamomilla",
+    ],
+    "Skin inflammation": [
+        "Calendula officinalis",
+        "Aloe vera",
+        "Matricaria chamomilla",
+        "Hamamelis virginiana",
+    ],
+    "IBS": [
+        "Mentha piperita",
+        "Curcuma longa",
+        "Foeniculum vulgare",
+        "Matricaria chamomilla",
+    ],
+}
+
+
+def get_candidate_plants_safe(indication):
+    try:
+        from knowledge_retrieval_engine import get_candidate_plants
+        plants = get_candidate_plants(indication)
+        if plants:
+            return plants
+    except Exception:
+        pass
+
+    return FALLBACK_CANDIDATE_PLANTS.get(indication, [])
+
+
+def run_research_engine(
     product_type,
     dosage_form,
     indication,
     target_market,
-    evidence_strictness="Dosage-form specific only",
-    max_pubmed_results_per_plant=3,
-    collect_online=True,
+    max_results_per_plant=3,
+    save=True,
 ):
-    """
-    General botanical product research engine.
-    Not limited to infusion or sleep.
-    """
+    candidate_plants = get_candidate_plants_safe(indication)
 
-    candidate_plants = get_candidate_plants(indication)
+    output = {
+        "product_type": product_type,
+        "dosage_form": dosage_form,
+        "indication": indication,
+        "target_market": target_market,
+        "candidate_plants": candidate_plants,
+        "saved_records": [],
+        "errors": [],
+    }
 
-    collected = []
+    for plant in candidate_plants:
+        try:
+            records = collect_pubmed_evidence(
+                scientific_name=plant,
+                indication=indication,
+                dosage_form=dosage_form,
+                market=target_market,
+                max_results=max_results_per_plant,
+                save=save,
+            )
 
-    if collect_online:
-        for plant in candidate_plants:
-            try:
-                records = collect_pubmed_evidence(
-                    scientific_name=plant,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=target_market,
-                    max_results=max_pubmed_results_per_plant,
-                    save=True,
+            for r in records:
+                output["saved_records"].append(
+                    {
+                        "plant": plant,
+                        "row_id": r.get("row_id"),
+                        "source": "PubMed",
+                        "pmid": r.get("pmid"),
+                        "title": r.get("title"),
+                    }
                 )
-                collected.extend(records)
-            except Exception as e:
-                collected.append({
+
+        except Exception as e:
+            output["errors"].append(
+                {
                     "plant": plant,
                     "error": str(e),
-                })
+                }
+            )
 
-    df = load_evidence_database()
-
-    retrieved = retrieve_knowledge(
-        df=df,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=target_market,
-        evidence_strictness=evidence_strictness,
-    )
-
-    filtered = apply_evidence_filters(
-        df=retrieved,
-        dosage_form=dosage_form,
-        evidence_strictness=evidence_strictness,
-    )
-
-    decision = analyze_evidence(
-        df=filtered,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=target_market,
-        min_score=0,
-    )
-
-    return {
-        "candidate_plants": candidate_plants,
-        "collected_records": collected,
-        "decision": decision,
-    }
+    return output

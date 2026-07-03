@@ -75,18 +75,34 @@ if st.button("Analyze evidence"):
             reason = row.get("Decision_Reason", "")
 
             st.markdown("---")
-            st.markdown(f"### 🌱 {plant}")
-            st.markdown(f"**Common name:** {common}")
-            st.markdown(f"**Decision:** {decision}")
-            st.markdown(f"**Evidence score:** {score}/100")
-            st.markdown(f"**Commercial potential:** {row.get('Commercial_Potential', '')}")
-            st.markdown(f"**EMA:** {row.get('EMA_Status', '')}")
-            st.markdown(f"**WHO:** {row.get('WHO_Status', '')}")
-            st.markdown(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
-            st.markdown(f"**Clinical evidence:** {row.get('Clinical_Evidence', '')}")
-            st.markdown(f"**Infusion-specific evidence:** {row.get('Infusion_Specific_Evidence', '')}")
-            st.markdown(f"**Safety:** {row.get('Safety', '')}")
-            st.markdown(f"**Decision reason:** {reason}")
+
+            with st.expander(
+                f"🌱 {plant} — {decision} — Score: {score}/100",
+                expanded=True
+            ):
+                st.markdown(f"**Scientific name:** {plant}")
+                st.markdown(f"**Common name:** {common}")
+                st.markdown(f"**Decision:** {decision}")
+                st.markdown(f"**Evidence score:** {score}/100")
+                st.markdown(f"**Commercial potential:** {row.get('Commercial_Potential', '')}")
+
+                st.markdown("### Regulatory evidence")
+                st.markdown(f"**EMA:** {row.get('EMA_Status', '')}")
+                st.markdown(f"**WHO:** {row.get('WHO_Status', '')}")
+                st.markdown(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
+                st.markdown(f"**Regulatory status:** {row.get('Regulatory_Status', '')}")
+
+                st.markdown("### Scientific evidence")
+                st.markdown(f"**Clinical evidence:** {row.get('Clinical_Evidence', '')}")
+                st.markdown(f"**Infusion-specific evidence:** {row.get('Infusion_Specific_Evidence', '')}")
+
+                st.markdown("### Safety")
+                st.markdown(f"**Safety:** {row.get('Safety', '')}")
+                st.markdown(f"**Drug interactions:** {row.get('Drug_Interactions', '')}")
+
+                st.markdown("### Product development decision")
+                st.markdown(f"**Decision reason:** {reason}")
+                st.markdown(f"**Reference:** {row.get('Reference', '')}")
 
         st.markdown("## Full decision table")
         st.dataframe(result, use_container_width=True)

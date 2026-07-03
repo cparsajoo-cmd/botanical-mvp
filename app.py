@@ -2,6 +2,7 @@ import streamlit as st
 from evidence_database import load_evidence_database
 from decision_engine import analyze_evidence
 from report_generator import generate_report
+from question_parser import parse_user_question
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -18,44 +19,60 @@ st.sidebar.title("New Product Project")
 
 free_question = st.sidebar.text_area(
     "Describe your product idea",
-    placeholder="Example: I want to develop a bedtime herbal tea for relaxation and sleep support in the EU."
+    placeholder="Example: I want to develop a bedtime herbal tea for sleep in the EU."
 )
+
+parsed = None
+if free_question.strip():
+    parsed = parse_user_question(free_question)
+
+product_type_options = sorted(df["Product_Type"].dropna().astype(str).unique())
+dosage_form_options = sorted(df["Dosage_Form"].dropna().astype(str).unique())
+indication_options = sorted(df["Target_Indication"].dropna().astype(str).unique())
+market_options = sorted(df["Target_Market"].dropna().astype(str).unique())
+
+def get_index(options, value):
+    if value in options:
+        return options.index(value)
+    return 0
 
 product_type = st.sidebar.selectbox(
     "Product type",
-    sorted(df["Product_Type"].dropna().unique())
+    product_type_options,
+    index=get_index(product_type_options, parsed["product_type"] if parsed else None)
 )
 
 dosage_form = st.sidebar.selectbox(
     "Dosage form",
-    sorted(df["Dosage_Form"].dropna().unique())
+    dosage_form_options,
+    index=get_index(dosage_form_options, parsed["dosage_form"] if parsed else None)
 )
 
 indication = st.sidebar.selectbox(
     "Target indication",
-    sorted(df["Target_Indication"].dropna().unique())
+    indication_options,
+    index=get_index(indication_options, parsed["indication"] if parsed else None)
 )
 
 market = st.sidebar.selectbox(
     "Target market",
-    sorted(df["Target_Market"].dropna().unique())
+    market_options,
+    index=get_index(market_options, parsed["market"] if parsed else None)
 )
 
-min_score = st.sidebar.slider(
-    "Minimum evidence score",
-    0, 100, 0
-)
+min_score = st.sidebar.slider("Minimum evidence score", 0, 100, 0)
+
+if parsed:
+    st.sidebar.markdown("### Parsed question")
+    st.sidebar.write(parsed)
 
 st.markdown("## Product development question")
 
-if free_question.strip():
-    st.info(f"**User question:** {free_question}")
-else:
-    st.info(
-        f"Which medicinal plants are scientifically and commercially worth investing in "
-        f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
-        f"in **{market}**?"
-    )
+st.info(
+    f"Which medicinal plants are scientifically and commercially worth investing in "
+    f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
+    f"in **{market}**?"
+)
 
 if st.button("Analyze evidence"):
     result = analyze_evidence(
@@ -70,89 +87,6 @@ if st.button("Analyze evidence"):
     st.markdown("## Decision output")
 
     if result.empty:
-        st.warning("No matching evidence records were found in the current Excel database.")
-        st.write("Next step: add more structured evidence records to the Excel file.")
+        st.warning("No matching evidence records were found.")
     else:
-        st.success(f"{len(result)} relevant plant records found.")
-
-        st.markdown("## Ranked recommendations")
-
-        for index, row in result.iterrows():
-            score = row.get("Evidence_Score", "")
-            decision = row.get("Decision_Class", "")
-            plant = row.get("Scientific_Name", "")
-            common = row.get("Common_Name", "")
-            reason = row.get("Decision_Reason", "")
-
-            with st.expander(
-                f"🌱 {plant} — {decision} — Score: {score}/100",
-                expanded=True
-            ):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.markdown("### Identity")
-                    st.markdown(f"**Scientific name:** {plant}")
-                    st.markdown(f"**Common name:** {common}")
-                    st.markdown(f"**Decision:** {decision}")
-                    st.markdown(f"**Evidence score:** {score}/100")
-                    st.markdown(f"**Commercial potential:** {row.get('Commercial_Potential', '')}")
-
-                with col2:
-                    st.markdown("### Product fit")
-                    st.markdown(f"**Product type:** {row.get('Product_Type', '')}")
-                    st.markdown(f"**Dosage form:** {row.get('Dosage_Form', '')}")
-                    st.markdown(f"**Indication:** {row.get('Target_Indication', '')}")
-                    st.markdown(f"**Market:** {row.get('Target_Market', '')}")
-
-                st.markdown("### Regulatory evidence")
-                st.markdown(f"**EMA:** {row.get('EMA_Status', '')}")
-                st.markdown(f"**WHO:** {row.get('WHO_Status', '')}")
-                st.markdown(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
-                st.markdown(f"**Regulatory status:** {row.get('Regulatory_Status', '')}")
-
-                st.markdown("### Scientific evidence")
-                st.markdown(f"**Clinical evidence:** {row.get('Clinical_Evidence', '')}")
-                st.markdown(f"**Infusion-specific evidence:** {row.get('Infusion_Specific_Evidence', '')}")
-
-                st.markdown("### Safety")
-                st.markdown(f"**Safety:** {row.get('Safety', '')}")
-                st.markdown(f"**Drug interactions:** {row.get('Drug_Interactions', '')}")
-
-                st.markdown("### Product development decision")
-                st.markdown(f"**Decision reason:** {reason}")
-                st.markdown(f"**Reference:** {row.get('Reference', '')}")
-
-        st.markdown("## Full decision table")
-        st.dataframe(result, use_container_width=True)
-
-        csv = result.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            label="Download decision output as CSV",
-            data=csv,
-            file_name="botanical_decision_output.csv",
-            mime="text/csv"
-        )
-
-        report_text = generate_report(
-            result=result,
-            product_type=product_type,
-            dosage_form=dosage_form,
-            indication=indication,
-            market=market
-        )
-
-        st.download_button(
-            label="Download decision report as TXT",
-            data=report_text.encode("utf-8"),
-            file_name="botanical_decision_report.txt",
-            mime="text/plain"
-        )
-
-st.divider()
-
-st.caption(
-    "This MVP reads structured evidence from Excel. "
-    "Next versions will add AI question parsing, source-level evidence, regulatory scoring, plant profile pages, and PDF reports."
-)
+        st.success(f"{len(result)} relevant

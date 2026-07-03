@@ -1,0 +1,17 @@
+STANDARD_EVIDENCE_FIELDS = {
+    "Plant": "",
+    "Study_Type": "",
+    "Study_Model": "",
+    "Dosage_Form_Detected": "",
+    "Target_Indication_Detected": "",
+    "Population": "",
+    "Sample_Size": "",
+    "Comparator": "",
+    "Primary_Outcome": "",
+    "Result_Direction": "",
+    "Safety_Signal": "",
+    "Evidence_Level": "",
+    "Direct_For_Selected_Product": "",
+    "Directness_Reason": "",
+    "Evidence_Score": 0,
+}

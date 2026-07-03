@@ -1,9 +1,8 @@
 import streamlit as st
-from evidence_database import load_evidence_database
-from decision_engine import analyze_evidence
-from report_generator import generate_report
-from question_parser import parse_user_question
-from evidence_retriever import retrieve_evidence
+import pandas as pd
+
+from question_understanding_engine import standardize_project_definition
+
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -11,178 +10,284 @@ st.set_page_config(
     layout="wide"
 )
 
-df = load_evidence_database()
+
+# =========================================================
+# Load Database
+# =========================================================
+
+@st.cache_data
+def load_database():
+    file_path = "botanical_database.xlsx"
+    df = pd.read_excel(file_path)
+    return df
+
+
+# =========================================================
+# Simple Decision Engine
+# =========================================================
+
+def calculate_score(row, standardized_project):
+    score = 0
+
+    indication = str(standardized_project.get("target_indication", "")).lower()
+    dosage_form = str(standardized_project.get("dosage_form", "")).lower()
+    market = str(standardized_project.get("target_market", "")).lower()
+
+    row_indication = str(row.get("Indication", "")).lower()
+    row_dosage = str(row.get("Dosage Form", "")).lower()
+    row_market = str(row.get("Market", "")).lower()
+
+    ema = str(row.get("EMA", "")).lower()
+    who = str(row.get("WHO", "")).lower()
+    escop = str(row.get("ESCOP", "")).lower()
+    clinical = str(row.get("Clinical Evidence", "")).lower()
+    safety = str(row.get("Safety", "")).lower()
+
+    if indication and indication in row_indication:
+        score += 25
+
+    if dosage_form and dosage_form in row_dosage:
+        score += 20
+
+    if market and market in row_market:
+        score += 10
+
+    if "yes" in ema or "available" in ema:
+        score += 15
+
+    if "yes" in who or "available" in who:
+        score += 10
+
+    if "yes" in escop or "available" in escop:
+        score += 10
+
+    if "strong" in clinical:
+        score += 15
+    elif "moderate" in clinical:
+        score += 10
+    elif "limited" in clinical:
+        score += 5
+
+    if "safe" in safety or "low risk" in safety:
+        score += 10
+
+    return score
+
+
+def rank_plants(df, standardized_project):
+    df = df.copy()
+    df["Decision Score"] = df.apply(
+        lambda row: calculate_score(row, standardized_project),
+        axis=1
+    )
+
+    df = df.sort_values(by="Decision Score", ascending=False)
+    return df
+
+
+# =========================================================
+# Sidebar
+# =========================================================
+
+st.sidebar.title("Project Settings")
+
+show_database = st.sidebar.checkbox("Show Raw Database", value=False)
+show_standardized_json = st.sidebar.checkbox("Show Standardized Project JSON", value=True)
+
+min_score = st.sidebar.slider(
+    "Minimum Decision Score",
+    min_value=0,
+    max_value=100,
+    value=0,
+    step=5
+)
+
+
+# =========================================================
+# Main Interface
+# =========================================================
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("Evidence-based decision support for botanical product development")
 
-st.sidebar.title("New Product Project")
-
-free_question = st.sidebar.text_area(
-    "Describe your product idea",
-    placeholder="Example: I want to develop a bedtime herbal tea for sleep in the EU."
+st.markdown(
+    """
+    Evidence-based decision-support platform for botanical product development.
+    """
 )
 
-parsed = parse_user_question(free_question) if free_question.strip() else None
+st.divider()
 
 
-def options(column):
-    if column not in df.columns:
-        return [""]
-    values = sorted(df[column].dropna().astype(str).unique())
-    return values if values else [""]
+# =========================================================
+# Project Definition Form
+# =========================================================
 
+st.header("Project Definition")
 
-def get_index(opts, value):
-    if value in opts:
-        return opts.index(value)
-    return 0
+with st.form("project_definition_form"):
 
+    col1, col2 = st.columns(2)
 
-product_type_options = options("Product_Type")
-dosage_form_options = options("Dosage_Form")
-indication_options = options("Target_Indication")
-market_options = options("Target_Market")
+    with col1:
+        product = st.text_input(
+            "Product",
+            value="Herbal bedtime infusion",
+            help="Example: Herbal bedtime infusion, nasal spray, botanical capsule"
+        )
 
-product_type = st.sidebar.selectbox(
-    "Product type",
-    product_type_options,
-    index=get_index(product_type_options, parsed.get("product_type") if parsed else None)
-)
+        dosage_form = st.selectbox(
+            "Dosage Form",
+            [
+                "Herbal Infusion",
+                "Capsule",
+                "Tablet",
+                "Drops",
+                "Syrup",
+                "Nasal Spray",
+                "Cream",
+                "Gel",
+                "Ointment",
+                "Other"
+            ]
+        )
 
-dosage_form = st.sidebar.selectbox(
-    "Dosage form",
-    dosage_form_options,
-    index=get_index(dosage_form_options, parsed.get("dosage_form") if parsed else None)
-)
+        indication = st.text_input(
+            "Target Indication",
+            value="Sleep",
+            help="Example: Sleep, Stress, Allergic Rhinitis, Constipation"
+        )
 
-indication = st.sidebar.selectbox(
-    "Target indication",
-    indication_options,
-    index=get_index(indication_options, parsed.get("indication") if parsed else None)
-)
+    with col2:
+        market = st.selectbox(
+            "Target Market",
+            [
+                "European Union",
+                "France",
+                "United States",
+                "United Kingdom",
+                "Canada",
+                "Global"
+            ]
+        )
 
-market = st.sidebar.selectbox(
-    "Target market",
-    market_options,
-    index=get_index(market_options, parsed.get("market") if parsed else None)
-)
+        population = st.selectbox(
+            "Target Population",
+            [
+                "Adults",
+                "Children",
+                "Elderly",
+                "Pregnant Women",
+                "General Population"
+            ]
+        )
 
-min_score = st.sidebar.slider("Minimum evidence score", 0, 100, 0)
+        commercial_goal = st.selectbox(
+            "Commercial Goal",
+            [
+                "New Product Development",
+                "Portfolio Screening",
+                "Investment Decision",
+                "Regulatory Assessment",
+                "Evidence Gap Analysis"
+            ]
+        )
 
-if parsed:
-    st.sidebar.markdown("### Parsed question")
-    st.sidebar.json(parsed)
-
-st.markdown("## Product development question")
-
-st.info(
-    f"Which medicinal plants are scientifically and commercially worth investing in "
-    f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
-    f"in **{market}**?"
-)
-
-if st.button("Analyze evidence"):
-    retrieved = retrieve_evidence(
-        df=df,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        free_question=free_question
+    constraints = st.multiselect(
+        "Product Constraints",
+        [
+            "Dried herbal material only",
+            "No capsules",
+            "No tablets",
+            "No hydroalcoholic extracts",
+            "No essential oils",
+            "Infusion-specific evidence required",
+            "EU regulatory compatibility required",
+            "Low safety risk required"
+        ]
     )
 
-    result = analyze_evidence(
-        df=retrieved,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        min_score=min_score
-    )
+    submitted = st.form_submit_button("Analyze Project")
 
-    st.markdown("## Decision output")
 
-    if result.empty:
-        st.warning("No matching evidence records were found.")
+# =========================================================
+# Run Analysis
+# =========================================================
+
+if submitted:
+
+    form_input = {
+        "product": product,
+        "dosage_form": dosage_form,
+        "indication": indication,
+        "market": market,
+        "population": population,
+        "constraints": constraints,
+        "commercial_goal": commercial_goal
+    }
+
+    standardized_project = standardize_project_definition(form_input)
+
+    st.success("Project definition standardized successfully.")
+
+    if show_standardized_json:
+        st.subheader("Standardized Project Definition")
+        st.json(standardized_project)
+
+    st.divider()
+
+    # Load database
+    try:
+        df = load_database()
+    except FileNotFoundError:
+        st.error(
+            "Database file not found. Please make sure `botanical_database.xlsx` exists in the project folder."
+        )
+        st.stop()
+
+    if show_database:
+        st.subheader("Raw Botanical Database")
+        st.dataframe(df, use_container_width=True)
+
+    # Ranking
+    ranked_df = rank_plants(df, standardized_project)
+    ranked_df = ranked_df[ranked_df["Decision Score"] >= min_score]
+
+    st.header("Ranked Botanical Recommendations")
+
+    if ranked_df.empty:
+        st.warning("No botanical ingredients matched the current project settings.")
     else:
-        st.success(str(len(result)) + " relevant plant records found.")
+        for _, row in ranked_df.iterrows():
 
-        st.markdown("## Ranked recommendations")
+            plant_name = row.get("Plant Name", "Unknown Plant")
+            score = row.get("Decision Score", 0)
 
-        for _, row in result.iterrows():
-            plant = row.get("Scientific_Name", "")
-            common = row.get("Common_Name", "")
-            decision = row.get("Decision_Class", "")
-            score = row.get("Evidence_Score", "")
-            reason = row.get("Notes", "")
+            with st.expander(f"{plant_name} — Decision Score: {score}"):
 
-            with st.expander(
-                f"🌱 {plant} — {decision} — Score: {score}/100",
-                expanded=True
-            ):
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
 
                 with col1:
-                    st.markdown("### Identity")
-                    st.markdown(f"**Scientific name:** {plant}")
-                    st.markdown(f"**Common name:** {common}")
-                    st.markdown(f"**Decision:** {decision}")
-                    st.markdown(f"**Evidence score:** {score}/100")
-                    st.markdown(f"**Commercial level:** {row.get('Commercial_Level', '')}")
+                    st.metric("Decision Score", score)
+                    st.write("**Indication:**", row.get("Indication", "Not specified"))
+                    st.write("**Dosage Form:**", row.get("Dosage Form", "Not specified"))
+                    st.write("**Market:**", row.get("Market", "Not specified"))
 
                 with col2:
-                    st.markdown("### Product fit")
-                    st.markdown(f"**Product type:** {row.get('Product_Type', '')}")
-                    st.markdown(f"**Dosage form:** {row.get('Dosage_Form', '')}")
-                    st.markdown(f"**Indication:** {row.get('Target_Indication', '')}")
-                    st.markdown(f"**Market:** {row.get('Target_Market', '')}")
+                    st.write("**EMA:**", row.get("EMA", "Not specified"))
+                    st.write("**WHO:**", row.get("WHO", "Not specified"))
+                    st.write("**ESCOP:**", row.get("ESCOP", "Not specified"))
+                    st.write("**Clinical Evidence:**", row.get("Clinical Evidence", "Not specified"))
 
-                st.markdown("### Regulatory evidence")
-                st.markdown(f"**EMA:** {row.get('EMA_Status', '')}")
-                st.markdown(f"**WHO:** {row.get('WHO_Status', '')}")
-                st.markdown(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
-                st.markdown(f"**Regulatory status:** {row.get('Regulatory_Status', '')}")
+                with col3:
+                    st.write("**Safety:**", row.get("Safety", "Not specified"))
+                    st.write("**Commercial Potential:**", row.get("Commercial Potential", "Not specified"))
+                    st.write("**Recommendation:**", row.get("Recommendation", "Not specified"))
 
-                st.markdown("### Scientific evidence")
-                st.markdown(f"**Clinical level:** {row.get('Clinical_Level', '')}")
-                st.markdown(f"**RCT count:** {row.get('Clinical_RCT_Count', '')}")
-                st.markdown(f"**Meta-analysis level:** {row.get('Meta_Level', '')}")
-                st.markdown(f"**Meta-analysis count:** {row.get('Meta_Count', '')}")
-                st.markdown(f"**Dosage-form evidence:** {row.get('Infusion_Evidence', '')}")
+                st.markdown("### Evidence Gap")
+                st.write(row.get("Evidence Gap", "Not specified"))
 
-                st.markdown("### Safety and market")
-                st.markdown(f"**Safety level:** {row.get('Safety_Level', '')}")
-                st.markdown(f"**Drug interaction level:** {row.get('Drug_Interaction_Level', '')}")
-                st.markdown(f"**Commercial level:** {row.get('Commercial_Level', '')}")
-                st.markdown(f"**Novel food status:** {row.get('Novel_Food_Status', '')}")
+                st.markdown("### Development Decision")
+                st.write(row.get("Development Decision", "Not specified"))
 
-                st.markdown("### Notes")
-                st.write(reason)
-
-        st.markdown("## Full decision table")
-        st.dataframe(result, use_container_width=True)
-
-        csv = result.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            label="Download decision output as CSV",
-            data=csv,
-            file_name="botanical_decision_output.csv",
-            mime="text/csv"
-        )
-
-        report_text = generate_report(
-            result=result,
-            product_type=product_type,
-            dosage_form=dosage_form,
-            indication=indication,
-            market=market
-        )
-
-        st.download_button(
-            label="Download decision report as TXT",
-            data=report_text.encode("utf-8"),
-            file_name="botanical_decision_report.txt",
-            mime="text/plain"
-        )
+else:
+    st.info("Complete the project definition form and click Analyze Project.")

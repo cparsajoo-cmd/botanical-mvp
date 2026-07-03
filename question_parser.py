@@ -1,47 +1,40 @@
 def parse_user_question(question):
-    question_lower = question.lower()
+    q = question.lower()
 
     parsed = {
-        "product_type": None,
+        "product_type": "Herbal product",
         "dosage_form": None,
         "indication": None,
         "market": None,
     }
 
-    # Product type
-    if "herbal" in question_lower or "botanical" in question_lower:
-        parsed["product_type"] = "Herbal product"
-
-    # Dosage form
-    if "tea" in question_lower or "infusion" in question_lower or "herbal tea" in question_lower:
+    if any(x in q for x in ["tea", "infusion", "herbal tea", "tisane"]):
         parsed["dosage_form"] = "Infusion"
-    elif "capsule" in question_lower:
+    elif "capsule" in q:
         parsed["dosage_form"] = "Capsule"
-    elif "tablet" in question_lower:
+    elif "tablet" in q:
         parsed["dosage_form"] = "Tablet"
-    elif "cream" in question_lower:
+    elif "cream" in q:
         parsed["dosage_form"] = "Cream"
-    elif "syrup" in question_lower:
+    elif "syrup" in q:
         parsed["dosage_form"] = "Syrup"
 
-    # Indication
-    if "sleep" in question_lower or "bedtime" in question_lower or "relaxation" in question_lower:
+    if any(x in q for x in ["sleep", "bedtime", "insomnia", "relaxation", "stress"]):
         parsed["indication"] = "Sleep and relaxation"
-    elif "constipation" in question_lower:
+    elif "constipation" in q:
         parsed["indication"] = "Constipation"
-    elif "cough" in question_lower:
+    elif "cough" in q:
         parsed["indication"] = "Cough"
-    elif "digestive" in question_lower or "digestion" in question_lower:
+    elif any(x in q for x in ["digestive", "digestion", "stomach"]):
         parsed["indication"] = "Digestive comfort"
 
-    # Market
-    if "eu" in question_lower or "europe" in question_lower or "european union" in question_lower:
+    if any(x in q for x in ["eu", "europe", "european union", "france"]):
         parsed["market"] = "European Union"
-    elif "usa" in question_lower or "united states" in question_lower:
+    elif any(x in q for x in ["usa", "united states", "america"]):
         parsed["market"] = "United States"
-    elif "canada" in question_lower:
+    elif "canada" in q:
         parsed["market"] = "Canada"
-    elif "iran" in question_lower:
+    elif "iran" in q:
         parsed["market"] = "Iran"
 
     return parsed

@@ -25,23 +25,58 @@ col1, col2 = st.columns(2)
 with col1:
     product_type = st.selectbox(
         "Product type",
-        sorted(df["Product_Type"].dropna().astype(str).unique())
+        [
+            "Herbal product",
+            "Food supplement",
+            "Cosmetic",
+            "Medical device",
+            "Veterinary botanical product",
+        ]
     )
 
     indication = st.selectbox(
         "Target indication",
-        sorted(df["Target_Indication"].dropna().astype(str).unique())
+        [
+            "Sleep and relaxation",
+            "Constipation",
+            "Cough",
+            "Digestive comfort",
+            "Anxiety",
+            "Skin inflammation",
+            "Dry mouth",
+            "Allergic rhinitis",
+            "IBS",
+            "Wound healing",
+        ]
     )
 
 with col2:
     dosage_form = st.selectbox(
         "Dosage form",
-        sorted(df["Dosage_Form"].dropna().astype(str).unique())
+        [
+            "Infusion",
+            "Capsule",
+            "Tablet",
+            "Syrup",
+            "Cream",
+            "Gel",
+            "Mouthwash",
+            "Nasal spray",
+            "Chewing gum",
+            "Powder",
+            "Extract",
+        ]
     )
 
     market = st.selectbox(
         "Target market",
-        sorted(df["Target_Market"].dropna().astype(str).unique())
+        [
+            "European Union",
+            "France",
+            "United States",
+            "Canada",
+            "Iran",
+        ]
     )
 
 evidence_strictness = st.selectbox(
@@ -50,7 +85,7 @@ evidence_strictness = st.selectbox(
         "Dosage-form specific only",
         "Regulatory-first",
         "Clinical-first",
-        "Flexible"
+        "Flexible",
     ]
 )
 
@@ -91,7 +126,12 @@ if st.button("Analyze evidence", type="primary"):
     st.markdown("## Decision output")
 
     if result.empty:
-        st.warning("No matching evidence records were found.")
+        st.warning("No evidence records found yet for this product question.")
+        st.info(
+            "This means the platform structure is ready, but the knowledge database "
+            "does not yet contain records for this combination of product type, dosage form, "
+            "indication and market."
+        )
     else:
         st.success(str(len(result)) + " relevant plant records found.")
 

@@ -3,6 +3,7 @@ from evidence_database import load_evidence_database
 from decision_engine import analyze_evidence
 from report_generator import generate_report
 from question_parser import parse_user_question
+from evidence_retriever import retrieve_evidence
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -24,11 +25,19 @@ free_question = st.sidebar.text_area(
 
 parsed = parse_user_question(free_question) if free_question.strip() else None
 
+
 def options(column):
-    return sorted(df[column].dropna().astype(str).unique())
+    if column not in df.columns:
+        return [""]
+    values = sorted(df[column].dropna().astype(str).unique())
+    return values if values else [""]
+
 
 def get_index(opts, value):
-    return opts.index(value) if value in opts else 0
+    if value in opts:
+        return opts.index(value)
+    return 0
+
 
 product_type_options = options("Product_Type")
 dosage_form_options = options("Dosage_Form")
@@ -74,8 +83,17 @@ st.info(
 )
 
 if st.button("Analyze evidence"):
-    result = analyze_evidence(
+    retrieved = retrieve_evidence(
         df=df,
+        product_type=product_type,
+        dosage_form=dosage_form,
+        indication=indication,
+        market=market,
+        free_question=free_question
+    )
+
+    result = analyze_evidence(
+        df=retrieved,
         product_type=product_type,
         dosage_form=dosage_form,
         indication=indication,
@@ -146,6 +164,7 @@ if st.button("Analyze evidence"):
         st.dataframe(result, use_container_width=True)
 
         csv = result.to_csv(index=False).encode("utf-8")
+
         st.download_button(
             label="Download decision output as CSV",
             data=csv,

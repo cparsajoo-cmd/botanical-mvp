@@ -16,6 +16,11 @@ st.caption("Evidence-based decision support for botanical product development")
 
 st.sidebar.title("New Product Project")
 
+free_question = st.sidebar.text_area(
+    "Describe your product idea",
+    placeholder="Example: I want to develop a bedtime herbal tea for relaxation and sleep support in the EU."
+)
+
 product_type = st.sidebar.selectbox(
     "Product type",
     sorted(df["Product_Type"].dropna().unique())
@@ -43,11 +48,14 @@ min_score = st.sidebar.slider(
 
 st.markdown("## Product development question")
 
-st.info(
-    f"Which medicinal plants are scientifically and commercially worth investing in "
-    f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
-    f"in **{market}**?"
-)
+if free_question.strip():
+    st.info(f"**User question:** {free_question}")
+else:
+    st.info(
+        f"Which medicinal plants are scientifically and commercially worth investing in "
+        f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
+        f"in **{market}**?"
+    )
 
 if st.button("Analyze evidence"):
     result = analyze_evidence(
@@ -67,24 +75,35 @@ if st.button("Analyze evidence"):
     else:
         st.success(f"{len(result)} relevant plant records found.")
 
-        for _, row in result.iterrows():
+        st.markdown("## Ranked recommendations")
+
+        for index, row in result.iterrows():
             score = row.get("Evidence_Score", "")
             decision = row.get("Decision_Class", "")
             plant = row.get("Scientific_Name", "")
             common = row.get("Common_Name", "")
             reason = row.get("Decision_Reason", "")
 
-            st.markdown("---")
-
             with st.expander(
                 f"🌱 {plant} — {decision} — Score: {score}/100",
                 expanded=True
             ):
-                st.markdown(f"**Scientific name:** {plant}")
-                st.markdown(f"**Common name:** {common}")
-                st.markdown(f"**Decision:** {decision}")
-                st.markdown(f"**Evidence score:** {score}/100")
-                st.markdown(f"**Commercial potential:** {row.get('Commercial_Potential', '')}")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("### Identity")
+                    st.markdown(f"**Scientific name:** {plant}")
+                    st.markdown(f"**Common name:** {common}")
+                    st.markdown(f"**Decision:** {decision}")
+                    st.markdown(f"**Evidence score:** {score}/100")
+                    st.markdown(f"**Commercial potential:** {row.get('Commercial_Potential', '')}")
+
+                with col2:
+                    st.markdown("### Product fit")
+                    st.markdown(f"**Product type:** {row.get('Product_Type', '')}")
+                    st.markdown(f"**Dosage form:** {row.get('Dosage_Form', '')}")
+                    st.markdown(f"**Indication:** {row.get('Target_Indication', '')}")
+                    st.markdown(f"**Market:** {row.get('Target_Market', '')}")
 
                 st.markdown("### Regulatory evidence")
                 st.markdown(f"**EMA:** {row.get('EMA_Status', '')}")
@@ -135,5 +154,5 @@ st.divider()
 
 st.caption(
     "This MVP reads structured evidence from Excel. "
-    "Next versions will add source-level evidence, regulatory scoring, plant profile pages, and PDF reports."
+    "Next versions will add AI question parsing, source-level evidence, regulatory scoring, plant profile pages, and PDF reports."
 )

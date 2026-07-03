@@ -7,11 +7,6 @@ def normalize_text(value):
     return str(value).strip().lower()
 
 
-def text_contains_any(text, keywords):
-    text = normalize_text(text)
-    return any(keyword in text for keyword in keywords)
-
-
 def retrieve_evidence(
     df,
     product_type=None,
@@ -40,19 +35,49 @@ def retrieve_evidence(
             == str(market).lower()
         ]
 
-    # Exact indication match first
     if indication and "Target_Indication" in result.columns:
         exact = result[
             result["Target_Indication"].astype(str).str.lower()
             == str(indication).lower()
         ]
-
         if not exact.empty:
             result = exact
 
-    # If no exact indication match, try semantic keyword retrieval
     if free_question and "Target_Indication" in result.columns:
         q = normalize_text(free_question)
 
         indication_keywords = {
-            "
+            "Sleep and relaxation": [
+                "sleep", "bedtime", "insomnia", "relaxation", "stress", "calm"
+            ],
+            "Constipation": [
+                "constipation", "laxative", "bowel", "intestinal transit"
+            ],
+            "Cough": [
+                "cough", "throat", "bronchial", "respiratory"
+            ],
+            "Digestive comfort": [
+                "digestive", "digestion", "stomach", "bloating", "gas"
+            ],
+            "Anxiety": [
+                "anxiety", "anxious", "nervous", "tension"
+            ],
+            "Skin": [
+                "skin", "dermatitis", "eczema", "psoriasis", "topical"
+            ],
+        }
+
+        matched_indications = []
+
+        for ind, keywords in indication_keywords.items():
+            if any(keyword in q for keyword in keywords):
+                matched_indications.append(ind)
+
+        if matched_indications:
+            semantic = result[
+                result["Target_Indication"].astype(str).isin(matched_indications)
+            ]
+            if not semantic.empty:
+                result = semantic
+
+    return result

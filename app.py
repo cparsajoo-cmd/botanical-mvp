@@ -2,6 +2,7 @@ import streamlit as st
 
 from evidence_database import load_evidence_database
 from knowledge_retrieval_engine import retrieve_knowledge
+from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
 from report_generator import generate_report
 
@@ -72,8 +73,14 @@ if st.button("Analyze evidence", type="primary"):
         evidence_strictness=evidence_strictness
     )
 
-    result = analyze_evidence(
+    filtered = apply_evidence_filters(
         df=retrieved,
+        dosage_form=dosage_form,
+        evidence_strictness=evidence_strictness
+    )
+
+    result = analyze_evidence(
+        df=filtered,
         product_type=product_type,
         dosage_form=dosage_form,
         indication=indication,
@@ -98,6 +105,8 @@ if st.button("Analyze evidence", type="primary"):
             for _, row in priority.iterrows():
                 st.markdown(f"### 🌿 {row.get('Scientific_Name', '')}")
                 st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Evidence filter status:** {row.get('Evidence_Filter_Status', '')}")
+                st.write(f"**Evidence filter reason:** {row.get('Evidence_Filter_Reason', '')}")
                 st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not conditional.empty:
@@ -105,6 +114,8 @@ if st.button("Analyze evidence", type="primary"):
             for _, row in conditional.iterrows():
                 st.markdown(f"### 🌱 {row.get('Scientific_Name', '')}")
                 st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Evidence filter status:** {row.get('Evidence_Filter_Status', '')}")
+                st.write(f"**Evidence filter reason:** {row.get('Evidence_Filter_Reason', '')}")
                 st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not supportive.empty:
@@ -112,6 +123,8 @@ if st.button("Analyze evidence", type="primary"):
             for _, row in supportive.iterrows():
                 st.markdown(f"### 🍃 {row.get('Scientific_Name', '')}")
                 st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Evidence filter status:** {row.get('Evidence_Filter_Status', '')}")
+                st.write(f"**Evidence filter reason:** {row.get('Evidence_Filter_Reason', '')}")
                 st.write(f"**Reason:** {row.get('Notes', '')}")
 
         if not gaps.empty:
@@ -119,6 +132,8 @@ if st.button("Analyze evidence", type="primary"):
             for _, row in gaps.iterrows():
                 st.markdown(f"### ⚠️ {row.get('Scientific_Name', '')}")
                 st.write(f"**Score:** {row.get('Evidence_Score', '')}/100")
+                st.write(f"**Evidence filter status:** {row.get('Evidence_Filter_Status', '')}")
+                st.write(f"**Evidence filter reason:** {row.get('Evidence_Filter_Reason', '')}")
                 st.write(f"**Gap:** {row.get('Notes', '')}")
 
         st.markdown("## Full evidence table")

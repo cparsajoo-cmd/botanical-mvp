@@ -1,5 +1,5 @@
 from source_ingestion_engine import normalize_source_record
-from evidence_classifier import classify_evidence
+from standard_evidence_builder import build_standard_evidence
 
 try:
     from llm_extractor import extract_evidence_with_llm
@@ -26,25 +26,46 @@ def standardize_extracted_record(extracted, source_metadata):
             llm = extract_evidence_with_llm(
                 normalized,
                 selected_dosage_form=normalized.get("Dosage_Form", ""),
-                selected_indication=normalized.get("Target_Indication", "")
+                selected_indication=normalized.get("Target_Indication", ""),
             )
 
-            normalized["Scientific_Name"] = llm.get("plant_scientific_name", normalized.get("Scientific_Name", ""))
+            normalized["Scientific_Name"] = llm.get(
+                "plant_scientific_name",
+                normalized.get("Scientific_Name", "")
+            )
+
             normalized["Evidence_Type"] = llm.get("evidence_type", "")
+            normalized["Study_Type"] = llm.get("evidence_type", "")
             normalized["Evidence_Level"] = llm.get("evidence_level", "")
             normalized["Study_Model"] = llm.get("study_model", "")
+
             normalized["Detected_Dosage_Forms"] = llm.get("dosage_form", "")
             normalized["Detected_Indications"] = llm.get("target_indication", "")
             normalized["Dosage_Form_Relevance"] = llm.get("dosage_form_relevance", "")
+
             normalized["LLM_Population"] = llm.get("population", "")
+            normalized["LLM_Sample_Size"] = llm.get("sample_size", "")
             normalized["LLM_Comparator"] = llm.get("comparator", "")
             normalized["LLM_Main_Outcome"] = llm.get("main_outcome", "")
+            normalized["LLM_Result_Direction"] = llm.get("result_direction", "")
             normalized["LLM_Safety_Signal"] = llm.get("safety_signal", "")
             normalized["LLM_Reason"] = llm.get("reason", "")
+
+            if llm.get("ema_relevance", "").lower() == "yes":
+                normalized["EMA_Status"] = "Yes"
+
+            if llm.get("who_relevance", "").lower() == "yes":
+                normalized["WHO_Status"] = "Yes"
+
+            if llm.get("escop_relevance", "").lower() == "yes":
+                normalized["ESCOP_Status"] = "Yes"
+
+            if llm.get("safety_signal"):
+                normalized["Safety_Signal"] = llm.get("safety_signal", "")
 
         except Exception as e:
             normalized["LLM_Reason"] = "LLM extraction failed: " + str(e)
 
-    classified = classify_evidence(normalized)
+    standardized = build_standard_evidence(normalized)
 
-    return classified
+    return standardized

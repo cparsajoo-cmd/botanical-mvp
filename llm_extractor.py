@@ -22,10 +22,15 @@ EVIDENCE_SCHEMA = {
         "target_indication": {"type": "string"},
         "dosage_form_relevance": {"type": "string"},
         "population": {"type": "string"},
+        "sample_size": {"type": "string"},
         "comparator": {"type": "string"},
         "main_outcome": {"type": "string"},
+        "result_direction": {"type": "string"},
         "safety_signal": {"type": "string"},
         "evidence_level": {"type": "string"},
+        "ema_relevance": {"type": "string"},
+        "who_relevance": {"type": "string"},
+        "escop_relevance": {"type": "string"},
         "reason": {"type": "string"},
     },
     "required": [
@@ -36,10 +41,15 @@ EVIDENCE_SCHEMA = {
         "target_indication",
         "dosage_form_relevance",
         "population",
+        "sample_size",
         "comparator",
         "main_outcome",
+        "result_direction",
         "safety_signal",
         "evidence_level",
+        "ema_relevance",
+        "who_relevance",
+        "escop_relevance",
         "reason",
     ],
 }
@@ -50,36 +60,45 @@ def extract_evidence_with_llm(record, selected_dosage_form="", selected_indicati
 
     text = (
         f"Title: {record.get('Source_Title', '')}\n\n"
-        f"Abstract/Text:\n{record.get('Notes', '')}"
+        f"Text:\n{record.get('Notes', '')}"
     )
 
-    prompt = f"""
-You are a scientific evidence extraction engine for botanical product development.
+    system_prompt = f"""
+You are a botanical product evidence extraction engine.
 
-User-selected dosage form: {selected_dosage_form}
-User-selected indication: {selected_indication}
+Selected product dosage form: {selected_dosage_form}
+Selected indication: {selected_indication}
 
-Extract structured evidence from the text.
-Classify dosage_form_relevance as:
-- Direct: same dosage form as selected
-- Indirect: botanical evidence exists but dosage form differs
-- Unknown: dosage form cannot be determined
+Extract only what is supported by the provided text.
 
 Evidence type must be one of:
 Meta-analysis, Systematic Review, Randomized Controlled Trial, Clinical Study,
-Observational Study, Case Report, Animal Study, In Vitro, Traditional/Regulatory, Review, Unknown.
+Observational Study, Case Report, Animal Study, In Vitro, Traditional/Regulatory,
+Clinical Trial Registry, Review, Unknown.
 
-Study model must be:
-Human, Animal, Cell/In vitro, Traditional use, Unknown.
+Study model must be one of:
+Human, Animal, Cell/In vitro, Traditional use, Registry, Unknown.
 
-Evidence level must be:
+Evidence level must be one of:
 Very High, High, Moderate, Low, Very Low, Traditional, Unknown.
+
+Result direction must be one of:
+Positive, Negative, Mixed, Neutral, Unknown.
+
+Dosage form relevance:
+Direct = same dosage form as selected product.
+Indirect = botanical evidence exists but dosage form differs.
+Unknown = cannot determine dosage form.
+
+EMA/WHO/ESCOP relevance:
+Yes only if the text clearly mentions EMA, HMPC, WHO monograph, or ESCOP.
+Otherwise No.
 """
 
     response = client.responses.create(
-        model="gpt-5.5-mini",
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         input=[
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
         ],
         text={

@@ -41,6 +41,21 @@ try:
 except Exception:
     search_pubchem = None
 
+try:
+    from chembl_connector import search_chembl
+except Exception:
+    search_chembl = None
+
+try:
+    from dailymed_connector import search_dailymed
+except Exception:
+    search_dailymed = None
+
+try:
+    from openfda_connector import search_openfda_faers
+except Exception:
+    search_openfda_faers = None
+
 
 def _save_records_from_connector(records, source_name, save=True):
     saved_records = []
@@ -118,6 +133,9 @@ def collect_multi_source_evidence(
         ("CrossRef", search_crossref, 5),
         ("Semantic Scholar", search_semantic_scholar, 5),
         ("PubChem", search_pubchem, 5),
+        ("ChEMBL", search_chembl, 5),
+        ("DailyMed", search_dailymed, 5),
+        ("OpenFDA FAERS", search_openfda_faers, 5),
     ]
 
     for source_name, connector, max_results in connectors:

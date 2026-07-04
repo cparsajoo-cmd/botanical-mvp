@@ -1,5 +1,6 @@
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
+from source_registry import get_enabled_sources
 
 try:
     from evidence_collector import collect_pubmed_evidence
@@ -47,6 +48,11 @@ except Exception:
     search_chembl = None
 
 try:
+    from chebi_connector import search_chebi
+except Exception:
+    search_chebi = None
+
+try:
     from dailymed_connector import search_dailymed
 except Exception:
     search_dailymed = None
@@ -67,22 +73,41 @@ except Exception:
     search_livertox = None
 
 try:
-    from chebi_connector import search_chebi
-except Exception:
-    search_chebi = None
-
-try:
     from patent_connector import search_patents
 except Exception:
     search_patents = None
 
 
-def _save_records_from_connector(records, source_name, save=True):
+CONNECTOR_MAP = {
+    "ClinicalTrials.gov": search_clinicaltrials,
+    "EMA/WHO/ESCOP Regulatory": search_regulatory_sources,
+    "Europe PMC": search_europepmc,
+    "OpenAlex": search_openalex,
+    "CrossRef": search_crossref,
+    "Semantic Scholar": search_semantic_scholar,
+    "PubChem": search_pubchem,
+    "ChEMBL": search_chembl,
+    "ChEBI": search_chebi,
+    "DailyMed": search_dailymed,
+    "OpenFDA FAERS": search_openfda_faers,
+    "FDA Labels": search_fda_labels,
+    "LiverTox": search_livertox,
+    "Patent Landscape": search_patents,
+}
+
+
+def _save_records_from_connector(records, source_config, save=True):
     saved_records = []
     errors = []
 
+    source_name = source_config["name"]
+
     for record in records:
         try:
+            record["Source_Category"] = source_config.get("category", "")
+            record["Source_Priority"] = source_config.get("priority", "")
+            record["Source_Authority_Weight"] = source_config.get("authority_weight", "")
+
             standardized = standardize_extracted_record(
                 extracted=record,
                 source_metadata={
@@ -104,6 +129,7 @@ def _save_records_from_connector(records, source_name, save=True):
                 "nct_id": "",
                 "title": record.get("Source_Title", ""),
                 "source": source_name,
+                "category": source_config.get("category", ""),
                 "record": standardized,
             })
 
@@ -130,45 +156,44 @@ def collect_multi_source_evidence(
     errors = []
     sources_checked = []
 
-    if collect_pubmed_evidence is not None:
-        sources_checked.append("PubMed")
-        try:
-            pubmed_records = collect_pubmed_evidence(
-                scientific_name=scientific_name,
-                indication=indication,
-                dosage_form=dosage_form,
-                market=market,
-                max_results=max_pubmed_results,
-                save=save,
-            )
-            saved_records.extend(pubmed_records)
-        except Exception as e:
-            errors.append({"source": "PubMed", "plant": scientific_name, "error": str(e)})
+    enabled_sources = sorted(
+        get_enabled_sources(),
+        key=lambda x: (x.get("priority", 99), x.get("name", ""))
+    )
 
-    connectors = [
-        ("ClinicalTrials.gov", search_clinicaltrials, max_clinicaltrials_results),
-        ("EMA/WHO/ESCOP Regulatory", search_regulatory_sources, 1),
-        ("Europe PMC", search_europepmc, 5),
-        ("OpenAlex", search_openalex, 5),
-        ("CrossRef", search_crossref, 5),
-        ("Semantic Scholar", search_semantic_scholar, 5),
-        ("PubChem", search_pubchem, 5),
-        ("ChEMBL", search_chembl, 5),
-        ("ChEBI", search_chebi, 5),
-        ("DailyMed", search_dailymed, 5),
-        ("OpenFDA FAERS", search_openfda_faers, 5),
-        ("FDA Labels", search_fda_labels, 5),
-        ("LiverTox", search_livertox, 5),
-        ("Patent Landscape", search_patents, 5),
-    ]
-
-    for source_name, connector, max_results in connectors:
-        if connector is None:
-            continue
+    for source_config in enabled_sources:
+        source_name = source_config["name"]
+        max_results = source_config.get("max_results", 5)
 
         sources_checked.append(source_name)
 
         try:
+            if source_name == "PubMed":
+                if collect_pubmed_evidence is None:
+                    continue
+
+                pubmed_records = collect_pubmed_evidence(
+                    scientific_name=scientific_name,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    market=market,
+                    max_results=max_pubmed_results or max_results,
+                    save=save,
+                )
+
+                saved_records.extend(pubmed_records)
+                continue
+
+            connector = CONNECTOR_MAP.get(source_name)
+
+            if connector is None:
+                errors.append({
+                    "source": source_name,
+                    "plant": scientific_name,
+                    "error": "Connector not implemented yet.",
+                })
+                continue
+
             if source_name == "EMA/WHO/ESCOP Regulatory":
                 records = connector(
                     scientific_name=scientific_name,
@@ -187,7 +212,7 @@ def collect_multi_source_evidence(
 
             sr, er = _save_records_from_connector(
                 records=records,
-                source_name=source_name,
+                source_config=source_config,
                 save=save,
             )
 
@@ -204,5 +229,5 @@ def collect_multi_source_evidence(
     return {
         "saved_records": saved_records,
         "errors": errors,
-        "sources_checked": sources_checked,
+        "sources_checked": sorted(set(sources_checked)),
     }

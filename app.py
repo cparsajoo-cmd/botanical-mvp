@@ -156,7 +156,9 @@ result = None
 if collect_and_generate:
     st.markdown("## Online evidence collection")
 
-    with st.spinner("Searching PubMed, ClinicalTrials.gov, extracting evidence, and saving records to Supabase..."):
+    with st.spinner(
+        "Searching PubMed, ClinicalTrials.gov, Regulatory sources, extracting evidence, and saving records to Supabase..."
+    ):
         research_output = run_research_engine(
             product_type=product_type,
             dosage_form=dosage_form,
@@ -170,8 +172,15 @@ if collect_and_generate:
     saved_records = research_output.get("saved_records", [])
     errors = research_output.get("errors", [])
     candidate_plants = research_output.get("candidate_plants", [])
+    sources_checked = research_output.get("sources_checked", [])
 
     st.success(f"{len(saved_records)} online evidence records saved.")
+
+    if sources_checked:
+        st.write("**Sources checked:**")
+        st.write(", ".join(sorted(set(sources_checked))))
+    else:
+        st.write("**Sources checked:** PubMed, ClinicalTrials.gov, Regulatory")
 
     if candidate_plants:
         st.write("**Candidate plants searched:**")
@@ -259,6 +268,7 @@ if result is not None:
                 st.write(f"**Evidence quality score:** {row.get('Evidence_Quality_Score', '')}")
                 st.write(f"**Evidence quality class:** {row.get('Evidence_Quality_Class', '')}")
                 st.write(f"**Evidence quality flags:** {row.get('Evidence_Quality_Flags', '')}")
+
                 st.write(
                     f"**Detected dosage form:** "
                     f"{row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}"
@@ -267,6 +277,7 @@ if result is not None:
                     f"**Detected indication:** "
                     f"{row.get('Target_Indication_Detected', row.get('Detected_Indications', ''))}"
                 )
+
                 st.write(f"**Direct for selected product:** {row.get('Direct_For_Selected_Product', '')}")
                 st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
 

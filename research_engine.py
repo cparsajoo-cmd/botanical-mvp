@@ -19,6 +19,7 @@ def run_research_engine(
 
     all_saved_records = []
     all_errors = []
+    all_sources_checked = []
 
     for plant in candidate_plants:
         result = collect_multi_source_evidence(
@@ -33,6 +34,7 @@ def run_research_engine(
 
         all_saved_records.extend(result.get("saved_records", []))
         all_errors.extend(result.get("errors", []))
+        all_sources_checked.extend(result.get("sources_checked", []))
 
     df = load_evidence_database()
 
@@ -64,5 +66,6 @@ def run_research_engine(
         "candidate_plants": candidate_plants,
         "saved_records": all_saved_records,
         "errors": all_errors,
+        "sources_checked": sorted(set(all_sources_checked)),
         "decision": decision,
     }

@@ -56,6 +56,26 @@ try:
 except Exception:
     search_openfda_faers = None
 
+try:
+    from fda_connector import search_fda_labels
+except Exception:
+    search_fda_labels = None
+
+try:
+    from livertox_connector import search_livertox
+except Exception:
+    search_livertox = None
+
+try:
+    from chebi_connector import search_chebi
+except Exception:
+    search_chebi = None
+
+try:
+    from patent_connector import search_patents
+except Exception:
+    search_patents = None
+
 
 def _save_records_from_connector(records, source_name, save=True):
     saved_records = []
@@ -134,8 +154,12 @@ def collect_multi_source_evidence(
         ("Semantic Scholar", search_semantic_scholar, 5),
         ("PubChem", search_pubchem, 5),
         ("ChEMBL", search_chembl, 5),
+        ("ChEBI", search_chebi, 5),
         ("DailyMed", search_dailymed, 5),
         ("OpenFDA FAERS", search_openfda_faers, 5),
+        ("FDA Labels", search_fda_labels, 5),
+        ("LiverTox", search_livertox, 5),
+        ("Patent Landscape", search_patents, 5),
     ]
 
     for source_name, connector, max_results in connectors:

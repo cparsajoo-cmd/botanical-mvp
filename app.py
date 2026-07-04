@@ -7,6 +7,7 @@ from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
 from report_generator import generate_report
 from research_engine import run_research_engine
+from investment_decision_engine import aggregate_investment_decision
 
 
 st.set_page_config(
@@ -17,6 +18,35 @@ st.set_page_config(
 
 st.title("🌿 Botanical Product Intelligence Platform")
 st.caption("Evidence-based botanical product decision support")
+
+
+def generate_decision(df, product_type, dosage_form, indication, market, evidence_strictness):
+    retrieved = retrieve_knowledge(
+        df=df,
+        product_type=product_type,
+        dosage_form=dosage_form,
+        indication=indication,
+        market=market,
+        evidence_strictness=evidence_strictness,
+    )
+
+    filtered = apply_evidence_filters(
+        df=retrieved,
+        dosage_form=dosage_form,
+        evidence_strictness=evidence_strictness,
+    )
+
+    result = analyze_evidence(
+        df=filtered,
+        product_type=product_type,
+        dosage_form=dosage_form,
+        indication=indication,
+        market=market,
+        min_score=0,
+    )
+
+    return result
+
 
 df = load_evidence_database()
 
@@ -67,6 +97,7 @@ with col2:
             "Chewing gum",
             "Powder",
             "Extract",
+            "Essential oil",
         ],
     )
 
@@ -106,35 +137,6 @@ st.info(
     f"in **{market}**?"
 )
 
-
-def generate_decision(current_df):
-    retrieved = retrieve_knowledge(
-        df=current_df,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        evidence_strictness=evidence_strictness,
-    )
-
-    filtered = apply_evidence_filters(
-        df=retrieved,
-        dosage_form=dosage_form,
-        evidence_strictness=evidence_strictness,
-    )
-
-    result = analyze_evidence(
-        df=filtered,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        min_score=0,
-    )
-
-    return result
-
-
 col_button_1, col_button_2 = st.columns(2)
 
 with col_button_1:
@@ -148,6 +150,7 @@ with col_button_2:
         "Collect online evidence + generate decision"
     )
 
+result = None
 
 if collect_and_generate:
     st.markdown("## Online evidence collection")
@@ -158,55 +161,73 @@ if collect_and_generate:
             dosage_form=dosage_form,
             indication=indication,
             target_market=market,
+            evidence_strictness=evidence_strictness,
             max_results_per_plant=max_pubmed_results,
             save=True,
         )
 
-    st.success(
-        f"{len(research_output.get('saved_records', []))} online evidence records saved."
-    )
+    saved_records = research_output.get("saved_records", [])
+    errors = research_output.get("errors", [])
+    candidate_plants = research_output.get("candidate_plants", [])
 
-    if research_output.get("candidate_plants"):
+    st.success(f"{len(saved_records)} online evidence records saved.")
+
+    if candidate_plants:
         st.write("**Candidate plants searched:**")
-        st.write(", ".join(research_output["candidate_plants"]))
+        st.write(", ".join(candidate_plants))
 
-    if research_output.get("errors"):
+    if errors:
         st.warning("Some searches produced errors.")
-        st.dataframe(pd.DataFrame(research_output["errors"]), use_container_width=True)
+        st.dataframe(pd.DataFrame(errors), use_container_width=True)
 
-    if research_output.get("saved_records"):
+    if saved_records:
         st.markdown("### Saved online evidence records")
-        st.dataframe(
-            pd.DataFrame(research_output["saved_records"]),
-            use_container_width=True
-        )
+        preview = []
+        for r in saved_records:
+            preview.append({
+                "row_id": r.get("row_id"),
+                "pmid": r.get("pmid"),
+                "title": r.get("title"),
+            })
+        st.dataframe(pd.DataFrame(preview), use_container_width=True)
 
     df = load_evidence_database()
-    result = generate_decision(df)
+    result = generate_decision(
+        df=df,
+        product_type=product_type,
+        dosage_form=dosage_form,
+        indication=indication,
+        market=market,
+        evidence_strictness=evidence_strictness,
+    )
 
 elif generate_only:
-    result = generate_decision(df)
-
-else:
-    result = None
+    result = generate_decision(
+        df=df,
+        product_type=product_type,
+        dosage_form=dosage_form,
+        indication=indication,
+        market=market,
+        evidence_strictness=evidence_strictness,
+    )
 
 
 if result is not None:
-
     st.markdown("## Decision output")
 
     if result.empty:
         st.warning("No evidence records found yet for this product question.")
     else:
-        st.success(str(len(result)) + " relevant plant records found.")
+        st.success(f"{len(result)} relevant plant records found.")
 
         for _, row in result.iterrows():
-            with st.expander(
+            title = (
                 f"🌿 {row.get('Scientific_Name', '')} — "
                 f"{row.get('Decision_Class', '')} — "
-                f"Score {row.get('Evidence_Score', '')}/100",
-                expanded=True,
-            ):
+                f"Score {row.get('Evidence_Score', '')}/100"
+            )
+
+            with st.expander(title, expanded=False):
                 st.write(f"**Common name:** {row.get('Common_Name', '')}")
                 st.write(f"**Product type:** {row.get('Product_Type', '')}")
                 st.write(f"**Dosage form:** {row.get('Dosage_Form', '')}")
@@ -217,18 +238,38 @@ if result is not None:
                 st.write(f"**EMA:** {row.get('EMA_Status', '')}")
                 st.write(f"**WHO:** {row.get('WHO_Status', '')}")
                 st.write(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
+                st.write(f"**Regulatory evidence:** {row.get('Regulatory_Evidence', '')}")
 
                 st.markdown("### Scientific evidence")
-                st.write(f"**Clinical level:** {row.get('Clinical_Level', '')}")
-                st.write(f"**RCT count:** {row.get('Clinical_RCT_Count', '')}")
-                st.write(f"**Meta-analysis level:** {row.get('Meta_Level', '')}")
-                st.write(f"**Dosage-form evidence:** {row.get('Infusion_Evidence', '')}")
+                st.write(f"**Study type:** {row.get('Study_Type', row.get('Evidence_Type', ''))}")
+                st.write(f"**Evidence type:** {row.get('Evidence_Type', '')}")
+                st.write(f"**Evidence level:** {row.get('Evidence_Level', '')}")
+                st.write(f"**Study model:** {row.get('Study_Model', '')}")
+                st.write(f"**Detected dosage form:** {row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}")
+                st.write(f"**Detected indication:** {row.get('Target_Indication_Detected', row.get('Detected_Indications', ''))}")
+                st.write(f"**Direct for selected product:** {row.get('Direct_For_Selected_Product', '')}")
+                st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
 
-                st.markdown("### Safety and decision")
+                st.markdown("### Decision")
+                st.write(f"**Decision reason:** {row.get('Decision_Reason', '')}")
                 st.write(f"**Safety:** {row.get('Safety_Level', '')}")
-                st.write(f"**Evidence filter status:** {row.get('Evidence_Filter_Status', '')}")
-                st.write(f"**Evidence filter reason:** {row.get('Evidence_Filter_Reason', '')}")
-                st.write(f"**Notes:** {row.get('Notes', '')}")
+                st.write(f"**Safety signal:** {row.get('Safety_Signal', '')}")
+
+                if row.get("Source_URL", ""):
+                    st.write(f"**Source:** {row.get('Source_URL', '')}")
+
+        st.markdown("## Final Investment Recommendation")
+
+        investment_summary = aggregate_investment_decision(result)
+
+        if investment_summary.empty:
+            st.info("No investment recommendation available.")
+        else:
+            st.dataframe(
+                investment_summary,
+                use_container_width=True,
+                hide_index=True,
+            )
 
         st.markdown("## Full evidence table")
         st.dataframe(result, use_container_width=True)

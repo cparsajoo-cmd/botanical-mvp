@@ -157,7 +157,7 @@ if collect_and_generate:
     st.markdown("## Online evidence collection")
 
     with st.spinner(
-        "Searching PubMed, ClinicalTrials.gov, Regulatory sources, extracting evidence, and saving records to Supabase..."
+        "Searching sources, extracting evidence, and saving records to Supabase..."
     ):
         research_output = run_research_engine(
             product_type=product_type,
@@ -179,8 +179,6 @@ if collect_and_generate:
     if sources_checked:
         st.write("**Sources checked:**")
         st.write(", ".join(sorted(set(sources_checked))))
-    else:
-        st.write("**Sources checked:** PubMed, ClinicalTrials.gov, Regulatory")
 
     if candidate_plants:
         st.write("**Candidate plants searched:**")
@@ -196,7 +194,7 @@ if collect_and_generate:
         for r in saved_records:
             preview.append({
                 "row_id": r.get("row_id"),
-                "source": r.get("source", "PubMed"),
+                "source": r.get("source", "Unknown"),
                 "pmid": r.get("pmid", ""),
                 "nct_id": r.get("nct_id", ""),
                 "title": r.get("title", ""),
@@ -280,6 +278,13 @@ if result is not None:
 
                 st.write(f"**Direct for selected product:** {row.get('Direct_For_Selected_Product', '')}")
                 st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
+
+                st.markdown("### Chemistry / Active compound intelligence")
+                st.write(f"**Active compounds:** {row.get('Active_Compounds', '')}")
+                st.write(f"**Molecular targets:** {row.get('Molecular_Targets', '')}")
+                st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
+                st.write(f"**Extraction method:** {row.get('Extraction_Method', '')}")
+                st.write(f"**Chemistry score:** {row.get('Chemistry_Score', '')}")
 
                 st.markdown("### Decision")
                 st.write(f"**Decision reason:** {row.get('Decision_Reason', '')}")

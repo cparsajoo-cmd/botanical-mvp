@@ -1,50 +1,38 @@
-from knowledge_retrieval_engine import get_candidate_plants, retrieve_knowledge
-from evidence_collector import collect_pubmed_evidence
+from knowledge_retrieval_engine import get_candidate_plants
+from multi_source_collector import collect_multi_source_evidence
 from evidence_database import load_evidence_database
+from knowledge_retrieval_engine import retrieve_knowledge
 from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
 
 
-def run_research(
+def run_research_engine(
     product_type,
     dosage_form,
     indication,
     target_market,
     evidence_strictness="Dosage-form specific only",
-    max_pubmed_results_per_plant=3,
-    collect_online=True,
+    max_results_per_plant=3,
+    save=True,
 ):
-    """
-    General botanical product research engine.
-    Works for any botanical product, indication and dosage form.
-    """
-
     candidate_plants = get_candidate_plants(indication)
 
-    collected = []
+    all_saved_records = []
+    all_errors = []
 
-    if collect_online:
-        for plant in candidate_plants:
-            try:
-                records = collect_pubmed_evidence(
-                    scientific_name=plant,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=target_market,
-                    max_results=max_pubmed_results_per_plant,
-                    save=True,
-                )
+    for plant in candidate_plants:
+        result = collect_multi_source_evidence(
+            scientific_name=plant,
+            indication=indication,
+            dosage_form=dosage_form,
+            market=target_market,
+            max_pubmed_results=max_results_per_plant,
+            max_clinicaltrials_results=3,
+            save=save,
+        )
 
-                if records:
-                    collected.extend(records)
-
-            except Exception as e:
-                collected.append(
-                    {
-                        "plant": plant,
-                        "error": str(e),
-                    }
-                )
+        all_saved_records.extend(result.get("saved_records", []))
+        all_errors.extend(result.get("errors", []))
 
     df = load_evidence_database()
 
@@ -74,44 +62,7 @@ def run_research(
 
     return {
         "candidate_plants": candidate_plants,
-        "collected_records": collected,
+        "saved_records": all_saved_records,
+        "errors": all_errors,
         "decision": decision,
-    }
-
-
-# ------------------------------------------------------------------
-# Compatibility wrapper for app.py
-# ------------------------------------------------------------------
-
-def run_research_engine(
-    product_type,
-    dosage_form,
-    indication,
-    target_market,
-    evidence_strictness="Dosage-form specific only",
-    max_results_per_plant=3,
-    save=True,
-):
-    """
-    Wrapper used by app.py.
-    """
-
-    result = run_research(
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        target_market=target_market,
-        evidence_strictness=evidence_strictness,
-        max_pubmed_results_per_plant=max_results_per_plant,
-        collect_online=save,
-    )
-
-    return {
-        "candidate_plants": result.get("candidate_plants", []),
-        "saved_records": result.get("collected_records", []),
-        "errors": [
-            r for r in result.get("collected_records", [])
-            if isinstance(r, dict) and "error" in r
-        ],
-        "decision": result.get("decision"),
     }

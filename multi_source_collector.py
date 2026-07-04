@@ -16,6 +16,61 @@ try:
 except Exception:
     search_regulatory_sources = None
 
+try:
+    from europepmc_connector import search_europepmc
+except Exception:
+    search_europepmc = None
+
+try:
+    from openalex_connector import search_openalex
+except Exception:
+    search_openalex = None
+
+try:
+    from crossref_connector import search_crossref
+except Exception:
+    search_crossref = None
+
+
+def _save_records_from_connector(records, source_name, save=True):
+    saved_records = []
+    errors = []
+
+    for record in records:
+        try:
+            standardized = standardize_extracted_record(
+                extracted=record,
+                source_metadata={
+                    "source_type": record.get("Source_Type", source_name),
+                    "source_title": record.get("Source_Title", ""),
+                    "source_url": record.get("Source_URL", ""),
+                    "source_organization": record.get("Source_Organization", source_name),
+                    "source_year": record.get("Source_Year", ""),
+                },
+            )
+
+            row_id = None
+            if save:
+                row_id = save_evidence_record(standardized)
+
+            saved_records.append({
+                "row_id": row_id,
+                "pmid": "",
+                "nct_id": "",
+                "title": record.get("Source_Title", ""),
+                "source": source_name,
+                "record": standardized,
+            })
+
+        except Exception as e:
+            errors.append({
+                "source": source_name,
+                "title": record.get("Source_Title", ""),
+                "error": str(e),
+            })
+
+    return saved_records, errors
+
 
 def collect_multi_source_evidence(
     scientific_name,
@@ -43,93 +98,51 @@ def collect_multi_source_evidence(
             )
             saved_records.extend(pubmed_records)
         except Exception as e:
-            errors.append({
-                "source": "PubMed",
-                "plant": scientific_name,
-                "error": str(e),
-            })
+            errors.append({"source": "PubMed", "plant": scientific_name, "error": str(e)})
 
-    if search_clinicaltrials is not None:
-        sources_checked.append("ClinicalTrials.gov")
+    connectors = [
+        ("ClinicalTrials.gov", search_clinicaltrials, max_clinicaltrials_results),
+        ("EMA/WHO/ESCOP Regulatory", search_regulatory_sources, 1),
+        ("Europe PMC", search_europepmc, 5),
+        ("OpenAlex", search_openalex, 5),
+        ("CrossRef", search_crossref, 5),
+    ]
+
+    for source_name, connector, max_results in connectors:
+        if connector is None:
+            continue
+
+        sources_checked.append(source_name)
+
         try:
-            clinical_records = search_clinicaltrials(
-                scientific_name=scientific_name,
-                indication=indication,
-                dosage_form=dosage_form,
-                market=market,
-                max_results=max_clinicaltrials_results,
-            )
-
-            for record in clinical_records:
-                standardized = standardize_extracted_record(
-                    extracted=record,
-                    source_metadata={
-                        "source_type": "ClinicalTrials.gov",
-                        "source_title": record.get("Source_Title", ""),
-                        "source_url": record.get("Source_URL", ""),
-                        "source_organization": "ClinicalTrials.gov",
-                        "source_year": record.get("Source_Year", ""),
-                    },
+            if source_name == "EMA/WHO/ESCOP Regulatory":
+                records = connector(
+                    scientific_name=scientific_name,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    market=market,
+                )
+            else:
+                records = connector(
+                    scientific_name=scientific_name,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    market=market,
+                    max_results=max_results,
                 )
 
-                row_id = None
-                if save:
-                    row_id = save_evidence_record(standardized)
+            sr, er = _save_records_from_connector(
+                records=records,
+                source_name=source_name,
+                save=save,
+            )
 
-                saved_records.append({
-                    "row_id": row_id,
-                    "pmid": "",
-                    "nct_id": record.get("Source_URL", "").split("/")[-1],
-                    "title": record.get("Source_Title", ""),
-                    "source": "ClinicalTrials.gov",
-                    "record": standardized,
-                })
+            saved_records.extend(sr)
+            errors.extend(er)
 
         except Exception as e:
             errors.append({
-                "source": "ClinicalTrials.gov",
-                "plant": scientific_name,
-                "error": str(e),
-            })
-
-    if search_regulatory_sources is not None:
-        sources_checked.append("EMA/WHO/ESCOP regulatory seed")
-        try:
-            regulatory_records = search_regulatory_sources(
-                scientific_name=scientific_name,
-                indication=indication,
-                dosage_form=dosage_form,
-                market=market,
-            )
-
-            for record in regulatory_records:
-                standardized = standardize_extracted_record(
-                    extracted=record,
-                    source_metadata={
-                        "source_type": "Regulatory",
-                        "source_title": record.get("Source_Title", ""),
-                        "source_url": record.get("Source_URL", ""),
-                        "source_organization": record.get("Source_Organization", ""),
-                        "source_year": record.get("Source_Year", ""),
-                    },
-                )
-
-                row_id = None
-                if save:
-                    row_id = save_evidence_record(standardized)
-
-                saved_records.append({
-                    "row_id": row_id,
-                    "pmid": "",
-                    "nct_id": "",
-                    "title": record.get("Source_Title", ""),
-                    "source": "Regulatory",
-                    "record": standardized,
-                })
-
-        except Exception as e:
-            errors.append({
-                "source": "Regulatory",
+                "source": source_name,
                 "plant": scientific_name,
                 "error": str(e),
             })

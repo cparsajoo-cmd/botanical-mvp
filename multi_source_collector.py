@@ -31,6 +31,16 @@ try:
 except Exception:
     search_crossref = None
 
+try:
+    from semantic_scholar_connector import search_semantic_scholar
+except Exception:
+    search_semantic_scholar = None
+
+try:
+    from pubchem_connector import search_pubchem
+except Exception:
+    search_pubchem = None
+
 
 def _save_records_from_connector(records, source_name, save=True):
     saved_records = []
@@ -106,6 +116,8 @@ def collect_multi_source_evidence(
         ("Europe PMC", search_europepmc, 5),
         ("OpenAlex", search_openalex, 5),
         ("CrossRef", search_crossref, 5),
+        ("Semantic Scholar", search_semantic_scholar, 5),
+        ("PubChem", search_pubchem, 5),
     ]
 
     for source_name, connector, max_results in connectors:

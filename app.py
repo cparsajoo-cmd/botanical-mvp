@@ -8,6 +8,7 @@ from decision_engine import analyze_evidence
 from report_generator import generate_report
 from research_engine import run_research_engine
 from investment_decision_engine import aggregate_investment_decision
+from investment_engine import build_investment_report
 
 
 st.set_page_config(
@@ -155,7 +156,7 @@ result = None
 if collect_and_generate:
     st.markdown("## Online evidence collection")
 
-    with st.spinner("Searching PubMed, extracting evidence, and saving records to Supabase..."):
+    with st.spinner("Searching PubMed, ClinicalTrials.gov, extracting evidence, and saving records to Supabase..."):
         research_output = run_research_engine(
             product_type=product_type,
             dosage_form=dosage_form,
@@ -186,8 +187,10 @@ if collect_and_generate:
         for r in saved_records:
             preview.append({
                 "row_id": r.get("row_id"),
-                "pmid": r.get("pmid"),
-                "title": r.get("title"),
+                "source": r.get("source", "PubMed"),
+                "pmid": r.get("pmid", ""),
+                "nct_id": r.get("nct_id", ""),
+                "title": r.get("title", ""),
             })
         st.dataframe(pd.DataFrame(preview), use_container_width=True)
 
@@ -253,6 +256,9 @@ if result is not None:
                 st.write(f"**Evidence type:** {row.get('Evidence_Type', '')}")
                 st.write(f"**Evidence level:** {row.get('Evidence_Level', '')}")
                 st.write(f"**Study model:** {row.get('Study_Model', '')}")
+                st.write(f"**Evidence quality score:** {row.get('Evidence_Quality_Score', '')}")
+                st.write(f"**Evidence quality class:** {row.get('Evidence_Quality_Class', '')}")
+                st.write(f"**Evidence quality flags:** {row.get('Evidence_Quality_Flags', '')}")
                 st.write(
                     f"**Detected dosage form:** "
                     f"{row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}"
@@ -303,6 +309,19 @@ if result is not None:
                 hide_index=True,
             )
 
+        st.markdown("## Investment Intelligence Report")
+
+        investment_report = build_investment_report(result)
+
+        if investment_report.empty:
+            st.info("No investment intelligence report available.")
+        else:
+            st.dataframe(
+                investment_report,
+                use_container_width=True,
+                hide_index=True,
+            )
+
         st.markdown("## Full evidence table")
         st.dataframe(result, use_container_width=True)
 
@@ -312,6 +331,15 @@ if result is not None:
             "Download decision table as CSV",
             data=csv,
             file_name="botanical_decision_output.csv",
+            mime="text/csv",
+        )
+
+        investment_csv = investment_report.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Download investment report as CSV",
+            data=investment_csv,
+            file_name="botanical_investment_report.csv",
             mime="text/csv",
         )
 

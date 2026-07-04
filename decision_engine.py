@@ -1,7 +1,17 @@
 import pandas as pd
 
 
-def _safe_numeric(value, default=0):
+def _txt(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _lower(value):
+    return _txt(value).lower()
+
+
+def _num(value, default=0):
     try:
         if value is None or value == "":
             return default
@@ -10,97 +20,140 @@ def _safe_numeric(value, default=0):
         return default
 
 
-def _safe_text(value):
-    if value is None:
-        return ""
-    return str(value).strip()
+def _combined_text(row):
+    parts = [
+        row.get("Source_Title", ""),
+        row.get("Notes", ""),
+        row.get("Evidence_Type", ""),
+        row.get("Study_Type", ""),
+        row.get("Study_Model", ""),
+        row.get("Detected_Dosage_Forms", ""),
+        row.get("Dosage_Form_Detected", ""),
+        row.get("Detected_Indications", ""),
+        row.get("Target_Indication_Detected", ""),
+        row.get("Regulatory_Evidence", ""),
+    ]
+    return " ".join([_txt(p) for p in parts]).lower()
 
 
-def _score_from_evidence(row):
-    """
-    Uses the newest standardized evidence fields first.
-    Falls back to older fields if needed.
-    """
+def _has_yes(row, cols):
+    for col in cols:
+        if _lower(row.get(col)) in ["yes", "true", "supported", "ema", "who", "escop"]:
+            return True
+    return False
 
+
+def _score_row(row):
+    text = _combined_text(row)
     score = 0
+    reasons = []
 
-    # 1. Existing AI / evidence score
-    if "ai_score" in row and _safe_numeric(row.get("ai_score")) > 0:
-        score += _safe_numeric(row.get("ai_score"))
+    # Regulatory evidence
+    if _has_yes(row, ["EMA_Status", "ema_status"]) or "ema" in text:
+        score += 25
+        reasons.append("EMA support")
 
-    elif "Evidence_Score" in row and _safe_numeric(row.get("Evidence_Score")) > 0:
-        score += _safe_numeric(row.get("Evidence_Score"))
+    if _has_yes(row, ["WHO_Status", "who_status"]) or "who" in text:
+        score += 15
+        reasons.append("WHO support")
 
-    else:
-        # 2. Evidence level
-        evidence_level = _safe_text(row.get("Evidence_Level")).lower()
+    if _has_yes(row, ["ESCOP_Status", "escop_status"]) or "escop" in text:
+        score += 15
+        reasons.append("ESCOP support")
 
-        level_points = {
-            "very high": 40,
-            "high": 35,
-            "moderate": 25,
-            "low": 12,
-            "very low": 6,
+    # Study strength
+    evidence_level = _lower(row.get("Evidence_Level"))
+    study_type = _lower(row.get("Study_Type") or row.get("Evidence_Type"))
+
+    if "meta" in study_type or "meta-analysis" in text or "meta analysis" in text:
+        score += 35
+        reasons.append("Meta-analysis")
+
+    elif "systematic" in study_type or "systematic review" in text:
+        score += 30
+        reasons.append("Systematic review")
+
+    elif "randomized" in study_type or "randomised" in study_type or "rct" in study_type or "randomized" in text or "randomised" in text:
+        score += 30
+        reasons.append("Randomized clinical evidence")
+
+    elif "clinical" in study_type or "patients" in text or "subjects" in text:
+        score += 22
+        reasons.append("Clinical evidence")
+
+    elif "animal" in study_type or "rat" in text or "mouse" in text or "mice" in text:
+        score += 8
+        reasons.append("Animal evidence")
+
+    elif "in vitro" in study_type or "cell" in text:
+        score += 5
+        reasons.append("In vitro evidence")
+
+    elif evidence_level:
+        score += {
+            "very high": 35,
+            "high": 30,
+            "moderate": 22,
+            "low": 10,
+            "very low": 5,
             "traditional": 10,
-            "unknown": 0,
-        }
+        }.get(evidence_level, 0)
+        if evidence_level:
+            reasons.append(f"Evidence level: {evidence_level}")
 
-        score += level_points.get(evidence_level, 0)
+    # Human model
+    study_model = _lower(row.get("Study_Model"))
+    if "human" in study_model or "patients" in text or "subjects" in text:
+        score += 10
+        reasons.append("Human relevance")
 
-        # 3. Study type
-        study_type = (
-            _safe_text(row.get("Study_Type")) + " " +
-            _safe_text(row.get("Evidence_Type"))
-        ).lower()
+    # Dosage-form relevance
+    selected_form = _lower(row.get("Dosage_Form"))
+    detected_forms = (
+        _lower(row.get("Detected_Dosage_Forms")) + " " +
+        _lower(row.get("Dosage_Form_Detected")) + " " +
+        _lower(row.get("Dosage_Form_Relevance")) + " " +
+        _lower(row.get("Direct_For_Selected_Product"))
+    )
 
-        if "meta-analysis" in study_type or "meta analysis" in study_type:
-            score += 35
-        elif "systematic review" in study_type:
-            score += 30
-        elif "randomized" in study_type or "rct" in study_type:
-            score += 30
-        elif "clinical" in study_type:
-            score += 22
-        elif "observational" in study_type:
-            score += 15
-        elif "animal" in study_type:
-            score += 8
-        elif "in vitro" in study_type:
-            score += 5
+    if selected_form and selected_form in detected_forms:
+        score += 20
+        reasons.append("Direct dosage-form match")
+    elif "direct" in detected_forms or "yes" in detected_forms:
+        score += 20
+        reasons.append("Direct product relevance")
+    elif detected_forms.strip():
+        score += 8
+        reasons.append("Indirect dosage-form evidence")
 
-        # 4. Study model
-        study_model = _safe_text(row.get("Study_Model")).lower()
+    # Indication relevance
+    selected_indication = _lower(row.get("Target_Indication"))
+    detected_indication = (
+        _lower(row.get("Detected_Indications")) + " " +
+        _lower(row.get("Target_Indication_Detected"))
+    )
 
-        if "human" in study_model:
-            score += 15
-        elif "animal" in study_model:
-            score += 5
-        elif "vitro" in study_model or "cell" in study_model:
-            score += 3
+    if selected_indication and selected_indication in detected_indication:
+        score += 10
+        reasons.append("Direct indication match")
+    elif detected_indication.strip():
+        score += 5
+        reasons.append("Related indication evidence")
 
-        # 5. Dosage-form relevance
-        relevance = (
-            _safe_text(row.get("Direct_For_Selected_Product")) + " " +
-            _safe_text(row.get("Dosage_Form_Relevance"))
-        ).lower()
+    # Safety
+    safety = (
+        _lower(row.get("Safety_Level")) + " " +
+        _lower(row.get("Safety_Signal"))
+    )
 
-        if "yes" in relevance or "direct" in relevance:
-            score += 25
-        elif "indirect" in relevance:
-            score += 10
+    if "good" in safety or "safe" in text or "well tolerated" in text:
+        score += 8
+        reasons.append("Positive safety signal")
+    elif "adverse" in safety or "warning" in safety or "caution" in safety:
+        score += 3
+        reasons.append("Safety caution")
 
-        # 6. Regulatory support
-        regulatory = (
-            _safe_text(row.get("Regulatory_Evidence")) + " " +
-            _safe_text(row.get("EMA_Status")) + " " +
-            _safe_text(row.get("WHO_Status")) + " " +
-            _safe_text(row.get("ESCOP_Status"))
-        ).lower()
-
-        if "ema" in regulatory or "who" in regulatory or "escop" in regulatory or "yes" in regulatory:
-            score += 20
-
-    return min(int(score), 100)
+    return min(int(score), 100), " | ".join(reasons)
 
 
 def _decision_class(score):
@@ -111,38 +164,6 @@ def _decision_class(score):
     if score >= 40:
         return "Evidence gap"
     return "Not recommended yet"
-
-
-def _decision_reason(row, score):
-    reasons = []
-
-    study_type = _safe_text(row.get("Study_Type")) or _safe_text(row.get("Evidence_Type"))
-    study_model = _safe_text(row.get("Study_Model"))
-    dosage_relevance = _safe_text(row.get("Dosage_Form_Relevance"))
-    directness = _safe_text(row.get("Direct_For_Selected_Product"))
-    regulatory = _safe_text(row.get("Regulatory_Evidence"))
-
-    if study_type:
-        reasons.append(f"Study type: {study_type}")
-
-    if study_model:
-        reasons.append(f"Study model: {study_model}")
-
-    if dosage_relevance:
-        reasons.append(f"Dosage-form relevance: {dosage_relevance}")
-
-    if directness:
-        reasons.append(f"Direct for selected product: {directness}")
-
-    if regulatory and regulatory != "None":
-        reasons.append(f"Regulatory evidence: {regulatory}")
-
-    if not reasons:
-        reasons.append("Limited structured evidence available.")
-
-    reasons.append(f"Computed evidence score: {score}/100")
-
-    return " | ".join(reasons)
 
 
 def analyze_evidence(
@@ -158,33 +179,49 @@ def analyze_evidence(
 
     result = df.copy()
 
-    for col in [
+    required_cols = [
         "Scientific_Name",
         "Common_Name",
         "Product_Type",
         "Dosage_Form",
         "Target_Indication",
         "Target_Market",
-        "Evidence_Score",
+        "EMA_Status",
+        "WHO_Status",
+        "ESCOP_Status",
         "Evidence_Type",
         "Evidence_Level",
         "Study_Type",
         "Study_Model",
+        "Detected_Dosage_Forms",
+        "Detected_Indications",
+        "Dosage_Form_Detected",
+        "Target_Indication_Detected",
         "Dosage_Form_Relevance",
         "Direct_For_Selected_Product",
-        "Directness_Reason",
+        "Safety_Level",
+        "Safety_Signal",
         "Regulatory_Evidence",
         "Notes",
-    ]:
+        "Source_Title",
+        "Source_URL",
+    ]
+
+    for col in required_cols:
         if col not in result.columns:
             result[col] = ""
 
-    result["Evidence_Score"] = result.apply(_score_from_evidence, axis=1)
+    scores = []
+    reasons = []
+
+    for _, row in result.iterrows():
+        score, reason = _score_row(row)
+        scores.append(score)
+        reasons.append(reason)
+
+    result["Evidence_Score"] = scores
     result["Decision_Class"] = result["Evidence_Score"].apply(_decision_class)
-    result["Decision_Reason"] = result.apply(
-        lambda row: _decision_reason(row, row["Evidence_Score"]),
-        axis=1,
-    )
+    result["Decision_Reason"] = reasons
 
     if min_score and min_score > 0:
         result = result[result["Evidence_Score"] >= min_score]

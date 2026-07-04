@@ -14,7 +14,7 @@ from investment_engine import build_investment_report
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
     page_icon="🌿",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
@@ -143,7 +143,7 @@ col_button_1, col_button_2 = st.columns(2)
 with col_button_1:
     generate_only = st.button(
         "Generate decision from database",
-        type="primary"
+        type="primary",
     )
 
 with col_button_2:
@@ -192,13 +192,15 @@ if collect_and_generate:
         st.markdown("### Saved online evidence records")
         preview = []
         for r in saved_records:
-            preview.append({
-                "row_id": r.get("row_id"),
-                "source": r.get("source", "Unknown"),
-                "pmid": r.get("pmid", ""),
-                "nct_id": r.get("nct_id", ""),
-                "title": r.get("title", ""),
-            })
+            preview.append(
+                {
+                    "row_id": r.get("row_id"),
+                    "source": r.get("source", "Unknown"),
+                    "pmid": r.get("pmid", ""),
+                    "nct_id": r.get("nct_id", ""),
+                    "title": r.get("title", ""),
+                }
+            )
         st.dataframe(pd.DataFrame(preview), use_container_width=True)
 
     df = load_evidence_database()
@@ -239,8 +241,10 @@ if result is not None:
         st.info(f"{len(display_result)} unique plant candidates shown below.")
 
         for _, row in display_result.iterrows():
+            plant_name = row.get("Scientific_Name", "")
+
             title = (
-                f"🌿 {row.get('Scientific_Name', '')} — "
+                f"🌿 {plant_name} — "
                 f"{row.get('Decision_Class', '')} — "
                 f"Score {row.get('Evidence_Score', '')}/100"
             )
@@ -291,8 +295,42 @@ if result is not None:
                 st.write(f"**Safety:** {row.get('Safety_Level', '')}")
                 st.write(f"**Safety signal:** {row.get('Safety_Signal', '')}")
 
-                if row.get("Source_URL", ""):
-                    st.write(f"**Source:** {row.get('Source_URL', '')}")
+                st.markdown("### Sources / References")
+
+                plant_sources = result[
+                    result["Scientific_Name"] == plant_name
+                ].copy()
+
+                if not plant_sources.empty:
+                    source_cols = [
+                        "Source_Type",
+                        "Source_Title",
+                        "Source_URL",
+                        "Source_Organization",
+                        "Source_Year",
+                    ]
+
+                    available_cols = [
+                        c for c in source_cols
+                        if c in plant_sources.columns
+                    ]
+
+                    if available_cols:
+                        refs = (
+                            plant_sources[available_cols]
+                            .drop_duplicates()
+                            .reset_index(drop=True)
+                        )
+
+                        st.dataframe(
+                            refs,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.write("No reference columns available.")
+                else:
+                    st.write("No references available.")
 
         st.markdown("## Final Investment Recommendation")
 

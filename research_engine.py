@@ -82,7 +82,12 @@ def run_research_engine(
         min_score=0,
     )
 
-    if decision is not None and not decision.empty and global_candidates is not None and not global_candidates.empty:
+    if (
+        decision is not None
+        and not decision.empty
+        and global_candidates is not None
+        and not global_candidates.empty
+    ):
         merge_cols = [
             "Scientific_Name",
             "Region",
@@ -92,10 +97,16 @@ def run_research_engine(
             "Extraction_Method",
             "Global_Ranking_Score",
             "Candidate_Status",
+            "Clinical_Score",
+            "Chemistry_Score",
+            "Active_Compound_Score",
+            "Target_Score",
+            "Extraction_Score",
             "Regulatory_Score",
-            "Research_Priority_Score",
+            "Safety_Score",
             "Novelty_Score",
-            "Extraction_Bonus",
+            "Market_Score",
+            "Commercial_Score",
         ]
 
         available_merge_cols = [

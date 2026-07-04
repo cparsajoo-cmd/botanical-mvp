@@ -1,5 +1,7 @@
 import pandas as pd
 
+from evidence_quality_engine import apply_evidence_quality
+
 
 def _txt(value):
     if value is None:
@@ -11,13 +13,11 @@ def _lower(value):
     return _txt(value).lower()
 
 
-def _num(value, default=0):
-    try:
-        if value is None or value == "":
-            return default
-        return float(value)
-    except Exception:
-        return default
+def _has_yes(row, cols):
+    for col in cols:
+        if _lower(row.get(col)) in ["yes", "true", "supported", "ema", "who", "escop"]:
+            return True
+    return False
 
 
 def _combined_text(row):
@@ -36,19 +36,21 @@ def _combined_text(row):
     return " ".join([_txt(p) for p in parts]).lower()
 
 
-def _has_yes(row, cols):
-    for col in cols:
-        if _lower(row.get(col)) in ["yes", "true", "supported", "ema", "who", "escop"]:
-            return True
-    return False
-
-
 def _score_row(row):
     text = _combined_text(row)
     score = 0
     reasons = []
 
-    # Regulatory evidence
+    quality_score = row.get("Evidence_Quality_Score", 0)
+    try:
+        quality_score = float(quality_score or 0)
+    except Exception:
+        quality_score = 0
+
+    score += min(int(quality_score * 0.35), 35)
+    if quality_score > 0:
+        reasons.append(f"Evidence quality score: {int(quality_score)}/100")
+
     if _has_yes(row, ["EMA_Status", "ema_status"]) or "ema" in text:
         score += 25
         reasons.append("EMA support")
@@ -61,53 +63,30 @@ def _score_row(row):
         score += 15
         reasons.append("ESCOP support")
 
-    # Study strength
-    evidence_level = _lower(row.get("Evidence_Level"))
     study_type = _lower(row.get("Study_Type") or row.get("Evidence_Type"))
 
     if "meta" in study_type or "meta-analysis" in text or "meta analysis" in text:
-        score += 35
+        score += 20
         reasons.append("Meta-analysis")
 
     elif "systematic" in study_type or "systematic review" in text:
-        score += 30
+        score += 18
         reasons.append("Systematic review")
 
-    elif "randomized" in study_type or "randomised" in study_type or "rct" in study_type or "randomized" in text or "randomised" in text:
-        score += 30
+    elif "randomized" in study_type or "randomised" in study_type or "rct" in study_type:
+        score += 18
         reasons.append("Randomized clinical evidence")
 
-    elif "clinical" in study_type or "patients" in text or "subjects" in text:
-        score += 22
+    elif "clinical" in study_type:
+        score += 12
         reasons.append("Clinical evidence")
 
-    elif "animal" in study_type or "rat" in text or "mouse" in text or "mice" in text:
-        score += 8
-        reasons.append("Animal evidence")
-
-    elif "in vitro" in study_type or "cell" in text:
-        score += 5
-        reasons.append("In vitro evidence")
-
-    elif evidence_level:
-        score += {
-            "very high": 35,
-            "high": 30,
-            "moderate": 22,
-            "low": 10,
-            "very low": 5,
-            "traditional": 10,
-        }.get(evidence_level, 0)
-        if evidence_level:
-            reasons.append(f"Evidence level: {evidence_level}")
-
-    # Human model
     study_model = _lower(row.get("Study_Model"))
+
     if "human" in study_model or "patients" in text or "subjects" in text:
         score += 10
         reasons.append("Human relevance")
 
-    # Dosage-form relevance
     selected_form = _lower(row.get("Dosage_Form"))
     detected_forms = (
         _lower(row.get("Detected_Dosage_Forms")) + " " +
@@ -126,7 +105,6 @@ def _score_row(row):
         score += 8
         reasons.append("Indirect dosage-form evidence")
 
-    # Indication relevance
     selected_indication = _lower(row.get("Target_Indication"))
     detected_indication = (
         _lower(row.get("Detected_Indications")) + " " +
@@ -140,7 +118,6 @@ def _score_row(row):
         score += 5
         reasons.append("Related indication evidence")
 
-    # Safety
     safety = (
         _lower(row.get("Safety_Level")) + " " +
         _lower(row.get("Safety_Signal"))
@@ -210,6 +187,8 @@ def analyze_evidence(
     for col in required_cols:
         if col not in result.columns:
             result[col] = ""
+
+    result = apply_evidence_quality(result)
 
     scores = []
     reasons = []

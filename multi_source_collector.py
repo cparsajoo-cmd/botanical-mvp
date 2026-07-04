@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
 from source_registry import get_enabled_sources
@@ -96,6 +98,10 @@ CONNECTOR_MAP = {
 }
 
 
+SOURCE_TIMEOUT_SECONDS = 25
+MAX_WORKERS = 6
+
+
 def _save_records_from_connector(records, source_config, save=True):
     saved_records = []
     errors = []
@@ -143,6 +149,79 @@ def _save_records_from_connector(records, source_config, save=True):
     return saved_records, errors
 
 
+def _run_one_source(
+    source_config,
+    scientific_name,
+    indication,
+    dosage_form,
+    market,
+    max_pubmed_results,
+    save,
+):
+    source_name = source_config["name"]
+    max_results = source_config.get("max_results", 5)
+
+    try:
+        if source_name == "PubMed":
+            if collect_pubmed_evidence is None:
+                return [], [{
+                    "source": source_name,
+                    "plant": scientific_name,
+                    "error": "PubMed connector not available.",
+                }]
+
+            records = collect_pubmed_evidence(
+                scientific_name=scientific_name,
+                indication=indication,
+                dosage_form=dosage_form,
+                market=market,
+                max_results=max_pubmed_results or max_results,
+                save=save,
+            )
+
+            return records, []
+
+        connector = CONNECTOR_MAP.get(source_name)
+
+        if connector is None:
+            return [], [{
+                "source": source_name,
+                "plant": scientific_name,
+                "error": "Connector not implemented yet.",
+            }]
+
+        if source_name == "EMA/WHO/ESCOP Regulatory":
+            records = connector(
+                scientific_name=scientific_name,
+                indication=indication,
+                dosage_form=dosage_form,
+                market=market,
+            )
+        else:
+            records = connector(
+                scientific_name=scientific_name,
+                indication=indication,
+                dosage_form=dosage_form,
+                market=market,
+                max_results=max_results,
+            )
+
+        saved_records, errors = _save_records_from_connector(
+            records=records,
+            source_config=source_config,
+            save=save,
+        )
+
+        return saved_records, errors
+
+    except Exception as e:
+        return [], [{
+            "source": source_name,
+            "plant": scientific_name,
+            "error": str(e),
+        }]
+
+
 def collect_multi_source_evidence(
     scientific_name,
     indication,
@@ -154,77 +233,51 @@ def collect_multi_source_evidence(
 ):
     saved_records = []
     errors = []
-    sources_checked = []
 
     enabled_sources = sorted(
         get_enabled_sources(),
         key=lambda x: (x.get("priority", 99), x.get("name", ""))
     )
 
-    for source_config in enabled_sources:
-        source_name = source_config["name"]
-        max_results = source_config.get("max_results", 5)
+    sources_checked = [s["name"] for s in enabled_sources]
 
-        sources_checked.append(source_name)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_map = {}
 
-        try:
-            if source_name == "PubMed":
-                if collect_pubmed_evidence is None:
-                    continue
+        for source_config in enabled_sources:
+            future = executor.submit(
+                _run_one_source,
+                source_config,
+                scientific_name,
+                indication,
+                dosage_form,
+                market,
+                max_pubmed_results,
+                save,
+            )
+            future_map[future] = source_config["name"]
 
-                pubmed_records = collect_pubmed_evidence(
-                    scientific_name=scientific_name,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=market,
-                    max_results=max_pubmed_results or max_results,
-                    save=save,
-                )
+        for future in as_completed(future_map, timeout=SOURCE_TIMEOUT_SECONDS * len(future_map)):
+            source_name = future_map[future]
 
-                saved_records.extend(pubmed_records)
-                continue
+            try:
+                sr, er = future.result(timeout=SOURCE_TIMEOUT_SECONDS)
+                saved_records.extend(sr)
+                errors.extend(er)
 
-            connector = CONNECTOR_MAP.get(source_name)
-
-            if connector is None:
+            except TimeoutError:
                 errors.append({
                     "source": source_name,
                     "plant": scientific_name,
-                    "error": "Connector not implemented yet.",
+                    "error": f"Timeout after {SOURCE_TIMEOUT_SECONDS} seconds.",
                 })
-                continue
 
-            if source_name == "EMA/WHO/ESCOP Regulatory":
-                records = connector(
-                    scientific_name=scientific_name,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=market,
-                )
-            else:
-                records = connector(
-                    scientific_name=scientific_name,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=market,
-                    max_results=max_results,
-                )
-
-            sr, er = _save_records_from_connector(
-                records=records,
-                source_config=source_config,
-                save=save,
-            )
-
-            saved_records.extend(sr)
-            errors.extend(er)
-
-        except Exception as e:
-            errors.append({
-                "source": source_name,
-                "plant": scientific_name,
-                "error": str(e),
-            })
+            except Exception as e:
+                errors.append({
+                    "source": source_name,
+                    "plant": scientific_name,
+                    "error": str(e),
+                })
 
     return {
         "saved_records": saved_records,

@@ -1,6 +1,7 @@
 import pandas as pd
 
 from evidence_quality_engine import apply_evidence_quality
+from compound_intelligence_engine import apply_compound_intelligence
 
 
 def _txt(value):
@@ -55,58 +56,56 @@ def _aggregate_plant_score(group):
         _series_text(group, "Evidence_Type") + " " +
         _series_text(group, "Study_Model") + " " +
         _series_text(group, "Evidence_Level") + " " +
-        _series_text(group, "Regulatory_Evidence")
+        _series_text(group, "Regulatory_Evidence") + " " +
+        _series_text(group, "Active_Compounds") + " " +
+        _series_text(group, "Molecular_Targets")
     )
 
-    # Regulatory
     if _any_yes(group, "EMA_Status") or "ema" in text or "hmpc" in text:
-        score += 25
+        score += 22
         reasons.append("EMA/HMPC support")
 
     if _any_yes(group, "WHO_Status") or "who monograph" in text:
-        score += 15
+        score += 12
         reasons.append("WHO support")
 
     if _any_yes(group, "ESCOP_Status") or "escop" in text:
-        score += 15
+        score += 12
         reasons.append("ESCOP support")
 
-    # Evidence hierarchy
     meta_count = text.count("meta-analysis") + text.count("meta analysis")
     systematic_count = text.count("systematic review")
     rct_count = text.count("randomized") + text.count("randomised") + text.count("rct")
     clinical_count = text.count("clinical trial") + text.count("patients") + text.count("subjects")
 
     if meta_count > 0:
-        score += min(25, 15 + meta_count * 5)
+        score += min(20, 10 + meta_count * 4)
         reasons.append(f"Meta-analysis evidence: {meta_count}")
 
     if systematic_count > 0:
-        score += min(18, 10 + systematic_count * 4)
+        score += min(15, 8 + systematic_count * 3)
         reasons.append(f"Systematic review evidence: {systematic_count}")
 
     if rct_count > 0:
-        score += min(25, 12 + rct_count * 4)
+        score += min(20, 10 + rct_count * 3)
         reasons.append(f"RCT evidence: {rct_count}")
 
     elif clinical_count > 0:
-        score += min(15, 8 + clinical_count * 2)
+        score += min(12, 6 + clinical_count * 2)
         reasons.append("Clinical human evidence")
 
-    # Human / animal / in vitro
     if "human" in text or "patients" in text or "subjects" in text:
-        score += 10
+        score += 8
         reasons.append("Human relevance")
 
     elif "animal" in text or "rat" in text or "mouse" in text or "mice" in text:
-        score += 5
+        score += 4
         reasons.append("Animal evidence")
 
     elif "in vitro" in text or "cell" in text:
-        score += 3
+        score += 2
         reasons.append("In vitro evidence")
 
-    # Dosage directness
     direct_text = (
         _series_text(group, "Direct_For_Selected_Product") + " " +
         _series_text(group, "Dosage_Form_Relevance") + " " +
@@ -116,13 +115,12 @@ def _aggregate_plant_score(group):
     )
 
     if "yes" in direct_text or "direct" in direct_text:
-        score += 15
+        score += 12
         reasons.append("Direct or relevant dosage-form evidence")
     elif direct_text.strip():
-        score += 6
+        score += 5
         reasons.append("Indirect dosage-form evidence")
 
-    # Indication relevance
     indication_text = (
         _series_text(group, "Detected_Indications") + " " +
         _series_text(group, "Target_Indication_Detected") + " " +
@@ -130,23 +128,35 @@ def _aggregate_plant_score(group):
     )
 
     if indication_text.strip():
-        score += 8
+        score += 7
         reasons.append("Indication relevance detected")
 
-    # Evidence quality
     if "Evidence_Quality_Score" in group.columns:
         avg_quality = group["Evidence_Quality_Score"].apply(_num).mean()
-        score += min(15, int(avg_quality * 0.15))
+        score += min(12, int(avg_quality * 0.12))
         reasons.append(f"Average evidence quality: {int(avg_quality)}/100")
 
-    # Safety
+    if "Chemistry_Score" in group.columns:
+        avg_chemistry = group["Chemistry_Score"].apply(_num).mean()
+        score += min(18, int(avg_chemistry * 0.18))
+        reasons.append(f"Chemistry/mechanism score: {int(avg_chemistry)}/100")
+
+    compound_text = _series_text(group, "Active_Compounds")
+    target_text = _series_text(group, "Molecular_Targets")
+
+    if compound_text.strip():
+        reasons.append("Active compounds detected")
+
+    if target_text.strip():
+        reasons.append("Molecular targets detected")
+
     safety_text = (
         _series_text(group, "Safety_Level") + " " +
         _series_text(group, "Safety_Signal")
     )
 
     if "good" in safety_text or "safe" in safety_text or "well tolerated" in text:
-        score += 7
+        score += 6
         reasons.append("Positive safety signal")
     elif "adverse" in safety_text or "warning" in safety_text or "caution" in safety_text:
         score += 2
@@ -204,6 +214,7 @@ def analyze_evidence(
             result[col] = ""
 
     result = apply_evidence_quality(result)
+    result = apply_compound_intelligence(result)
 
     plant_scores = {}
 

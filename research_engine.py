@@ -1,10 +1,10 @@
-from knowledge_retrieval_engine import get_candidate_plants
 from multi_source_collector import collect_multi_source_evidence
 from evidence_database import load_evidence_database
 from knowledge_retrieval_engine import retrieve_knowledge
 from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
 from deduplication_engine import deduplicate_evidence
+from global_candidate_ranking_engine import rank_global_candidates
 
 
 def run_research_engine(
@@ -15,8 +15,25 @@ def run_research_engine(
     evidence_strictness="Dosage-form specific only",
     max_results_per_plant=3,
     save=True,
+    global_candidate_count=50,
 ):
-    candidate_plants = get_candidate_plants(indication)
+    global_candidates = rank_global_candidates(
+        indication=indication,
+        dosage_form=dosage_form,
+        market=target_market,
+        target_count=global_candidate_count,
+    )
+
+    if global_candidates is None or global_candidates.empty:
+        candidate_plants = []
+    else:
+        candidate_plants = (
+            global_candidates["Scientific_Name"]
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+            .tolist()
+        )
 
     all_saved_records = []
     all_errors = []
@@ -65,8 +82,37 @@ def run_research_engine(
         min_score=0,
     )
 
+    if decision is not None and not decision.empty and global_candidates is not None and not global_candidates.empty:
+        merge_cols = [
+            "Scientific_Name",
+            "Region",
+            "Known_Active_Compounds",
+            "Known_Targets",
+            "Plant_Part",
+            "Extraction_Method",
+            "Global_Ranking_Score",
+            "Candidate_Status",
+            "Regulatory_Score",
+            "Research_Priority_Score",
+            "Novelty_Score",
+            "Extraction_Bonus",
+        ]
+
+        available_merge_cols = [
+            col for col in merge_cols
+            if col in global_candidates.columns
+        ]
+
+        decision = decision.merge(
+            global_candidates[available_merge_cols].drop_duplicates("Scientific_Name"),
+            on="Scientific_Name",
+            how="left",
+            suffixes=("", "_Global"),
+        )
+
     return {
         "candidate_plants": candidate_plants,
+        "global_candidates": global_candidates,
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),

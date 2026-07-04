@@ -9,6 +9,7 @@ from report_generator import generate_report
 from research_engine import run_research_engine
 from investment_decision_engine import aggregate_investment_decision
 from investment_engine import build_investment_report
+from global_candidate_ranking_engine import rank_global_candidates
 
 
 st.set_page_config(
@@ -137,6 +138,49 @@ st.info(
     f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
     f"in **{market}**?"
 )
+
+st.markdown("## Global plant candidate ranking")
+
+target_count = st.slider(
+    "Number of global plant candidates to rank",
+    10,
+    100,
+    50,
+)
+
+show_global_ranking = st.button(
+    "Rank global plant candidates"
+)
+
+if show_global_ranking:
+    global_ranking = rank_global_candidates(
+        indication=indication,
+        dosage_form=dosage_form,
+        market=market,
+        target_count=target_count,
+    )
+
+    if global_ranking.empty:
+        st.warning("No global plant candidates found for this indication.")
+    else:
+        st.success(f"{len(global_ranking)} global plant candidates ranked.")
+
+        st.dataframe(
+            global_ranking,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        global_csv = global_ranking.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Download global plant ranking as CSV",
+            data=global_csv,
+            file_name="global_plant_candidate_ranking.csv",
+            mime="text/csv",
+        )
+
+st.markdown("## Evidence collection and decision")
 
 col_button_1, col_button_2 = st.columns(2)
 

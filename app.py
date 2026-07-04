@@ -218,9 +218,17 @@ if result is not None:
     if result.empty:
         st.warning("No evidence records found yet for this product question.")
     else:
-        st.success(f"{len(result)} relevant plant records found.")
+        st.success(f"{len(result)} relevant evidence records found.")
 
-        for _, row in result.iterrows():
+        display_result = (
+            result.sort_values("Evidence_Score", ascending=False)
+            .drop_duplicates(subset=["Scientific_Name"], keep="first")
+            .reset_index(drop=True)
+        )
+
+        st.info(f"{len(display_result)} unique plant candidates shown below.")
+
+        for _, row in display_result.iterrows():
             title = (
                 f"🌿 {row.get('Scientific_Name', '')} — "
                 f"{row.get('Decision_Class', '')} — "
@@ -245,8 +253,14 @@ if result is not None:
                 st.write(f"**Evidence type:** {row.get('Evidence_Type', '')}")
                 st.write(f"**Evidence level:** {row.get('Evidence_Level', '')}")
                 st.write(f"**Study model:** {row.get('Study_Model', '')}")
-                st.write(f"**Detected dosage form:** {row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}")
-                st.write(f"**Detected indication:** {row.get('Target_Indication_Detected', row.get('Detected_Indications', ''))}")
+                st.write(
+                    f"**Detected dosage form:** "
+                    f"{row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}"
+                )
+                st.write(
+                    f"**Detected indication:** "
+                    f"{row.get('Target_Indication_Detected', row.get('Detected_Indications', ''))}"
+                )
                 st.write(f"**Direct for selected product:** {row.get('Direct_For_Selected_Product', '')}")
                 st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
 

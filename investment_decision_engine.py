@@ -12,6 +12,20 @@ def _num(x):
         return 0
 
 
+def _series_text(group, col):
+    if col not in group.columns:
+        return ""
+    return " ".join(group[col].fillna("").astype(str).tolist()).lower()
+
+
+def _any_yes(group, col):
+    if col not in group.columns:
+        return False
+    return group[col].fillna("").astype(str).str.lower().isin(
+        ["yes", "true", "supported"]
+    ).any()
+
+
 def aggregate_investment_decision(df):
     if df is None or df.empty:
         return pd.DataFrame()
@@ -26,40 +40,43 @@ def aggregate_investment_decision(df):
 
     rows = []
 
-    for plant, group in data.groupby("Scientific_Name"):
+    for plant, group in data.groupby("Scientific_Name", dropna=False):
         scores = group["Evidence_Score"].apply(_num)
 
-        max_score = int(scores.max())
-        mean_score = int(scores.mean())
+        max_score = int(scores.max()) if len(scores) else 0
+        mean_score = int(scores.mean()) if len(scores) else 0
 
-        ema = "Yes" if (group.get("EMA_Status", "").astype(str).str.lower() == "yes").any() else "No"
-        who = "Yes" if (group.get("WHO_Status", "").astype(str).str.lower() == "yes").any() else "No"
-        escop = "Yes" if (group.get("ESCOP_Status", "").astype(str).str.lower() == "yes").any() else "No"
+        ema = "Yes" if _any_yes(group, "EMA_Status") else "No"
+        who = "Yes" if _any_yes(group, "WHO_Status") else "No"
+        escop = "Yes" if _any_yes(group, "ESCOP_Status") else "No"
 
-        study_text = " ".join(
-            group.get("Study_Type", "").astype(str).tolist()
-            + group.get("Evidence_Type", "").astype(str).tolist()
-            + group.get("Study_Model", "").astype(str).tolist()
-        ).lower()
+        study_text = (
+            _series_text(group, "Study_Type") + " " +
+            _series_text(group, "Evidence_Type") + " " +
+            _series_text(group, "Study_Model") + " " +
+            _series_text(group, "Notes") + " " +
+            _series_text(group, "Source_Title")
+        )
 
-        has_human = "human" in study_text or "clinical" in study_text or "randomized" in study_text
-        has_rct = "randomized" in study_text or "rct" in study_text
+        has_human = any(x in study_text for x in ["human", "clinical", "patients", "subjects", "volunteers"])
+        has_rct = any(x in study_text for x in ["randomized", "randomised", "rct", "placebo"])
         has_meta = "meta" in study_text
         has_review = "systematic" in study_text or "review" in study_text
 
-        direct_text = " ".join(
-            group.get("Direct_For_Selected_Product", "").astype(str).tolist()
-            + group.get("Dosage_Form_Relevance", "").astype(str).tolist()
-        ).lower()
+        direct_text = (
+            _series_text(group, "Direct_For_Selected_Product") + " " +
+            _series_text(group, "Dosage_Form_Relevance") + " " +
+            _series_text(group, "Directness_Reason")
+        )
 
         has_direct = "yes" in direct_text or "direct" in direct_text
 
-        safety_text = " ".join(
-            group.get("Safety_Level", "").astype(str).tolist()
-            + group.get("Safety_Signal", "").astype(str).tolist()
-        ).lower()
+        safety_text = (
+            _series_text(group, "Safety_Level") + " " +
+            _series_text(group, "Safety_Signal")
+        )
 
-        safety = "Good" if ("safe" in safety_text or "well tolerated" in safety_text or "good" in safety_text) else "To verify"
+        safety = "Good" if any(x in safety_text for x in ["safe", "well tolerated", "good"]) else "To verify"
 
         investment_score = 0
 
@@ -121,6 +138,9 @@ def aggregate_investment_decision(df):
         })
 
     result = pd.DataFrame(rows)
+
+    if result.empty:
+        return result
 
     return result.sort_values(
         by=["Investment_Score", "Scientific_Name"],

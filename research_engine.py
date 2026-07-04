@@ -4,6 +4,7 @@ from evidence_database import load_evidence_database
 from knowledge_retrieval_engine import retrieve_knowledge
 from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
+from deduplication_engine import deduplicate_evidence
 
 
 def run_research_engine(
@@ -52,6 +53,8 @@ def run_research_engine(
         dosage_form=dosage_form,
         evidence_strictness=evidence_strictness,
     )
+
+    filtered = deduplicate_evidence(filtered)
 
     decision = analyze_evidence(
         df=filtered,

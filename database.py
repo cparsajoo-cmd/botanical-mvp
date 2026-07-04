@@ -2,24 +2,89 @@ import pandas as pd
 from supabase_client import get_supabase_client
 
 
+def _safe_int(value, default=0):
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _find_existing_source(supabase, url, title):
+    if url:
+        res = supabase.table("sources").select("id").eq("url", url).limit(1).execute()
+        if res.data:
+            return res.data[0]["id"]
+
+    if title:
+        res = supabase.table("sources").select("id").eq("title", title).limit(1).execute()
+        if res.data:
+            return res.data[0]["id"]
+
+    return None
+
+
+def _get_or_create_plant(supabase, scientific_name, common_name):
+    scientific_name = scientific_name or ""
+
+    if scientific_name:
+        res = supabase.table("plants").select("id").eq("scientific_name", scientific_name).limit(1).execute()
+        if res.data:
+            return res.data[0]["id"]
+
+    plant_result = supabase.table("plants").insert({
+        "scientific_name": scientific_name,
+        "common_name": common_name or "",
+    }).execute()
+
+    return plant_result.data[0]["id"]
+
+
 def save_evidence_record(record):
     supabase = get_supabase_client()
 
-    plant_result = supabase.table("plants").insert({
-        "scientific_name": record.get("Scientific_Name", ""),
-        "common_name": record.get("Common_Name", ""),
-    }).execute()
-    plant_id = plant_result.data[0]["id"]
+    source_url = record.get("Source_URL", "")
+    source_title = record.get("Source_Title", "")
 
-    source_result = supabase.table("sources").insert({
-        "source_type": record.get("Source_Type", ""),
-        "organization": record.get("Source_Organization", ""),
-        "title": record.get("Source_Title", ""),
-        "year": record.get("Source_Year", ""),
-        "url": record.get("Source_URL", ""),
-        "raw_text": record.get("Notes", ""),
-    }).execute()
-    source_id = source_result.data[0]["id"]
+    existing_source_id = _find_existing_source(
+        supabase=supabase,
+        url=source_url,
+        title=source_title,
+    )
+
+    if existing_source_id:
+        existing_evidence = (
+            supabase.table("evidence_records")
+            .select("id")
+            .eq("source_id", existing_source_id)
+            .eq("target_indication", record.get("Target_Indication", ""))
+            .eq("dosage_form", record.get("Dosage_Form", ""))
+            .limit(1)
+            .execute()
+        )
+
+        if existing_evidence.data:
+            return existing_evidence.data[0]["id"]
+
+    plant_id = _get_or_create_plant(
+        supabase=supabase,
+        scientific_name=record.get("Scientific_Name", ""),
+        common_name=record.get("Common_Name", ""),
+    )
+
+    if existing_source_id:
+        source_id = existing_source_id
+    else:
+        source_result = supabase.table("sources").insert({
+            "source_type": record.get("Source_Type", ""),
+            "organization": record.get("Source_Organization", ""),
+            "title": source_title,
+            "year": record.get("Source_Year", ""),
+            "url": source_url,
+            "raw_text": record.get("Notes", ""),
+        }).execute()
+        source_id = source_result.data[0]["id"]
 
     evidence_result = supabase.table("evidence_records").insert({
         "plant_id": plant_id,
@@ -35,9 +100,9 @@ def save_evidence_record(record):
         "escop_status": record.get("ESCOP_Status", ""),
 
         "clinical_level": record.get("Clinical_Level", ""),
-        "clinical_rct_count": int(record.get("Clinical_RCT_Count", 0) or 0),
+        "clinical_rct_count": _safe_int(record.get("Clinical_RCT_Count", 0)),
         "meta_level": record.get("Meta_Level", ""),
-        "meta_count": int(record.get("Meta_Count", 0) or 0),
+        "meta_count": _safe_int(record.get("Meta_Count", 0)),
 
         "dosage_form_evidence": record.get("Dosage_Form_Evidence", record.get("Infusion_Evidence", "")),
         "safety_level": record.get("Safety_Level", ""),
@@ -54,7 +119,7 @@ def save_evidence_record(record):
         "detected_dosage_forms": record.get("Detected_Dosage_Forms", ""),
         "detected_indications": record.get("Detected_Indications", ""),
         "regulatory_evidence": record.get("Regulatory_Evidence", ""),
-        "evidence_score": int(record.get("Evidence_Score", 0) or 0),
+        "evidence_score": _safe_int(record.get("Evidence_Score", 0)),
 
         "plant": record.get("Plant", ""),
         "study_type": record.get("Study_Type", ""),

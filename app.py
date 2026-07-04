@@ -10,6 +10,7 @@ from research_engine import run_research_engine
 from investment_decision_engine import aggregate_investment_decision
 from investment_engine import build_investment_report
 from global_candidate_ranking_engine import rank_global_candidates
+from plant_compound_ranking_engine import build_plant_compound_ranking
 
 
 st.set_page_config(
@@ -19,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("Evidence-based botanical product decision support")
+st.caption("Plant → Active Compound → Target → Evidence → R&D Decision")
 
 
 def generate_decision(df, product_type, dosage_form, indication, market, evidence_strictness):
@@ -38,7 +39,7 @@ def generate_decision(df, product_type, dosage_form, indication, market, evidenc
         evidence_strictness=evidence_strictness,
     )
 
-    result = analyze_evidence(
+    return analyze_evidence(
         df=filtered,
         product_type=product_type,
         dosage_form=dosage_form,
@@ -46,8 +47,6 @@ def generate_decision(df, product_type, dosage_form, indication, market, evidenc
         market=market,
         min_score=0,
     )
-
-    return result
 
 
 df = load_evidence_database()
@@ -134,8 +133,8 @@ max_pubmed_results = st.slider(
 st.markdown("## Product development question")
 
 st.info(
-    f"Which medicinal plants are scientifically and commercially worth investing in "
-    f"for **{product_type}** prepared as **{dosage_form}** for **{indication}** "
+    f"Which medicinal plants and active compounds are worth investigating for "
+    f"**{product_type}** prepared as **{dosage_form}** for **{indication}** "
     f"in **{market}**?"
 )
 
@@ -148,9 +147,9 @@ target_count = st.slider(
     50,
 )
 
-show_global_ranking = st.button(
-    "Rank global plant candidates"
-)
+show_global_ranking = st.button("Rank global plant candidates")
+
+global_ranking = None
 
 if show_global_ranking:
     global_ranking = rank_global_candidates(
@@ -180,6 +179,50 @@ if show_global_ranking:
             mime="text/csv",
         )
 
+
+st.markdown("## Active compound / target ranking")
+
+show_compound_ranking = st.button("Rank active compounds and targets")
+
+if show_compound_ranking:
+    if global_ranking is None:
+        global_ranking = rank_global_candidates(
+            indication=indication,
+            dosage_form=dosage_form,
+            market=market,
+            target_count=target_count,
+        )
+
+    selected_plants = []
+    if global_ranking is not None and not global_ranking.empty:
+        selected_plants = global_ranking["Scientific_Name"].dropna().astype(str).tolist()
+
+    compound_ranking = build_plant_compound_ranking(
+        indication=indication,
+        selected_plants=selected_plants,
+    )
+
+    if compound_ranking.empty:
+        st.warning("No compound candidates found.")
+    else:
+        st.success(f"{len(compound_ranking)} plant-compound-target candidates ranked.")
+
+        st.dataframe(
+            compound_ranking,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        compound_csv = compound_ranking.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Download compound ranking as CSV",
+            data=compound_csv,
+            file_name="plant_compound_target_ranking.csv",
+            mime="text/csv",
+        )
+
+
 st.markdown("## Evidence collection and decision")
 
 col_button_1, col_button_2 = st.columns(2)
@@ -200,9 +243,7 @@ result = None
 if collect_and_generate:
     st.markdown("## Online evidence collection")
 
-    with st.spinner(
-        "Searching sources, extracting evidence, and saving records to Supabase..."
-    ):
+    with st.spinner("Searching sources, extracting evidence, and saving records to Supabase..."):
         research_output = run_research_engine(
             product_type=product_type,
             dosage_form=dosage_form,
@@ -276,8 +317,10 @@ if result is not None:
     else:
         st.success(f"{len(result)} relevant evidence records found.")
 
+        score_col = "Final_Score" if "Final_Score" in result.columns else "Evidence_Score"
+
         display_result = (
-            result.sort_values("Evidence_Score", ascending=False)
+            result.sort_values(score_col, ascending=False)
             .drop_duplicates(subset=["Scientific_Name"], keep="first")
             .reset_index(drop=True)
         )
@@ -290,15 +333,44 @@ if result is not None:
             title = (
                 f"🌿 {plant_name} — "
                 f"{row.get('Decision_Class', '')} — "
-                f"Score {row.get('Evidence_Score', '')}/100"
+                f"Final Score {row.get(score_col, '')}/100"
             )
 
             with st.expander(title, expanded=False):
                 st.write(f"**Common name:** {row.get('Common_Name', '')}")
+                st.write(f"**Region:** {row.get('Region', '')}")
                 st.write(f"**Product type:** {row.get('Product_Type', '')}")
                 st.write(f"**Dosage form:** {row.get('Dosage_Form', '')}")
                 st.write(f"**Indication:** {row.get('Target_Indication', '')}")
                 st.write(f"**Market:** {row.get('Target_Market', '')}")
+
+                st.markdown("### Multi-criteria decision scores")
+                score_columns = [
+                    "Clinical_Score",
+                    "Chemistry_Score",
+                    "Active_Compound_Score",
+                    "Target_Score",
+                    "Extraction_Score",
+                    "Regulatory_Score",
+                    "Safety_Score",
+                    "Novelty_Score",
+                    "Market_Score",
+                    "Commercial_Score",
+                    "Final_Score",
+                ]
+
+                score_data = {
+                    c: row.get(c, "")
+                    for c in score_columns
+                    if c in result.columns
+                }
+
+                if score_data:
+                    st.dataframe(
+                        pd.DataFrame([score_data]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
                 st.markdown("### Regulatory evidence")
                 st.write(f"**EMA:** {row.get('EMA_Status', '')}")
@@ -328,11 +400,29 @@ if result is not None:
                 st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
 
                 st.markdown("### Chemistry / Active compound intelligence")
-                st.write(f"**Active compounds:** {row.get('Active_Compounds', '')}")
-                st.write(f"**Molecular targets:** {row.get('Molecular_Targets', '')}")
+                st.write(f"**Known active compounds:** {row.get('Known_Active_Compounds', '')}")
+                st.write(f"**Detected active compounds:** {row.get('Active_Compounds', '')}")
+                st.write(f"**Known targets:** {row.get('Known_Targets', '')}")
+                st.write(f"**Detected molecular targets:** {row.get('Molecular_Targets', '')}")
                 st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
                 st.write(f"**Extraction method:** {row.get('Extraction_Method', '')}")
                 st.write(f"**Chemistry score:** {row.get('Chemistry_Score', '')}")
+
+                st.markdown("### Plant-compound-target candidates")
+
+                compound_for_plant = build_plant_compound_ranking(
+                    indication=indication,
+                    selected_plants=[plant_name],
+                )
+
+                if compound_for_plant.empty:
+                    st.write("No compound-target candidates available for this plant.")
+                else:
+                    st.dataframe(
+                        compound_for_plant,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
                 st.markdown("### Decision")
                 st.write(f"**Decision reason:** {row.get('Decision_Reason', '')}")

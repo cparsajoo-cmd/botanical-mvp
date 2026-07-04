@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
 from source_registry import get_enabled_sources
+from plant_compound_extractor import extract_plant_compounds_from_text
 
 try:
     from evidence_collector import collect_pubmed_evidence
@@ -102,6 +103,31 @@ SOURCE_TIMEOUT_SECONDS = 25
 MAX_WORKERS = 6
 
 
+def _extract_and_save_compounds(record, source_name):
+    compound_text = " ".join([
+        str(record.get("Scientific_Name", "")),
+        str(record.get("Source_Title", "")),
+        str(record.get("Notes", "")),
+        str(record.get("Abstract", "")),
+        str(record.get("Raw_Text", "")),
+        str(record.get("Evidence_Text", "")),
+        str(record.get("Summary", "")),
+    ])
+
+    return extract_plant_compounds_from_text(
+        scientific_name=record.get("Scientific_Name", ""),
+        text=compound_text,
+        indication=record.get("Target_Indication", ""),
+        dosage_form=record.get("Dosage_Form", ""),
+        market=record.get("Target_Market", ""),
+        reference_title=record.get("Source_Title", ""),
+        reference_url=record.get("Source_URL", ""),
+        source=record.get("Source_Type", source_name),
+        source_year=record.get("Source_Year", ""),
+        save=True,
+    )
+
+
 def _save_records_from_connector(records, source_config, save=True):
     saved_records = []
     errors = []
@@ -126,16 +152,24 @@ def _save_records_from_connector(records, source_config, save=True):
             )
 
             row_id = None
+            compound_records = []
+
             if save:
                 row_id = save_evidence_record(standardized)
 
+                compound_records = _extract_and_save_compounds(
+                    record=record,
+                    source_name=source_name,
+                )
+
             saved_records.append({
                 "row_id": row_id,
-                "pmid": "",
-                "nct_id": "",
+                "pmid": record.get("PMID", ""),
+                "nct_id": record.get("NCT_ID", ""),
                 "title": record.get("Source_Title", ""),
                 "source": source_name,
                 "category": source_config.get("category", ""),
+                "compound_records_saved": len(compound_records),
                 "record": standardized,
             })
 
@@ -178,6 +212,33 @@ def _run_one_source(
                 max_results=max_pubmed_results or max_results,
                 save=save,
             )
+
+            for item in records:
+                try:
+                    record = item.get("record", {})
+                    compound_text = " ".join([
+                        str(item.get("title", "")),
+                        str(record.get("Notes", "")),
+                        str(record.get("Source_Title", "")),
+                    ])
+
+                    compound_records = extract_plant_compounds_from_text(
+                        scientific_name=scientific_name,
+                        text=compound_text,
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        market=market,
+                        reference_title=item.get("title", ""),
+                        reference_url=record.get("Source_URL", ""),
+                        source="PubMed",
+                        source_year=record.get("Source_Year", ""),
+                        save=save,
+                    )
+
+                    item["compound_records_saved"] = len(compound_records)
+
+                except Exception:
+                    item["compound_records_saved"] = 0
 
             return records, []
 
@@ -257,7 +318,10 @@ def collect_multi_source_evidence(
             )
             future_map[future] = source_config["name"]
 
-        for future in as_completed(future_map, timeout=SOURCE_TIMEOUT_SECONDS * len(future_map)):
+        for future in as_completed(
+            future_map,
+            timeout=SOURCE_TIMEOUT_SECONDS * max(1, len(future_map))
+        ):
             source_name = future_map[future]
 
             try:

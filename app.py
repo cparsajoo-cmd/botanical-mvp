@@ -279,8 +279,26 @@ if result is not None:
         if investment_summary.empty:
             st.info("No investment recommendation available.")
         else:
+            investment_columns = [
+                "Scientific_Name",
+                "Investment_Score",
+                "Final_Decision",
+                "Investment_Class",
+                "Best_Evidence_Score",
+                "EMA",
+                "WHO",
+                "ESCOP",
+                "Direct_Dosage_Form_Evidence",
+                "Number_of_Records",
+            ]
+
+            visible_columns = [
+                c for c in investment_columns
+                if c in investment_summary.columns
+            ]
+
             st.dataframe(
-                investment_summary,
+                investment_summary[visible_columns],
                 use_container_width=True,
                 hide_index=True,
             )

@@ -1,13 +1,10 @@
 import streamlit as st
 import pandas as pd
+from pathlib import Path
 
-from evidence_database import load_evidence_database
-from knowledge_retrieval_engine import retrieve_knowledge
-from evidence_filtering_engine import apply_evidence_filters
-from decision_engine import analyze_evidence
-from report_generator import generate_report
-from research_engine import run_research_engine
-
+from schema import DB_PATH
+from seed_data import seed_all
+from scoring_engine import rank_plants, list_diseases
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -16,348 +13,71 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("Scientific decision-support system for botanical product development")
+st.caption("Plant-first decision support — every plant in the database is ranked, not just plants with existing evidence")
 
+if not Path(DB_PATH).exists():
+    with st.spinner("First run: building the local database..."):
+        seed_all()
 
-def generate_decision(df, product_type, dosage_form, indication, market, evidence_strictness):
-    retrieved = retrieve_knowledge(
-        df=df,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        evidence_strictness=evidence_strictness,
+with st.sidebar:
+    st.header("Product question")
+    disease = st.selectbox("Health indication (disease/target)", list_diseases())
+    dosage_form = st.selectbox("Dosage form", ["Infusion", "Extract", "Capsule"])
+    market = st.selectbox("Target market", ["European Union", "France", "Global"])
+
+    st.markdown("---")
+    st.caption(
+        "This demo runs on a local SQLite database seeded from the plant / compound / "
+        "target / disease graph."
     )
 
-    filtered = apply_evidence_filters(
-        df=retrieved,
-        dosage_form=dosage_form,
-        evidence_strictness=evidence_strictness,
-    )
+    if st.button("Rebuild seed database"):
+        seed_all()
+        st.success("Database rebuilt.")
 
-    return analyze_evidence(
-        df=filtered,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        min_score=0,
-    )
-
-
-st.markdown("## 1. Product project inputs")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    product_type = st.selectbox(
-        "Product type",
-        [
-            "Herbal product",
-            "Food supplement",
-            "Cosmetic",
-            "Medical device",
-            "Veterinary botanical product",
-        ],
-    )
-
-    indication = st.selectbox(
-        "Target indication",
-        [
-            "Sleep and relaxation",
-            "Anxiety",
-            "Digestive comfort",
-            "Constipation",
-            "Cough",
-            "Skin inflammation",
-            "Dry mouth",
-            "Allergic rhinitis",
-            "IBS",
-            "Wound healing",
-            "Cognitive support",
-            "Anti-inflammatory",
-        ],
-    )
-
-with col2:
-    dosage_form = st.selectbox(
-        "Dosage form",
-        [
-            "Infusion",
-            "Capsule",
-            "Tablet",
-            "Extract",
-            "Syrup",
-            "Cream",
-            "Gel",
-            "Mouthwash",
-            "Nasal spray",
-            "Chewing gum",
-            "Powder",
-            "Essential oil",
-        ],
-    )
-
-    market = st.selectbox(
-        "Target market",
-        [
-            "European Union",
-            "France",
-            "United States",
-            "Canada",
-            "United Kingdom",
-            "Australia",
-            "Iran",
-            "Global",
-        ],
-    )
-
-evidence_strictness = st.selectbox(
-    "Evidence strictness",
-    [
-        "Dosage-form specific only",
-        "Regulatory-first",
-        "Clinical-first",
-        "Flexible",
-    ],
+st.markdown(
+    f"**Decision question:** Which medicinal plants are the best candidates for a "
+    f"**{dosage_form}** targeting **{disease}** in **{market}**?"
 )
 
-max_pubmed_results = st.slider(
-    "Online results per candidate plant",
-    1,
-    10,
-    3,
-)
+results = rank_plants(disease, dosage_form)
+df = pd.DataFrame(results)
 
-st.markdown("## 2. Run workflow")
+if df.empty:
+    st.warning("No plants found. Try rebuilding the database from the sidebar.")
+else:
+    st.success(f"{len(df)} plants ranked out of {len(df)} in the global plant database (plant-first: no plant is excluded for lack of evidence).")
 
-st.info(
-    "First collect online evidence if needed. Then generate the final botanical ranking from the database."
-)
+    st.markdown("## Final Global Botanical Ranking")
+    overview_cols = [
+        "Scientific_Name", "Common_Name", "Region", "Decision_Class", "Final_Score",
+        "Clinical_Score", "Chemistry_Score", "Regulatory_Score", "Safety_Score",
+    ]
+    st.dataframe(df[overview_cols], use_container_width=True, hide_index=True)
 
-col_a, col_b = st.columns(2)
+    st.markdown("## Candidate details")
+    for _, row in df.iterrows():
+        title = f"🌿 {row['Scientific_Name']} — {row['Decision_Class']} — {row['Final_Score']}/100"
+        with st.expander(title):
+            score_cols = [
+                "Clinical_Score", "Chemistry_Score", "Compound_Score", "Target_Score",
+                "Extraction_Score", "Regulatory_Score", "Safety_Score", "Novelty_Score",
+                "Commercial_Score", "Market_Score",
+            ]
+            st.dataframe(pd.DataFrame([{c: row[c] for c in score_cols}]), use_container_width=True, hide_index=True)
 
-with col_a:
-    collect_and_generate = st.button(
-        "Step 1 — Collect online evidence and update database",
-    )
+            st.markdown(f"**Compound count:** {row['Compound_Count']}")
+            st.markdown(f"**Relevant molecular targets hit:** {row['Relevant_Targets_Hit']}")
+            st.markdown(f"**Clinical evidence:** {row['Clinical_Evidence_Notes']}")
+            st.markdown(f"**Regulatory status:** {row['Regulatory_Notes']}")
 
-with col_b:
-    generate_only = st.button(
-        "Step 2 — Generate final botanical ranking",
-        type="primary",
-    )
-
-
-result = None
-
-if collect_and_generate:
-    st.markdown("## Online evidence collection")
-
-    with st.spinner("Searching sources, extracting evidence, and saving records to Supabase..."):
-        research_output = run_research_engine(
-            product_type=product_type,
-            dosage_form=dosage_form,
-            indication=indication,
-            target_market=market,
-            evidence_strictness=evidence_strictness,
-            max_results_per_plant=max_pubmed_results,
-            save=True,
-        )
-
-    saved_records = research_output.get("saved_records", [])
-    errors = research_output.get("errors", [])
-    candidate_plants = research_output.get("candidate_plants", [])
-    sources_checked = research_output.get("sources_checked", [])
-
-    st.success(f"{len(saved_records)} online evidence records saved.")
-
-    if candidate_plants:
-        st.write("**Candidate plants searched:**")
-        st.write(", ".join(candidate_plants))
-
-    if sources_checked:
-        st.write("**Sources checked:**")
-        st.write(", ".join(sorted(set(sources_checked))))
-
-    if errors:
-        st.warning("Some sources returned errors.")
-        st.dataframe(pd.DataFrame(errors), use_container_width=True)
-
-    if saved_records:
-        preview = []
-        for r in saved_records:
-            preview.append(
-                {
-                    "row_id": r.get("row_id"),
-                    "source": r.get("source", ""),
-                    "title": r.get("title", ""),
-                    "compound_records_saved": r.get("compound_records_saved", 0),
-                }
-            )
-
-        st.markdown("### Saved records preview")
-        st.dataframe(pd.DataFrame(preview), use_container_width=True, hide_index=True)
-
-    st.info("Now press Step 2 to generate the final ranking from the updated database.")
-
-
-if generate_only:
-    df = load_evidence_database()
-
-    result = generate_decision(
-        df=df,
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        evidence_strictness=evidence_strictness,
-    )
-
-
-if result is not None:
-    st.markdown("## 3. Final Global Botanical Ranking")
-
-    if result.empty:
-        st.warning("No evidence records found for this product question.")
-    else:
-        st.success(f"{len(result)} plant candidates ranked.")
-
-        ranking_columns = [
-            "Scientific_Name",
-            "Common_Name",
-            "Region",
-            "Decision_Class",
-            "Final_Score",
-            "Clinical_Score",
-            "Chemistry_Score",
-            "Active_Compound_Score",
-            "Target_Score",
-            "Extraction_Score",
-            "Regulatory_Score",
-            "Safety_Score",
-            "Novelty_Score",
-            "Market_Score",
-            "Commercial_Score",
-            "Compound_Count",
-            "Best_Compounds",
-            "Best_Targets",
-            "Best_Extraction_Methods",
-        ]
-
-        visible_columns = [
-            c for c in ranking_columns
-            if c in result.columns
-        ]
-
-        st.dataframe(
-            result[visible_columns],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.markdown("## 4. Candidate details")
-
-        score_col = "Final_Score" if "Final_Score" in result.columns else "Evidence_Score"
-
-        for _, row in result.iterrows():
-            plant_name = row.get("Scientific_Name", "")
-
-            title = (
-                f"🌿 {plant_name} — "
-                f"{row.get('Decision_Class', '')} — "
-                f"Final Score {row.get(score_col, '')}/100"
-            )
-
-            with st.expander(title, expanded=False):
-                st.markdown("### Scores")
-
-                score_columns = [
-                    "Clinical_Score",
-                    "Chemistry_Score",
-                    "Active_Compound_Score",
-                    "Target_Score",
-                    "Extraction_Score",
-                    "Regulatory_Score",
-                    "Safety_Score",
-                    "Novelty_Score",
-                    "Market_Score",
-                    "Commercial_Score",
-                    "Final_Score",
-                ]
-
-                score_data = {
-                    c: row.get(c, "")
-                    for c in score_columns
-                    if c in result.columns
-                }
-
-                st.dataframe(
-                    pd.DataFrame([score_data]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                st.markdown("### Compound intelligence")
-                st.write(f"**Compound count:** {row.get('Compound_Count', '')}")
-                st.write(f"**Best compounds:** {row.get('Best_Compounds', '')}")
-                st.write(f"**Best targets:** {row.get('Best_Targets', '')}")
-                st.write(f"**Best extraction methods:** {row.get('Best_Extraction_Methods', '')}")
-
-                st.markdown("### Botanical and product fit")
-                st.write(f"**Common name:** {row.get('Common_Name', '')}")
-                st.write(f"**Region:** {row.get('Region', '')}")
-                st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
-                st.write(f"**Extraction method:** {row.get('Extraction_Method', '')}")
-                st.write(f"**Dosage form:** {row.get('Dosage_Form', '')}")
-                st.write(f"**Indication:** {row.get('Target_Indication', '')}")
-                st.write(f"**Market:** {row.get('Target_Market', '')}")
-
-                st.markdown("### Regulatory and safety")
-                st.write(f"**EMA:** {row.get('EMA_Status', '')}")
-                st.write(f"**WHO:** {row.get('WHO_Status', '')}")
-                st.write(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
-                st.write(f"**Regulatory evidence:** {row.get('Regulatory_Evidence', '')}")
-                st.write(f"**Safety level:** {row.get('Safety_Level', '')}")
-                st.write(f"**Safety signal:** {row.get('Safety_Signal', '')}")
-
-                st.markdown("### Decision")
-                st.write(row.get("Decision_Reason", ""))
-
-                st.markdown("### Sources")
-                st.write(row.get("Source_Title", ""))
-                st.write(row.get("Source_URL", ""))
-
-        st.markdown("## 5. Downloads")
-
-        csv = result.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "Download final ranking as CSV",
-            data=csv,
-            file_name="botanical_final_ranking.csv",
-            mime="text/csv",
-        )
-
-        report_text = generate_report(
-            result=result,
-            product_type=product_type,
-            dosage_form=dosage_form,
-            indication=indication,
-            market=market,
-        )
-
-        st.download_button(
-            "Download report as TXT",
-            data=report_text.encode("utf-8"),
-            file_name="botanical_decision_report.txt",
-            mime="text/plain",
-        )
-
+    st.markdown("## Downloads")
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download ranking as CSV", data=csv, file_name="botanical_ranking.csv", mime="text/csv")
 
 st.markdown("---")
-
-with st.expander("Current Supabase evidence database preview"):
-    refreshed_df = load_evidence_database()
-    st.write(f"Total evidence records: {len(refreshed_df)}")
-    st.dataframe(refreshed_df, use_container_width=True)
+st.caption(
+    "Architecture: plants → plant_compounds → compound_targets → target_diseases, "
+    "enriched by clinical_evidence / regulatory_status / safety_profile / market_information. "
+    "The ranking query always starts from `plants`, never from `clinical_evidence`."
+)

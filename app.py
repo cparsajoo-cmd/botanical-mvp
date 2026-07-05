@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 
+from ai_discovery_engine import understand_question
+from global_plant_discovery_engine import GlobalPlantDiscoveryEngine
+
 from rd_discovery_engine import build_rd_discovery_ranking
 from research_engine import run_research_engine
 from compound_profile_seed import seed_compound_profiles
@@ -14,31 +17,19 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("Unified Plant–Compound–Target–Evidence R&D Decision Engine")
+st.caption("AI Botanical R&D Discovery Platform")
 
 
 def classify_explanation(final_class):
     if final_class == "Commercial-ready":
-        return "Suitable for near-term product development. Evidence, safety, and regulatory fit are relatively strong."
+        return "Suitable for near-term product development."
     if final_class == "R&D candidate":
-        return "Promising for R&D. Chemistry or target relevance is strong, but more evidence, formulation, or regulatory work is needed."
+        return "Promising for R&D, but more evidence or regulatory work is needed."
     if final_class == "Discovery / high-risk candidate":
-        return "High innovation potential, but high uncertainty. Useful for exploratory R&D, not immediate product launch."
+        return "High innovation potential, but high uncertainty."
     if final_class == "Early research candidate":
-        return "Keep in the research pipeline. More evidence is needed before product development."
+        return "Keep in the research pipeline."
     return "Low priority for now."
-
-
-def next_step_recommendation(final_class):
-    if final_class == "Commercial-ready":
-        return "Next step: check EU regulatory details, suppliers, dosage, and competitor products."
-    if final_class == "R&D candidate":
-        return "Next step: collect more clinical/preclinical evidence, extraction data, and safety information."
-    if final_class == "Discovery / high-risk candidate":
-        return "Next step: validate active compound, extraction feasibility, toxicity, and IP/patent landscape."
-    if final_class == "Early research candidate":
-        return "Next step: keep monitoring evidence and add more references before investment."
-    return "Next step: do not prioritize unless new evidence appears."
 
 
 st.markdown("## Step 0 — Define R&D question")
@@ -62,6 +53,8 @@ with col1:
         [
             "Sleep and relaxation",
             "Anxiety",
+            "Stress",
+            "Inflammation",
             "Constipation",
             "Cough",
             "Digestive comfort",
@@ -126,23 +119,115 @@ st.info(
 
 
 st.markdown("---")
-st.markdown("## Step 1 — Prepare compound database")
+st.markdown("## Step 1 — Understand question")
 
-st.write("Click this once at the beginning, or when compound profiles are updated.")
+if st.button("Step 1: Understand R&D question"):
+    question = understand_question(
+        therapeutic_area=indication,
+        dosage_form=dosage_form,
+        target_market=market,
+    )
 
-if st.button("Step 1: Seed compound profiles"):
+    if question is None:
+        st.warning("No therapeutic profile found for this indication yet.")
+    else:
+        st.success("Question understood.")
+
+        st.write("**Therapeutic area:**", question.get("therapeutic_area"))
+        st.write("**Dosage form:**", question.get("dosage_form"))
+        st.write("**Target market:**", question.get("target_market"))
+
+        st.write("**Targets:**")
+        st.write(", ".join(question.get("targets", [])))
+
+        st.write("**Search keywords:**")
+        st.write(", ".join(question.get("keywords", [])))
+
+        st.write("**Compound classes:**")
+        st.write(", ".join(question.get("compound_classes", [])))
+
+
+st.markdown("---")
+st.markdown("## Step 2 — Prepare compound database")
+
+if st.button("Step 2: Seed compound profiles"):
     saved_count = seed_compound_profiles()
     st.success(f"{saved_count} compound profiles saved.")
 
 
 st.markdown("---")
-st.markdown("## Step 2 — Collect online evidence")
+st.markdown("## Step 3 — Global AI discovery test")
 
 st.write(
-    "This searches scientific, chemical, regulatory, safety, and patent sources, then saves evidence to Supabase."
+    "This searches global botanical, chemical, literature, and clinical sources "
+    "using the AI-understood targets and keywords."
 )
 
-if st.button("Step 2: Collect online evidence"):
+if st.button("Step 3: Test global discovery engine"):
+    with st.spinner("Searching global discovery sources..."):
+        engine = GlobalPlantDiscoveryEngine()
+
+        discovery_result = engine.discover(
+            therapeutic_area=indication,
+            dosage_form=dosage_form,
+            target_market=market,
+        )
+
+    if discovery_result.get("question") is None:
+        st.warning("No question profile found.")
+    else:
+        st.success("Global discovery completed.")
+
+        st.write("**Sources used:**")
+        st.write(", ".join(discovery_result.get("sources", [])))
+
+        col_a, col_b, col_c, col_d = st.columns(4)
+
+        with col_a:
+            st.metric("Plants found", len(discovery_result.get("candidate_plants", [])))
+
+        with col_b:
+            st.metric("Compounds found", len(discovery_result.get("compounds", [])))
+
+        with col_c:
+            st.metric("Papers found", len(discovery_result.get("papers", [])))
+
+        with col_d:
+            st.metric("Clinical trials", len(discovery_result.get("clinical_trials", [])))
+
+        st.markdown("### Candidate plants")
+        plants_df = pd.DataFrame(discovery_result.get("candidate_plants", []))
+        if plants_df.empty:
+            st.info("No plants found.")
+        else:
+            st.dataframe(plants_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Compounds")
+        compounds_df = pd.DataFrame(discovery_result.get("compounds", []))
+        if compounds_df.empty:
+            st.info("No compounds found.")
+        else:
+            st.dataframe(compounds_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Papers")
+        papers_df = pd.DataFrame(discovery_result.get("papers", []))
+        if papers_df.empty:
+            st.info("No papers found.")
+        else:
+            st.dataframe(papers_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Clinical trials")
+        trials_df = pd.DataFrame(discovery_result.get("clinical_trials", []))
+        if trials_df.empty:
+            st.info("No clinical trials found.")
+        else:
+            st.dataframe(trials_df, use_container_width=True, hide_index=True)
+
+
+st.markdown("---")
+st.markdown("## Step 4 — Collect online evidence")
+
+if st.button("Step 4: Collect online evidence"):
     with st.spinner("Searching sources and saving evidence to Supabase..."):
         research_output = run_research_engine(
             product_type=product_type,
@@ -176,15 +261,11 @@ if st.button("Step 2: Collect online evidence"):
 
 
 st.markdown("---")
-st.markdown("## Step 3 — Generate unified R&D ranking")
-
-st.write(
-    "This creates one final ranking by combining plant, compound, target, evidence, extraction, regulation, safety, and innovation."
-)
+st.markdown("## Step 5 — Generate unified R&D ranking")
 
 ranking = None
 
-if st.button("Step 3: Generate unified R&D ranking", type="primary"):
+if st.button("Step 5: Generate unified R&D ranking", type="primary"):
     with st.spinner("Building unified R&D ranking..."):
         ranking = build_rd_discovery_ranking(
             product_type=product_type,
@@ -197,7 +278,7 @@ if st.button("Step 3: Generate unified R&D ranking", type="primary"):
 
 if ranking is not None:
     st.markdown("---")
-    st.markdown("## Step 4 — Unified R&D Ranking")
+    st.markdown("## Step 6 — Unified R&D Ranking")
 
     if ranking.empty:
         st.warning("No R&D candidates found yet.")
@@ -232,7 +313,7 @@ if ranking is not None:
             hide_index=True,
         )
 
-        st.markdown("## Step 5 — Candidate profiles")
+        st.markdown("## Step 7 — Candidate profiles")
 
         for _, row in ranking.iterrows():
             plant = row.get("Scientific_Name", "")
@@ -257,7 +338,6 @@ if ranking is not None:
                 st.write(f"**Final class:** {final_class}")
                 st.write(f"**Final R&D score:** {final_score}/100")
                 st.write(f"**Interpretation:** {classify_explanation(final_class)}")
-                st.write(f"**Recommended next step:** {next_step_recommendation(final_class)}")
 
                 st.markdown("### 2. Plant identity")
                 st.write(f"**Scientific name:** {plant}")
@@ -302,32 +382,13 @@ if ranking is not None:
                     hide_index=True,
                 )
 
-                st.markdown("### 7. Why this candidate appears in the ranking")
-
-                st.write(
-                    f"This candidate appears because **{plant}** contains or is associated with "
-                    f"**{compound if compound else 'relevant active compounds'}**, linked to "
-                    f"**{target if target else 'relevant biological targets'}**, and received a combined score from "
-                    f"evidence, chemistry, extraction, regulation, safety, and innovation."
-                )
-
-                if row.get("Regulatory_Score_Unified", 0) < 50:
-                    st.warning(
-                        "Regulatory support appears weak or incomplete. This is more suitable for R&D than immediate commercialization."
-                    )
-
-                if row.get("Innovation_Score", 0) >= 75:
-                    st.info(
-                        "Innovation potential is high. This may be useful for discovering differentiated products or new R&D directions."
-                    )
-
-                st.markdown("### 8. References")
+                st.markdown("### 7. References")
                 st.write(f"**Evidence records:** {row.get('Evidence_Record_Count', '')}")
                 st.write(f"**Source titles:** {row.get('Source_Title', '')}")
                 st.write(f"**Source URLs:** {row.get('Source_URL', '')}")
 
         st.markdown("---")
-        st.markdown("## Step 6 — Download results")
+        st.markdown("## Step 8 — Download results")
 
         csv = ranking.to_csv(index=False).encode("utf-8")
 

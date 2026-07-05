@@ -75,9 +75,31 @@ else:
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("Download ranking as CSV", data=csv, file_name="botanical_ranking.csv", mime="text/csv")
 
+    st.markdown("## 🔬 Live scientific evidence lookup")
+    st.caption("Fetches real, live data from PubChem, ChEMBL, Europe PMC and ClinicalTrials.gov. Requires internet access at runtime.")
+
+    selected_plant = st.selectbox("Choose a plant to look up live", df["Scientific_Name"].tolist())
+
+    if st.button("Fetch live evidence"):
+        from connectors import get_pubchem_data, get_chembl_targets, search_articles, search_trials
+
+        with st.spinner(f"Querying live sources for {selected_plant}..."):
+            st.markdown("### Europe PMC articles")
+            st.json(search_articles(selected_plant, disease.split(" /")[0]))
+
+            st.markdown("### ClinicalTrials.gov trials")
+            st.json(search_trials(selected_plant, disease.split(" /")[0]))
+
+            st.markdown("### PubChem (test compound)")
+            st.json(get_pubchem_data("Rosmarinic acid"))
+
+            st.markdown("### ChEMBL (test compound)")
+            st.json(get_chembl_targets("Rosmarinic acid"))
+
 st.markdown("---")
 st.caption(
     "Architecture: plants → plant_compounds → compound_targets → target_diseases, "
     "enriched by clinical_evidence / regulatory_status / safety_profile / market_information. "
-    "The ranking query always starts from `plants`, never from `clinical_evidence`."
+    "The ranking query always starts from `plants`, never from `clinical_evidence`. "
+    "Live lookups (PubChem, ChEMBL, Europe PMC, ClinicalTrials.gov) enrich on demand via `connectors.py`."
 )

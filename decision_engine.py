@@ -2,18 +2,19 @@ import pandas as pd
 
 from evidence_quality_engine import apply_evidence_quality
 from compound_intelligence_engine import apply_compound_intelligence
+from compound_scoring_engine import build_compound_scores
 
 
 CLINICAL_WEIGHT = 0.25
-CHEMISTRY_WEIGHT = 0.20
-ACTIVE_COMPOUND_WEIGHT = 0.15
+CHEMISTRY_WEIGHT = 0.25
+ACTIVE_COMPOUND_WEIGHT = 0.10
 TARGET_WEIGHT = 0.10
 EXTRACTION_WEIGHT = 0.10
 REGULATORY_WEIGHT = 0.10
 SAFETY_WEIGHT = 0.05
-NOVELTY_WEIGHT = 0.05
-MARKET_WEIGHT = 0.05
-COMMERCIAL_WEIGHT = 0.05
+NOVELTY_WEIGHT = 0.03
+MARKET_WEIGHT = 0.01
+COMMERCIAL_WEIGHT = 0.01
 
 
 def _txt(value):
@@ -26,7 +27,7 @@ def _num(value):
     try:
         return float(value or 0)
     except Exception:
-        return 0
+        return 0.0
 
 
 def _series_text(group, col):
@@ -39,7 +40,7 @@ def _any_yes(group, col):
     if col not in group.columns:
         return False
     return group[col].fillna("").astype(str).str.lower().isin(
-        ["yes", "true", "supported"]
+        ["yes", "true", "supported", "available"]
     ).any()
 
 
@@ -67,35 +68,30 @@ def _clinical_score(group):
 
     score = 0
 
-    meta_count = text.count("meta-analysis") + text.count("meta analysis")
-    systematic_count = text.count("systematic review")
-    rct_count = text.count("randomized") + text.count("randomised") + text.count("rct")
-    clinical_count = text.count("clinical trial") + text.count("patients") + text.count("subjects")
+    if "meta-analysis" in text or "meta analysis" in text:
+        score += 35
 
-    if meta_count > 0:
-        score += min(35, 20 + meta_count * 5)
+    if "systematic review" in text:
+        score += 25
 
-    if systematic_count > 0:
-        score += min(25, 15 + systematic_count * 4)
+    if "randomized" in text or "randomised" in text or "rct" in text:
+        score += 30
 
-    if rct_count > 0:
-        score += min(35, 20 + rct_count * 4)
+    if "clinical trial" in text or "patients" in text or "subjects" in text or "human" in text:
+        score += 25
 
-    if clinical_count > 0:
-        score += min(20, 10 + clinical_count * 2)
+    if "animal" in text or "rat" in text or "mouse" in text or "mice" in text:
+        score += 10
 
-    if "human" in text or "patients" in text or "subjects" in text:
-        score += 15
-
-    elif "animal" in text or "rat" in text or "mouse" in text or "mice" in text:
-        score += 8
-
-    elif "in vitro" in text or "cell" in text:
-        score += 4
+    if "in vitro" in text or "cell" in text:
+        score += 5
 
     if "Evidence_Quality_Score" in group.columns:
         avg_quality = group["Evidence_Quality_Score"].apply(_num).mean()
         score += min(20, avg_quality * 0.20)
+
+    record_bonus = min(20, len(group) * 2)
+    score += record_bonus
 
     return min(round(score, 1), 100)
 
@@ -112,77 +108,17 @@ def _regulatory_score(group):
     if _any_yes(group, "EMA_Status") or "ema" in text or "hmpc" in text:
         score += 45
 
-    if _any_yes(group, "WHO_Status") or "who monograph" in text:
+    if _any_yes(group, "WHO_Status") or "who monograph" in text or "world health organization" in text:
         score += 25
 
     if _any_yes(group, "ESCOP_Status") or "escop" in text:
         score += 25
 
-    if "fda" in text or "dailymed" in text:
+    if "efsa" in text or "novel food" in text:
         score += 10
 
-    return min(score, 100)
-
-
-def _chemistry_score(group):
-    if "Chemistry_Score" in group.columns:
-        return min(round(group["Chemistry_Score"].apply(_num).mean(), 1), 100)
-
-    return 0
-
-
-def _active_compound_score(group):
-    text = _series_text(group, "Active_Compounds") + " " + _series_text(group, "Known_Active_Compounds")
-
-    if not text.strip():
-        return 0
-
-    compounds = set()
-
-    for chunk in text.replace(";", ",").split(","):
-        chunk = chunk.strip()
-        if chunk and chunk != "nan":
-            compounds.add(chunk)
-
-    return min(30 + len(compounds) * 12, 100)
-
-
-def _target_score(group):
-    text = _series_text(group, "Molecular_Targets") + " " + _series_text(group, "Known_Targets")
-
-    if not text.strip():
-        return 0
-
-    targets = set()
-
-    for chunk in text.replace(";", ",").split(","):
-        chunk = chunk.strip()
-        if chunk and chunk != "nan":
-            targets.add(chunk)
-
-    return min(30 + len(targets) * 15, 100)
-
-
-def _extraction_score(group):
-    text = (
-        _series_text(group, "Extraction_Method") + " " +
-        _series_text(group, "Dosage_Form") + " " +
-        _series_text(group, "Detected_Dosage_Forms")
-    )
-
-    if not text.strip():
-        return 20
-
-    score = 55
-
-    if "infusion" in text or "aqueous" in text:
-        score += 25
-
-    if "extract" in text or "hydroalcoholic" in text or "ethanolic" in text:
-        score += 20
-
-    if "essential oil" in text or "distillation" in text:
-        score += 15
+    if "fda" in text or "dailymed" in text:
+        score += 10
 
     return min(score, 100)
 
@@ -194,10 +130,10 @@ def _safety_score(group):
         _series_text(group, "Notes")
     )
 
-    if "hepatotoxic" in text or "warning" in text or "contraindication" in text:
+    if "hepatotoxic" in text or "liver injury" in text or "contraindication" in text:
         return 35
 
-    if "adverse" in text or "caution" in text:
+    if "warning" in text or "adverse" in text or "caution" in text:
         return 55
 
     if "safe" in text or "well tolerated" in text:
@@ -207,19 +143,14 @@ def _safety_score(group):
 
 
 def _novelty_score(group):
-    if "Novelty_Score" in group.columns:
-        values = group["Novelty_Score"].apply(_num)
-        if values.max() > 0:
-            return min(round(values.max(), 1), 100)
-
     text = _series_text(group, "Region") + " " + _series_text(group, "EMA_Status")
 
     score = 35
 
     if "no" in _series_text(group, "EMA_Status"):
-        score += 30
+        score += 25
 
-    if any(x in text for x in ["china", "india", "asia", "pacific", "africa"]):
+    if any(x in text for x in ["china", "india", "asia", "pacific", "africa", "iran", "south america"]):
         score += 25
 
     return min(score, 100)
@@ -240,10 +171,7 @@ def _commercial_score(group):
         if values.max() > 0:
             return min(round(values.max(), 1), 100)
 
-    extraction = _extraction_score(group)
-    regulatory = _regulatory_score(group)
-
-    return min(round((extraction * 0.6 + regulatory * 0.4), 1), 100)
+    return 50
 
 
 def _weighted_final_score(scores):
@@ -263,20 +191,20 @@ def _weighted_final_score(scores):
 
 
 def _reason_text(scores):
-    reasons = []
-
-    reasons.append(f"Clinical evidence: {scores['Clinical_Score']}/100")
-    reasons.append(f"Chemistry: {scores['Chemistry_Score']}/100")
-    reasons.append(f"Active compounds: {scores['Active_Compound_Score']}/100")
-    reasons.append(f"Molecular targets: {scores['Target_Score']}/100")
-    reasons.append(f"Extraction feasibility: {scores['Extraction_Score']}/100")
-    reasons.append(f"Regulatory fit: {scores['Regulatory_Score']}/100")
-    reasons.append(f"Safety: {scores['Safety_Score']}/100")
-    reasons.append(f"Novelty/R&D opportunity: {scores['Novelty_Score']}/100")
-    reasons.append(f"Market opportunity: {scores['Market_Score']}/100")
-    reasons.append(f"Commercial feasibility: {scores['Commercial_Score']}/100")
-
-    return " | ".join(reasons)
+    return " | ".join(
+        [
+            f"Clinical evidence: {scores['Clinical_Score']}/100",
+            f"Chemistry: {scores['Chemistry_Score']}/100",
+            f"Active compounds: {scores['Active_Compound_Score']}/100",
+            f"Molecular targets: {scores['Target_Score']}/100",
+            f"Extraction feasibility: {scores['Extraction_Score']}/100",
+            f"Regulatory fit: {scores['Regulatory_Score']}/100",
+            f"Safety: {scores['Safety_Score']}/100",
+            f"Novelty/R&D opportunity: {scores['Novelty_Score']}/100",
+            f"Market opportunity: {scores['Market_Score']}/100",
+            f"Commercial feasibility: {scores['Commercial_Score']}/100",
+        ]
+    )
 
 
 def analyze_evidence(
@@ -341,15 +269,57 @@ def analyze_evidence(
     result = apply_evidence_quality(result)
     result = apply_compound_intelligence(result)
 
+    compound_scores = build_compound_scores(
+        indication=indication,
+        dosage_form=dosage_form,
+    )
+
+    if compound_scores is not None and not compound_scores.empty:
+        result = result.merge(
+            compound_scores,
+            on="Scientific_Name",
+            how="left",
+            suffixes=("", "_CompoundDB"),
+        )
+
+    for col in [
+        "Compound_Count",
+        "High_Value_Compound_Count",
+        "Best_Compounds",
+        "Best_Targets",
+        "Best_Extraction_Methods",
+        "Compound_Evidence_Score",
+        "Chemistry_Score",
+        "Active_Compound_Score",
+        "Target_Score",
+        "Extraction_Score",
+    ]:
+        if col not in result.columns:
+            result[col] = 0 if "Score" in col or "Count" in col else ""
+
     plant_scores = {}
 
     for plant, group in result.groupby("Scientific_Name", dropna=False):
+        chemistry = group["Chemistry_Score"].apply(_num).max()
+        active = group["Active_Compound_Score"].apply(_num).max()
+        target = group["Target_Score"].apply(_num).max()
+        extraction = group["Extraction_Score"].apply(_num).max()
+
+        if chemistry <= 0:
+            chemistry = 30
+        if active <= 0:
+            active = 25
+        if target <= 0:
+            target = 25
+        if extraction <= 0:
+            extraction = 25
+
         scores = {
             "Clinical_Score": _clinical_score(group),
-            "Chemistry_Score": _chemistry_score(group),
-            "Active_Compound_Score": _active_compound_score(group),
-            "Target_Score": _target_score(group),
-            "Extraction_Score": _extraction_score(group),
+            "Chemistry_Score": round(chemistry, 1),
+            "Active_Compound_Score": round(active, 1),
+            "Target_Score": round(target, 1),
+            "Extraction_Score": round(extraction, 1),
             "Regulatory_Score": _regulatory_score(group),
             "Safety_Score": _safety_score(group),
             "Novelty_Score": _novelty_score(group),
@@ -386,6 +356,21 @@ def analyze_evidence(
         result[col] = result["Scientific_Name"].apply(
             lambda x: plant_scores.get(x, {}).get(col, 0 if "Score" in col else "")
         )
+
+    passthrough_cols = [
+        "Compound_Count",
+        "High_Value_Compound_Count",
+        "Best_Compounds",
+        "Best_Targets",
+        "Best_Extraction_Methods",
+        "Compound_Evidence_Score",
+    ]
+
+    for col in passthrough_cols:
+        if col in result.columns:
+            result[col] = result.groupby("Scientific_Name")[col].transform(
+                lambda s: s.dropna().iloc[0] if len(s.dropna()) else ""
+            )
 
     if min_score and min_score > 0:
         result = result[result["Final_Score"] >= min_score]

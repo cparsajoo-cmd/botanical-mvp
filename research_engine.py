@@ -5,7 +5,6 @@ from evidence_filtering_engine import apply_evidence_filters
 from decision_engine import analyze_evidence
 from deduplication_engine import deduplicate_evidence
 from global_candidate_ranking_engine import rank_global_candidates
-from compound_source_engine import collect_compounds_from_all_sources
 
 
 def run_research_engine(
@@ -39,20 +38,8 @@ def run_research_engine(
     all_saved_records = []
     all_errors = []
     all_sources_checked = []
-    all_compound_results = []
 
     for plant in candidate_plants:
-        compound_result = collect_compounds_from_all_sources(
-            scientific_name=plant,
-            indication=indication,
-            dosage_form=dosage_form,
-            market=target_market,
-            max_results_per_source=10,
-        )
-
-        all_compound_results.append(compound_result)
-        all_errors.extend(compound_result.get("errors", []))
-
         result = collect_multi_source_evidence(
             scientific_name=plant,
             indication=indication,
@@ -137,7 +124,6 @@ def run_research_engine(
     return {
         "candidate_plants": candidate_plants,
         "global_candidates": global_candidates,
-        "compound_results": all_compound_results,
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),

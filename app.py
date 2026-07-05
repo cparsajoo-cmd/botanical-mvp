@@ -4,6 +4,7 @@ import pandas as pd
 from ai_discovery_engine import understand_question
 from global_plant_discovery_engine import GlobalPlantDiscoveryEngine
 from ai_opportunity_engine import build_opportunity_table
+from botanical_knowledge_graph_engine import build_graph_from_ranking
 
 from rd_discovery_engine import build_rd_discovery_ranking
 from research_engine import run_research_engine
@@ -133,17 +134,13 @@ if st.button("Step 1: Understand R&D question"):
         st.warning("No therapeutic profile found for this indication yet.")
     else:
         st.success("Question understood.")
-
         st.write("**Therapeutic area:**", question.get("therapeutic_area"))
         st.write("**Dosage form:**", question.get("dosage_form"))
         st.write("**Target market:**", question.get("target_market"))
-
         st.write("**Targets:**")
         st.write(", ".join(question.get("targets", [])))
-
         st.write("**Search keywords:**")
         st.write(", ".join(question.get("keywords", [])))
-
         st.write("**Compound classes:**")
         st.write(", ".join(question.get("compound_classes", [])))
 
@@ -159,15 +156,9 @@ if st.button("Step 2: Seed compound profiles"):
 st.markdown("---")
 st.markdown("## Step 3 — Global AI discovery test")
 
-st.write(
-    "This searches global botanical, chemical, literature, and clinical sources "
-    "using the AI-understood targets and keywords."
-)
-
 if st.button("Step 3: Test global discovery engine"):
     with st.spinner("Searching global discovery sources..."):
         engine = GlobalPlantDiscoveryEngine()
-
         discovery_result = engine.discover(
             therapeutic_area=indication,
             dosage_form=dosage_form,
@@ -186,43 +177,28 @@ if st.button("Step 3: Test global discovery engine"):
 
         with col_a:
             st.metric("Plants found", len(discovery_result.get("candidate_plants", [])))
-
         with col_b:
             st.metric("Compounds found", len(discovery_result.get("compounds", [])))
-
         with col_c:
             st.metric("Papers found", len(discovery_result.get("papers", [])))
-
         with col_d:
             st.metric("Clinical trials", len(discovery_result.get("clinical_trials", [])))
 
         st.markdown("### Candidate plants")
         plants_df = pd.DataFrame(discovery_result.get("candidate_plants", []))
-        if plants_df.empty:
-            st.info("No plants found.")
-        else:
-            st.dataframe(plants_df, use_container_width=True, hide_index=True)
+        st.dataframe(plants_df, use_container_width=True, hide_index=True)
 
         st.markdown("### Compounds")
         compounds_df = pd.DataFrame(discovery_result.get("compounds", []))
-        if compounds_df.empty:
-            st.info("No compounds found.")
-        else:
-            st.dataframe(compounds_df, use_container_width=True, hide_index=True)
+        st.dataframe(compounds_df, use_container_width=True, hide_index=True)
 
         st.markdown("### Papers")
         papers_df = pd.DataFrame(discovery_result.get("papers", []))
-        if papers_df.empty:
-            st.info("No papers found.")
-        else:
-            st.dataframe(papers_df, use_container_width=True, hide_index=True)
+        st.dataframe(papers_df, use_container_width=True, hide_index=True)
 
         st.markdown("### Clinical trials")
         trials_df = pd.DataFrame(discovery_result.get("clinical_trials", []))
-        if trials_df.empty:
-            st.info("No clinical trials found.")
-        else:
-            st.dataframe(trials_df, use_container_width=True, hide_index=True)
+        st.dataframe(trials_df, use_container_width=True, hide_index=True)
 
 
 st.markdown("---")
@@ -429,40 +405,6 @@ if ranking is not None:
                 hide_index=True,
             )
 
-            st.markdown("### AI Opportunity Profiles")
-
-            for _, opp in opportunity_df.iterrows():
-                title = (
-                    f"🌿 {opp.get('Plant', '')}"
-                    f" — {opp.get('Compound', '')}"
-                    f" — {opp.get('AI_Opportunity_Decision', '')}"
-                    f" — Investment {opp.get('Investment_Opportunity_Score', '')}/100"
-                )
-
-                with st.expander(title, expanded=False):
-                    st.write(f"**Decision:** {opp.get('AI_Opportunity_Decision', '')}")
-                    st.write(f"**Investment score:** {opp.get('Investment_Opportunity_Score', '')}/100")
-                    st.write(f"**Risk score:** {opp.get('Overall_Risk_Score', '')}/100")
-                    st.write(f"**Summary:** {opp.get('AI_Opportunity_Summary', '')}")
-
-                    score_data = {
-                        "Scientific strength": opp.get("Scientific_Strength", ""),
-                        "Chemistry strength": opp.get("Chemistry_Strength", ""),
-                        "Target relevance": opp.get("Target_Relevance", ""),
-                        "Extraction feasibility": opp.get("Extraction_Feasibility", ""),
-                        "Regulatory readiness": opp.get("Regulatory_Readiness", ""),
-                        "Safety profile": opp.get("Safety_Profile", ""),
-                        "Innovation opportunity": opp.get("Innovation_Opportunity", ""),
-                        "Market saturation risk": opp.get("Market_Saturation_Risk", ""),
-                        "Patent crowding risk": opp.get("Patent_Crowding_Risk", ""),
-                    }
-
-                    st.dataframe(
-                        pd.DataFrame([score_data]),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
             opportunity_csv = opportunity_df.to_csv(index=False).encode("utf-8")
 
             st.download_button(
@@ -471,11 +413,25 @@ if ranking is not None:
                 file_name="ai_opportunity_assessment.csv",
                 mime="text/csv",
             )
-        else:
-            st.info("No opportunity assessment generated.")
 
         st.markdown("---")
-        st.markdown("## Step 9 — Download unified ranking")
+        st.markdown("## Step 9 — Build Botanical Knowledge Graph")
+
+        st.write(
+            "This stores plant–compound–target–indication relationships into Supabase graph tables."
+        )
+
+        if st.button("Step 9: Build Knowledge Graph from ranking"):
+            with st.spinner("Building botanical knowledge graph..."):
+                edge_count = build_graph_from_ranking(
+                    ranking_df=ranking,
+                    indication=indication,
+                )
+
+            st.success(f"{edge_count} graph relations saved.")
+
+        st.markdown("---")
+        st.markdown("## Step 10 — Download unified ranking")
 
         csv = ranking.to_csv(index=False).encode("utf-8")
 

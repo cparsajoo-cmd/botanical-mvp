@@ -1,27 +1,5 @@
-"""
-Global Plant Discovery Engine
-
-Step 2 of the Botanical AI Discovery Platform
-
-This engine receives the interpreted research question,
-searches global botanical sources,
-and returns candidate medicinal plants.
-
-Current source:
-- Kew Plants of the World Online (POWO)
-
-Later sources:
-- GBIF
-- Dr Duke
-- Chinese Pharmacopoeia
-- African Medicinal Plants
-- Iranian Medicinal Plants
-- Ayurvedic Database
-- Japanese Kampo
-"""
-
 from ai_discovery_engine import understand_question
-from kew_connector import search_kew_plants
+from global_discovery_connectors import discover_records
 
 
 class GlobalPlantDiscoveryEngine:
@@ -35,11 +13,6 @@ class GlobalPlantDiscoveryEngine:
         dosage_form,
         target_market,
     ):
-
-        # -----------------------------
-        # Understand user question
-        # -----------------------------
-
         question = understand_question(
             therapeutic_area=therapeutic_area,
             dosage_form=dosage_form,
@@ -49,94 +22,93 @@ class GlobalPlantDiscoveryEngine:
         if question is None:
             return {
                 "question": None,
+                "records": [],
                 "candidate_plants": [],
+                "compounds": [],
+                "papers": [],
+                "clinical_trials": [],
                 "sources": [],
             }
 
-        # -----------------------------
-        # Search candidate plants
-        # -----------------------------
+        all_records = []
 
-        candidate_plants = []
+        search_terms = []
 
-        for keyword in question["keywords"]:
+        search_terms.extend(question.get("keywords", []))
+        search_terms.extend(question.get("targets", []))
+        search_terms.extend(question.get("compound_classes", []))
 
-            try:
+        for term in search_terms:
+            records = discover_records(term)
+            all_records.extend(records)
 
-                plants = search_kew_plants(
-                    keyword=keyword,
-                    limit=30,
-                )
+        all_records = self._deduplicate(all_records)
 
-                candidate_plants.extend(plants)
+        candidate_plants = [
+            r for r in all_records
+            if r.get("record_type") == "plant"
+        ]
 
-            except Exception:
-                pass
+        compounds = [
+            r for r in all_records
+            if r.get("record_type") == "compound"
+        ]
 
-        # -----------------------------
-        # Remove duplicates
-        # -----------------------------
+        papers = [
+            r for r in all_records
+            if r.get("record_type") == "paper"
+        ]
 
-        unique = {}
+        clinical_trials = [
+            r for r in all_records
+            if r.get("record_type") == "clinical_trial"
+        ]
 
-        for plant in candidate_plants:
-
-            name = plant.get("Scientific_Name")
-
-            if not name:
-                continue
-
-            if name not in unique:
-                unique[name] = plant
-
-        candidate_plants = list(unique.values())
-
-        # -----------------------------
-        # Sort alphabetically
-        # -----------------------------
-
-        candidate_plants.sort(
-            key=lambda x: x.get("Scientific_Name", "")
-        )
-
-        # -----------------------------
-        # Return
-        # -----------------------------
+        sources = sorted(set([
+            r.get("source", "")
+            for r in all_records
+            if r.get("source", "")
+        ]))
 
         return {
-
             "question": question,
-
+            "records": all_records,
             "candidate_plants": candidate_plants,
-
-            "sources": [
-
-                "Kew Plants of the World Online"
-
-            ]
-
+            "compounds": compounds,
+            "papers": papers,
+            "clinical_trials": clinical_trials,
+            "sources": sources,
         }
+
+    def _deduplicate(self, records):
+        unique = {}
+
+        for r in records:
+            key = "|".join([
+                r.get("record_type", ""),
+                r.get("scientific_name", "").lower(),
+                r.get("compound", "").lower(),
+                r.get("title", "").lower(),
+                r.get("source", ""),
+            ])
+
+            if key not in unique:
+                unique[key] = r
+
+        return list(unique.values())
 
 
 if __name__ == "__main__":
-
     engine = GlobalPlantDiscoveryEngine()
 
     result = engine.discover(
-
         therapeutic_area="Sleep and relaxation",
-
         dosage_form="Infusion",
-
         target_market="European Union",
-
     )
 
-    print(result["question"])
-
-    print()
-
-    print(f"Plants found: {len(result['candidate_plants'])}")
-
-    for plant in result["candidate_plants"][:10]:
-        print(plant)
+    print("Sources:", result["sources"])
+    print("Plants:", len(result["candidate_plants"]))
+    print("Compounds:", len(result["compounds"]))
+    print("Papers:", len(result["papers"]))
+    print("Clinical trials:", len(result["clinical_trials"]))

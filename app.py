@@ -11,6 +11,7 @@ from investment_decision_engine import aggregate_investment_decision
 from investment_engine import build_investment_report
 from global_candidate_ranking_engine import rank_global_candidates
 from plant_compound_ranking_engine import build_plant_compound_ranking
+from compound_profile_seed import seed_compound_profiles
 
 
 st.set_page_config(
@@ -138,89 +139,11 @@ st.info(
     f"in **{market}**?"
 )
 
-st.markdown("## Global plant candidate ranking")
+st.markdown("## Compound profile database")
 
-target_count = st.slider(
-    "Number of global plant candidates to rank",
-    10,
-    100,
-    50,
-)
-
-show_global_ranking = st.button("Rank global plant candidates")
-
-global_ranking = None
-
-if show_global_ranking:
-    global_ranking = rank_global_candidates(
-        indication=indication,
-        dosage_form=dosage_form,
-        market=market,
-        target_count=target_count,
-    )
-
-    if global_ranking.empty:
-        st.warning("No global plant candidates found for this indication.")
-    else:
-        st.success(f"{len(global_ranking)} global plant candidates ranked.")
-
-        st.dataframe(
-            global_ranking,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        global_csv = global_ranking.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "Download global plant ranking as CSV",
-            data=global_csv,
-            file_name="global_plant_candidate_ranking.csv",
-            mime="text/csv",
-        )
-
-
-st.markdown("## Active compound / target ranking")
-
-show_compound_ranking = st.button("Rank active compounds and targets")
-
-if show_compound_ranking:
-    if global_ranking is None:
-        global_ranking = rank_global_candidates(
-            indication=indication,
-            dosage_form=dosage_form,
-            market=market,
-            target_count=target_count,
-        )
-
-    selected_plants = []
-    if global_ranking is not None and not global_ranking.empty:
-        selected_plants = global_ranking["Scientific_Name"].dropna().astype(str).tolist()
-
-    compound_ranking = build_plant_compound_ranking(
-        indication=indication,
-        selected_plants=selected_plants,
-    )
-
-    if compound_ranking.empty:
-        st.warning("No compound candidates found.")
-    else:
-        st.success(f"{len(compound_ranking)} plant-compound-target candidates ranked.")
-
-        st.dataframe(
-            compound_ranking,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        compound_csv = compound_ranking.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "Download compound ranking as CSV",
-            data=compound_csv,
-            file_name="plant_compound_target_ranking.csv",
-            mime="text/csv",
-        )
+if st.button("Seed compound profiles"):
+    saved_count = seed_compound_profiles()
+    st.success(f"{saved_count} compound profiles saved.")
 
 
 st.markdown("## Evidence collection and decision")
@@ -284,6 +207,7 @@ if collect_and_generate:
                     "pmid": r.get("pmid", ""),
                     "nct_id": r.get("nct_id", ""),
                     "title": r.get("title", ""),
+                    "compound_records_saved": r.get("compound_records_saved", 0),
                 }
             )
         st.dataframe(pd.DataFrame(preview), use_container_width=True)
@@ -310,7 +234,7 @@ elif generate_only:
 
 
 if result is not None:
-    st.markdown("## Decision output")
+    st.markdown("## Final Global Botanical Ranking")
 
     if result.empty:
         st.warning("No evidence records found yet for this product question.")
@@ -325,7 +249,36 @@ if result is not None:
             .reset_index(drop=True)
         )
 
-        st.info(f"{len(display_result)} unique plant candidates shown below.")
+        st.info(f"{len(display_result)} unique plant candidates ranked.")
+
+        ranking_columns = [
+            "Scientific_Name",
+            "Common_Name",
+            "Region",
+            "Decision_Class",
+            "Final_Score",
+            "Clinical_Score",
+            "Chemistry_Score",
+            "Active_Compound_Score",
+            "Target_Score",
+            "Extraction_Score",
+            "Regulatory_Score",
+            "Safety_Score",
+            "Novelty_Score",
+            "Market_Score",
+            "Commercial_Score",
+        ]
+
+        visible_ranking_columns = [
+            c for c in ranking_columns
+            if c in display_result.columns
+        ]
+
+        st.dataframe(
+            display_result[visible_ranking_columns],
+            use_container_width=True,
+            hide_index=True,
+        )
 
         for _, row in display_result.iterrows():
             plant_name = row.get("Scientific_Name", "")
@@ -345,6 +298,7 @@ if result is not None:
                 st.write(f"**Market:** {row.get('Target_Market', '')}")
 
                 st.markdown("### Multi-criteria decision scores")
+
                 score_columns = [
                     "Clinical_Score",
                     "Chemistry_Score",
@@ -372,42 +326,6 @@ if result is not None:
                         hide_index=True,
                     )
 
-                st.markdown("### Regulatory evidence")
-                st.write(f"**EMA:** {row.get('EMA_Status', '')}")
-                st.write(f"**WHO:** {row.get('WHO_Status', '')}")
-                st.write(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
-                st.write(f"**Regulatory evidence:** {row.get('Regulatory_Evidence', '')}")
-
-                st.markdown("### Scientific evidence")
-                st.write(f"**Study type:** {row.get('Study_Type', row.get('Evidence_Type', ''))}")
-                st.write(f"**Evidence type:** {row.get('Evidence_Type', '')}")
-                st.write(f"**Evidence level:** {row.get('Evidence_Level', '')}")
-                st.write(f"**Study model:** {row.get('Study_Model', '')}")
-                st.write(f"**Evidence quality score:** {row.get('Evidence_Quality_Score', '')}")
-                st.write(f"**Evidence quality class:** {row.get('Evidence_Quality_Class', '')}")
-                st.write(f"**Evidence quality flags:** {row.get('Evidence_Quality_Flags', '')}")
-
-                st.write(
-                    f"**Detected dosage form:** "
-                    f"{row.get('Dosage_Form_Detected', row.get('Detected_Dosage_Forms', ''))}"
-                )
-                st.write(
-                    f"**Detected indication:** "
-                    f"{row.get('Target_Indication_Detected', row.get('Detected_Indications', ''))}"
-                )
-
-                st.write(f"**Direct for selected product:** {row.get('Direct_For_Selected_Product', '')}")
-                st.write(f"**Directness reason:** {row.get('Directness_Reason', '')}")
-
-                st.markdown("### Chemistry / Active compound intelligence")
-                st.write(f"**Known active compounds:** {row.get('Known_Active_Compounds', '')}")
-                st.write(f"**Detected active compounds:** {row.get('Active_Compounds', '')}")
-                st.write(f"**Known targets:** {row.get('Known_Targets', '')}")
-                st.write(f"**Detected molecular targets:** {row.get('Molecular_Targets', '')}")
-                st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
-                st.write(f"**Extraction method:** {row.get('Extraction_Method', '')}")
-                st.write(f"**Chemistry score:** {row.get('Chemistry_Score', '')}")
-
                 st.markdown("### Plant-compound-target candidates")
 
                 compound_for_plant = build_plant_compound_ranking(
@@ -423,6 +341,30 @@ if result is not None:
                         use_container_width=True,
                         hide_index=True,
                     )
+
+                st.markdown("### Chemistry / Active compound intelligence")
+                st.write(f"**Known active compounds:** {row.get('Known_Active_Compounds', '')}")
+                st.write(f"**Detected active compounds:** {row.get('Active_Compounds', '')}")
+                st.write(f"**Known targets:** {row.get('Known_Targets', '')}")
+                st.write(f"**Detected molecular targets:** {row.get('Molecular_Targets', '')}")
+                st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
+                st.write(f"**Extraction method:** {row.get('Extraction_Method', '')}")
+                st.write(f"**Chemistry score:** {row.get('Chemistry_Score', '')}")
+
+                st.markdown("### Regulatory evidence")
+                st.write(f"**EMA:** {row.get('EMA_Status', '')}")
+                st.write(f"**WHO:** {row.get('WHO_Status', '')}")
+                st.write(f"**ESCOP:** {row.get('ESCOP_Status', '')}")
+                st.write(f"**Regulatory evidence:** {row.get('Regulatory_Evidence', '')}")
+
+                st.markdown("### Scientific evidence")
+                st.write(f"**Study type:** {row.get('Study_Type', row.get('Evidence_Type', ''))}")
+                st.write(f"**Evidence type:** {row.get('Evidence_Type', '')}")
+                st.write(f"**Evidence level:** {row.get('Evidence_Level', '')}")
+                st.write(f"**Study model:** {row.get('Study_Model', '')}")
+                st.write(f"**Evidence quality score:** {row.get('Evidence_Quality_Score', '')}")
+                st.write(f"**Evidence quality class:** {row.get('Evidence_Quality_Class', '')}")
+                st.write(f"**Evidence quality flags:** {row.get('Evidence_Quality_Flags', '')}")
 
                 st.markdown("### Decision")
                 st.write(f"**Decision reason:** {row.get('Decision_Reason', '')}")
@@ -497,19 +439,6 @@ if result is not None:
                 hide_index=True,
             )
 
-        st.markdown("## Investment Intelligence Report")
-
-        investment_report = build_investment_report(result)
-
-        if investment_report.empty:
-            st.info("No investment intelligence report available.")
-        else:
-            st.dataframe(
-                investment_report,
-                use_container_width=True,
-                hide_index=True,
-            )
-
         st.markdown("## Full evidence table")
         st.dataframe(result, use_container_width=True)
 
@@ -519,15 +448,6 @@ if result is not None:
             "Download decision table as CSV",
             data=csv,
             file_name="botanical_decision_output.csv",
-            mime="text/csv",
-        )
-
-        investment_csv = investment_report.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "Download investment report as CSV",
-            data=investment_csv,
-            file_name="botanical_investment_report.csv",
             mime="text/csv",
         )
 

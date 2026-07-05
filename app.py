@@ -3,6 +3,7 @@ import pandas as pd
 
 from ai_discovery_engine import understand_question
 from global_plant_discovery_engine import GlobalPlantDiscoveryEngine
+from ai_opportunity_engine import build_opportunity_table
 
 from rd_discovery_engine import build_rd_discovery_ranking
 from research_engine import run_research_engine
@@ -388,7 +389,93 @@ if ranking is not None:
                 st.write(f"**Source URLs:** {row.get('Source_URL', '')}")
 
         st.markdown("---")
-        st.markdown("## Step 8 — Download results")
+        st.markdown("## Step 8 — AI Opportunity Assessment")
+
+        opportunities = build_opportunity_table(ranking)
+
+        if opportunities:
+            opportunity_df = pd.DataFrame(opportunities)
+
+            st.success(
+                f"{len(opportunity_df)} AI opportunity assessments generated."
+            )
+
+            opportunity_cols = [
+                "Plant",
+                "Compound",
+                "Current_Class",
+                "AI_Opportunity_Decision",
+                "Investment_Opportunity_Score",
+                "Overall_Risk_Score",
+                "Scientific_Strength",
+                "Chemistry_Strength",
+                "Target_Relevance",
+                "Regulatory_Readiness",
+                "Safety_Profile",
+                "Innovation_Opportunity",
+                "Market_Saturation_Risk",
+                "Patent_Crowding_Risk",
+                "AI_Opportunity_Summary",
+            ]
+
+            opportunity_cols = [
+                c for c in opportunity_cols
+                if c in opportunity_df.columns
+            ]
+
+            st.dataframe(
+                opportunity_df[opportunity_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("### AI Opportunity Profiles")
+
+            for _, opp in opportunity_df.iterrows():
+                title = (
+                    f"🌿 {opp.get('Plant', '')}"
+                    f" — {opp.get('Compound', '')}"
+                    f" — {opp.get('AI_Opportunity_Decision', '')}"
+                    f" — Investment {opp.get('Investment_Opportunity_Score', '')}/100"
+                )
+
+                with st.expander(title, expanded=False):
+                    st.write(f"**Decision:** {opp.get('AI_Opportunity_Decision', '')}")
+                    st.write(f"**Investment score:** {opp.get('Investment_Opportunity_Score', '')}/100")
+                    st.write(f"**Risk score:** {opp.get('Overall_Risk_Score', '')}/100")
+                    st.write(f"**Summary:** {opp.get('AI_Opportunity_Summary', '')}")
+
+                    score_data = {
+                        "Scientific strength": opp.get("Scientific_Strength", ""),
+                        "Chemistry strength": opp.get("Chemistry_Strength", ""),
+                        "Target relevance": opp.get("Target_Relevance", ""),
+                        "Extraction feasibility": opp.get("Extraction_Feasibility", ""),
+                        "Regulatory readiness": opp.get("Regulatory_Readiness", ""),
+                        "Safety profile": opp.get("Safety_Profile", ""),
+                        "Innovation opportunity": opp.get("Innovation_Opportunity", ""),
+                        "Market saturation risk": opp.get("Market_Saturation_Risk", ""),
+                        "Patent crowding risk": opp.get("Patent_Crowding_Risk", ""),
+                    }
+
+                    st.dataframe(
+                        pd.DataFrame([score_data]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            opportunity_csv = opportunity_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                "Download AI opportunity assessment as CSV",
+                data=opportunity_csv,
+                file_name="ai_opportunity_assessment.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("No opportunity assessment generated.")
+
+        st.markdown("---")
+        st.markdown("## Step 9 — Download unified ranking")
 
         csv = ranking.to_csv(index=False).encode("utf-8")
 

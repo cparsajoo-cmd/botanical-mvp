@@ -17,7 +17,7 @@ st.title("🌿 Botanical Product Intelligence Platform")
 st.caption("Unified Plant–Compound–Target–Evidence R&D Decision Engine")
 
 
-st.markdown("## Product / R&D question")
+st.markdown("## Step 0 — Define R&D question")
 
 col1, col2 = st.columns(2)
 
@@ -101,35 +101,29 @@ st.info(
 )
 
 
-st.markdown("## Database setup")
+st.markdown("---")
+st.markdown("## Step 1 — Prepare compound database")
 
-if st.button("Seed compound profiles"):
+st.write(
+    "Click this only once, or when you want to refresh the internal compound profile database."
+)
+
+if st.button("Step 1: Seed compound profiles"):
     saved_count = seed_compound_profiles()
     st.success(f"{saved_count} compound profiles saved.")
 
 
-st.markdown("## Unified R&D Discovery Engine")
+st.markdown("---")
+st.markdown("## Step 2 — Collect online evidence")
 
-col_a, col_b = st.columns(2)
+st.write(
+    "This searches online scientific and regulatory sources, extracts evidence, compounds, targets, and saves them to Supabase."
+)
 
-with col_a:
-    run_from_database = st.button(
-        "Generate unified R&D ranking from database",
-        type="primary",
-    )
+collect_done = False
 
-with col_b:
-    collect_then_rank = st.button(
-        "Collect online evidence + generate unified ranking"
-    )
-
-
-ranking = None
-
-if collect_then_rank:
-    st.markdown("### Online evidence collection")
-
-    with st.spinner("Searching sources, extracting evidence, compounds, targets, and saving to Supabase..."):
+if st.button("Step 2: Collect online evidence"):
+    with st.spinner("Searching sources and saving evidence to Supabase..."):
         research_output = run_research_engine(
             product_type=product_type,
             dosage_form=dosage_form,
@@ -157,29 +151,35 @@ if collect_then_rank:
         st.write(", ".join(candidate_plants))
 
     if errors:
-        st.warning("Some source searches produced errors.")
+        st.warning("Some searches produced errors.")
         st.dataframe(pd.DataFrame(errors), use_container_width=True)
 
-    ranking = build_rd_discovery_ranking(
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        target_count=target_count,
-    )
+    collect_done = True
 
-elif run_from_database:
-    ranking = build_rd_discovery_ranking(
-        product_type=product_type,
-        dosage_form=dosage_form,
-        indication=indication,
-        market=market,
-        target_count=target_count,
-    )
+
+st.markdown("---")
+st.markdown("## Step 3 — Generate unified R&D ranking")
+
+st.write(
+    "This combines plants, compounds, targets, evidence, extraction, regulation, safety, and innovation into one ranking."
+)
+
+ranking = None
+
+if st.button("Step 3: Generate unified R&D ranking", type="primary"):
+    with st.spinner("Building unified R&D ranking..."):
+        ranking = build_rd_discovery_ranking(
+            product_type=product_type,
+            dosage_form=dosage_form,
+            indication=indication,
+            market=market,
+            target_count=target_count,
+        )
 
 
 if ranking is not None:
-    st.markdown("## Unified R&D Ranking")
+    st.markdown("---")
+    st.markdown("## Step 4 — Unified R&D Ranking")
 
     if ranking.empty:
         st.warning("No R&D candidates found yet.")
@@ -213,7 +213,7 @@ if ranking is not None:
             hide_index=True,
         )
 
-        st.markdown("## Candidate profiles")
+        st.markdown("## Step 5 — Candidate profiles")
 
         for _, row in ranking.iterrows():
             plant = row.get("Scientific_Name", "")
@@ -223,29 +223,31 @@ if ranking is not None:
 
             title = (
                 f"🌿 {plant}"
-                f" — {compound if compound else 'compound not identified'}"
+                f" — {compound if compound else 'No compound identified'}"
                 f" — {final_class}"
                 f" — Score {final_score}/100"
             )
 
             with st.expander(title, expanded=False):
-                st.markdown("### Identity")
+                st.markdown("### 1. Identity")
                 st.write(f"**Scientific name:** {plant}")
                 st.write(f"**Common name:** {row.get('Common_Name', '')}")
                 st.write(f"**Region / country:** {row.get('Region', '')}")
 
-                st.markdown("### Active compound / target")
+                st.markdown("### 2. Active compound")
                 st.write(f"**Compound:** {compound}")
                 st.write(f"**Compound class:** {row.get('compound_class', '')}")
+
+                st.markdown("### 3. Target and mechanism")
                 st.write(f"**Major target:** {row.get('major_target', '')}")
                 st.write(f"**Mechanism:** {row.get('mechanism', '')}")
 
-                st.markdown("### Extraction")
+                st.markdown("### 4. Extraction")
                 extraction_method = row.get("extraction_method", "") or row.get("Extraction_Method", "")
                 st.write(f"**Extraction method:** {extraction_method}")
                 st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
 
-                st.markdown("### Scores")
+                st.markdown("### 5. Scores")
                 score_cols = [
                     "Evidence_Score_Unified",
                     "Chemistry_Score_Unified",
@@ -269,31 +271,34 @@ if ranking is not None:
                     hide_index=True,
                 )
 
-                st.markdown("### Interpretation")
+                st.markdown("### 6. Decision interpretation")
 
                 if final_class == "Commercial-ready":
                     st.success(
-                        "This candidate is suitable for near-term product development because it has stronger evidence, better regulatory fit, and acceptable safety."
+                        "Commercial-ready: suitable for near-term product development."
                     )
                 elif final_class == "R&D candidate":
                     st.info(
-                        "This candidate is suitable for R&D investment. It has promising chemistry, targets, or active compounds, but needs more evidence or regulatory work."
+                        "R&D candidate: promising chemistry or target profile, but more evidence or regulatory work is needed."
                     )
                 elif final_class == "Discovery / high-risk candidate":
                     st.warning(
-                        "This is a high-risk / high-reward discovery candidate. It may have interesting chemistry or novelty but lacks strong regulatory or clinical support."
+                        "Discovery candidate: high innovation potential, but high scientific or regulatory uncertainty."
                     )
                 elif final_class == "Early research candidate":
                     st.info(
-                        "This candidate may be kept in the research pipeline but is not yet strong enough for immediate development."
+                        "Early research candidate: keep in pipeline, but not ready for product development."
                     )
                 else:
                     st.warning("Low priority for now.")
 
-                st.markdown("### References")
+                st.markdown("### 7. References")
                 st.write(f"**Evidence records:** {row.get('Evidence_Record_Count', '')}")
                 st.write(f"**Source titles:** {row.get('Source_Title', '')}")
                 st.write(f"**Source URLs:** {row.get('Source_URL', '')}")
+
+        st.markdown("---")
+        st.markdown("## Step 6 — Download results")
 
         csv = ranking.to_csv(index=False).encode("utf-8")
 

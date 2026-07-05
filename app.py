@@ -6,6 +6,12 @@ from schema import DB_PATH
 from seed_data import seed_all
 from scoring_engine import rank_plants, list_diseases
 
+from scientific_evidence_collector import (
+    collect_or_load_evidence,
+    evidence_records_to_dataframe,
+)
+from scientific_decision_engine import get_scientific_decision
+
 
 st.set_page_config(
     page_title="Botanical Product Intelligence Platform",
@@ -15,8 +21,8 @@ st.set_page_config(
 
 st.title("🌿 Botanical Product Intelligence Platform")
 st.caption(
-    "Plant-first decision support — every plant in the database is ranked, "
-    "not just plants with existing evidence"
+    "Plant-first botanical product intelligence — ranking starts from plants, "
+    "then scientific evidence is collected and integrated."
 )
 
 if not Path(DB_PATH).exists():
@@ -100,6 +106,7 @@ st.markdown(
     f"for **{disease}** in **{market}**?"
 )
 
+
 results = rank_plants(disease, dosage_form)
 df = pd.DataFrame(results)
 
@@ -111,7 +118,7 @@ else:
         f"(plant-first: no plant is excluded for lack of evidence)."
     )
 
-    st.markdown("## Final Global Botanical Ranking")
+    st.markdown("## 1. Initial Plant-first Ranking")
 
     overview_cols = [
         "Scientific_Name",
@@ -131,10 +138,7 @@ else:
         "Market_Score",
     ]
 
-    visible_overview_cols = [
-        col for col in overview_cols
-        if col in df.columns
-    ]
+    visible_overview_cols = [c for c in overview_cols if c in df.columns]
 
     st.dataframe(
         df[visible_overview_cols],
@@ -142,7 +146,90 @@ else:
         hide_index=True,
     )
 
-    st.markdown("## Candidate details")
+    st.markdown("## 2. Scientific Evidence Collector")
+
+    selected_plant = st.selectbox(
+        "Select a plant for scientific evidence collection",
+        df["Scientific_Name"].tolist(),
+    )
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        collect_button = st.button("Collect scientific evidence")
+
+    with col_b:
+        force_refresh = st.checkbox("Force refresh online sources", value=False)
+
+    if collect_button:
+        with st.spinner(f"Collecting scientific evidence for {selected_plant}..."):
+            evidence_output = collect_or_load_evidence(
+                plant=selected_plant,
+                indication=disease,
+                compounds=[],
+                market=market,
+                max_results=8,
+                force_refresh=force_refresh,
+            )
+
+        if evidence_output.get("from_cache"):
+            st.info("Evidence loaded from Supabase cache.")
+        else:
+            st.success(
+                f"{evidence_output.get('saved_count', 0)} evidence records saved to Supabase."
+            )
+
+        decision = evidence_output.get("decision", {})
+
+        st.markdown("### Scientific decision summary")
+        st.write(f"**Decision class:** {decision.get('decision_class', '')}")
+        st.write(f"**Final scientific score:** {decision.get('final_scientific_score', '')}/100")
+        st.write(f"**Clinical score:** {decision.get('clinical_score', '')}/100")
+        st.write(f"**Chemistry score:** {decision.get('chemistry_score', '')}/100")
+        st.write(f"**Regulatory score:** {decision.get('regulatory_score', '')}/100")
+        st.write(f"**Reason:** {decision.get('decision_reason', '')}")
+
+        records_df = evidence_records_to_dataframe(evidence_output.get("records", []))
+
+        if not records_df.empty:
+            show_cols = [
+                "source",
+                "title",
+                "year",
+                "trust_score",
+                "evidence_score",
+                "final_source_score",
+                "evidence_flags",
+                "url",
+            ]
+            show_cols = [c for c in show_cols if c in records_df.columns]
+
+            st.markdown("### Retrieved scientific evidence")
+            st.dataframe(
+                records_df[show_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.markdown("## 3. Scientific Decision From Evidence Database")
+
+    if st.button("Show scientific decision from Supabase"):
+        sci_decision = get_scientific_decision(
+            plant=None,
+            indication=disease,
+            market=market,
+        )
+
+        if sci_decision.empty:
+            st.warning("No scientific evidence found in Supabase yet.")
+        else:
+            st.dataframe(
+                sci_decision,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.markdown("## 4. Candidate details")
 
     for _, row in df.iterrows():
         title = (
@@ -165,10 +252,7 @@ else:
                 "Market_Score",
             ]
 
-            available_score_cols = [
-                col for col in score_cols
-                if col in df.columns
-            ]
+            available_score_cols = [c for c in score_cols if c in df.columns]
 
             st.dataframe(
                 pd.DataFrame([{c: row.get(c, "") for c in available_score_cols}]),
@@ -183,18 +267,20 @@ else:
 
             st.markdown("### Chemistry and targets")
             st.markdown(f"**Compound count:** {row.get('Compound_Count', '')}")
-            st.markdown(f"**Relevant molecular targets hit:** {row.get('Relevant_Targets_Hit', '')}")
+            st.markdown(
+                f"**Relevant molecular targets hit:** {row.get('Relevant_Targets_Hit', '')}"
+            )
 
             st.markdown("### Evidence and regulation")
             st.markdown(f"**Clinical evidence:** {row.get('Clinical_Evidence_Notes', '')}")
             st.markdown(f"**Regulatory status:** {row.get('Regulatory_Notes', '')}")
 
-    st.markdown("## Downloads")
+    st.markdown("## 5. Downloads")
 
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
-        "Download ranking as CSV",
+        "Download initial ranking as CSV",
         data=csv,
         file_name="botanical_ranking.csv",
         mime="text/csv",
@@ -204,7 +290,6 @@ else:
 st.markdown("---")
 
 st.caption(
-    "Architecture: plants → plant_compounds → compound_targets → target_diseases, "
-    "enriched by clinical_evidence / regulatory_status / safety_profile / market_information. "
-    "The ranking query always starts from plants, never from clinical_evidence."
+    "Architecture: plants → plant_compounds → compound_targets → target_diseases → "
+    "scientific_evidence_collector → Supabase evidence cache → scientific decision engine."
 )

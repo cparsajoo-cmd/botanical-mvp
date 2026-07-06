@@ -1,5 +1,4 @@
 import pandas as pd
-from evidence_database import load_evidence_database
 
 
 def _txt(x):
@@ -9,185 +8,129 @@ def _txt(x):
 
 
 class MechanismDiscoveryEngine:
-    def __init__(self):
-        try:
-            self.evidence_df = load_evidence_database()
-        except Exception:
-            self.evidence_df = pd.DataFrame()
+    def discover(self, knowledge_df, inputs=None):
+        if inputs is None:
+            inputs = {}
 
-    def discover(self, ranking_df, inputs):
-        if ranking_df is None or ranking_df.empty:
+        if knowledge_df is None or knowledge_df.empty:
             return pd.DataFrame()
 
-        if self.evidence_df is None or self.evidence_df.empty:
-            return pd.DataFrame()
+        df = knowledge_df.copy()
 
-        df = self.evidence_df.copy()
+        required_cols = ["Plant", "Target", "Mechanism", "Indication", "Confidence"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = ""
 
-        usable_cols = [
-            c for c in df.columns
-            if c.lower() in [
-                "plant",
-                "scientific_name",
-                "common_name",
-                "compound",
-                "compound_name",
-                "title",
-                "abstract",
-                "source",
-                "source_title",
-                "source_url",
-                "url",
-                "indication",
-                "mechanism",
-                "target",
-                "major_target",
-            ]
-        ]
+        df["Confidence"] = pd.to_numeric(df["Confidence"], errors="coerce").fillna(0)
 
-        if not usable_cols:
-            return pd.DataFrame()
+        records = []
 
-        df["_text"] = (
-            df[usable_cols]
-            .fillna("")
-            .astype(str)
-            .apply(lambda x: " ".join(x.values.astype(str)), axis=1)
-            .str.lower()
-        )
+        for i, row in df.iterrows():
+            source_plant = row.get("Plant", "")
+            source_compound = row.get("Compound", "")
+            source_target = row.get("Target", "")
+            source_mechanism = row.get("Mechanism", "")
+            source_indication = row.get("Indication", "")
+            source_confidence = row.get("Confidence", 0)
 
-        target_indication = _txt(inputs.get("indication", ""))
-
-        opportunities = []
-
-        for _, row in ranking_df.iterrows():
-            known_plant = row.get("Scientific_Name", "")
-            known_common = row.get("Common_Name", "")
-            known_compound = row.get("compound_name", "")
-            known_target = row.get("major_target", "")
-            known_mechanism = row.get("mechanism", "")
-
-            mechanism_terms = [
-                _txt(known_target),
-                _txt(known_mechanism),
-                _txt(target_indication),
-            ]
-
-            mechanism_terms = [
-                t for t in mechanism_terms
-                if t and t not in ["nan", "none"]
-            ]
-
-            if not mechanism_terms:
+            if not source_plant:
                 continue
 
-            mask = pd.Series(False, index=df.index)
+            for j, candidate in df.iterrows():
+                if i == j:
+                    continue
 
-            for term in mechanism_terms:
-                if len(term) >= 3:
-                    mask = mask | df["_text"].str.contains(
-                        term,
-                        case=False,
-                        na=False,
-                        regex=False,
-                    )
-
-            matched = df[mask].copy()
-
-            if matched.empty:
-                continue
-
-            for _, ev in matched.iterrows():
-                candidate_plant = ""
-
-                for col in [
-                    "plant",
-                    "scientific_name",
-                    "Plant",
-                    "Scientific_Name",
-                    "common_name",
-                    "Common_Name",
-                ]:
-                    if col in ev.index and str(ev.get(col, "")).strip():
-                        candidate_plant = str(ev.get(col, "")).strip()
-                        break
+                candidate_plant = candidate.get("Plant", "")
+                candidate_compound = candidate.get("Compound", "")
+                candidate_target = candidate.get("Target", "")
+                candidate_mechanism = candidate.get("Mechanism", "")
+                candidate_indication = candidate.get("Indication", "")
+                candidate_confidence = candidate.get("Confidence", 0)
 
                 if not candidate_plant:
                     continue
 
-                if _txt(candidate_plant) == _txt(known_plant):
+                if _txt(candidate_plant) == _txt(source_plant):
                     continue
 
-                text = ev.get("_text", "")
-
-                mechanism_hits = sum(
-                    1 for term in mechanism_terms
-                    if term and term in text
+                shared_target = (
+                    source_target
+                    and candidate_target
+                    and _txt(source_target) == _txt(candidate_target)
                 )
 
-                evidence_signal = mechanism_hits * 20
-
-                scientific_score = row.get("Scientific_RnD_Potential", 0)
-                if scientific_score is None:
-                    scientific_score = row.get("Final_RnD_Score", 0)
-
-                try:
-                    scientific_score = float(scientific_score)
-                except Exception:
-                    scientific_score = 0
-
-                market_score = row.get("Market_Score", 0)
-
-                try:
-                    market_score = float(market_score)
-                except Exception:
-                    market_score = 0
-
-                novelty_bonus = max(0, 100 - market_score) * 0.25
-
-                mechanism_score = min(
-                    100,
-                    round(
-                        evidence_signal
-                        + scientific_score * 0.35
-                        + novelty_bonus,
-                        1,
-                    ),
+                shared_mechanism = (
+                    source_mechanism
+                    and candidate_mechanism
+                    and _txt(source_mechanism) == _txt(candidate_mechanism)
                 )
 
-                if mechanism_score >= 70:
+                shared_indication = (
+                    source_indication
+                    and candidate_indication
+                    and _txt(source_indication) == _txt(candidate_indication)
+                )
+
+                if not shared_target and not shared_mechanism and not shared_indication:
+                    continue
+
+                score = 0
+
+                if shared_target:
+                    score += 40
+
+                if shared_mechanism:
+                    score += 35
+
+                if shared_indication:
+                    score += 10
+
+                score += min(15, float(candidate_confidence) * 0.15)
+
+                score = round(min(100, score), 1)
+
+                if score >= 75:
                     category = "Strong mechanism-based R&D candidate"
-                elif mechanism_score >= 45:
+                elif score >= 50:
                     category = "Promising mechanism-based candidate"
                 else:
                     category = "Weak mechanism signal"
 
-                opportunities.append(
+                records.append(
                     {
-                        "Known_Plant": known_plant,
-                        "Known_Common_Name": known_common,
-                        "Known_Compound": known_compound,
-                        "Known_Target": known_target,
-                        "Known_Mechanism": known_mechanism,
+                        "Source_Plant": source_plant,
+                        "Source_Compound": source_compound,
                         "New_Candidate_Plant": candidate_plant,
-                        "Indication": inputs.get("indication", ""),
-                        "Mechanism_Hits": mechanism_hits,
-                        "Mechanism_Discovery_Score": mechanism_score,
+                        "Candidate_Compound": candidate_compound,
+                        "Shared_Target": source_target if shared_target else "",
+                        "Shared_Mechanism": source_mechanism if shared_mechanism else "",
+                        "Shared_Indication": source_indication if shared_indication else "",
+                        "Candidate_Confidence": candidate_confidence,
+                        "Mechanism_Discovery_Score": score,
                         "Mechanism_Category": category,
                         "Rationale": (
-                            f"{candidate_plant} appears in evidence connected to the same indication, "
-                            f"target, or mechanism as {known_plant}. This may represent a mechanism-based R&D opportunity."
+                            f"{candidate_plant} shares "
+                            f"{'target; ' if shared_target else ''}"
+                            f"{'mechanism; ' if shared_mechanism else ''}"
+                            f"{'indication; ' if shared_indication else ''}"
+                            f"with {source_plant}. This may represent a mechanism-based R&D opportunity."
                         ),
                     }
                 )
 
-        result = pd.DataFrame(opportunities)
+        result = pd.DataFrame(records)
 
         if result.empty:
             return result
 
         result = result.drop_duplicates(
-            subset=["Known_Target", "New_Candidate_Plant"],
+            subset=[
+                "Source_Plant",
+                "New_Candidate_Plant",
+                "Shared_Target",
+                "Shared_Mechanism",
+            ],
             keep="first",
         )
 

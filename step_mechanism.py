@@ -5,23 +5,23 @@ from mechanism_discovery_engine import MechanismDiscoveryEngine
 
 
 def render_mechanism_step(inputs):
-    ranking = st.session_state.get("ranking")
+    knowledge_df = st.session_state.get("knowledge_df")
 
-    if ranking is None or ranking.empty:
+    if knowledge_df is None or knowledge_df.empty:
         return
 
     st.markdown("---")
-    st.markdown("## Step 8.7 — Mechanism Discovery Engine")
+    st.markdown("## Step 8.8 — Mechanism Discovery Engine")
 
     st.write(
-        "This engine searches for new R&D candidates based on shared biological targets, mechanisms, and indication relevance."
+        "This engine uses extracted scientific knowledge to find new R&D candidates sharing targets, mechanisms, or indications."
     )
 
-    if st.button("Step 8.7: Discover mechanism-based R&D candidates"):
+    if st.button("Step 8.8: Discover mechanism-based R&D candidates"):
         with st.spinner("Searching mechanism-based R&D opportunities..."):
             engine = MechanismDiscoveryEngine()
             mechanism_df = engine.discover(
-                ranking_df=ranking,
+                knowledge_df=knowledge_df,
                 inputs=inputs,
             )
 

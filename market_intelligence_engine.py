@@ -21,14 +21,7 @@ class MarketIntelligenceEngine:
         compound = row.get("compound_name", "")
 
         if self.evidence_df is None or self.evidence_df.empty:
-            return {
-                "Market_Score": 0,
-                "Market_Status": "No market data",
-                "Product_Hits": 0,
-                "Regulatory_Hits": 0,
-                "Patent_Hits": 0,
-                "White_Space": "Unknown",
-            }
+            return self._empty_result("No market data")
 
         df = self.evidence_df.copy()
 
@@ -51,43 +44,31 @@ class MarketIntelligenceEngine:
         ]
 
         if not usable_cols:
-            return {
-                "Market_Score": 0,
-                "Market_Status": "No readable market data",
-                "Product_Hits": 0,
-                "Regulatory_Hits": 0,
-                "Patent_Hits": 0,
-                "White_Space": "Unknown",
-            }
+            return self._empty_result("No readable market data")
 
-       df["_text"] = (
-    df[usable_cols]
-    .fillna("")
-    .astype(str)
-    .apply(lambda x: " ".join(x.values.astype(str)), axis=1)
-    .str.lower()
-)
+        df["_text"] = (
+            df[usable_cols]
+            .fillna("")
+            .astype(str)
+            .apply(lambda x: " ".join(x.values.astype(str)), axis=1)
+            .str.lower()
+        )
 
-        terms = [
-            _text(plant),
-            _text(common),
-            _text(compound),
-        ]
+        terms = [_text(plant), _text(common), _text(compound)]
         terms = [t for t in terms if t and t != "nan"]
 
         if not terms:
-            return {
-                "Market_Score": 0,
-                "Market_Status": "No searchable term",
-                "Product_Hits": 0,
-                "Regulatory_Hits": 0,
-                "Patent_Hits": 0,
-                "White_Space": "Unknown",
-            }
+            return self._empty_result("No searchable term")
 
         mask = pd.Series(False, index=df.index)
+
         for term in terms:
-            mask = mask | df["_text"].str.contains(term, case=False, na=False, regex=False)
+            mask = mask | df["_text"].str.contains(
+                term,
+                case=False,
+                na=False,
+                regex=False,
+            )
 
         matched = df[mask]
 
@@ -124,7 +105,12 @@ class MarketIntelligenceEngine:
 
         market_score = min(
             100,
-            int(product_hits * 15 + regulatory_hits * 10 + patent_hits * 5 + len(matched) * 2),
+            int(
+                product_hits * 15
+                + regulatory_hits * 10
+                + patent_hits * 5
+                + len(matched) * 2
+            ),
         )
 
         if market_score >= 60 or product_hits >= 2:
@@ -144,4 +130,14 @@ class MarketIntelligenceEngine:
             "Regulatory_Hits": int(regulatory_hits),
             "Patent_Hits": int(patent_hits),
             "White_Space": white_space,
+        }
+
+    def _empty_result(self, status):
+        return {
+            "Market_Score": 0,
+            "Market_Status": status,
+            "Product_Hits": 0,
+            "Regulatory_Hits": 0,
+            "Patent_Hits": 0,
+            "White_Space": "Unknown",
         }

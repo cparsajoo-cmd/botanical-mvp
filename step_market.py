@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from modules.market_intelligence_engine import MarketIntelligenceEngine
+from market_intelligence_engine import MarketIntelligenceEngine
 
 
 def render_market_step():

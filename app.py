@@ -9,6 +9,7 @@ from step_ranking import render_ranking_step
 from step_opportunity import render_opportunity_step
 from step_market import render_market_step
 from step_whitespace import render_whitespace_step
+from step_knowledge import render_knowledge_step
 from step_mechanism import render_mechanism_step
 from step_graph import render_graph_step
 from step_download import render_download_step
@@ -35,6 +36,7 @@ render_ranking_step(inputs)
 render_opportunity_step()
 render_market_step()
 render_whitespace_step(inputs)
+render_knowledge_step(inputs)
 render_mechanism_step(inputs)
 render_graph_step(inputs)
 render_download_step()

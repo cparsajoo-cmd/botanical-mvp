@@ -15,32 +15,33 @@ def render_market_step():
 
     if st.button("Step 8.5: Analyze market potential"):
         engine = MarketIntelligenceEngine()
-
         results = []
 
         for _, row in ranking.iterrows():
             result = engine.evaluate(row)
-            results.append(result.__dict__)
+            results.append(result)
 
         market_df = pd.DataFrame(results)
         st.session_state["market_df"] = market_df
 
     market_df = st.session_state.get("market_df")
 
-    if market_df is not None and not market_df.empty:
-        st.success(f"{len(market_df)} market intelligence records generated.")
+    if market_df is None or market_df.empty:
+        return
 
-        st.dataframe(
-            market_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+    st.success(f"{len(market_df)} market intelligence records generated.")
 
-        csv = market_df.to_csv(index=False).encode("utf-8")
+    st.dataframe(
+        market_df,
+        use_container_width=True,
+        hide_index=True,
+    )
 
-        st.download_button(
-            "Download market intelligence as CSV",
-            data=csv,
-            file_name="market_intelligence.csv",
-            mime="text/csv",
-        )
+    csv = market_df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "Download market intelligence as CSV",
+        data=csv,
+        file_name="market_intelligence.csv",
+        mime="text/csv",
+    )

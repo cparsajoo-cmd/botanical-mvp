@@ -7,6 +7,7 @@ from step_discovery import render_discovery_step
 from step_evidence import render_evidence_step
 from step_ranking import render_ranking_step
 from step_opportunity import render_opportunity_step
+from step_market import render_market_step
 from step_graph import render_graph_step
 from step_download import render_download_step
 from evidence_database import load_evidence_database
@@ -30,6 +31,7 @@ render_discovery_step(inputs)
 render_evidence_step(inputs)
 render_ranking_step(inputs)
 render_opportunity_step()
+render_market_step()
 render_graph_step(inputs)
 render_download_step()
 

@@ -5,20 +5,6 @@ from rd_discovery_engine import build_rd_discovery_ranking
 from market_intelligence_engine import MarketIntelligenceEngine
 
 
-def classify_explanation(final_class):
-    if final_class == "Commercial-ready":
-        return "Suitable for near-term product development."
-    if final_class == "R&D candidate":
-        return "Promising for R&D, but more evidence, formulation, or regulatory work is needed."
-    if final_class == "Discovery / high-risk candidate":
-        return "High innovation potential, but high uncertainty."
-    if final_class == "Early research candidate":
-        return "Keep in the research pipeline."
-    if final_class == "Low priority":
-        return "Low priority for now."
-    return "Needs review."
-
-
 def clean_ranking(ranking):
     ranking = ranking.copy()
 
@@ -46,6 +32,8 @@ def clean_ranking(ranking):
     for col in score_cols:
         if col in ranking.columns:
             ranking[col] = pd.to_numeric(ranking[col], errors="coerce").fillna(0)
+        else:
+            ranking[col] = 0
 
     duplicate_cols = [
         c for c in ["Scientific_Name", "compound_name"]
@@ -78,13 +66,24 @@ def attach_market_intelligence(ranking, inputs):
     market_rows = []
 
     for _, row in ranking.iterrows():
-        market_result = engine.evaluate(
-            row=row,
-            indication=inputs["indication"],
-            dosage_form=inputs["dosage_form"],
-            market=inputs["market"],
-        )
-        market_rows.append(market_result)
+        try:
+            result = engine.evaluate(
+                row=row,
+                indication=inputs.get("indication", ""),
+                dosage_form=inputs.get("dosage_form", ""),
+                market=inputs.get("market", ""),
+            )
+        except Exception:
+            result = {
+                "Market_Score": 0,
+                "Market_Status": "Market analysis error",
+                "Product_Hits": 0,
+                "Regulatory_Hits": 0,
+                "Patent_Hits": 0,
+                "White_Space": "Unknown",
+            }
+
+        market_rows.append(result)
 
     market_df = pd.DataFrame(market_rows)
 
@@ -94,26 +93,15 @@ def attach_market_intelligence(ranking, inputs):
     )
 
     for col in ["Market_Score", "Product_Hits", "Regulatory_Hits", "Patent_Hits"]:
-        if col in ranking.columns:
-            ranking[col] = pd.to_numeric(ranking[col], errors="coerce").fillna(0)
+        if col not in ranking.columns:
+            ranking[col] = 0
+        ranking[col] = pd.to_numeric(ranking[col], errors="coerce").fillna(0)
 
-    st.session_state["market_df"] = ranking[
-        [
-            c for c in [
-                "Rank",
-                "Scientific_Name",
-                "Common_Name",
-                "compound_name",
-                "Market_Score",
-                "Market_Status",
-                "Product_Hits",
-                "Regulatory_Hits",
-                "Patent_Hits",
-                "White_Space",
-            ]
-            if c in ranking.columns
-        ]
-    ]
+    if "Market_Status" not in ranking.columns:
+        ranking["Market_Status"] = "No market signal yet"
+
+    if "White_Space" not in ranking.columns:
+        ranking["White_Space"] = "Unknown"
 
     return ranking
 
@@ -137,6 +125,9 @@ def add_decision_layers(ranking):
         if col not in ranking.columns:
             ranking[col] = 0
         ranking[col] = pd.to_numeric(ranking[col], errors="coerce").fillna(0)
+
+    if "Market_Status" not in ranking.columns:
+        ranking["Market_Status"] = "No market signal yet"
 
     ranking["Scientific_RnD_Potential"] = (
         ranking["Evidence_Score_Unified"] * 0.30
@@ -181,31 +172,30 @@ def add_decision_layers(ranking):
 
         return "Do not prioritize now"
 
-    def decision_reason(row):
+    def reason(row):
         if row["Is_Marketed"]:
             return (
-                "Market or regulatory/product signals exist. This can be studied as an existing commercial category, "
-                "with focus on differentiation, formulation, claims, quality, or positioning."
+                "Market/product/regulatory signals exist. Evaluate differentiation, formulation, quality, claims, and positioning."
             )
 
         if row["Is_New_RnD_Opportunity"]:
             return (
-                "Not strongly visible in market signals, but scientific/chemical/target evidence suggests R&D potential. "
-                "This is the category for new product-development or innovation scouting."
+                "Not strongly commercialized yet, but scientific, chemical, target, or innovation signals suggest R&D potential."
             )
 
         return (
-            "Current market and scientific signals are weak. Keep only as low-priority unless new evidence appears."
+            "Current scientific and market signals are weak. Keep as low priority unless new evidence appears."
         )
 
     ranking["Decision_Category"] = ranking.apply(decide, axis=1)
-    ranking["Decision_Reason"] = ranking.apply(decision_reason, axis=1)
+    ranking["Decision_Reason"] = ranking.apply(reason, axis=1)
 
     return ranking
 
 
 def split_ranking_sections(ranking):
-    ranking = ranking.copy()
+    if "Decision_Category" not in ranking.columns:
+        ranking = add_decision_layers(ranking)
 
     marketed = ranking[
         ranking["Decision_Category"] == "Already marketed / commercial candidate"
@@ -374,12 +364,18 @@ def render_ranking_step(inputs):
     if ranking is None:
         return
 
-    st.markdown("---")
-    st.markdown("## Step 6 — Unified Market + R&D Decision Ranking")
-
     if ranking.empty:
         st.warning("No candidates found yet.")
         return
+
+    if "Decision_Category" not in ranking.columns:
+        ranking = clean_ranking(ranking)
+        ranking = attach_market_intelligence(ranking, inputs)
+        ranking = add_decision_layers(ranking)
+        st.session_state["ranking"] = ranking
+
+    st.markdown("---")
+    st.markdown("## Step 6 — Unified Market + R&D Decision Ranking")
 
     marketed, new_rd, low = split_ranking_sections(ranking)
 

@@ -60,7 +60,13 @@ class MarketIntelligenceEngine:
                 "White_Space": "Unknown",
             }
 
-        df["_text"] = df[usable_cols].astype(str).agg(" ".join, axis=1).str.lower()
+       df["_text"] = (
+    df[usable_cols]
+    .fillna("")
+    .astype(str)
+    .apply(lambda x: " ".join(x.values.astype(str)), axis=1)
+    .str.lower()
+)
 
         terms = [
             _text(plant),

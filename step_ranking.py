@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
+
 from rd_discovery_engine import build_rd_discovery_ranking
+from market_intelligence_engine import MarketIntelligenceEngine
 
 
 def classify_explanation(final_class):
     if final_class == "Commercial-ready":
-        return "Already suitable for near-term product development or marketed-style positioning."
+        return "Suitable for near-term product development."
     if final_class == "R&D candidate":
         return "Promising for R&D, but more evidence, formulation, or regulatory work is needed."
     if final_class == "Discovery / high-risk candidate":
@@ -28,7 +30,6 @@ def clean_ranking(ranking):
             .str.lower()
             .str.replace("nan", "", regex=False)
         )
-
         ranking["compound_name"] = ranking["compound_name"].str.capitalize()
 
     if "Final_RnD_Score" in ranking.columns:
@@ -37,10 +38,7 @@ def clean_ranking(ranking):
             errors="coerce",
         )
 
-    duplicate_cols = [
-        c for c in ["Scientific_Name", "compound_name"]
-        if c in ranking.columns
-    ]
+    duplicate_cols = [c for c in ["Scientific_Name", "compound_name"] if c in ranking.columns]
 
     if duplicate_cols:
         ranking = ranking.drop_duplicates(subset=duplicate_cols, keep="first")
@@ -52,42 +50,78 @@ def clean_ranking(ranking):
     )
 
     ranking = ranking.reset_index(drop=True)
+
+    if "Rank" in ranking.columns:
+        ranking = ranking.drop(columns=["Rank"])
+
     ranking.insert(0, "Rank", range(1, len(ranking) + 1))
 
     return ranking
 
 
-def split_ranking_sections(ranking):
-    commercial = ranking[
-        ranking["Final_Class"].isin(
-            [
-                "Commercial-ready",
-                "Product-ready candidate",
-                "Market-ready candidate",
-            ]
+def attach_market_intelligence(ranking, inputs):
+    ranking = ranking.copy()
+
+    engine = MarketIntelligenceEngine()
+    rows = []
+
+    for _, row in ranking.iterrows():
+        market = engine.evaluate(
+            row=row,
+            indication=inputs["indication"],
+            dosage_form=inputs["dosage_form"],
+            market=inputs["market"],
         )
-    ] if "Final_Class" in ranking.columns else pd.DataFrame()
+        rows.append(market)
+
+    market_df = pd.DataFrame(rows)
+
+    ranking = pd.concat(
+        [ranking.reset_index(drop=True), market_df.reset_index(drop=True)],
+        axis=1,
+    )
+
+    st.session_state["market_df"] = ranking[
+        [
+            c for c in [
+                "Rank",
+                "Scientific_Name",
+                "Common_Name",
+                "compound_name",
+                "Market_Score",
+                "Market_Status",
+                "Product_Hits",
+                "Regulatory_Hits",
+                "Patent_Hits",
+                "White_Space",
+            ]
+            if c in ranking.columns
+        ]
+    ]
+
+    return ranking
+
+
+def split_ranking_sections(ranking):
+    ranking = ranking.copy()
+
+    marketed = ranking[
+        (ranking["Market_Score"] >= 60)
+        | (ranking["Product_Hits"] >= 2)
+        | (ranking["Market_Status"].astype(str).str.contains("Marketed", case=False, na=False))
+    ]
 
     rd = ranking[
-        ranking["Final_Class"].isin(
-            [
-                "R&D candidate",
-                "Strategic development candidate",
-            ]
-        )
-    ] if "Final_Class" in ranking.columns else pd.DataFrame()
+        (~ranking.index.isin(marketed.index))
+        & (ranking["Final_RnD_Score"] >= 60)
+    ]
 
-    discovery = ranking[
-        ranking["Final_Class"].isin(
-            [
-                "Discovery / high-risk candidate",
-                "Early research candidate",
-                "Low priority",
-            ]
-        )
-    ] if "Final_Class" in ranking.columns else pd.DataFrame()
+    low = ranking[
+        (~ranking.index.isin(marketed.index))
+        & (~ranking.index.isin(rd.index))
+    ]
 
-    return commercial, rd, discovery
+    return marketed, rd, low
 
 
 def show_table(title, df):
@@ -103,6 +137,12 @@ def show_table(title, df):
         "Common_Name",
         "compound_name",
         "Region",
+        "Market_Score",
+        "Market_Status",
+        "Product_Hits",
+        "Regulatory_Hits",
+        "Patent_Hits",
+        "White_Space",
         "Final_RnD_Score",
         "Final_Class",
         "Evidence_Score_Unified",
@@ -116,11 +156,7 @@ def show_table(title, df):
 
     cols = [c for c in cols if c in df.columns]
 
-    st.dataframe(
-        df[cols],
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.dataframe(df[cols], use_container_width=True, hide_index=True)
 
 
 def render_candidate_profiles(ranking):
@@ -131,39 +167,23 @@ def render_candidate_profiles(ranking):
         compound = row.get("compound_name", "")
         final_score = row.get("Final_RnD_Score", "")
         final_class = row.get("Final_Class", "")
+        market_status = row.get("Market_Status", "")
 
         title = (
             f"#{row.get('Rank')} 🌿 {plant}"
             f" — {compound if compound else 'No compound identified'}"
-            f" — {final_class}"
-            f" — Score {final_score}/100"
+            f" — {market_status}"
+            f" — R&D Score {final_score}/100"
         )
 
         with st.expander(title, expanded=False):
             st.markdown("### 1. Executive decision")
-            st.write(f"**Final class:** {final_class}")
-            st.write(f"**Final R&D score:** {final_score}/100")
+            st.write(f"**Scientific/R&D class:** {final_class}")
+            st.write(f"**R&D score:** {final_score}/100")
+            st.write(f"**Market status:** {market_status}")
+            st.write(f"**Market score:** {row.get('Market_Score', '')}/100")
+            st.write(f"**White space:** {row.get('White_Space', '')}")
             st.write(f"**Interpretation:** {classify_explanation(final_class)}")
-
-            if final_class in [
-                "Commercial-ready",
-                "Product-ready candidate",
-                "Market-ready candidate",
-            ]:
-                st.success(
-                    "This candidate appears suitable for commercial product positioning, subject to regulatory and formulation confirmation."
-                )
-            elif final_class in [
-                "R&D candidate",
-                "Strategic development candidate",
-            ]:
-                st.info(
-                    "This candidate is better treated as an R&D or product-development opportunity."
-                )
-            else:
-                st.warning(
-                    "This candidate is exploratory or low-priority until stronger evidence is available."
-                )
 
             st.markdown("### 2. Plant identity")
             st.write(f"**Scientific name:** {plant}")
@@ -178,14 +198,20 @@ def render_candidate_profiles(ranking):
             st.write(f"**Major target:** {row.get('major_target', '')}")
             st.write(f"**Mechanism:** {row.get('mechanism', '')}")
 
-            st.markdown("### 5. Extraction / formulation relevance")
+            st.markdown("### 5. Market evidence")
+            st.write(f"**Product hits:** {row.get('Product_Hits', '')}")
+            st.write(f"**Regulatory hits:** {row.get('Regulatory_Hits', '')}")
+            st.write(f"**Patent hits:** {row.get('Patent_Hits', '')}")
+
+            st.markdown("### 6. Extraction / formulation relevance")
             extraction_method = row.get("extraction_method", "") or row.get("Extraction_Method", "")
             st.write(f"**Extraction method:** {extraction_method}")
             st.write(f"**Plant part:** {row.get('Plant_Part', '')}")
 
-            st.markdown("### 6. Score breakdown")
+            st.markdown("### 7. Score breakdown")
 
             score_cols = [
+                "Market_Score",
                 "Evidence_Score_Unified",
                 "Chemistry_Score_Unified",
                 "Target_Match_Score",
@@ -202,13 +228,9 @@ def render_candidate_profiles(ranking):
                 if col in ranking.columns
             }
 
-            st.dataframe(
-                pd.DataFrame([score_data]),
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(pd.DataFrame([score_data]), use_container_width=True, hide_index=True)
 
-            st.markdown("### 7. References")
+            st.markdown("### 8. References")
             st.write(f"**Evidence records:** {row.get('Evidence_Record_Count', '')}")
             st.write(f"**Source titles:** {row.get('Source_Title', '')}")
             st.write(f"**Source URLs:** {row.get('Source_URL', '')}")
@@ -216,10 +238,10 @@ def render_candidate_profiles(ranking):
 
 def render_ranking_step(inputs):
     st.markdown("---")
-    st.markdown("## Step 5 — Generate unified R&D ranking")
+    st.markdown("## Step 5 — Generate unified market + R&D ranking")
 
-    if st.button("Step 5: Generate unified R&D ranking", type="primary"):
-        with st.spinner("Building unified R&D ranking..."):
+    if st.button("Step 5: Generate unified market + R&D ranking", type="primary"):
+        with st.spinner("Building unified market + R&D ranking..."):
             ranking = build_rd_discovery_ranking(
                 product_type=inputs["product_type"],
                 dosage_form=inputs["dosage_form"],
@@ -230,6 +252,7 @@ def render_ranking_step(inputs):
 
         if ranking is not None and not ranking.empty:
             ranking = clean_ranking(ranking)
+            ranking = attach_market_intelligence(ranking, inputs)
 
         st.session_state["ranking"] = ranking
 
@@ -239,13 +262,13 @@ def render_ranking_step(inputs):
         return
 
     st.markdown("---")
-    st.markdown("## Step 6 — Unified Decision Ranking")
+    st.markdown("## Step 6 — Unified Market + R&D Decision Ranking")
 
     if ranking.empty:
         st.warning("No candidates found yet.")
         return
 
-    commercial, rd, discovery = split_ranking_sections(ranking)
+    marketed, rd, low = split_ranking_sections(ranking)
 
     st.success(f"{len(ranking)} plant–compound candidates ranked.")
 
@@ -253,17 +276,17 @@ def render_ranking_step(inputs):
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.metric("Commercial / market-ready", len(commercial))
+        st.metric("Marketed / commercial candidates", len(marketed))
 
     with c2:
         st.metric("R&D opportunities", len(rd))
 
     with c3:
-        st.metric("Discovery / low priority", len(discovery))
+        st.metric("Do not prioritize / low priority", len(low))
 
-    show_table("A. Commercial-ready / marketed-style candidates", commercial)
+    show_table("A. Already marketed / commercial candidates", marketed)
     show_table("B. R&D development opportunities", rd)
-    show_table("C. Discovery / exploratory / low-priority candidates", discovery)
+    show_table("C. Do not prioritize / low-priority candidates", low)
 
     st.markdown("### Full ranking")
     show_table("All candidates", ranking)

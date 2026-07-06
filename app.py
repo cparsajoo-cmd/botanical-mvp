@@ -8,6 +8,7 @@ from step_evidence import render_evidence_step
 from step_ranking import render_ranking_step
 from step_opportunity import render_opportunity_step
 from step_market import render_market_step
+from step_whitespace import render_whitespace_step
 from step_graph import render_graph_step
 from step_download import render_download_step
 from evidence_database import load_evidence_database
@@ -32,6 +33,7 @@ render_evidence_step(inputs)
 render_ranking_step(inputs)
 render_opportunity_step()
 render_market_step()
+render_whitespace_step(inputs)
 render_graph_step(inputs)
 render_download_step()
 
@@ -39,6 +41,10 @@ render_download_step()
 st.markdown("---")
 
 with st.expander("Supabase evidence database preview"):
-    df = load_evidence_database()
-    st.write(f"Total evidence records: {len(df)}")
-    st.dataframe(df, use_container_width=True)
+    try:
+        df = load_evidence_database()
+        st.write(f"Total evidence records: {len(df)}")
+        st.dataframe(df, use_container_width=True)
+    except Exception as e:
+        st.warning("Could not load Supabase evidence database preview.")
+        st.write(str(e))

@@ -21,6 +21,23 @@ chembl_connector, europepmc_connector, clinicaltrials_connector, ...) or the
 Supabase evidence store (database.py / evidence_database.py). Those stay as
 the data-access layer; this engine is the single place that turns that data
 into a decision.
+
+Pipeline (all internal, not separate Streamlit "Steps"):
+    1. known_inventory()      -> known plants / compounds / targets / evidence
+                                  / market status for the product/problem
+    2. discover_alternatives() -> for each reference compound, find
+                                  alternative plants (curated map + live
+                                  Europe PMC) containing the same/similar
+                                  compound
+    3. enrich()                -> concentration, extraction method,
+                                  co-compounds, safety flags, interaction
+                                  flags, extracted from the supporting text
+    4. score()                 -> market status, novelty status, R&D
+                                  opportunity score, decision class,
+                                  rationale
+    5. run()                   -> orchestrates 1-4, returns the final
+                                  decision table as a pandas DataFrame with
+                                  exactly the columns requested by product.
 """
 
 import re
@@ -28,14 +45,25 @@ import requests
 import pandas as pd
 
 from seed_data import PLANT_COMPOUNDS, COMPOUND_TARGETS, TARGET_DISEASES, SLEEP_TEA_EVIDENCE
-from compound_occurrence_map import get_alternative_plants
+from compound_occurrence_map import get_alternative_plants, get_region
 
 DECISION_COLUMNS = [
-    "Reference_Plant", "Reference_Compound", "Alternative_Plant",
-    "Shared_or_Similar_Compound", "Target_or_Mechanism", "Concentration_Info",
-    "Extraction_Method", "Co_Compounds", "Safety_Flags", "Interaction_Flags",
-    "Evidence_Source", "Market_Status", "Novelty_Status",
-    "R&D_Opportunity_Score", "Decision_Class", "Rationale",
+    "Reference_Plant",
+    "Reference_Compound",
+    "Alternative_Plant",
+    "Shared_or_Similar_Compound",
+    "Target_or_Mechanism",
+    "Concentration_Info",
+    "Extraction_Method",
+    "Co_Compounds",
+    "Safety_Flags",
+    "Interaction_Flags",
+    "Evidence_Source",
+    "Market_Status",
+    "Novelty_Status",
+    "R&D_Opportunity_Score",
+    "Decision_Class",
+    "Rationale",
 ]
 
 _SAFETY_WORDS = [
@@ -106,7 +134,12 @@ class BotanicalRDCandidateEngine:
     # 1. Known inventory: plants / compounds / targets / evidence
     # ------------------------------------------------------------------ #
     def known_inventory(self, indication: str):
+        """
+        Returns a list of dicts: reference_plant, reference_compound, target
+        for everything already known (seed knowledge base) about `indication`.
+        """
         indication_n = _norm(indication)
+
         matched_targets = set()
 
         # 1. Exact match (covers every option in step_inputs.py's dropdown).
@@ -147,12 +180,45 @@ class BotanicalRDCandidateEngine:
                         "seed_extraction": extraction,
                         "target": "; ".join(targets) if targets else "Not established",
                     })
+
         return inventory
+
+    def known_inventory_df(self, indication: str) -> pd.DataFrame:
+        """
+        Public, displayable version of known_inventory(): the 5-part
+        inventory the user asks to see FIRST, before any alternative-plant
+        analysis — known plants, known compounds, target/mechanism, known
+        clinical/regulatory evidence, known market status.
+        """
+        rows = []
+        for item in self.known_inventory(indication):
+            plant = item["reference_plant"]
+            curated = self._curated_evidence_for(plant)
+            rows.append({
+                "Known_Plant": plant,
+                "Known_Compound": item["reference_compound"],
+                "Compound_Class": item["compound_class"],
+                "Target_or_Mechanism": item["target"],
+                "Region_of_Origin": get_region(plant),
+                "Known_Clinical_Evidence": curated["outcome"] if curated else "Not catalogued yet",
+                "Known_Regulatory_Status": (
+                    f"EMA: {curated['ema_status']}; WHO: {curated['who_status']}; ESCOP: {curated['escop_status']}"
+                    if curated else "Not catalogued yet"
+                ),
+                "Known_Market_Status": (
+                    f"{curated['production_status']} — {curated['commercial']}" if curated else "Not catalogued yet"
+                ),
+            })
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.drop_duplicates().reset_index(drop=True)
+        return df
 
     # ------------------------------------------------------------------ #
     # 2. Alternative plant discovery for a given compound
     # ------------------------------------------------------------------ #
     def discover_alternatives(self, compound: str, indication: str = ""):
+        """Returns a list of raw text-bearing rows for candidate alternative plants."""
         rows = []
 
         # 2a. Curated offline knowledge base (instant, no network needed)
@@ -193,6 +259,7 @@ class BotanicalRDCandidateEngine:
         query = f'"{compound}" medicinal plant phytochemical extraction concentration'
         if indication:
             query += f' "{indication}"'
+
         try:
             r = requests.get(
                 "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
@@ -274,6 +341,33 @@ class BotanicalRDCandidateEngine:
         t = _norm(text)
         found = [c for c in _KNOWN_CO_COMPOUNDS if c in t]
         return "; ".join(found)
+
+    @staticmethod
+    def _annotate_synergy(co_compounds_str, reference_compound):
+        """For each co-compound found in the text, check whether it shares
+        a target/mechanism with the reference compound (COMPOUND_TARGETS).
+        Shared target -> plausible mechanistic synergy; otherwise it's just
+        a co-occurring compound with no evidence of synergy."""
+        if not co_compounds_str:
+            return "None identified"
+
+        ref_targets = set(COMPOUND_TARGETS.get(reference_compound, []))
+        annotated = []
+        for co in [c.strip() for c in co_compounds_str.split(";") if c.strip()]:
+            if _norm(co) == _norm(reference_compound):
+                continue
+            co_title = co.title() if co not in ("egcg",) else co.upper()
+            co_targets = set()
+            for name, targets in COMPOUND_TARGETS.items():
+                if _norm(name) == _norm(co):
+                    co_targets = set(targets)
+                    break
+            shared = ref_targets & co_targets
+            if shared:
+                annotated.append(f"{co_title} (synergy likely — shared target: {', '.join(shared)})")
+            else:
+                annotated.append(f"{co_title} (co-occurring, no shared-target evidence)")
+        return "; ".join(annotated) if annotated else "None identified"
 
     @staticmethod
     def _extract_flags(text, words):
@@ -366,6 +460,13 @@ class BotanicalRDCandidateEngine:
     # ------------------------------------------------------------------ #
     def run(self, indication: str, dosage_form: str = "", market: str = "",
             reference_plant: str = "", reference_compound: str = "") -> pd.DataFrame:
+        """
+        Build the full R&D decision table for `indication`.
+
+        If reference_plant / reference_compound are given, only that
+        plant-compound pair is expanded; otherwise every known
+        plant-compound pair relevant to `indication` is expanded.
+        """
         inventory = self.known_inventory(indication)
 
         if reference_plant:
@@ -386,6 +487,7 @@ class BotanicalRDCandidateEngine:
 
             candidates = self.discover_alternatives(ref_compound, indication)
 
+            # Always include the reference plant itself as row 0 (baseline).
             candidates.insert(0, {
                 "alternative_plant": ref_plant,
                 "raw_text": f"{ref_plant} is the reference source of {ref_compound}. "
@@ -406,11 +508,16 @@ class BotanicalRDCandidateEngine:
                 seen.add(dedup_key)
 
                 enriched = self._enrich(c["raw_text"])
+                enriched["co_compounds"] = self._annotate_synergy(enriched["co_compounds"], ref_compound)
                 extraction_score = self._score_extraction(enriched["extraction_method"], dosage_form)
                 market_status = self._market_status(alt_plant, ref_plant)
                 novelty_status = self._novelty_status(alt_plant, ref_compound)
                 is_reference = _norm(alt_plant) == _norm(ref_plant)
+                region = get_region(alt_plant)
 
+                # Fold in real curated clinical/regulatory evidence when we
+                # have it (seed_data.SLEEP_TEA_EVIDENCE), instead of relying
+                # only on regex-extracted text.
                 curated = self._curated_evidence_for(alt_plant)
                 if curated:
                     if not enriched["safety_flags"]:
@@ -452,7 +559,7 @@ class BotanicalRDCandidateEngine:
                     "R&D_Opportunity_Score": rd_score,
                     "Decision_Class": self._decision_class(rd_score),
                     "Rationale": (
-                        f"{alt_plant} is a {'reference' if is_reference else 'candidate alternative'} "
+                        f"{alt_plant} ({region}) is a {'reference' if is_reference else 'candidate alternative'} "
                         f"source of {ref_compound} (target/mechanism: {target}). "
                         f"Extraction route: {enriched['extraction_method'] or 'not clearly reported'}. "
                         f"Market status: {market_status}."
@@ -463,6 +570,8 @@ class BotanicalRDCandidateEngine:
         if df.empty:
             return df
 
-        df = df.sort_values(by=["R&D_Opportunity_Score"], ascending=False).reset_index(drop=True)
+        df = df.sort_values(
+            by=["R&D_Opportunity_Score"], ascending=False
+        ).reset_index(drop=True)
         df.insert(0, "Rank", range(1, len(df) + 1))
         return df

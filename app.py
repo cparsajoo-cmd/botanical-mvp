@@ -30,6 +30,11 @@ st.caption("AI Botanical R&D Discovery Platform")
 
 inputs = render_inputs()
 
+st.markdown("## Workflow order")
+st.info(
+    "Run in this order: Step 2 → Step 3 → Step 4 → Step 5 → Step 9 → Step 10 → Step 11 → Step 12 → Step 13 → Step 14"
+)
+
 render_question_step(inputs)
 render_seed_step()
 render_discovery_step(inputs)

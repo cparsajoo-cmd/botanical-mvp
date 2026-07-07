@@ -17,6 +17,26 @@ def render_rd_candidates_step(inputs):
     dosage_form = inputs.get("dosage_form", "")
     market = inputs.get("market", "")
 
+    # --- Step 1: known inventory, shown immediately (offline, instant) ---
+    st.markdown("### Step 1 — Known inventory for this problem")
+    inventory_engine = BotanicalRDCandidateEngine(use_live_search=False)
+    inventory_df = inventory_engine.known_inventory_df(indication)
+
+    if inventory_df.empty:
+        st.warning(
+            f"No known plants/compounds/targets for '{indication}' yet in "
+            "the seed knowledge base. Extend seed_data.py "
+            "(PLANT_COMPOUNDS / COMPOUND_TARGETS / TARGET_DISEASES) to add it."
+        )
+    else:
+        st.caption(
+            f"{inventory_df['Known_Plant'].nunique()} known plant(s), "
+            f"{inventory_df['Known_Compound'].nunique()} known compound(s) already catalogued for this problem."
+        )
+        st.dataframe(inventory_df, use_container_width=True)
+
+    st.markdown("### Step 2 — Alternative/better botanical sources")
+
     col1, col2 = st.columns(2)
     with col1:
         reference_plant = st.text_input(

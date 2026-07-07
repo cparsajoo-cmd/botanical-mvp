@@ -13,6 +13,7 @@ from step_knowledge import render_knowledge_step
 from step_targets import render_target_step
 from step_mechanism import render_mechanism_step
 from step_target_discovery import render_target_discovery_step
+from step_botanical_brain import render_botanical_brain_step
 from step_graph import render_graph_step
 from step_download import render_download_step
 from evidence_database import load_evidence_database
@@ -25,15 +26,17 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("AI Botanical R&D Discovery Platform")
+st.caption("AI Botanical R&D Decision Intelligence Platform")
 
 
 inputs = render_inputs()
 
-st.markdown("## Workflow order")
+st.markdown("## Recommended workflow")
 st.info(
-    "Run in this order: Step 2 → Step 3 → Step 4 → Step 5 → Step 9 → Step 10 → Step 11 → Step 12 → Step 13 → Step 14"
+    "Run: Evidence → Ranking → Knowledge Extraction → Disease Target → Mechanism → "
+    "Target-Compound-Plant → Botanical Brain → Knowledge Graph → Download"
 )
+
 
 render_question_step(inputs)
 render_seed_step()
@@ -47,6 +50,10 @@ render_knowledge_step(inputs)
 render_target_step(inputs)
 render_mechanism_step(inputs)
 render_target_discovery_step(inputs)
+
+# Core competitive advantage engine
+render_botanical_brain_step(inputs)
+
 render_graph_step(inputs)
 render_download_step()
 

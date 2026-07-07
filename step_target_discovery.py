@@ -7,6 +7,7 @@ from target_compound_plant_engine import TargetCompoundPlantEngine
 def render_target_discovery_step(inputs):
     knowledge_df = st.session_state.get("knowledge_df")
     ranking_df = st.session_state.get("ranking")
+    target_df = st.session_state.get("target_df")
 
     if knowledge_df is None or knowledge_df.empty:
         return
@@ -15,7 +16,7 @@ def render_target_discovery_step(inputs):
     st.markdown("## Step 8.9 — Target → Compound → Plant Discovery")
 
     st.write(
-        "This engine starts from biological targets and mechanisms, then identifies active compounds and candidate plants connected to them."
+        "This engine connects disease targets to active compounds and then to candidate plants."
     )
 
     if st.button("Step 8.9: Discover target-compound-plant opportunities"):
@@ -24,6 +25,7 @@ def render_target_discovery_step(inputs):
             tcp_df = engine.discover(
                 knowledge_df=knowledge_df,
                 ranking_df=ranking_df,
+                target_df=target_df,
                 inputs=inputs,
             )
 
@@ -40,49 +42,49 @@ def render_target_discovery_step(inputs):
 
     st.success(f"{len(tcp_df)} target-compound-plant opportunities found.")
 
+    commercial = tcp_df[
+        tcp_df["Opportunity_Category"] == "Known commercial target-compound-plant route"
+    ]
+
     strong = tcp_df[
-        tcp_df["Opportunity_Category"] == "Strong target-to-plant R&D opportunity"
+        tcp_df["Opportunity_Category"] == "Strong new R&D opportunity"
     ]
 
     promising = tcp_df[
-        tcp_df["Opportunity_Category"] == "Promising target-to-plant opportunity"
-    ]
-
-    commercial = tcp_df[
-        tcp_df["Opportunity_Category"] == "Known commercial mechanism candidate"
+        tcp_df["Opportunity_Category"] == "Promising new R&D opportunity"
     ]
 
     weak = tcp_df[
-        tcp_df["Opportunity_Category"] == "Weak target-to-plant signal"
+        tcp_df["Opportunity_Category"] == "Weak signal"
     ]
 
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        st.metric("Strong R&D", len(strong))
+        st.metric("Commercial routes", len(commercial))
 
     with c2:
-        st.metric("Promising", len(promising))
+        st.metric("Strong new R&D", len(strong))
 
     with c3:
-        st.metric("Known commercial", len(commercial))
+        st.metric("Promising new R&D", len(promising))
 
     with c4:
         st.metric("Weak signal", len(weak))
 
-    st.markdown("### A. Strong target-to-plant R&D opportunities")
+    st.markdown("### A. Strong new R&D opportunities")
     st.dataframe(strong, use_container_width=True, hide_index=True)
 
-    st.markdown("### B. Promising target-to-plant opportunities")
+    st.markdown("### B. Promising new R&D opportunities")
     st.dataframe(promising, use_container_width=True, hide_index=True)
 
-    st.markdown("### C. Known commercial mechanism candidates")
+    st.markdown("### C. Known commercial target-compound-plant routes")
     st.dataframe(commercial, use_container_width=True, hide_index=True)
 
     st.markdown("### D. Weak signals")
     st.dataframe(weak, use_container_width=True, hide_index=True)
 
-    st.markdown("### Full target-compound-plant discovery table")
+    st.markdown("### Full target-compound-plant table")
     st.dataframe(tcp_df, use_container_width=True, hide_index=True)
 
     csv = tcp_df.to_csv(index=False).encode("utf-8")

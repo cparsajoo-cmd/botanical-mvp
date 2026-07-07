@@ -1,124 +1,77 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-from botanical_rd_candidate_engine import (
-    BotanicalRDCandidateEngine,
-    load_default_evidence,
-)
+from botanical_rd_engine import BotanicalRDCandidateEngine
 
 
-def render_rd_candidate_step(inputs):
-    st.markdown("## Central Botanical R&D Candidate Engine")
-
-    st.write(
-        "This engine starts from the product/problem, identifies known "
-        "plant–compound–target evidence, and proposes alternative botanical "
-        "R&D candidates."
+def render_rd_candidates_step(inputs):
+    st.markdown("## R&D Candidate Discovery")
+    st.caption(
+        "Starts from your product/problem, lists what is already known "
+        "(plants, compounds, targets, evidence, market), then searches for "
+        "better or alternative botanical sources of the same active "
+        "compounds."
     )
 
-    run_engine = st.button(
-        "Run central R&D candidate engine",
-        type="primary",
-    )
+    indication = inputs.get("indication", "")
+    dosage_form = inputs.get("dosage_form", "")
+    market = inputs.get("market", "")
 
-    if run_engine:
-        evidence_df = st.session_state.get("evidence_df")
-
-        if evidence_df is None:
-            evidence_df = load_default_evidence()
-
-        if evidence_df is None:
-            evidence_df = pd.DataFrame()
-
-        engine = BotanicalRDCandidateEngine(
-            evidence_df=evidence_df,
-        )
-
-        result = engine.run(
-            product_type=inputs.get("product_type", ""),
-            problem=inputs.get("indication", ""),
-            dosage_form=inputs.get("dosage_form", ""),
-            market=inputs.get("market", ""),
-            max_reference_plants=inputs.get("target_count", 50),
-        )
-
-        st.session_state["rd_candidate_df"] = result
-
-    result = st.session_state.get("rd_candidate_df")
-
-    if result is None:
-        return
-
-    if result.empty:
-        st.warning(
-            "No R&D candidates found. Add more seed plants, compounds, "
-            "or evidence records for this indication."
-        )
-        return
-
-    st.success(
-        f"{len(result)} R&D candidate decisions generated."
-    )
-
-    col1, col2, col3 = st.columns(3)
-
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Candidates", len(result))
-
+        reference_plant = st.text_input(
+            "Restrict to reference plant (optional)",
+            value="",
+            help="Leave empty to analyze every known plant for this indication.",
+        )
     with col2:
-        st.metric(
-            "Reference plants",
-            result["Reference_Plant"].nunique(),
+        reference_compound = st.text_input(
+            "Restrict to reference compound (optional)",
+            value="",
         )
 
-    with col3:
-        st.metric(
-            "Alternative plants",
-            result["Alternative_Plant"].nunique(),
-        )
-
-    strong = result[
-        result["Decision_Class"].str.contains(
-            "Strong",
-            case=False,
-            na=False,
-        )
-    ]
-
-    promising = result[
-        result["Decision_Class"].str.contains(
-            "Promising",
-            case=False,
-            na=False,
-        )
-    ]
-
-    st.markdown("### Strong R&D candidates")
-    st.dataframe(
-        strong,
-        use_container_width=True,
-        hide_index=True,
+    use_live_search = st.checkbox(
+        "Include live Europe PMC search (slower, needs internet)", value=True
     )
 
-    st.markdown("### Promising candidates")
-    st.dataframe(
-        promising,
-        use_container_width=True,
-        hide_index=True,
+    if not st.button("Run R&D candidate discovery", type="primary"):
+        return
+
+    evidence_df = st.session_state.get("evidence_df")
+    if not isinstance(evidence_df, pd.DataFrame):
+        evidence_df = None
+
+    engine = BotanicalRDCandidateEngine(
+        evidence_df=evidence_df,
+        use_live_search=use_live_search,
     )
 
-    st.markdown("### Full decision table")
-    st.dataframe(
-        result,
-        use_container_width=True,
-        hide_index=True,
-    )
+    with st.spinner("Discovering R&D candidates..."):
+        result_df = engine.run(
+            indication=indication,
+            dosage_form=dosage_form,
+            market=market,
+            reference_plant=reference_plant,
+            reference_compound=reference_compound,
+        )
 
-    csv = result.to_csv(index=False).encode("utf-8")
+    if result_df.empty:
+        st.warning(
+            "No known plants/compounds found for this indication in the "
+            "seed knowledge base yet. Add entries to seed_data.py "
+            "(PLANT_COMPOUNDS / COMPOUND_TARGETS / TARGET_DISEASES) to "
+            "extend coverage."
+        )
+        return
+
+    st.session_state["rd_candidates_df"] = result_df
+
+    st.success(f"{len(result_df)} candidate rows generated.")
+    st.dataframe(result_df, use_container_width=True)
 
     st.download_button(
-        "Download R&D candidate decision table",
-        data=csv,
-        file_name="botanical_rd_candidate_decision_table.csv",
+        "Download decision table (CSV)",
+        data=result_df.to_csv(index=False).encode("utf-8"),
+        file_name="botanical_rd_candidates.csv",
         mime="text/csv",
     )

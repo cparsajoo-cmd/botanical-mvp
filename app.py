@@ -31,10 +31,10 @@ st.caption("AI Botanical R&D Decision Intelligence Platform")
 
 inputs = render_inputs()
 
-st.markdown("## Recommended workflow")
+st.markdown("## Workflow")
 st.info(
-    "Run: Evidence → Ranking → Knowledge Extraction → Disease Target → Mechanism → "
-    "Target-Compound-Plant → Botanical Brain → Knowledge Graph → Download"
+    "Run the normal workflow, then use Universal Botanical Brain for the core discovery: "
+    "target / biomolecule → active compounds → candidate plants."
 )
 
 
@@ -51,7 +51,6 @@ render_target_step(inputs)
 render_mechanism_step(inputs)
 render_target_discovery_step(inputs)
 
-# Core competitive advantage engine
 render_botanical_brain_step(inputs)
 
 render_graph_step(inputs)
@@ -65,6 +64,10 @@ with st.expander("Supabase evidence database preview"):
         df = load_evidence_database()
         st.write(f"Total evidence records: {len(df)}")
         st.dataframe(df, use_container_width=True)
+
+        if "evidence_df" not in st.session_state:
+            st.session_state["evidence_df"] = df
+
     except Exception as e:
         st.warning("Could not load Supabase evidence database preview.")
         st.write(str(e))

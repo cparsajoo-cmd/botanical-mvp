@@ -1,11 +1,5 @@
 import pandas as pd
 
-from target_knowledge_base import (
-    get_compounds_for_target,
-    get_plants_for_compound,
-    get_all_target_compound_plant_links,
-)
-
 
 def _clean(x):
     if x is None:
@@ -30,29 +24,39 @@ def _get(row, names):
 
 
 class TargetCompoundPlantEngine:
-    def discover(self, knowledge_df=None, ranking_df=None, target_df=None, inputs=None):
+    def discover(self, knowledge_df, ranking_df=None, target_df=None, inputs=None):
         if inputs is None:
             inputs = {}
 
-        records = []
-
-        target_terms = set()
-
-        if target_df is not None and not target_df.empty:
-            for _, r in target_df.iterrows():
-                target = _get(r, ["target", "Target"])
-                if target:
-                    target_terms.add(target)
-
-        if not target_terms and knowledge_df is not None and not knowledge_df.empty:
-            for _, r in knowledge_df.iterrows():
-                target = _get(r, ["Target", "target"])
-                if target:
-                    target_terms.add(target)
-
-        if not target_terms:
+        if knowledge_df is None or knowledge_df.empty:
             return pd.DataFrame()
 
+        knowledge = knowledge_df.copy()
+
+        # -------- target list from Step 8.95 --------
+        target_terms = set()
+        if target_df is not None and not target_df.empty:
+            for _, r in target_df.iterrows():
+                t = _get(r, ["target", "Target"])
+                if t:
+                    target_terms.add(_lower(t))
+
+        # -------- build plant -> compounds from ranking --------
+        plant_to_compounds = {}
+
+        if ranking_df is not None and not ranking_df.empty:
+            for _, r in ranking_df.iterrows():
+                plant = _get(r, ["Scientific_Name", "Plant", "plant"])
+                common = _get(r, ["Common_Name", "common_name"])
+                compound = _get(r, ["compound_name", "Compound", "compound"])
+
+                if compound:
+                    if plant:
+                        plant_to_compounds.setdefault(_lower(plant), set()).add(compound)
+                    if common:
+                        plant_to_compounds.setdefault(_lower(common), set()).add(compound)
+
+        # -------- marketed plants --------
         marketed_plants = set()
 
         if ranking_df is not None and not ranking_df.empty:
@@ -73,56 +77,110 @@ class TargetCompoundPlantEngine:
                 ):
                     marketed_plants.add(_lower(plant))
 
-        for target in target_terms:
-            compounds = get_compounds_for_target(target)
+        records = []
 
-            for compound in compounds:
-                plants = get_plants_for_compound(compound)
+        for _, row in knowledge.iterrows():
+            plant = _get(row, ["Plant", "plant", "Scientific_Name", "scientific_name"])
+            compound = _get(row, ["Compound", "compound", "compound_name", "Compound_Name"])
+            target = _get(row, ["Target", "target", "major_target", "Major_Target"])
+            mechanism = _get(row, ["Mechanism", "mechanism"])
+            indication = _get(row, ["Indication", "indication"])
+            evidence_type = _get(row, ["Evidence_Type", "evidence_type"])
+            confidence = _get(row, ["Confidence", "confidence"])
+            title = _get(row, ["Title", "title"])
+            url = _get(row, ["URL", "url", "Source_URL", "source_url"])
 
-                for plant in plants:
-                    already_marketed = _lower(plant) in marketed_plants
+            try:
+                confidence = float(confidence)
+            except Exception:
+                confidence = 0
 
-                    evidence_score = self._knowledge_support_score(
-                        knowledge_df=knowledge_df,
-                        target=target,
-                        compound=compound,
-                        plant=plant,
-                    )
+            if not plant or not target:
+                continue
 
-                    novelty_bonus = 0 if already_marketed else 25
+            # اگر target_df داریم، فقط همان targetهای کشف‌شده را نگه دار
+            if target_terms and _lower(target) not in target_terms:
+                continue
 
-                    score = 35 + evidence_score + novelty_bonus
+            compounds = []
 
-                    if compound:
-                        score += 15
+            if compound:
+                compounds.append(compound)
 
-                    score = round(min(100, score), 1)
+            # اگر compound در knowledge خالی بود، از ranking برای همان گیاه بردار
+            ranking_compounds = plant_to_compounds.get(_lower(plant), set())
+            for c in ranking_compounds:
+                if c not in compounds:
+                    compounds.append(c)
 
-                    if already_marketed:
-                        category = "Known commercial target-compound-plant route"
-                    elif score >= 75:
-                        category = "Strong new R&D opportunity"
-                    elif score >= 50:
-                        category = "Promising new R&D opportunity"
-                    else:
-                        category = "Weak signal"
+            # اگر هنوز compound نداریم، حذف نکن؛ به عنوان unknown نگه دار
+            if not compounds:
+                compounds = ["Unknown compound — needs extraction"]
 
-                    records.append(
-                        {
-                            "Target": target,
-                            "Compound": compound,
-                            "Candidate_Plant": plant,
-                            "Already_Marketed": already_marketed,
-                            "Knowledge_Support_Score": evidence_score,
-                            "Target_Compound_Plant_Score": score,
-                            "Opportunity_Category": category,
-                            "Rationale": (
-                                f"{target} is linked to {compound}; "
-                                f"{compound} is reported in {plant}. "
-                                f"This creates a disease → target → compound → plant discovery path."
-                            ),
-                        }
-                    )
+            for comp in compounds:
+                already_marketed = _lower(plant) in marketed_plants
+
+                evidence_count = len(
+                    knowledge[
+                        knowledge.apply(
+                            lambda x: _lower(_get(x, ["Plant", "plant", "Scientific_Name", "scientific_name"])) == _lower(plant),
+                            axis=1,
+                        )
+                        &
+                        knowledge.apply(
+                            lambda x: _lower(_get(x, ["Target", "target", "major_target"])) == _lower(target),
+                            axis=1,
+                        )
+                    ]
+                )
+
+                novelty_bonus = 0 if already_marketed else 25
+
+                score = (
+                    min(35, evidence_count * 7)
+                    + min(35, confidence * 0.35)
+                    + novelty_bonus
+                )
+
+                if comp != "Unknown compound — needs extraction":
+                    score += 15
+
+                if mechanism:
+                    score += 10
+
+                score = round(min(100, score), 1)
+
+                if already_marketed:
+                    category = "Known commercial target-compound-plant route"
+                elif score >= 70:
+                    category = "Strong new R&D opportunity"
+                elif score >= 45:
+                    category = "Promising new R&D opportunity"
+                else:
+                    category = "Weak signal"
+
+                records.append(
+                    {
+                        "Target": target,
+                        "Compound": comp,
+                        "Candidate_Plant": plant,
+                        "Mechanism": mechanism,
+                        "Indication": indication,
+                        "Evidence_Type": evidence_type,
+                        "Evidence_Count": evidence_count,
+                        "Confidence": confidence,
+                        "Already_Marketed": already_marketed,
+                        "Target_Compound_Plant_Score": score,
+                        "Opportunity_Category": category,
+                        "Title": title,
+                        "URL": url,
+                        "Rationale": (
+                            f"{target} is linked to {plant}. "
+                            f"Compound route: {comp}. "
+                            f"This creates a target → compound → plant discovery path."
+                        ),
+                    }
+                )
 
         result = pd.DataFrame(records)
 
@@ -142,34 +200,3 @@ class TargetCompoundPlantEngine:
         result.insert(0, "Rank", range(1, len(result) + 1))
 
         return result
-
-    def _knowledge_support_score(self, knowledge_df, target, compound, plant):
-        if knowledge_df is None or knowledge_df.empty:
-            return 0
-
-        df = knowledge_df.copy()
-
-        score = 0
-
-        for _, r in df.iterrows():
-            text = " ".join(
-                [
-                    _get(r, ["Target", "target"]),
-                    _get(r, ["Compound", "compound"]),
-                    _get(r, ["Plant", "plant"]),
-                    _get(r, ["Mechanism", "mechanism"]),
-                    _get(r, ["Indication", "indication"]),
-                    _get(r, ["Title", "title"]),
-                ]
-            ).lower()
-
-            if _lower(target) and _lower(target) in text:
-                score += 5
-
-            if _lower(compound) and _lower(compound) in text:
-                score += 5
-
-            if _lower(plant) and _lower(plant) in text:
-                score += 5
-
-        return min(25, score)

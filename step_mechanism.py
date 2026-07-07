@@ -34,6 +34,13 @@ def render_mechanism_step(inputs):
 
     if mechanism_df.empty:
         st.warning("No mechanism-based R&D candidates found yet.")
+
+        with st.expander("Debug: extracted knowledge available"):
+            st.write("Knowledge columns:")
+            st.write(list(knowledge_df.columns))
+            st.write("Knowledge rows:", len(knowledge_df))
+            st.dataframe(knowledge_df.head(20), use_container_width=True, hide_index=True)
+
         return
 
     st.success(f"{len(mechanism_df)} mechanism-based R&D opportunities found.")

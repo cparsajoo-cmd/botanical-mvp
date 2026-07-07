@@ -11,6 +11,7 @@ from step_market import render_market_step
 from step_whitespace import render_whitespace_step
 from step_knowledge import render_knowledge_step
 from step_mechanism import render_mechanism_step
+from step_target_discovery import render_target_discovery_step
 from step_graph import render_graph_step
 from step_download import render_download_step
 from evidence_database import load_evidence_database
@@ -38,6 +39,7 @@ render_market_step()
 render_whitespace_step(inputs)
 render_knowledge_step(inputs)
 render_mechanism_step(inputs)
+render_target_discovery_step(inputs)
 render_graph_step(inputs)
 render_download_step()
 

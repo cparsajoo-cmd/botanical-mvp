@@ -1,4 +1,7 @@
+import os
 import re
+import base64
+import requests
 from collections import defaultdict
 
 import pandas as pd
@@ -6,6 +9,13 @@ import pandas as pd
 from evidence_database import load_evidence_database
 from global_candidate_ranking_engine import rank_global_candidates
 from global_plant_candidate_database import GLOBAL_PLANT_CANDIDATES
+from compound_occurrence_map import get_region
+from seed_data import (
+    PLANT_COMPOUNDS,
+    COMPOUND_TARGETS,
+    TARGET_DISEASES,
+    SLEEP_TEA_EVIDENCE,
+)
 
 
 OUTPUT_COLUMNS = [
@@ -103,19 +113,25 @@ class BotanicalRDCandidateEngine:
     botanical substitution.
     """
 
-    def __init__(self, evidence_df=None, candidate_data=None):
+    def __init__(self, evidence_df=None, candidate_data=None, use_live_search=True):
         self.evidence_df = self._to_dataframe(evidence_df)
         self.candidate_data = candidate_data or GLOBAL_PLANT_CANDIDATES
         self.compound_to_class = self._build_compound_class_index()
+        self.use_live_search = use_live_search
 
     def run(
         self,
-        product_type,
-        problem,
-        dosage_form,
-        market,
+        indication,
+        dosage_form="",
+        market="",
+        reference_plant="",
+        reference_compound="",
+        product_type=None,
         max_reference_plants=12,
     ):
+        problem = indication
+        product_type = product_type or (dosage_form or "botanical product")
+
         references = self._get_reference_plants(
             problem=problem,
             dosage_form=dosage_form,
@@ -136,6 +152,9 @@ class BotanicalRDCandidateEngine:
                 ["Scientific_Name", "scientific_name", "Plant", "plant"],
             )
 
+            if reference_plant and self._norm(reference_plant) not in self._norm(ref_plant):
+                continue
+
             ref_compounds = self._split_terms(
                 self._pick(
                     ref,
@@ -147,6 +166,13 @@ class BotanicalRDCandidateEngine:
                     ],
                 )
             )
+
+            if reference_compound:
+                filtered = [
+                    compound for compound in ref_compounds
+                    if self._norm(reference_compound) in self._norm(compound)
+                ]
+                ref_compounds = filtered or [reference_compound]
 
             ref_targets = self._split_terms(
                 self._pick(
@@ -809,6 +835,204 @@ class BotanicalRDCandidateEngine:
                 return str(value).strip()
 
         return ""
+
+    # ------------------------------------------------------------------ #
+    # Known inventory: what is already known for this problem, before any
+    # alternative-plant discovery runs. Pure offline lookup against
+    # seed_data (PLANT_COMPOUNDS / COMPOUND_TARGETS / TARGET_DISEASES).
+    # ------------------------------------------------------------------ #
+
+    def known_inventory_df(self, indication):
+        columns = [
+            "Known_Plant",
+            "Known_Compound",
+            "Chemical_Class",
+            "Known_Target",
+            "Evidence_Level",
+            "Typical_Extraction",
+        ]
+
+        indication_norm = self._norm(indication)
+
+        if not indication_norm:
+            return pd.DataFrame(columns=columns)
+
+        matched_diseases = [
+            disease for disease in TARGET_DISEASES
+            if indication_norm in self._norm(disease)
+            or self._norm(disease) in indication_norm
+        ]
+
+        if not matched_diseases:
+            indication_tokens = set(indication_norm.split())
+            for disease in TARGET_DISEASES:
+                disease_tokens = set(self._norm(disease).split())
+                if indication_tokens & disease_tokens:
+                    matched_diseases.append(disease)
+
+        relevant_targets = {}
+        for disease in matched_diseases:
+            for target, level in TARGET_DISEASES[disease].items():
+                relevant_targets[self._norm(target)] = level
+
+        if not relevant_targets:
+            return pd.DataFrame(columns=columns)
+
+        rows = []
+        for plant, compounds in PLANT_COMPOUNDS.items():
+            for compound_name, chem_class, extraction in compounds:
+                for target in COMPOUND_TARGETS.get(compound_name, []):
+                    if self._norm(target) in relevant_targets:
+                        rows.append({
+                            "Known_Plant": plant,
+                            "Known_Compound": compound_name,
+                            "Chemical_Class": chem_class,
+                            "Known_Target": target,
+                            "Evidence_Level": relevant_targets[self._norm(target)],
+                            "Typical_Extraction": extraction,
+                        })
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return (
+            pd.DataFrame(rows)
+            .drop_duplicates()
+            .sort_values(["Known_Plant", "Known_Compound"])
+            .reset_index(drop=True)
+        )
+
+    # ------------------------------------------------------------------ #
+    # Market landscape: EU regulatory status, patents, retail products.
+    #
+    # This answers the "what already exists in the market" question and is
+    # intentionally a SEPARATE table from run()'s decision table, not extra
+    # columns bolted onto it — the OUTPUT_COLUMNS contract stays as-is.
+    # ------------------------------------------------------------------ #
+
+    def _curated_evidence_for(self, plant):
+        plant_norm = self._norm(plant)
+        for name, evidence in SLEEP_TEA_EVIDENCE.items():
+            if self._norm(name) == plant_norm:
+                return evidence
+        return None
+
+    def _eu_regulatory_status(self, plant):
+        curated = self._curated_evidence_for(plant)
+        if curated:
+            return {
+                "EMA_HMPC_Status": curated.get("ema_status", "Not evaluated"),
+                "WHO_Status": curated.get("who_status", "Not listed"),
+                "ESCOP_Status": curated.get("escop_status", "Not listed"),
+                "Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
+            }
+        return {
+            "EMA_HMPC_Status": "Not yet verified",
+            "WHO_Status": "Not yet verified",
+            "ESCOP_Status": "Not yet verified",
+            "Source": "No EMA HMPC bulk API exists (browse-only site) — "
+                      "needs manual lookup at ema.europa.eu and adding to "
+                      "seed_data.py, same pattern as the sleep-tea plants",
+        }
+
+    def _search_patents(self, query, max_results=5):
+        """
+        EPO Open Patent Services (OPS) — real free API, needs registration:
+        https://developers.epo.org/ (free account -> consumer key/secret).
+        Set env vars EPO_OPS_KEY and EPO_OPS_SECRET to activate.
+        """
+        if not self.use_live_search:
+            return [{"status": "Skipped", "detail": "Live search disabled."}]
+
+        key, secret = os.environ.get("EPO_OPS_KEY"), os.environ.get("EPO_OPS_SECRET")
+        if not key or not secret:
+            return [{
+                "status": "Not configured",
+                "detail": "Set EPO_OPS_KEY and EPO_OPS_SECRET (free registration "
+                          "at https://developers.epo.org/) to enable patent search.",
+            }]
+
+        try:
+            auth = base64.b64encode(f"{key}:{secret}".encode()).decode()
+            token_r = requests.post(
+                "https://ops.epo.org/3.2/auth/accesstoken",
+                headers={"Authorization": f"Basic {auth}",
+                         "Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials"},
+                timeout=20,
+            )
+            token_r.raise_for_status()
+            access_token = token_r.json().get("access_token")
+
+            search_r = requests.get(
+                "https://ops.epo.org/3.2/rest-services/published-data/search",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"q": f'ctxt="{query}"', "Range": f"1-{max_results}"},
+                timeout=20,
+            )
+            search_r.raise_for_status()
+            return [{"status": "OK", "raw_response": search_r.json()}]
+        except Exception as e:
+            return [{"status": "Error", "detail": str(e)}]
+
+    def _search_retail_products(self, query):
+        """
+        Retail/brand product presence needs a paid web-search API (there is
+        no free, structured, ToS-compliant source for 'which brands sell
+        X'). Set SEARCH_API_KEY (+ optionally SEARCH_API_PROVIDER) to
+        activate once you've picked a provider (Bing Web Search API,
+        SerpAPI, etc.) — this function is the single place to wire it in.
+        """
+        if not self.use_live_search:
+            return [{"status": "Skipped", "detail": "Live search disabled."}]
+
+        api_key = os.environ.get("SEARCH_API_KEY")
+        if not api_key:
+            return [{
+                "status": "Not configured",
+                "detail": "Set SEARCH_API_KEY to a paid web-search provider "
+                          "(e.g. Bing Web Search API, SerpAPI) to enable "
+                          "retail/brand product scanning. No free source "
+                          "exists for this data.",
+            }]
+        return [{
+            "status": "Not implemented",
+            "detail": "SEARCH_API_KEY is set, but no provider call is wired "
+                      "in yet. Implement the request for your chosen "
+                      "provider inside _search_retail_products().",
+        }]
+
+    def market_landscape(self, plant):
+        """Single-plant market snapshot: regulatory + patents + retail."""
+        return {
+            "plant": plant,
+            "region": get_region(plant),
+            "regulatory": self._eu_regulatory_status(plant),
+            "patents": self._search_patents(plant),
+            "retail_products": self._search_retail_products(plant),
+        }
+
+    def market_landscape_df(self, plants):
+        """Market landscape table: one row per plant."""
+        rows = []
+        for plant in plants:
+            snap = self.market_landscape(plant)
+            reg = snap["regulatory"]
+            patents = snap["patents"]
+            retail = snap["retail_products"]
+            rows.append({
+                "Plant": snap["plant"],
+                "Region_of_Origin": snap["region"],
+                "EMA_HMPC_Status": reg["EMA_HMPC_Status"],
+                "WHO_Status": reg["WHO_Status"],
+                "ESCOP_Status": reg["ESCOP_Status"],
+                "Regulatory_Source": reg["Source"],
+                "Patent_Search_Status": patents[0].get("status", "Unknown"),
+                "Patent_Detail": patents[0].get("detail", patents[0].get("raw_response", "")),
+                "Retail_Products_Status": retail[0].get("status", "Unknown"),
+                "Retail_Products_Detail": retail[0].get("detail", ""),
+            })
+        return pd.DataFrame(rows)
 
 
 def load_default_evidence():

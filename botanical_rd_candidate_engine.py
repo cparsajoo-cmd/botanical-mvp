@@ -10,6 +10,11 @@ from evidence_database import load_evidence_database
 from global_candidate_ranking_engine import rank_global_candidates
 from global_plant_candidate_database import GLOBAL_PLANT_CANDIDATES
 from compound_occurrence_map import get_region
+from supabase_data import (
+    load_plant_compounds_df,
+    load_compound_profiles_df,
+    load_scientific_evidence_df,
+)
 from seed_data import (
     PLANT_COMPOUNDS,
     COMPOUND_TARGETS,
@@ -113,12 +118,46 @@ class BotanicalRDCandidateEngine:
     botanical substitution.
     """
 
-    def __init__(self, evidence_df=None, candidate_data=None, use_live_search=True):
+    def __init__(
+        self,
+        evidence_df=None,
+        candidate_data=None,
+        use_live_search=True,
+        plant_compounds_df=None,
+        compound_profiles_df=None,
+        scientific_evidence_df=None,
+    ):
         self.evidence_df = self._to_dataframe(evidence_df)
-        self.candidate_data = candidate_data or GLOBAL_PLANT_CANDIDATES
-        self.compound_to_class = self._build_compound_class_index()
-        self.compound_to_targets = self._build_compound_target_index()
         self.use_live_search = use_live_search
+
+        # Real Supabase tables (806 / 310 / 47 records as of the last known
+        # snapshot) are the primary data source. Any of them can be passed
+        # in explicitly (e.g. for tests); otherwise they're fetched live.
+        # If Supabase is unreachable, these come back empty and the engine
+        # falls back to the small local seed dataset further below.
+        self.plant_compounds_df = self._load_supabase_df(
+            plant_compounds_df, load_plant_compounds_df
+        )
+        self.compound_profiles_df = self._load_supabase_df(
+            compound_profiles_df, load_compound_profiles_df
+        )
+        self.scientific_evidence_df = self._load_supabase_df(
+            scientific_evidence_df, load_scientific_evidence_df
+        )
+
+        if candidate_data is not None:
+            self.candidate_data = candidate_data
+            self.candidate_source = "override"
+        elif not self.plant_compounds_df.empty:
+            self.candidate_data = self._candidates_from_plant_compounds()
+            self.candidate_source = "supabase"
+        else:
+            self.candidate_data = GLOBAL_PLANT_CANDIDATES
+            self.candidate_source = "local_fallback"
+
+        self.compound_to_class, self.compound_to_targets = (
+            self._build_compound_indexes()
+        )
 
     def run(
         self,
@@ -346,6 +385,13 @@ class BotanicalRDCandidateEngine:
         market,
         max_reference_plants,
     ):
+        if self.candidate_source == "supabase":
+            direct = self._reference_plants_from_supabase(
+                problem, max_reference_plants
+            )
+            if not direct.empty:
+                return direct
+
         try:
             ranked = rank_global_candidates(
                 indication=problem,
@@ -371,6 +417,134 @@ class BotanicalRDCandidateEngine:
             ]
 
         return ranked.head(max_reference_plants)
+
+    def _reference_plants_from_supabase(self, problem, max_reference_plants):
+        """Reference plants selected directly from the real
+        plant_compounds table's own `indication` column, instead of the
+        small hardcoded GLOBAL_PLANT_CANDIDATES list. This is the primary
+        path whenever Supabase data is available.
+        """
+        problem_norm = self._norm(problem)
+
+        matched = [
+            item for item in self.candidate_data
+            if any(
+                problem_norm in self._norm(indication)
+                or self._norm(indication) in problem_norm
+                for indication in item.get("Indications", [])
+            )
+        ]
+
+        if not matched:
+            problem_tokens = set(problem_norm.split())
+            matched = [
+                item for item in self.candidate_data
+                if any(
+                    problem_tokens & set(self._norm(indication).split())
+                    for indication in item.get("Indications", [])
+                )
+            ]
+
+        if not matched:
+            return pd.DataFrame()
+
+        rows = []
+        for item in matched[:max_reference_plants]:
+            row = dict(item)
+            row["Known_Active_Compounds"] = ", ".join(
+                item.get("Known_Active_Compounds", [])
+            )
+            row["Known_Targets"] = ", ".join(item.get("Known_Targets", []))
+            row["Indications_Text"] = ", ".join(item.get("Indications", []))
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _load_supabase_df(explicit_df, loader):
+        if explicit_df is not None:
+            return BotanicalRDCandidateEngine._to_dataframe(explicit_df)
+
+        try:
+            loaded = loader()
+        except Exception:
+            return pd.DataFrame()
+
+        return loaded if isinstance(loaded, pd.DataFrame) else pd.DataFrame()
+
+    def _candidates_from_plant_compounds(self):
+        """Build the GLOBAL_PLANT_CANDIDATES-shaped list directly from the
+        real plant_compounds table (grouped by scientific_name), instead
+        of the small hardcoded local list.
+        """
+        df = self.plant_compounds_df.copy()
+
+        if "scientific_name" not in df.columns:
+            return GLOBAL_PLANT_CANDIDATES
+
+        df["scientific_name"] = df["scientific_name"].fillna("").astype(str).str.strip()
+        df = df[df["scientific_name"] != ""]
+
+        if df.empty:
+            return GLOBAL_PLANT_CANDIDATES
+
+        candidates = []
+
+        for scientific_name, group in df.groupby("scientific_name"):
+            candidates.append({
+                "Scientific_Name": scientific_name,
+                "Common_Name": self._first_non_empty(group.get("common_name")),
+                "Region": get_region(scientific_name),
+                "Indications": self._unique_clean_list(group.get("indication")),
+                "Known_Active_Compounds": self._unique_clean_list(
+                    group.get("compound_name")
+                ),
+                "Known_Targets": self._unique_clean_list(
+                    self._split_series_terms(group.get("target"))
+                ),
+                "Plant_Part": self._first_non_empty(group.get("plant_part")),
+                "Extraction_Method": self._first_non_empty(
+                    group.get("extraction_method")
+                ),
+                "EMA_Status": "",
+            })
+
+        return candidates or GLOBAL_PLANT_CANDIDATES
+
+    @staticmethod
+    def _unique_clean_list(values):
+        if values is None:
+            return []
+
+        seen = []
+        for value in values:
+            text = str(value).strip() if value is not None else ""
+            if text and text.lower() not in {"nan", "none", "null"} and text not in seen:
+                seen.append(text)
+
+        return seen
+
+    @staticmethod
+    def _first_non_empty(values):
+        if values is None:
+            return ""
+
+        for value in values:
+            text = str(value).strip() if value is not None else ""
+            if text and text.lower() not in {"nan", "none", "null"}:
+                return text
+
+        return ""
+
+    def _split_series_terms(self, values):
+        if values is None:
+            return []
+
+        terms = []
+        for value in values:
+            terms.extend(self._split_terms(value))
+
+        return terms
 
     def _candidate_frame(self):
         rows = []
@@ -401,33 +575,52 @@ class BotanicalRDCandidateEngine:
     def _build_evidence_text_index(self):
         index = defaultdict(str)
 
-        if self.evidence_df.empty:
-            return index
+        if not self.evidence_df.empty:
+            for _, row in self.evidence_df.iterrows():
+                text = " ".join(
+                    str(value)
+                    for value in row.values
+                    if pd.notna(value)
+                )
 
-        for _, row in self.evidence_df.iterrows():
-            text = " ".join(
-                str(value)
-                for value in row.values
-                if pd.notna(value)
-            )
+                plant = self._pick(
+                    row,
+                    [
+                        "Scientific_Name",
+                        "scientific_name",
+                        "Plant",
+                        "plant",
+                        "Common_Name",
+                        "common_name",
+                    ],
+                )
 
-            plant = self._pick(
-                row,
-                [
-                    "Scientific_Name",
-                    "scientific_name",
-                    "Plant",
-                    "plant",
-                    "Common_Name",
-                    "common_name",
-                ],
-            )
+                if plant:
+                    index[self._norm(plant)] += " " + text
 
-            if plant:
-                index[self._norm(plant)] += " " + text
+                for compound in self._known_compounds_from_text(text):
+                    index[self._norm(compound)] += " " + text
 
-            for compound in self._known_compounds_from_text(text):
-                index[self._norm(compound)] += " " + text
+        if not self.scientific_evidence_df.empty:
+            text_columns = [
+                "title", "abstract", "decision_reason",
+                "evidence_flags", "decision_class", "indication",
+            ]
+
+            for _, row in self.scientific_evidence_df.iterrows():
+                text = " ".join(
+                    str(row.get(col))
+                    for col in text_columns
+                    if pd.notna(row.get(col, None)) and str(row.get(col)).strip()
+                )
+
+                plant = str(row.get("plant") or "").strip()
+
+                if plant:
+                    index[self._norm(plant)] += " " + text
+
+                for compound in self._known_compounds_from_text(text):
+                    index[self._norm(compound)] += " " + text
 
         return index
 
@@ -511,28 +704,43 @@ class BotanicalRDCandidateEngine:
             "class_only",
         )
 
-    def _build_compound_class_index(self):
-        index = {}
+    def _build_compound_indexes(self):
+        """Returns (compound_to_class, compound_to_targets).
+
+        Built primarily from the real Supabase `compound_profiles` table
+        (310 records: compound_name, compound_class, major_target), with
+        the small local SIMILAR_COMPOUND_GROUPS / seed_data.COMPOUND_TARGETS
+        as a fallback layer for any compound not (yet) in Supabase.
+        """
+        class_index = {}
 
         for compound_class, compounds in SIMILAR_COMPOUND_GROUPS.items():
             for compound in compounds:
-                index[self._norm(compound)] = compound_class
+                class_index[self._norm(compound)] = compound_class
 
-        return index
-
-    def _build_compound_target_index(self):
-        """Normalized compound name -> set of normalized known targets,
-        sourced from seed_data.COMPOUND_TARGETS. Used to check whether two
-        chemically-similar compounds also share a validated biological
-        target, instead of trusting broad chemical-class membership alone.
-        """
-        index = defaultdict(set)
+        target_index = defaultdict(set)
 
         for compound, targets in COMPOUND_TARGETS.items():
             for target in targets:
-                index[self._norm(compound)].add(self._norm(target))
+                target_index[self._norm(compound)].add(self._norm(target))
 
-        return index
+        if not self.compound_profiles_df.empty:
+            for _, row in self.compound_profiles_df.iterrows():
+                compound = self._norm(row.get("compound_name"))
+
+                if not compound:
+                    continue
+
+                compound_class = str(row.get("compound_class") or "").strip()
+                if compound_class:
+                    # Supabase is the richer, maintained source — it wins
+                    # over the small local class map when both exist.
+                    class_index[compound] = compound_class
+
+                for target in self._split_terms(row.get("major_target")):
+                    target_index[compound].add(self._norm(target))
+
+        return class_index, dict(target_index)
 
     def _best_extraction(self, alt, evidence):
         base = self._pick(alt, ["Extraction_Method"])
@@ -968,6 +1176,74 @@ class BotanicalRDCandidateEngine:
         if not indication_norm:
             return pd.DataFrame(columns=columns)
 
+        if not self.plant_compounds_df.empty:
+            supabase_result = self._known_inventory_from_supabase(
+                indication_norm, columns
+            )
+            if not supabase_result.empty:
+                return supabase_result
+
+        return self._known_inventory_from_seed_data(indication_norm, columns)
+
+    def _known_inventory_from_supabase(self, indication_norm, columns):
+        """Primary path: filter the real plant_compounds table (806
+        records) directly by its own `indication` column.
+        """
+        df = self.plant_compounds_df.copy()
+
+        if "indication" not in df.columns:
+            return pd.DataFrame(columns=columns)
+
+        df["_indication_norm"] = df["indication"].fillna("").map(self._norm)
+
+        mask = df["_indication_norm"].apply(
+            lambda text: bool(text)
+            and (indication_norm in text or text in indication_norm)
+        )
+
+        if not mask.any():
+            indication_tokens = set(indication_norm.split())
+            mask = df["_indication_norm"].apply(
+                lambda text: bool(indication_tokens & set(text.split()))
+                if text else False
+            )
+
+        matched = df[mask]
+
+        if matched.empty:
+            return pd.DataFrame(columns=columns)
+
+        rows = []
+        for _, row in matched.iterrows():
+            known_plant = str(row.get("scientific_name") or "").strip()
+            known_compound = str(row.get("compound_name") or "").strip()
+
+            if not known_plant or not known_compound:
+                continue
+
+            rows.append({
+                "Known_Plant": known_plant,
+                "Known_Compound": known_compound,
+                "Chemical_Class": str(row.get("compound_class") or "").strip(),
+                "Known_Target": str(row.get("target") or "").strip(),
+                "Evidence_Level": str(row.get("evidence_level") or "").strip(),
+                "Typical_Extraction": str(row.get("extraction_method") or "").strip(),
+            })
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return (
+            pd.DataFrame(rows)
+            .drop_duplicates()
+            .sort_values(["Known_Plant", "Known_Compound"])
+            .reset_index(drop=True)
+        )
+
+    def _known_inventory_from_seed_data(self, indication_norm, columns):
+        """Fallback path used only when Supabase data is unavailable:
+        the small local seed_data.py dataset (~30 plants).
+        """
         matched_diseases = [
             disease for disease in TARGET_DISEASES
             if indication_norm in self._norm(disease)

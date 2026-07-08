@@ -1,5 +1,7 @@
 import streamlit as st
 
+from regulatory_frameworks import get_market_framework
+
 
 def render_inputs():
     st.markdown("## Step 0 — Define R&D question")
@@ -77,15 +79,29 @@ def render_inputs():
             "Target market",
             [
                 "European Union",
-                "United Kingdom",
                 "Germany",
-                "Switzerland",
                 "France",
+                "Italy",
+                "Spain",
+                "Netherlands",
+                "Poland",
+                "United Kingdom",
+                "Switzerland",
+                "Nordic countries (Sweden, Norway, Denmark, Finland)",
                 "Iran",
                 "Middle East / GCC",
+                "Turkey",
                 "United States",
                 "Canada",
+                "Brazil / Latin America",
+                "China",
+                "Japan",
+                "South Korea",
+                "India",
+                "Southeast Asia (Vietnam / Thailand / Indonesia)",
                 "Australia",
+                "New Zealand",
+                "South Africa",
                 "Global / Multi-market",
             ],
         )
@@ -103,6 +119,22 @@ def render_inputs():
         10,
         3,
     )
+
+    framework = get_market_framework(market)
+
+    if framework:
+        with st.expander(f"📋 Regulatory framework — {market}"):
+            st.write(f"**Primary authority:** {framework['primary_authority']}")
+            st.write("**Key pathways:**")
+            for pathway in framework["key_pathways"]:
+                st.write(f"- {pathway}")
+            st.caption(framework["notes"])
+            st.caption(
+                "This is general, market-level regulatory context — not a "
+                "plant-specific or product-specific legal opinion. Verify "
+                "against the actual ingredient, formulation, and supplier "
+                "before commercial use."
+            )
 
     st.info(
         f"Find and rank global medicinal plants and active compounds for "

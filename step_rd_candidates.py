@@ -54,26 +54,41 @@ def render_rd_candidates_step(inputs):
         "Include live Europe PMC search (slower, needs internet)", value=True
     )
 
-    if not st.button("Run R&D candidate discovery", type="primary"):
-        return
+    run_clicked = st.button("Run R&D candidate discovery", type="primary")
 
-    evidence_df = st.session_state.get("evidence_df")
-    if not isinstance(evidence_df, pd.DataFrame):
-        evidence_df = None
+    # --- Persist results in session_state so they survive reruns caused by
+    # OTHER buttons on this page (e.g. the Step 3 button below). Without
+    # this, clicking any later button resets this button's clicked state
+    # to False and the whole step appears to "close". ---
+    if run_clicked:
+        evidence_df = st.session_state.get("evidence_df")
+        if not isinstance(evidence_df, pd.DataFrame):
+            evidence_df = None
 
-    engine = BotanicalRDCandidateEngine(
-        evidence_df=evidence_df,
-        use_live_search=use_live_search,
-    )
-
-    with st.spinner("Discovering R&D candidates..."):
-        result_df = engine.run(
-            indication=indication,
-            dosage_form=dosage_form,
-            market=market,
-            reference_plant=reference_plant,
-            reference_compound=reference_compound,
+        engine = BotanicalRDCandidateEngine(
+            evidence_df=evidence_df,
+            use_live_search=use_live_search,
         )
+
+        with st.spinner("Discovering R&D candidates..."):
+            result_df = engine.run(
+                indication=indication,
+                dosage_form=dosage_form,
+                market=market,
+                reference_plant=reference_plant,
+                reference_compound=reference_compound,
+            )
+
+        st.session_state["rd_candidates_df"] = result_df
+        st.session_state["rd_candidates_use_live_search"] = use_live_search
+        # Reset any stale market-landscape result from a previous run
+        st.session_state.pop("rd_market_landscape_df", None)
+
+    result_df = st.session_state.get("rd_candidates_df")
+
+    if result_df is None:
+        # Nothing computed yet in this session — nothing more to show.
+        return
 
     if result_df.empty:
         st.warning(
@@ -83,8 +98,6 @@ def render_rd_candidates_step(inputs):
             "extend coverage."
         )
         return
-
-    st.session_state["rd_candidates_df"] = result_df
 
     st.success(f"{len(result_df)} candidate rows generated.")
     st.dataframe(result_df, use_container_width=True)
@@ -105,9 +118,18 @@ def render_rd_candidates_step(inputs):
     )
 
     plants_in_results = result_df["Alternative_Plant"].dropna().unique().tolist()
+
     if st.button("Check market landscape for these plants"):
+        landscape_engine = BotanicalRDCandidateEngine(
+            use_live_search=st.session_state.get("rd_candidates_use_live_search", True)
+        )
         with st.spinner("Checking regulatory status, patents, and retail presence..."):
-            landscape_df = engine.market_landscape_df(plants_in_results)
+            landscape_df = landscape_engine.market_landscape_df(plants_in_results)
+        st.session_state["rd_market_landscape_df"] = landscape_df
+
+    landscape_df = st.session_state.get("rd_market_landscape_df")
+
+    if landscape_df is not None:
         st.dataframe(landscape_df, use_container_width=True)
         if (landscape_df["Patent_Search_Status"] == "Not configured").all():
             st.info(

@@ -54,6 +54,13 @@ PLANTS = [
     ("Trigonella foenum-graecum", "Fenugreek", "Fabaceae", "Middle East / South Asia", "Seed"),
     ("Ocimum basilicum", "Basil", "Lamiaceae", "Mediterranean / Asia", "Leaf"),
     ("Moringa oleifera", "Moringa", "Moringaceae", "South Asia / Africa", "Leaf/seed"),
+
+    ("Crataegus monogyna", "Hawthorn", "Rosaceae", "Europe", "Flower/leaf/berry"),
+    ("Boswellia serrata", "Frankincense", "Burseraceae", "South Asia / Middle East", "Resin"),
+    ("Cimicifuga racemosa", "Black cohosh", "Ranunculaceae", "North America", "Root/rhizome"),
+    ("Vitex agnus-castus", "Chaste tree", "Lamiaceae", "Mediterranean", "Fruit"),
+    ("Serenoa repens", "Saw palmetto", "Arecaceae", "North America", "Fruit"),
+    ("Vaccinium macrocarpon", "Cranberry", "Ericaceae", "North America", "Fruit"),
 ]
 
 PLANT_COMPOUNDS = {
@@ -253,6 +260,26 @@ PLANT_COMPOUNDS = {
         ("Isothiocyanates", "Sulfur compounds", "Aqueous / ethanolic extract"),
         ("Quercetin", "Flavonoid", "Aqueous extract"),
     ],
+    "Crataegus monogyna": [
+        ("Hyperoside", "Flavonoid glycoside", "Hydroalcoholic extract"),
+        ("Procyanidins", "Oligomeric flavonoid", "Hydroalcoholic extract"),
+        ("Vitexin", "Flavonoid", "Hydroalcoholic extract"),
+    ],
+    "Boswellia serrata": [
+        ("Boswellic acids", "Triterpenic acid", "Resin extract / hydroalcoholic extract"),
+    ],
+    "Cimicifuga racemosa": [
+        ("Triterpene glycosides", "Triterpenoid saponin", "Hydroalcoholic extract"),
+    ],
+    "Vitex agnus-castus": [
+        ("Agnuside", "Iridoid glycoside", "Hydroalcoholic extract"),
+    ],
+    "Serenoa repens": [
+        ("Fatty acid sterols", "Fatty acid / phytosterol", "Lipophilic (CO2 or hexane) extract"),
+    ],
+    "Vaccinium macrocarpon": [
+        ("Proanthocyanidins", "Oligomeric flavonoid", "Aqueous / hydroalcoholic extract"),
+    ],
 }
 
 COMPOUND_TARGETS = {
@@ -343,6 +370,14 @@ COMPOUND_TARGETS = {
     "4-hydroxyisoleucine": ["Insulin secretion"],
     "Eugenol": ["Anti-inflammatory pathways"],
     "Isothiocyanates": ["Nrf2", "Detoxification pathways"],
+
+    "Hyperoside": ["Microvascular pathways", "Cardiometabolic pathways"],
+    "Procyanidins": ["Microvascular pathways", "Cardiometabolic pathways", "Antioxidant pathways"],
+    "Boswellic acids": ["Anti-inflammatory pathways", "COX-2"],
+    "Triterpene glycosides": ["Hormonal pathways", "Serotonergic system"],
+    "Agnuside": ["Hormonal pathways", "Dopaminergic system"],
+    "Fatty acid sterols": ["Hormonal pathways", "Anti-inflammatory pathways"],
+    "Proanthocyanidins": ["Antimicrobial pathways", "Microvascular pathways"],
 }
 
 TARGET_DISEASES = {
@@ -480,6 +515,92 @@ TARGET_DISEASES = {
         "Oxidative stress pathways": "established",
         "Neuroprotective pathways": "probable",
         "Antioxidant pathways": "probable",
+    },
+
+    "Immune support": {
+        "Immune modulation": "established",
+        "Antioxidant pathways": "probable",
+        "CB2 receptor": "theoretical",
+    },
+    "Cardiovascular / circulation": {
+        "Cardiometabolic pathways": "established",
+        "Microvascular pathways": "probable",
+        "Platelet activating factor": "probable",
+        "Neurovascular pathways": "theoretical",
+    },
+    "Liver support / detox": {
+        "Hepatoprotective pathways": "established",
+        "Bile flow": "probable",
+        "Detoxification pathways": "probable",
+        "Nrf2": "theoretical",
+    },
+    "Joint & muscle comfort": {
+        "Anti-inflammatory pathways": "established",
+        "COX-2": "probable",
+        "TRPV1": "probable",
+        "NF-kB": "theoretical",
+    },
+    "Energy / fatigue": {
+        "HPA axis": "established",
+        "Anti-fatigue pathways": "probable",
+        "Adenosine receptor": "probable",
+        "AMPK": "theoretical",
+    },
+    "Metabolic & blood sugar support": {
+        "AMPK": "established",
+        "Insulin signaling": "probable",
+        "Insulin secretion": "probable",
+        "PPAR-gamma": "theoretical",
+    },
+    "Weight management": {
+        "AMPK": "probable",
+        "Adenosine receptor": "probable",
+        "Gut microbiota": "theoretical",
+        "Cardiometabolic pathways": "theoretical",
+    },
+    "Menopause support": {
+        "Estrogen receptors": "probable",
+        "Hormonal pathways": "probable",
+        "Serotonergic system": "theoretical",
+        "HPA axis": "theoretical",
+    },
+    "Menstrual / PMS support": {
+        "Hormonal pathways": "probable",
+        "Dopaminergic system": "probable",
+        "Smooth muscle relaxation": "probable",
+        "GABAergic system": "theoretical",
+    },
+    "Prostate / men's health": {
+        "Hormonal pathways": "probable",
+        "Anti-inflammatory pathways": "probable",
+        "COX-2": "theoretical",
+    },
+    "Urinary tract health": {
+        "Antimicrobial pathways": "established",
+        "Microvascular pathways": "probable",
+        "Diuretic effect": "theoretical",
+    },
+    "Cold & flu / respiratory": {
+        "Immune modulation": "established",
+        "Antimicrobial pathways": "probable",
+        "Expectorant pathways": "probable",
+        "Antioxidant pathways": "theoretical",
+    },
+    "Headache / mood support": {
+        "Monoamine system": "established",
+        "Serotonergic system": "probable",
+        "GABAergic system": "probable",
+        "HPA axis": "theoretical",
+    },
+    "Hair, skin & nail beauty-from-within": {
+        "Collagen synthesis": "established",
+        "Antioxidant pathways": "probable",
+        "Anti-inflammatory pathways": "theoretical",
+    },
+    "Eye health": {
+        "Antioxidant pathways": "probable",
+        "Microvascular pathways": "probable",
+        "Neuroprotective pathways": "theoretical",
     },
 }
 

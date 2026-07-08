@@ -4,6 +4,7 @@ from step_inputs import render_inputs
 from step_question import render_question_step
 from step_evidence import render_evidence_step
 from step_rd_candidates import render_rd_candidates_step
+from step_import_data import render_import_step
 from evidence_database import load_evidence_database
 
 st.set_page_config(
@@ -33,6 +34,7 @@ st.info(
 render_question_step(inputs)
 render_evidence_step(inputs)
 render_rd_candidates_step(inputs)
+render_import_step()
 
 st.markdown("---")
 

@@ -10,10 +10,12 @@ def render_inputs():
         product_type = st.selectbox(
             "Product type",
             [
-                "Herbal product",
+                "Herbal medicinal product (THMP)",
                 "Food supplement",
                 "Cosmetic",
-                "Medical device",
+                "Novel food ingredient",
+                "Functional food / beverage",
+                "Botanical extract / raw ingredient (B2B)",
                 "Veterinary botanical product",
             ],
         )
@@ -33,6 +35,22 @@ def render_inputs():
                 "Allergic rhinitis",
                 "IBS",
                 "Wound healing",
+                "Cognitive decline / Alzheimer's support",
+                "Immune support",
+                "Cardiovascular / circulation",
+                "Liver support / detox",
+                "Joint & muscle comfort",
+                "Energy / fatigue",
+                "Metabolic & blood sugar support",
+                "Weight management",
+                "Menopause support",
+                "Menstrual / PMS support",
+                "Prostate / men's health",
+                "Urinary tract health",
+                "Cold & flu / respiratory",
+                "Headache / mood support",
+                "Hair, skin & nail beauty-from-within",
+                "Eye health",
             ],
         )
 
@@ -59,11 +77,16 @@ def render_inputs():
             "Target market",
             [
                 "European Union",
+                "United Kingdom",
+                "Germany",
+                "Switzerland",
                 "France",
+                "Iran",
+                "Middle East / GCC",
                 "United States",
                 "Canada",
-                "Iran",
-                "Global R&D",
+                "Australia",
+                "Global / Multi-market",
             ],
         )
 

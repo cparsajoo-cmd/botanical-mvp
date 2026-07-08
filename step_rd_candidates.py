@@ -95,3 +95,29 @@ def render_rd_candidates_step(inputs):
         file_name="botanical_rd_candidates.csv",
         mime="text/csv",
     )
+
+    # --- Step 3: market landscape (regulatory status, patents, retail) ---
+    st.markdown("### Step 3 — Market landscape")
+    st.caption(
+        "What already exists in the market for these plants: EU regulatory "
+        "status (free, curated), patents (free API — needs a key), and "
+        "retail/brand products (paid search API — needs a key)."
+    )
+
+    plants_in_results = result_df["Alternative_Plant"].dropna().unique().tolist()
+    if st.button("Check market landscape for these plants"):
+        with st.spinner("Checking regulatory status, patents, and retail presence..."):
+            landscape_df = engine.market_landscape_df(plants_in_results)
+        st.dataframe(landscape_df, use_container_width=True)
+        if (landscape_df["Patent_Search_Status"] == "Not configured").all():
+            st.info(
+                "Patent search isn't configured yet. Set EPO_OPS_KEY / "
+                "EPO_OPS_SECRET (free registration at developers.epo.org) "
+                "to enable it."
+            )
+        if (landscape_df["Retail_Products_Status"] == "Not configured").all():
+            st.info(
+                "Retail/brand product scanning needs a paid search API "
+                "(e.g. Bing Web Search, SerpAPI). Set SEARCH_API_KEY once "
+                "you've picked a provider."
+            )

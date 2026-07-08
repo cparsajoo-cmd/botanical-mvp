@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from botanical_rd_engine import BotanicalRDCandidateEngine
+from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 
 
 def render_rd_candidates_step(inputs):

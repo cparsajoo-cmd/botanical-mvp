@@ -1408,6 +1408,7 @@ class BotanicalRDCandidateEngine:
             reg = snap["regulatory"]
             patents = snap["patents"]
             retail = snap["retail_products"]
+            us_uk = get_us_uk_status(plant) or {}
             rows.append({
                 "Plant": snap["plant"],
                 "Region_of_Origin": snap["region"],
@@ -1415,6 +1416,12 @@ class BotanicalRDCandidateEngine:
                 "WHO_Status": reg["WHO_Status"],
                 "ESCOP_Status": reg["ESCOP_Status"],
                 "Regulatory_Source": reg["Source"],
+                "US_Status": us_uk.get(
+                    "us_status", "Not yet catalogued for this plant"
+                ),
+                "UK_Status": us_uk.get(
+                    "uk_status", "Not yet catalogued for this plant"
+                ),
                 "Patent_Search_Status": patents[0].get("status", "Unknown"),
                 "Patent_Detail": patents[0].get("detail", patents[0].get("raw_response", "")),
                 "Retail_Products_Status": retail[0].get("status", "Unknown"),

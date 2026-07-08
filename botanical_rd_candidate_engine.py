@@ -106,6 +106,17 @@ EXTRACTION_KEYWORDS = {
 }
 
 
+# Generic/connector words that appear across many different indication
+# names (e.g. "Joint & muscle comfort" and "Metabolic & blood sugar
+# support" both contain "&" and "support"). These must be excluded from
+# any token-overlap fallback matching, otherwise unrelated indications
+# get falsely linked just because they share a filler word.
+INDICATION_STOPWORDS = {
+    "&", "/", "-", "and", "or", "of", "for", "in", "on", "the", "a", "to",
+    "support", "health", "comfort", "care", "wellness", "relief",
+}
+
+
 class BotanicalRDCandidateEngine:
     """
     Central engine for botanical R&D candidate discovery.
@@ -437,11 +448,12 @@ class BotanicalRDCandidateEngine:
         ]
 
         if not matched:
-            problem_tokens = set(problem_norm.split())
+            problem_tokens = self._meaningful_tokens(problem_norm)
             matched = [
                 item for item in self.candidate_data
-                if any(
-                    problem_tokens & set(self._norm(indication).split())
+                if problem_tokens
+                and any(
+                    problem_tokens & self._meaningful_tokens(self._norm(indication))
                     for indication in item.get("Indications", [])
                 )
             ]
@@ -1108,6 +1120,17 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(data)
 
     @staticmethod
+    def _meaningful_tokens(text):
+        """Word tokens from an indication string, with generic/connector
+        words (&, support, health, ...) removed so token-overlap fallback
+        matching only fires on genuinely distinctive shared words.
+        """
+        return {
+            token for token in text.split()
+            if token not in INDICATION_STOPWORDS and len(token) > 2
+        }
+
+    @staticmethod
     def _norm(value):
         if value is None:
             return ""
@@ -1203,9 +1226,13 @@ class BotanicalRDCandidateEngine:
         )
 
         if not mask.any():
-            indication_tokens = set(indication_norm.split())
+            indication_tokens = self._meaningful_tokens(indication_norm)
             mask = df["_indication_norm"].apply(
-                lambda text: bool(indication_tokens & set(text.split()))
+                lambda text: bool(
+                    indication_tokens
+                    and self._meaningful_tokens(text)
+                    and indication_tokens & self._meaningful_tokens(text)
+                )
                 if text else False
             )
 
@@ -1252,10 +1279,10 @@ class BotanicalRDCandidateEngine:
         ]
 
         if not matched_diseases:
-            indication_tokens = set(indication_norm.split())
+            indication_tokens = self._meaningful_tokens(indication_norm)
             for disease in TARGET_DISEASES:
-                disease_tokens = set(self._norm(disease).split())
-                if indication_tokens & disease_tokens:
+                disease_tokens = self._meaningful_tokens(self._norm(disease))
+                if indication_tokens and (indication_tokens & disease_tokens):
                     matched_diseases.append(disease)
 
         relevant_targets = {}

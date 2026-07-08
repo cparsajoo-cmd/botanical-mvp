@@ -117,6 +117,7 @@ class BotanicalRDCandidateEngine:
         self.evidence_df = self._to_dataframe(evidence_df)
         self.candidate_data = candidate_data or GLOBAL_PLANT_CANDIDATES
         self.compound_to_class = self._build_compound_class_index()
+        self.compound_to_targets = self._build_compound_target_index()
         self.use_live_search = use_live_search
 
     def run(
@@ -200,7 +201,7 @@ class BotanicalRDCandidateEngine:
                         self._pick(alt, ["Known_Active_Compounds"])
                     )
 
-                    matched_compound = self._match_compounds(
+                    matched_compound, match_quality = self._match_compounds(
                         ref_compound,
                         alt_compounds,
                     )
@@ -214,6 +215,8 @@ class BotanicalRDCandidateEngine:
                         compound=matched_compound,
                         problem=problem,
                     )
+
+                    has_real_evidence = bool(raw_evidence.strip())
 
                     extraction = self._best_extraction(alt, raw_evidence)
                     concentration = self._extract_concentration(raw_evidence)
@@ -252,6 +255,7 @@ class BotanicalRDCandidateEngine:
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                         matched_compound=matched_compound,
                         reference_compound=ref_compound,
+                        match_quality=match_quality,
                         concentration=concentration,
                         extraction=extraction,
                         dosage_form=dosage_form,
@@ -268,6 +272,8 @@ class BotanicalRDCandidateEngine:
                         score=score,
                         safety_flags=safety_flags,
                         interaction_flags=interaction_flags,
+                        has_evidence=has_real_evidence,
+                        match_quality=match_quality,
                     )
 
                     rows.append(
@@ -299,6 +305,8 @@ class BotanicalRDCandidateEngine:
                                 ref_compound=ref_compound,
                                 alt_plant=alt_plant,
                                 matched=matched_compound,
+                                match_quality=match_quality,
+                                has_evidence=has_real_evidence,
                                 extraction=extraction,
                                 concentration=concentration,
                                 co_compounds=co_compounds,
@@ -445,6 +453,21 @@ class BotanicalRDCandidateEngine:
         reference_compound,
         alternative_compounds,
     ):
+        """Returns (matched_compound_label, match_quality).
+
+        match_quality is one of:
+          "exact"           - the alternative plant contains the exact
+                               same reference compound.
+          "target_verified" - a different compound, in the same broad
+                               chemical class, that ALSO shares a known
+                               biological target with the reference
+                               compound (per seed_data.COMPOUND_TARGETS).
+          "class_only"       - a different compound sharing only the
+                               broad chemical class label (e.g. both are
+                               "flavonoids"), with no confirmed shared
+                               target — a weak, hypothesis-level link.
+          "none"             - no match at all.
+        """
         ref = self._norm(reference_compound)
 
         alt_norm = {
@@ -453,18 +476,40 @@ class BotanicalRDCandidateEngine:
         }
 
         if ref in alt_norm:
-            return alt_norm[ref]
+            return alt_norm[ref], "exact"
 
         ref_class = self.compound_to_class.get(ref, "")
 
         if not ref_class:
-            return ""
+            return "", "none"
 
-        for alt_key, alt_value in alt_norm.items():
-            if self.compound_to_class.get(alt_key, "") == ref_class:
-                return f"{alt_value} [similar: {ref_class}]"
+        ref_targets = self.compound_to_targets.get(ref, set())
 
-        return ""
+        class_matches = [
+            alt_value
+            for alt_key, alt_value in alt_norm.items()
+            if self.compound_to_class.get(alt_key, "") == ref_class
+        ]
+
+        if not class_matches:
+            return "", "none"
+
+        if ref_targets:
+            for alt_value in class_matches:
+                alt_targets = self.compound_to_targets.get(
+                    self._norm(alt_value), set()
+                )
+                if alt_targets & ref_targets:
+                    return (
+                        f"{alt_value} [similar: {ref_class}; shared target]",
+                        "target_verified",
+                    )
+
+        return (
+            f"{class_matches[0]} [similar: {ref_class}; class-only, "
+            f"target not confirmed]",
+            "class_only",
+        )
 
     def _build_compound_class_index(self):
         index = {}
@@ -472,6 +517,20 @@ class BotanicalRDCandidateEngine:
         for compound_class, compounds in SIMILAR_COMPOUND_GROUPS.items():
             for compound in compounds:
                 index[self._norm(compound)] = compound_class
+
+        return index
+
+    def _build_compound_target_index(self):
+        """Normalized compound name -> set of normalized known targets,
+        sourced from seed_data.COMPOUND_TARGETS. Used to check whether two
+        chemically-similar compounds also share a validated biological
+        target, instead of trusting broad chemical-class membership alone.
+        """
+        index = defaultdict(set)
+
+        for compound, targets in COMPOUND_TARGETS.items():
+            for target in targets:
+                index[self._norm(compound)].add(self._norm(target))
 
         return index
 
@@ -489,6 +548,7 @@ class BotanicalRDCandidateEngine:
         same_plant,
         matched_compound,
         reference_compound,
+        match_quality,
         concentration,
         extraction,
         dosage_form,
@@ -502,10 +562,14 @@ class BotanicalRDCandidateEngine:
     ):
         score = 0
 
-        if self._norm(matched_compound) == self._norm(reference_compound):
+        if match_quality == "exact":
             score += 18
+        elif match_quality == "target_verified":
+            score += 14
         else:
-            score += 11
+            # class_only: same broad chemical family, no confirmed shared
+            # target — the weakest kind of compound link.
+            score += 6
 
         score += 12 if concentration else 3
         score += self._extraction_fit_score(extraction, dosage_form)
@@ -644,19 +708,45 @@ class BotanicalRDCandidateEngine:
         score,
         safety_flags,
         interaction_flags,
+        has_evidence,
+        match_quality,
     ):
         risky = bool(safety_flags) or bool(interaction_flags)
 
         if score >= 75 and not risky:
-            return "Strong R&D candidate"
+            base = "Strong R&D candidate"
+        elif score >= 60:
+            base = "Promising candidate; verify safety and standardization"
+        elif score >= 45:
+            base = "Early-stage candidate; more evidence needed"
+        else:
+            base = "Low priority / insufficient data"
 
-        if score >= 60:
-            return "Promising candidate; verify safety and standardization"
+        if has_evidence:
+            return base
 
-        if score >= 45:
-            return "Early-stage candidate; more evidence needed"
+        # No real literature/evidence text was found for this plant/compound
+        # pair — cap the confidence level so a purely heuristic chemical
+        # link (or even an exact-compound match with zero literature
+        # support yet) is never reported as a "Strong" candidate.
+        order = [
+            "Low priority / insufficient data",
+            "Early-stage candidate; more evidence needed",
+            "Promising candidate; verify safety and standardization",
+            "Strong R&D candidate",
+        ]
 
-        return "Low priority / insufficient data"
+        if match_quality == "exact":
+            ceiling = "Promising candidate; verify safety and standardization"
+        elif match_quality == "target_verified":
+            ceiling = "Early-stage candidate; more evidence needed"
+        else:
+            ceiling = "Low priority / insufficient data"
+
+        if order.index(base) > order.index(ceiling):
+            return ceiling
+
+        return base
 
     def _rationale(
         self,
@@ -667,6 +757,8 @@ class BotanicalRDCandidateEngine:
         ref_compound,
         alt_plant,
         matched,
+        match_quality,
+        has_evidence,
         extraction,
         concentration,
         co_compounds,
@@ -674,15 +766,34 @@ class BotanicalRDCandidateEngine:
         novelty_status,
         decision,
     ):
+        basis = {
+            "exact": "it contains the exact same reference compound",
+            "target_verified": "it contains a chemically-related compound "
+                                "that ALSO shares a validated biological "
+                                "target with the reference compound",
+            "class_only": "it contains a compound from the same broad "
+                          "chemical family only — no shared biological "
+                          "target has been confirmed yet, so this link is "
+                          "a hypothesis, not evidence",
+        }.get(match_quality, "an unspecified link")
+
+        evidence_note = (
+            "Real literature/evidence text was found for this pair."
+            if has_evidence else
+            "No literature evidence text was found yet for this "
+            "plant/compound pair — this candidate's confidence has been "
+            "capped accordingly until evidence is collected."
+        )
+
         return (
             f"For {product_type} targeting {problem}, {alt_plant} is compared "
-            f"with {ref_plant} because it contains {matched}, linked to the "
+            f"with {ref_plant} because {basis} ({matched}), linked to the "
             f"reference compound {ref_compound}. Extraction fit for "
             f"{dosage_form}: {extraction or 'not clearly reported'}. "
             f"Concentration: {concentration or 'not clearly reported'}. "
             f"Co-compounds: {co_compounds or 'not clearly extracted'}. "
             f"Market: {market_status}. Novelty: {novelty_status}. "
-            f"Decision: {decision}."
+            f"{evidence_note} Decision: {decision}."
         )
 
     def _target_or_mechanism(self, ref_targets, alt):

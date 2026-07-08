@@ -15,6 +15,7 @@ from supabase_data import (
     load_compound_profiles_df,
     load_scientific_evidence_df,
 )
+from regulatory_frameworks import get_us_uk_status
 from seed_data import (
     PLANT_COMPOUNDS,
     COMPOUND_TARGETS,

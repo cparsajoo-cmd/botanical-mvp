@@ -1,111 +1,59 @@
 """
 AI Discovery Engine
 Step 1 - Question Understanding
+
+Builds a therapeutic profile (targets / keywords / compound classes)
+directly from seed_data.py (TARGET_DISEASES / COMPOUND_TARGETS /
+PLANT_COMPOUNDS) instead of a separate hardcoded map, so every
+indication offered in the Step 0 dropdown is automatically covered
+here too, with a single source of truth.
 """
 
-THERAPEUTIC_MAP = {
+from seed_data import TARGET_DISEASES, COMPOUND_TARGETS, PLANT_COMPOUNDS
 
-    "Sleep and relaxation": {
 
-        "targets": [
-            "GABA-A receptor",
-            "Melatonin receptor",
-            "5-HT1A receptor",
-            "Orexin receptor",
-            "Histamine receptor"
-        ],
+def _build_compound_class_index():
+    index = {}
+    for compounds in PLANT_COMPOUNDS.values():
+        for compound_name, chem_class, _extraction in compounds:
+            index[compound_name] = chem_class
+    return index
 
-        "keywords": [
-            "sleep",
-            "insomnia",
-            "sedative",
-            "anxiolytic",
-            "sleep quality",
-            "sleep disorder",
-            "GABA",
-            "melatonin"
-        ],
 
-        "compound_classes": [
-            "Flavonoids",
-            "Terpenes",
-            "Phenolic acids",
-            "Alkaloids",
-            "Lignans",
-            "Saponins"
-        ]
-    },
-
-    "Stress": {
-
-        "targets": [
-            "Cortisol",
-            "GABA-A receptor",
-            "5-HT1A receptor"
-        ],
-
-        "keywords": [
-            "stress",
-            "adaptogen",
-            "cortisol",
-            "relaxation"
-        ],
-
-        "compound_classes": [
-            "Withanolides",
-            "Flavonoids",
-            "Terpenes"
-        ]
-    },
-
-    "Inflammation": {
-
-        "targets": [
-            "COX-2",
-            "NF-kB",
-            "TNF-alpha",
-            "IL-6"
-        ],
-
-        "keywords": [
-            "anti-inflammatory",
-            "inflammation",
-            "cytokines"
-        ],
-
-        "compound_classes": [
-            "Polyphenols",
-            "Flavonoids",
-            "Terpenes"
-        ]
-    }
-
-}
+_COMPOUND_CLASS_INDEX = _build_compound_class_index()
 
 
 def understand_question(
     therapeutic_area,
     dosage_form,
-    target_market
+    target_market,
 ):
+    targets_dict = TARGET_DISEASES.get(therapeutic_area)
 
-    profile = THERAPEUTIC_MAP.get(therapeutic_area)
-
-    if profile is None:
+    if not targets_dict:
         return None
 
+    targets = list(targets_dict.keys())
+
+    compound_classes = sorted({
+        _COMPOUND_CLASS_INDEX[compound]
+        for compound, compound_targets in COMPOUND_TARGETS.items()
+        if compound in _COMPOUND_CLASS_INDEX
+        and any(target in targets for target in compound_targets)
+    })
+
+    keywords = sorted({
+        word
+        for target in targets
+        for word in target.lower().replace("-", " ").replace("/", " ").split()
+        if len(word) > 2
+    } | {therapeutic_area.lower()})
+
     return {
-
         "therapeutic_area": therapeutic_area,
-
         "dosage_form": dosage_form,
-
         "target_market": target_market,
-
-        "targets": profile["targets"],
-
-        "keywords": profile["keywords"],
-
-        "compound_classes": profile["compound_classes"]
-
+        "targets": targets,
+        "keywords": keywords,
+        "compound_classes": compound_classes or ["Not yet catalogued"],
     }

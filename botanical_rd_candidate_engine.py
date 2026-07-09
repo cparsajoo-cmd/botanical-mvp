@@ -457,7 +457,7 @@ class BotanicalRDCandidateEngine:
                 problem, max_reference_plants
             )
             if not direct.empty:
-                return direct
+                return direct.head(max_reference_plants)
 
         try:
             ranked = rank_global_candidates(
@@ -483,19 +483,23 @@ class BotanicalRDCandidateEngine:
                 )
             ]
 
-        if ranked.empty:
-            # Last resort: derive reference plants straight from the same
-            # known_inventory chain (TARGET_DISEASES -> COMPOUND_TARGETS ->
-            # PLANT_COMPOUNDS / Supabase plant_compounds) that Step 1
-            # already successfully uses. Without this, an indication can
-            # show a full "known inventory" in Step 1 and still return zero
-            # rows in Step 2 just because no plant happened to be manually
-            # tagged with that exact indication in GLOBAL_PLANT_CANDIDATES
-            # (e.g. Ginkgo biloba / Bacopa monnieri were never tagged with
-            # "Cognitive decline / Alzheimer's support").
-            ranked = self._reference_plants_from_known_inventory(
-                problem, max_reference_plants
-            )
+        # Also check the known_inventory-based fallback (TARGET_DISEASES ->
+        # COMPOUND_TARGETS -> PLANT_COMPOUNDS / Supabase plant_compounds) —
+        # the same chain Step 1/Step 4 ("Existing Scientific Knowledge")
+        # already uses successfully. A plant only gets manually tagged with
+        # an exact indication in GLOBAL_PLANT_CANDIDATES for a handful of
+        # cases (e.g. only Centella asiatica is tagged "Wound healing",
+        # even though 20+ other plants have wound-healing-relevant
+        # compounds per COMPOUND_TARGETS). Whichever source finds MORE
+        # reference plants wins, instead of always stopping at the first
+        # non-empty one — otherwise a single narrowly-tagged plant silently
+        # shadows a much richer, already-working result.
+        from_inventory = self._reference_plants_from_known_inventory(
+            problem, max_reference_plants
+        )
+
+        if len(from_inventory) > len(ranked):
+            ranked = from_inventory
 
         return ranked.head(max_reference_plants)
 

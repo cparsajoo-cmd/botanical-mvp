@@ -20,7 +20,6 @@ def _unique_nonempty(values):
 
 def _status_badge(key):
     status = st.session_state.get(key, "not_run")
-
     if status == "completed":
         st.success("🟢 Completed")
     elif status == "running":
@@ -107,13 +106,40 @@ def render_rd_candidates_step(inputs):
     market = inputs.get("market", "")
 
     st.markdown("---")
+    st.markdown("## Step 0 — Define R&D Question")
+    _status_badge("step0_question_status")
+
+    st.caption("Confirm that the platform has understood the R&D question before running the analysis.")
+
+    st.write("**Selected indication / product question:**")
+    st.info(indication if indication else "No indication selected yet.")
+
+    st.write("**Dosage form:**")
+    st.info(dosage_form if dosage_form else "Not specified.")
+
+    st.write("**Target market:**")
+    st.info(market if market else "Not specified.")
+
+    if st.button("✅ R&D Question Understood", type="primary", key="run_step0_question"):
+        if indication:
+            st.session_state["step0_question_status"] = "completed"
+            st.session_state["rd_confirmed_question"] = {
+                "indication": indication,
+                "dosage_form": dosage_form,
+                "market": market,
+            }
+            st.success("✅ R&D question confirmed. You can now run the analysis steps below.")
+        else:
+            st.session_state["step0_question_status"] = "failed"
+            st.error("Please define an indication or product question first.")
+
+    st.markdown("---")
     st.markdown("## Step 1 — Market & Competitive Landscape")
     _status_badge("step1_market_status")
 
     st.caption(
-        "Check what already exists in the market for this R&D question: "
-        "known botanical sources, regulatory status, patent readiness, "
-        "retail/brand search readiness, and market saturation signals."
+        "Check what already exists in the market: existing products, known botanical sources, "
+        "brands, claims, regulatory status, patent readiness, and saturation signals."
     )
 
     live_market = st.checkbox(
@@ -192,16 +218,11 @@ def render_rd_candidates_step(inputs):
     _status_badge("step2_science_status")
 
     st.caption(
-        "Show the current scientific knowledge base: known plants, compounds, "
-        "targets/mechanisms, evidence level, extraction information, safety notes, "
-        "and regulatory notes."
+        "Show current scientific knowledge: known plants, compounds, targets, mechanisms, "
+        "evidence level, extraction information, safety notes, and regulatory notes."
     )
 
-    if st.button(
-        "Run Scientific Knowledge Analysis",
-        type="primary",
-        key="run_step2_science",
-    ):
+    if st.button("Run Scientific Knowledge Analysis", type="primary", key="run_step2_science"):
         st.session_state["step2_science_status"] = "running"
 
         try:
@@ -228,17 +249,15 @@ def render_rd_candidates_step(inputs):
         st.dataframe(inventory_df, use_container_width=True)
 
     elif st.session_state.get("step2_science_status") == "failed":
-        st.warning(
-            f"No known scientific inventory found for '{indication}' in the seed database."
-        )
+        st.warning(f"No known scientific inventory found for '{indication}' in the seed database.")
 
     st.markdown("---")
     st.markdown("## Step 3 — R&D Candidate Discovery & Decision Engine")
     _status_badge("step3_candidate_status")
 
     st.caption(
-        "Generate alternative botanical candidates and score them using evidence, "
-        "mechanism plausibility, novelty, safety, regulatory feasibility, and market opportunity."
+        "Generate alternative botanical candidates and score them using evidence, mechanism plausibility, "
+        "novelty, safety, regulatory feasibility, and market opportunity."
     )
 
     col1, col2 = st.columns(2)
@@ -265,11 +284,7 @@ def render_rd_candidates_step(inputs):
         key="rd_live_evidence_checkbox",
     )
 
-    if st.button(
-        "Run Candidate Discovery",
-        type="primary",
-        key="run_step3_candidates",
-    ):
+    if st.button("Run Candidate Discovery", type="primary", key="run_step3_candidates"):
         st.session_state["step3_candidate_status"] = "running"
 
         try:
@@ -289,7 +304,9 @@ def render_rd_candidates_step(inputs):
 
             st.session_state["rd_candidates_df"] = result_df
             st.session_state["step3_candidate_status"] = (
-                "completed" if isinstance(result_df, pd.DataFrame) and not result_df.empty else "failed"
+                "completed"
+                if isinstance(result_df, pd.DataFrame) and not result_df.empty
+                else "failed"
             )
 
         except Exception as e:
@@ -310,23 +327,15 @@ def render_rd_candidates_step(inputs):
         )
 
     elif st.session_state.get("step3_candidate_status") == "failed":
-        st.warning(
-            "No R&D candidates found. Extend seed_data.py or Supabase records."
-        )
+        st.warning("No R&D candidates found. Extend seed_data.py or Supabase records.")
 
     st.markdown("---")
     st.markdown("## Step 4 — Final Recommendation")
     _status_badge("step4_recommendation_status")
 
-    st.caption(
-        "Generate a concise R&D recommendation based on the decision table produced in Step 3."
-    )
+    st.caption("Generate a concise R&D recommendation based on the decision table produced in Step 3.")
 
-    if st.button(
-        "Generate Final Recommendation",
-        type="primary",
-        key="run_step4_recommendation",
-    ):
+    if st.button("Generate Final Recommendation", type="primary", key="run_step4_recommendation"):
         if isinstance(result_df, pd.DataFrame) and not result_df.empty:
             st.session_state["step4_recommendation_status"] = "completed"
             st.session_state["show_final_recommendation"] = True

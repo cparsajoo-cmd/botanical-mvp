@@ -34,7 +34,7 @@ def _offline_engine():
 
 def _recommendation_block(result_df):
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:
-        st.warning("Run Step 3 first, then generate the final recommendation.")
+        st.warning("Run Step 5 first, then generate the final recommendation.")
         return
 
     df = result_df.copy()
@@ -94,7 +94,7 @@ def render_rd_candidates_step(inputs):
     market = inputs.get("market", "")
 
     st.markdown("---")
-    st.markdown("## Step 1 — Market & Competitive Landscape")
+    st.markdown("## Step 3 — Market & Competitive Landscape")
 
     st.caption(
         "Check what already exists in the market: existing botanical products, "
@@ -155,7 +155,7 @@ def render_rd_candidates_step(inputs):
         st.dataframe(landscape_df, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("## Step 2 — Existing Scientific Knowledge")
+    st.markdown("## Step 4 — Existing Scientific Knowledge")
 
     st.caption(
         "Show current scientific knowledge: known plants, compounds, targets, mechanisms, "
@@ -189,7 +189,7 @@ def render_rd_candidates_step(inputs):
         st.dataframe(inventory_df, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("## Step 3 — R&D Candidate Discovery & Decision Engine")
+    st.markdown("## Step 5 — R&D Candidate Discovery & Decision Engine")
 
     st.caption(
         "Generate alternative botanical candidates and score them using evidence, "
@@ -259,10 +259,10 @@ def render_rd_candidates_step(inputs):
         )
 
     st.markdown("---")
-    st.markdown("## Step 4 — Final Recommendation")
+    st.markdown("## Step 6 — Final Recommendation")
 
     st.caption(
-        "Generate a concise R&D recommendation based on the decision table produced in Step 3."
+        "Generate a concise R&D recommendation based on the decision table produced in Step 5."
     )
 
     if st.button("Generate Final Recommendation", type="primary", key="run_step4_recommendation"):

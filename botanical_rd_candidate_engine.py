@@ -6,16 +6,42 @@ from collections import defaultdict
 
 import pandas as pd
 
-from evidence_database import load_evidence_database
-from global_candidate_ranking_engine import rank_global_candidates
+try:
+    from evidence_database import load_evidence_database
+except Exception:
+    def load_evidence_database():
+        return []
+
+try:
+    from global_candidate_ranking_engine import rank_global_candidates
+except Exception:
+    def rank_global_candidates(*args, **kwargs):
+        return pd.DataFrame()
+
 from global_plant_candidate_database import GLOBAL_PLANT_CANDIDATES
 from compound_occurrence_map import get_region
-from supabase_data import (
-    load_plant_compounds_df,
-    load_compound_profiles_df,
-    load_scientific_evidence_df,
-)
-from regulatory_frameworks import get_us_uk_status
+
+try:
+    from supabase_data import (
+        load_plant_compounds_df,
+        load_compound_profiles_df,
+        load_scientific_evidence_df,
+    )
+except Exception:
+    def load_plant_compounds_df():
+        return pd.DataFrame()
+
+    def load_compound_profiles_df():
+        return pd.DataFrame()
+
+    def load_scientific_evidence_df():
+        return pd.DataFrame()
+
+try:
+    from regulatory_frameworks import get_us_uk_status
+except Exception:
+    def get_us_uk_status(plant):
+        return {}
 from seed_data import (
     PLANT_COMPOUNDS,
     COMPOUND_TARGETS,
@@ -36,6 +62,7 @@ OUTPUT_COLUMNS = [
     "Safety_Flags",
     "Interaction_Flags",
     "Evidence_Source",
+    "Evidence_Level",
     "Market_Status",
     "Novelty_Status",
     "R&D_Opportunity_Score",
@@ -282,6 +309,7 @@ class BotanicalRDCandidateEngine:
                     )
 
                     has_real_evidence = bool(raw_evidence.strip())
+                    evidence_level = self._evidence_level(raw_evidence)
 
                     extraction = self._best_extraction(alt, raw_evidence)
                     concentration = self._extract_concentration(raw_evidence)
@@ -331,6 +359,7 @@ class BotanicalRDCandidateEngine:
                         novelty_status=novelty_status,
                         target=target,
                         evidence=raw_evidence,
+                        evidence_level=evidence_level,
                     )
 
                     decision = self._decision_class(
@@ -339,6 +368,7 @@ class BotanicalRDCandidateEngine:
                         interaction_flags=interaction_flags,
                         has_evidence=has_real_evidence,
                         match_quality=match_quality,
+                        evidence_level=evidence_level,
                     )
 
                     rows.append(
@@ -358,6 +388,7 @@ class BotanicalRDCandidateEngine:
                                 matched_compound,
                                 raw_evidence,
                             ),
+                            "Evidence_Level": evidence_level,
                             "Market_Status": market_status,
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
@@ -372,6 +403,7 @@ class BotanicalRDCandidateEngine:
                                 matched=matched_compound,
                                 match_quality=match_quality,
                                 has_evidence=has_real_evidence,
+                                evidence_level=evidence_level,
                                 extraction=extraction,
                                 concentration=concentration,
                                 co_compounds=co_compounds,
@@ -915,46 +947,64 @@ class BotanicalRDCandidateEngine:
         novelty_status,
         target,
         evidence,
+        evidence_level="No direct evidence",
     ):
         score = 0
 
+        # 1) Chemical/mechanistic link. Exact shared compound is strong;
+        # target-verified similarity is moderate; class-only similarity is weak.
         if match_quality == "exact":
-            score += 18
+            score += 22
         elif match_quality == "target_verified":
-            score += 14
+            score += 15
         else:
-            # class_only: same broad chemical family, no confirmed shared
-            # target — the weakest kind of compound link.
+            score += 5
+
+        # 2) Evidence quality. The previous engine rewarded any text too much.
+        # Here weak/no evidence cannot produce a high-confidence candidate.
+        evidence_points = {
+            "Clinical / human evidence": 24,
+            "Regulatory / monograph evidence": 20,
+            "Preclinical / mechanistic evidence": 12,
+            "General literature signal": 7,
+            "No direct evidence": 0,
+        }
+        score += evidence_points.get(evidence_level, 0)
+
+        # 3) Product-development fit. These matter, but they must not
+        # overpower poor evidence.
+        score += 10 if concentration else 2
+        score += min(18, self._extraction_fit_score(extraction, dosage_form))
+        score += min(8, len(self._split_terms(co_compounds)) * 2)
+        score += 8 if target else 1
+
+        # 4) Novelty is valuable only after some scientific basis exists.
+        if evidence_level != "No direct evidence":
+            if "Alternative" in novelty_status or "Cross-region" in novelty_status:
+                score += 10
+            else:
+                score += 2
+
+        # 5) Market signal is a small modifier, not the core scientific score.
+        market_lower = market_status.lower()
+        if "saturated" in market_lower:
+            score += 1
+        elif "emerging" in market_lower or "white-space" in market_lower:
             score += 6
-
-        score += 12 if concentration else 3
-        score += self._extraction_fit_score(extraction, dosage_form)
-        score += min(12, len(self._split_terms(co_compounds)) * 3)
-        score += 10 if target else 2
-        score += 10 if evidence else 4
-
-        if "Alternative" in novelty_status or "Cross-region" in novelty_status:
-            score += 14
         else:
             score += 3
 
-        market_lower = market_status.lower()
-
-        if "saturated" in market_lower:
-            score += 4
-        elif "emerging" in market_lower or "white-space" in market_lower:
-            score += 12
-        else:
-            score += 8
-
+        # 6) Penalize safety and interaction flags strongly. A candidate with
+        # clear safety issues should not be presented as attractive without
+        # qualification.
         if safety_flags:
-            score -= 8
+            score -= 14
 
         if interaction_flags:
-            score -= 6
+            score -= 10
 
         if same_plant:
-            score -= 12
+            score -= 15
 
         return round(max(0, min(100, score)), 1)
 
@@ -1066,25 +1116,19 @@ class BotanicalRDCandidateEngine:
         interaction_flags,
         has_evidence,
         match_quality,
+        evidence_level="No direct evidence",
     ):
         risky = bool(safety_flags) or bool(interaction_flags)
 
-        if score >= 75 and not risky:
+        if score >= 78 and not risky:
             base = "Strong R&D candidate"
-        elif score >= 60:
+        elif score >= 62:
             base = "Promising candidate; verify safety and standardization"
         elif score >= 45:
             base = "Early-stage candidate; more evidence needed"
         else:
             base = "Low priority / insufficient data"
 
-        if has_evidence:
-            return base
-
-        # No real literature/evidence text was found for this plant/compound
-        # pair — cap the confidence level so a purely heuristic chemical
-        # link (or even an exact-compound match with zero literature
-        # support yet) is never reported as a "Strong" candidate.
         order = [
             "Low priority / insufficient data",
             "Early-stage candidate; more evidence needed",
@@ -1092,17 +1136,51 @@ class BotanicalRDCandidateEngine:
             "Strong R&D candidate",
         ]
 
-        if match_quality == "exact":
+        # Confidence caps make the output scientifically defensible.
+        if not has_evidence or evidence_level == "No direct evidence":
+            ceiling = (
+                "Promising candidate; verify safety and standardization"
+                if match_quality == "exact"
+                else "Early-stage candidate; more evidence needed"
+            )
+        elif evidence_level in {"General literature signal", "Preclinical / mechanistic evidence"}:
             ceiling = "Promising candidate; verify safety and standardization"
-        elif match_quality == "target_verified":
-            ceiling = "Early-stage candidate; more evidence needed"
+        elif risky:
+            ceiling = "Promising candidate; verify safety and standardization"
         else:
-            ceiling = "Low priority / insufficient data"
+            ceiling = "Strong R&D candidate"
 
         if order.index(base) > order.index(ceiling):
             return ceiling
 
         return base
+
+    def _evidence_level(self, evidence):
+        text = self._norm(evidence)
+        if not text:
+            return "No direct evidence"
+
+        clinical_terms = [
+            "clinical trial", "randomized", "randomised", "placebo",
+            "human", "patient", "subjects", "participants", "meta-analysis",
+            "systematic review",
+        ]
+        regulatory_terms = [
+            "ema", "hmcp", "escop", "who monograph", "monograph",
+            "traditional use", "well-established use",
+        ]
+        preclinical_terms = [
+            "in vitro", "in vivo", "animal", "mouse", "rat",
+            "mechanism", "pathway", "receptor", "enzyme", "target",
+        ]
+
+        if any(term in text for term in clinical_terms):
+            return "Clinical / human evidence"
+        if any(term in text for term in regulatory_terms):
+            return "Regulatory / monograph evidence"
+        if any(term in text for term in preclinical_terms):
+            return "Preclinical / mechanistic evidence"
+        return "General literature signal"
 
     def _rationale(
         self,
@@ -1115,6 +1193,7 @@ class BotanicalRDCandidateEngine:
         matched,
         match_quality,
         has_evidence,
+        evidence_level,
         extraction,
         concentration,
         co_compounds,
@@ -1134,7 +1213,7 @@ class BotanicalRDCandidateEngine:
         }.get(match_quality, "an unspecified link")
 
         evidence_note = (
-            "Real literature/evidence text was found for this pair."
+            f"Evidence level: {evidence_level}."
             if has_evidence else
             "No literature evidence text was found yet for this "
             "plant/compound pair — this candidate's confidence has been "

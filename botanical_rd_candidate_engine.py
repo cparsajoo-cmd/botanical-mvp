@@ -451,7 +451,48 @@ class BotanicalRDCandidateEngine:
                 )
             ]
 
+        if ranked.empty:
+            # Last resort: derive reference plants straight from the same
+            # known_inventory chain (TARGET_DISEASES -> COMPOUND_TARGETS ->
+            # PLANT_COMPOUNDS / Supabase plant_compounds) that Step 1
+            # already successfully uses. Without this, an indication can
+            # show a full "known inventory" in Step 1 and still return zero
+            # rows in Step 2 just because no plant happened to be manually
+            # tagged with that exact indication in GLOBAL_PLANT_CANDIDATES
+            # (e.g. Ginkgo biloba / Bacopa monnieri were never tagged with
+            # "Cognitive decline / Alzheimer's support").
+            ranked = self._reference_plants_from_known_inventory(
+                problem, max_reference_plants
+            )
+
         return ranked.head(max_reference_plants)
+
+    def _reference_plants_from_known_inventory(self, problem, max_reference_plants):
+        inventory = self.known_inventory_df(problem)
+
+        if inventory.empty:
+            return pd.DataFrame()
+
+        rows = []
+
+        for plant, group in inventory.groupby("Known_Plant"):
+            compounds = sorted(
+                c for c in group["Known_Compound"].dropna().unique() if c
+            )
+            targets = sorted(
+                t for t in group["Known_Target"].dropna().unique() if t
+            )
+
+            if not plant or not compounds:
+                continue
+
+            rows.append({
+                "Scientific_Name": plant,
+                "Known_Active_Compounds": ", ".join(compounds),
+                "Known_Targets": "; ".join(targets),
+            })
+
+        return pd.DataFrame(rows).head(max_reference_plants)
 
     def _reference_plants_from_supabase(self, problem, max_reference_plants):
         """Reference plants selected directly from the real

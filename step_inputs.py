@@ -142,6 +142,23 @@ def render_inputs():
         f"in **{market}**."
     )
 
+    if st.button("✅ R&D question understood", type="primary", key="confirm_rd_question"):
+        st.session_state["step0_question_status"] = "completed"
+        st.session_state["rd_confirmed_question"] = {
+            "product_type": product_type,
+            "indication": indication,
+            "dosage_form": dosage_form,
+            "market": market,
+            "target_count": target_count,
+            "max_pubmed_results": max_pubmed_results,
+        }
+        st.success("✅ R&D question confirmed.")
+
+    if st.session_state.get("step0_question_status") == "completed":
+        st.success("🟢 Step 0 completed")
+    else:
+        st.info("⚪ Step 0 not confirmed yet")
+
     return {
         "product_type": product_type,
         "indication": indication,

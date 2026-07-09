@@ -164,7 +164,21 @@ class BotanicalRDCandidateEngine:
             self.candidate_data = self._candidates_from_plant_compounds()
             self.candidate_source = "supabase"
         else:
-            self.candidate_data = GLOBAL_PLANT_CANDIDATES
+            # GLOBAL_PLANT_CANDIDATES alone (35 plants, each hand-tagged
+            # with Indications) is used for REFERENCE-plant selection.
+            # But it's noticeably smaller than seed_data.PLANT_COMPOUNDS
+            # (48+ plants) — so alternative-plant matching was silently
+            # blind to any plant only present in PLANT_COMPOUNDS (e.g.
+            # Eschscholzia californica never got considered as an
+            # isoquinoline-alkaloid alternative to Berberis vulgaris).
+            # Merge in every seed_data plant not already covered, with no
+            # Indications tag (so it still can't be picked as a
+            # reference plant via indication text-matching — only as an
+            # alternative-plant match target), to make alt-plant search
+            # cover the full local dataset.
+            self.candidate_data = (
+                GLOBAL_PLANT_CANDIDATES + self._seed_data_only_candidates()
+            )
             self.candidate_source = "local_fallback"
 
         self.compound_to_class, self.compound_to_targets = (
@@ -373,15 +387,24 @@ class BotanicalRDCandidateEngine:
 
         output = pd.DataFrame(rows)
 
-        output = output.drop_duplicates(
-            subset=[
-                "Reference_Plant",
-                "Reference_Compound",
-                "Alternative_Plant",
-                "Shared_or_Similar_Compound",
-            ],
-            keep="first",
+        # Sort by score first so, when two rows differ only by letter case in
+        # the compound name (a real data-quality issue seen in some source
+        # records — e.g. "Withanolide D" / "withanolide D" / "WITHANOLIDE
+        # D" all meaning the same compound), the highest-scoring version is
+        # the one kept.
+        output = output.sort_values(
+            by=["R&D_Opportunity_Score"],
+            ascending=False,
         )
+
+        dedup_key = pd.DataFrame({
+            "Reference_Plant": output["Reference_Plant"].map(self._norm),
+            "Reference_Compound": output["Reference_Compound"].map(self._norm),
+            "Alternative_Plant": output["Alternative_Plant"].map(self._norm),
+            "Shared_or_Similar_Compound": output["Shared_or_Similar_Compound"].map(self._norm),
+        })
+
+        output = output[~dedup_key.duplicated(keep="first")]
 
         output = output.sort_values(
             by=["R&D_Opportunity_Score"],
@@ -558,6 +581,48 @@ class BotanicalRDCandidateEngine:
             terms.extend(self._split_terms(value))
 
         return terms
+
+    @staticmethod
+    def _seed_data_only_candidates():
+        """Every plant in seed_data.PLANT_COMPOUNDS that ISN'T already in
+        GLOBAL_PLANT_CANDIDATES, reshaped into the same candidate-dict
+        format (Known_Active_Compounds / Known_Targets / Region), so it
+        can be searched as an alternative-plant match target. No
+        Indications tag on purpose — see the comment where this is called.
+        """
+        already_covered = {
+            item["Scientific_Name"] for item in GLOBAL_PLANT_CANDIDATES
+        }
+
+        candidates = []
+
+        for plant, compounds in PLANT_COMPOUNDS.items():
+            if plant in already_covered:
+                continue
+
+            compound_names = [name for name, _cls, _extraction in compounds]
+            targets = sorted({
+                target
+                for name in compound_names
+                for target in COMPOUND_TARGETS.get(name, [])
+            })
+            extraction = next(
+                (ext for _name, _cls, ext in compounds if ext), ""
+            )
+
+            candidates.append({
+                "Scientific_Name": plant,
+                "Common_Name": "",
+                "Region": get_region(plant),
+                "Indications": [],
+                "Known_Active_Compounds": compound_names,
+                "Known_Targets": targets,
+                "Plant_Part": "",
+                "Extraction_Method": extraction,
+                "EMA_Status": "",
+            })
+
+        return candidates
 
     def _candidate_frame(self):
         rows = []
@@ -737,12 +802,24 @@ class BotanicalRDCandidateEngine:
     def _build_compound_indexes(self):
         """Returns (compound_to_class, compound_to_targets).
 
-        Built primarily from the real Supabase `compound_profiles` table
-        (310 records: compound_name, compound_class, major_target), with
-        the small local SIMILAR_COMPOUND_GROUPS / seed_data.COMPOUND_TARGETS
-        as a fallback layer for any compound not (yet) in Supabase.
+        Layered, cheapest/narrowest first so richer sources can override:
+          1. seed_data.PLANT_COMPOUNDS's own per-compound chemical class
+             (already collected there for every plant, e.g. "Isoquinoline
+             alkaloid" for Berberine — previously computed but never fed
+             into cross-plant matching, which silently starved newer
+             indications like metabolic/energy of any alternative-plant
+             results even when a real class match existed).
+          2. SIMILAR_COMPOUND_GROUPS — a small hand-curated set of extra
+             families for compounds not listed with a class anywhere else.
+          3. The real Supabase `compound_profiles` table (310 records) —
+             the richest, maintained source — wins over both when present.
         """
         class_index = {}
+
+        for compounds in PLANT_COMPOUNDS.values():
+            for compound_name, chem_class, _extraction in compounds:
+                if chem_class:
+                    class_index[self._norm(compound_name)] = chem_class
 
         for compound_class, compounds in SIMILAR_COMPOUND_GROUPS.items():
             for compound in compounds:

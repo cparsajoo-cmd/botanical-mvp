@@ -1,6 +1,8 @@
 import streamlit as st
 
 from step_inputs import render_inputs
+from step_question import render_question_step
+from step_evidence import render_evidence_step
 from step_rd_candidates import render_rd_candidates_step
 from step_import_data import render_import_step
 from evidence_database import load_evidence_database
@@ -24,11 +26,14 @@ except Exception:
 
 st.markdown("## Core workflow")
 st.info(
-    "Step 0: define the R&D question → Step 1: market & competitive landscape → "
-    "Step 2: scientific knowledge → Step 3: R&D candidate discovery and decision engine → "
-    "Step 4: final recommendation."
+    "Step 0: define the R&D question → Step 1: understand the question → "
+    "Step 2: collect online evidence → Step 3: market & competitive landscape → "
+    "Step 4: existing scientific knowledge → Step 5: R&D candidate discovery "
+    "and decision engine → Step 6: final recommendation."
 )
 
+render_question_step(inputs)
+render_evidence_step(inputs)
 render_rd_candidates_step(inputs)
 
 with st.expander("Optional: import / ingest data"):

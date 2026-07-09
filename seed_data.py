@@ -770,6 +770,60 @@ def _get_id(cur, table, id_col, name_col, name_value):
     return row[0] if row else None
 
 
+
+def build_standard_seed_records():
+    """
+    Return the local seed database in a normalized record format used by the
+    R&D candidate engine. This does not replace the existing seed tables; it
+    gives the engine one clean view of plant -> compound -> target ->
+    indication -> evidence/safety/regulatory information.
+    """
+    compound_to_targets = {
+        str(compound).strip(): list(targets)
+        for compound, targets in COMPOUND_TARGETS.items()
+    }
+
+    target_to_indications = {}
+    for indication, targets in TARGET_DISEASES.items():
+        for target, relevance in targets.items():
+            target_to_indications.setdefault(str(target).strip(), []).append({
+                "indication": indication,
+                "relevance_level": relevance,
+            })
+
+    evidence_by_plant = SLEEP_TEA_EVIDENCE
+
+    records = []
+    for plant, compounds in PLANT_COMPOUNDS.items():
+        sleep_evidence = evidence_by_plant.get(plant, {})
+        for compound_name, compound_class, extraction_method in compounds:
+            targets = compound_to_targets.get(compound_name, [])
+            indications = []
+            for target in targets:
+                indications.extend(target_to_indications.get(target, []))
+
+            records.append({
+                "plant": plant,
+                "compound": compound_name,
+                "compound_class": compound_class,
+                "targets": targets,
+                "indications": indications,
+                "extraction_method": extraction_method,
+                "evidence_level": sleep_evidence.get(
+                    "study_type", "Not curated yet"
+                ),
+                "safety_notes": sleep_evidence.get(
+                    "safety_desc", "Not curated yet"
+                ),
+                "regulatory_notes": {
+                    "EMA": sleep_evidence.get("ema_status", "Not curated yet"),
+                    "WHO": sleep_evidence.get("who_status", "Not curated yet"),
+                    "ESCOP": sleep_evidence.get("escop_status", "Not curated yet"),
+                },
+            })
+
+    return records
+
 def seed_all():
     init_schema(reset=True)
     conn = get_connection()

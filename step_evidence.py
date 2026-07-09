@@ -5,9 +5,9 @@ from research_engine import run_research_engine
 
 def render_evidence_step(inputs):
     st.markdown("---")
-    st.markdown("## Step 4 — Collect online evidence")
+    st.markdown("## Step 2 — Collect online evidence")
 
-    if st.button("Step 4: Collect online evidence"):
+    if st.button("Step 2: Collect online evidence"):
         with st.spinner("Searching sources and saving evidence to Supabase..."):
             research_output = run_research_engine(
                 product_type=inputs["product_type"],

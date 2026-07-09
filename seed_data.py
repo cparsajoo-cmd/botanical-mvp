@@ -696,6 +696,71 @@ SLEEP_TEA_EVIDENCE = {
         safety="mild", safety_desc="Dose and pregnancy safety need review",
         production_status="commercially produced", commercial="High",
     ),
+    "Piper methysticum": dict(
+        study_type="Clinical (multiple RCTs, meta-analysis) + contested EU regulatory history",
+        preparation_form="extract (ethanolic/acetonic) — not aqueous infusion",
+        outcome=(
+            "Witte et al. 2005 meta-analysis and RCTs (Sarris et al. 2009 KADSS; "
+            "Sarris et al. 2013 GAD trial) show anxiolytic efficacy vs placebo for "
+            "kavalactone extracts. EMA/HMPC assessed Piper methysticum rhizoma but "
+            "did NOT adopt an EU herbal monograph (2016-2019 assessment), citing "
+            "insufficient efficacy data for the specific extracts reviewed."
+        ),
+        ema_status="No EU HMPC monograph adopted (rejected/withdrawn)",
+        who_status="WHO monograph exists (Vol. 2, 2004)",
+        escop_status="ESCOP monograph: positive, for anxiety/tension/restlessness",
+        safety="serious",
+        safety_desc=(
+            "Hepatotoxicity concerns led to bans on kava products in Germany "
+            "(2002, reinstated 2019) and restrictions in other markets; German "
+            "courts have contested the ban's evidentiary basis. Not usable as an "
+            "EU herbal medicinal product without national-level exception; "
+            "requires dedicated regulatory and safety review before any product "
+            "development."
+        ),
+        production_status="commercially produced (where legally permitted; banned/restricted in several EU markets)",
+        commercial="Medium (regulatory-restricted)",
+    ),
+    "Crataegus monogyna": dict(
+        study_type="EU HMPC traditional-use monograph + Ph. Eur. monograph",
+        preparation_form="leaf/flower preparations (infusion, tincture, dry extract)",
+        outcome=(
+            "The EU herbal monograph on Crataegus monogyna/C. laevigata leaf and "
+            "flower explicitly lists 'relief of mild symptoms of mental stress and "
+            "to aid sleep' as an accepted traditional-use indication, alongside "
+            "relief of temporary nervous cardiac complaints."
+        ),
+        ema_status="Traditional use (HMPC) — explicit sleep/mental-stress indication",
+        who_status="Not confirmed in this review",
+        escop_status="Traditional use (cardiac focus; ESCOP monograph exists)",
+        safety="mild",
+        safety_desc=(
+            "Target organ is the heart; caution advised for people on cardiac "
+            "medication or with serious cardiovascular disease. Reported adverse "
+            "reactions include nausea, palpitations, and dizziness."
+        ),
+        production_status="commercially produced", commercial="Medium-high",
+    ),
+    "Gynostemma pentaphyllum": dict(
+        study_type="Clinical (single RCT, human, anxiety-specific)",
+        preparation_form="extract (ethanolic) — not infusion-specific",
+        outcome=(
+            "Huyen et al. 2018 (PubMed 30599899): randomized, double-blind, "
+            "placebo-controlled trial in 72 healthy Korean adults with chronic "
+            "psychological stress found ethanol extract of G. pentaphyllum leaves "
+            "(200mg twice daily) reduced anxiety-proneness (STAI) vs placebo."
+        ),
+        ema_status="Not evaluated (no EU HMPC monograph; Chinese-origin herb)",
+        who_status="Not listed", escop_status="Not listed",
+        safety="none",
+        safety_desc=(
+            "Generally well tolerated in the available trial, though safety data "
+            "is limited to one study. May require Novel Food authorisation for EU "
+            "food-supplement use, since it lacks significant pre-1997 EU food-use "
+            "history."
+        ),
+        production_status="R&D candidate", commercial="Medium",
+    ),
 }
 
 

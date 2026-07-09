@@ -4,7 +4,7 @@ from regulatory_frameworks import get_market_framework
 
 
 def render_inputs():
-    st.markdown("## Step 0 — Define R&D question")
+    st.markdown("## Step 0 — Define R&D Question")
 
     col1, col2 = st.columns(2)
 
@@ -120,6 +120,23 @@ def render_inputs():
         3,
     )
 
+    if st.button("✅ R&D Question Understood", type="primary", key="confirm_rd_question"):
+        st.session_state["rd_question_confirmed"] = True
+        st.session_state["rd_question_inputs"] = {
+            "product_type": product_type,
+            "indication": indication,
+            "dosage_form": dosage_form,
+            "market": market,
+            "target_count": target_count,
+            "max_pubmed_results": max_pubmed_results,
+        }
+
+    if st.session_state.get("rd_question_confirmed"):
+        st.success(
+            f"✅ R&D question confirmed: {product_type} as {dosage_form} "
+            f"for {indication} in {market}."
+        )
+
     framework = get_market_framework(market)
 
     if framework:
@@ -131,33 +148,8 @@ def render_inputs():
             st.caption(framework["notes"])
             st.caption(
                 "This is general, market-level regulatory context — not a "
-                "plant-specific or product-specific legal opinion. Verify "
-                "against the actual ingredient, formulation, and supplier "
-                "before commercial use."
+                "plant-specific or product-specific legal opinion."
             )
-
-    st.info(
-        f"Find and rank global medicinal plants and active compounds for "
-        f"**{product_type}** as **{dosage_form}** for **{indication}** "
-        f"in **{market}**."
-    )
-
-    if st.button("✅ R&D question understood", type="primary", key="confirm_rd_question"):
-        st.session_state["step0_question_status"] = "completed"
-        st.session_state["rd_confirmed_question"] = {
-            "product_type": product_type,
-            "indication": indication,
-            "dosage_form": dosage_form,
-            "market": market,
-            "target_count": target_count,
-            "max_pubmed_results": max_pubmed_results,
-        }
-        st.success("✅ R&D question confirmed.")
-
-    if st.session_state.get("step0_question_status") == "completed":
-        st.success("🟢 Step 0 completed")
-    else:
-        st.info("⚪ Step 0 not confirmed yet")
 
     return {
         "product_type": product_type,

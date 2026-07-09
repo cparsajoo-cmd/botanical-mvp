@@ -4,95 +4,73 @@ import streamlit as st
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 
 
-def _safe_unique(series):
-    if series is None:
-        return []
-    return [x for x in series.dropna().astype(str).unique().tolist() if x.strip()]
+def _unique_nonempty(values):
+    seen = set()
+    out = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text.lower() == "nan":
+            continue
+        key = text.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(text)
+    return out
 
 
-def _market_notice(landscape_df):
-    if landscape_df is None or landscape_df.empty:
+def _recommendation_block(result_df):
+    if result_df is None or result_df.empty:
+        st.info("Run Step 3 first to generate final recommendations.")
         return
 
-    if "Patent_Search_Status" in landscape_df.columns:
-        if (landscape_df["Patent_Search_Status"] == "Not configured").all():
-            st.caption(
-                "Patent search is not configured yet. This is not a scientific error; "
-                "it only means EPO_OPS_KEY / EPO_OPS_SECRET are missing."
+    df = result_df.copy()
+    if "R&D_Opportunity_Score" in df.columns:
+        df["R&D_Opportunity_Score"] = pd.to_numeric(
+            df["R&D_Opportunity_Score"], errors="coerce"
+        ).fillna(0)
+        df = df.sort_values("R&D_Opportunity_Score", ascending=False)
+
+    plant_col = "Alternative_Plant" if "Alternative_Plant" in df.columns else df.columns[0]
+    decision_col = "Decision_Class" if "Decision_Class" in df.columns else None
+
+    # One visible recommendation per plant, using the best scoring row.
+    best_rows = df.drop_duplicates(subset=[plant_col], keep="first")
+
+    recommended = best_rows
+    if decision_col:
+        recommended = best_rows[
+            best_rows[decision_col].astype(str).str.contains(
+                "strong|promising|recommend", case=False, na=False
             )
-
-    if "Retail_Products_Status" in landscape_df.columns:
-        if (landscape_df["Retail_Products_Status"] == "Not configured").all():
-            st.caption(
-                "Retail/brand product scanning is not configured yet. Add a search API "
-                "key later if you want automated retail monitoring."
-            )
-
-
-def _build_decision_summary(result_df, landscape_df=None):
-    if result_df is None or result_df.empty:
-        return pd.DataFrame()
-
-    group_cols = ["Alternative_Plant"]
-    agg = {
-        "R&D_Opportunity_Score": "max",
-        "Decision_Class": lambda x: "; ".join(sorted(set(x.dropna().astype(str))))[:200],
-        "Reference_Plant": lambda x: ", ".join(sorted(set(x.dropna().astype(str))))[:250],
-        "Shared_or_Similar_Compound": lambda x: ", ".join(sorted(set(x.dropna().astype(str))))[:250],
-        "Target_or_Mechanism": lambda x: ", ".join(sorted(set(x.dropna().astype(str))))[:250],
-        "Safety_Flags": lambda x: ", ".join(sorted(set(x.dropna().astype(str))))[:250],
-        "Rationale": lambda x: " | ".join(sorted(set(x.dropna().astype(str))))[:500],
-    }
-
-    available_agg = {k: v for k, v in agg.items() if k in result_df.columns}
-    summary = result_df.groupby(group_cols, as_index=False).agg(available_agg)
-
-    summary = summary.rename(
-        columns={
-            "Alternative_Plant": "Candidate_Plant",
-            "R&D_Opportunity_Score": "Best_R&D_Score",
-            "Reference_Plant": "Compared_Against",
-            "Shared_or_Similar_Compound": "Key_Compounds",
-            "Target_or_Mechanism": "Mechanistic_Rationale",
-            "Safety_Flags": "Safety_Notes",
-        }
-    )
-
-    if landscape_df is not None and not landscape_df.empty and "Plant" in landscape_df.columns:
-        market_cols = [
-            c for c in [
-                "Plant",
-                "EMA_HMPC_Status",
-                "WHO_Status",
-                "ESCOP_Status",
-                "US_Status",
-                "UK_Status",
-                "Patent_Search_Status",
-                "Retail_Products_Status",
-            ]
-            if c in landscape_df.columns
         ]
-        market_small = landscape_df[market_cols].drop_duplicates()
-        summary = summary.merge(
-            market_small,
-            left_on="Candidate_Plant",
-            right_on="Plant",
-            how="left",
-        ).drop(columns=["Plant"], errors="ignore")
+        if recommended.empty:
+            recommended = best_rows.head(5)
 
-    summary = summary.sort_values("Best_R&D_Score", ascending=False).reset_index(drop=True)
-    return summary
+    st.markdown("#### Recommended / worth validating")
+    display_cols = [
+        col for col in [
+            "Alternative_Plant",
+            "Shared_or_Similar_Compound",
+            "Target_or_Mechanism",
+            "R&D_Opportunity_Score",
+            "Decision_Class",
+            "Safety_Flags",
+            "Market_Status",
+            "Novelty_Status",
+            "Rationale",
+        ] if col in recommended.columns
+    ]
+    st.dataframe(recommended[display_cols].head(10), use_container_width=True)
 
-
-def _recommendation_label(score, decision_class, safety_notes):
-    text = f"{decision_class} {safety_notes}".lower()
-    if any(flag in text for flag in ["contraindicat", "hepatotoxic", "toxicity", "major safety"]):
-        return "Not recommended until safety is clarified"
-    if score >= 80:
-        return "Recommended for R&D validation"
-    if score >= 60:
-        return "Worth validating"
-    return "Weak / low priority"
+    if decision_col:
+        weak = best_rows[
+            best_rows[decision_col].astype(str).str.contains(
+                "weak|reject|not", case=False, na=False
+            )
+        ]
+        if not weak.empty:
+            st.markdown("#### Weak / not recommended")
+            st.dataframe(weak[display_cols].head(10), use_container_width=True)
 
 
 def render_rd_candidates_step(inputs):
@@ -100,67 +78,105 @@ def render_rd_candidates_step(inputs):
     dosage_form = inputs.get("dosage_form", "")
     market = inputs.get("market", "")
 
-    engine_offline = BotanicalRDCandidateEngine(use_live_search=False)
+    evidence_df = st.session_state.get("evidence_df")
+    if not isinstance(evidence_df, pd.DataFrame):
+        evidence_df = None
 
-    # ------------------------------------------------------------------
-    # Step 1 — existing knowledge
-    # ------------------------------------------------------------------
-    st.markdown("### Step 1 — Existing scientific knowledge")
-    st.caption(
-        "Known plants, active compounds, targets, evidence level, and extraction "
-        "information already present in the seed/Supabase knowledge base."
+    offline_engine = BotanicalRDCandidateEngine(
+        evidence_df=evidence_df,
+        use_live_search=False,
     )
 
-    inventory_df = engine_offline.known_inventory_df(indication)
-    st.session_state["rd_inventory_df"] = inventory_df
+    inventory_df = offline_engine.known_inventory_df(indication)
+    known_plants = _unique_nonempty(inventory_df.get("Known_Plant", [])) if not inventory_df.empty else []
+
+    # ------------------------------------------------------------------
+    # Step 1 — Market first, before scientific deep dive and before R&D
+    # candidate generation.
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.markdown("## Step 1 — Market & competitive landscape")
+    st.caption(
+        "What already exists for this R&D question: known commercial botanical "
+        "sources, regulatory status, patent-search readiness, and retail/brand "
+        "search readiness. This step comes before candidate discovery."
+    )
+
+    if not known_plants:
+        st.warning(
+            f"No known plant inventory found yet for '{indication}'. Add seed data "
+            "before running a meaningful market landscape."
+        )
+    else:
+        st.write("**Known plants used for the first market check:**")
+        st.write(", ".join(known_plants))
+
+        live_market = st.checkbox(
+            "Include live patent / retail search if API keys are configured",
+            value=False,
+            help="Keep this off unless EPO/retail search keys are configured. It avoids rate-limit errors.",
+            key="rd_market_live_checkbox",
+        )
+
+        if st.button("Step 1: Check market & competitive landscape", type="primary"):
+            market_engine = BotanicalRDCandidateEngine(
+                evidence_df=evidence_df,
+                use_live_search=live_market,
+            )
+            with st.spinner("Checking market and regulatory landscape..."):
+                landscape_df = market_engine.market_landscape_df(known_plants)
+            st.session_state["rd_market_landscape_df"] = landscape_df
+
+        landscape_df = st.session_state.get("rd_market_landscape_df")
+        if isinstance(landscape_df, pd.DataFrame) and not landscape_df.empty:
+            st.dataframe(landscape_df, use_container_width=True)
+
+            if "Patent_Search_Status" in landscape_df.columns and (
+                landscape_df["Patent_Search_Status"] == "Not configured"
+            ).all():
+                st.info(
+                    "Patent search is not configured. This is expected unless "
+                    "EPO_OPS_KEY and EPO_OPS_SECRET are set."
+                )
+            if "Retail_Products_Status" in landscape_df.columns and (
+                landscape_df["Retail_Products_Status"] == "Not configured"
+            ).all():
+                st.info(
+                    "Retail/brand scanning is not configured. Set a paid web-search "
+                    "API key only when you choose a provider."
+                )
+
+    # ------------------------------------------------------------------
+    # Step 2 — Scientific knowledge after market overview.
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.markdown("## Step 2 — Existing scientific knowledge")
+    st.caption(
+        "Known plants, active compounds, targets/mechanisms, evidence level, "
+        "and typical extraction already catalogued for this problem."
+    )
 
     if inventory_df.empty:
         st.warning(
-            f"No known inventory for '{indication}' yet. Add records to seed_data.py "
-            "or Supabase before running candidate discovery."
+            f"No known plants/compounds/targets for '{indication}' yet in the "
+            "seed knowledge base. Extend seed_data.py to add coverage."
         )
-        return
-
-    st.caption(
-        f"{inventory_df['Known_Plant'].nunique()} known plant(s), "
-        f"{inventory_df['Known_Compound'].nunique()} known compound(s) already catalogued."
-    )
-    st.dataframe(inventory_df, use_container_width=True)
-
-    known_plants = _safe_unique(inventory_df["Known_Plant"])
-
-    # ------------------------------------------------------------------
-    # Step 2 — market landscape BEFORE candidate discovery
-    # ------------------------------------------------------------------
-    st.markdown("### Step 2 — Market & competitive landscape")
-    st.caption(
-        "Check regulatory status, market presence, and patent/retail configuration "
-        "for plants already known for this problem. This step comes before candidate "
-        "discovery because market saturation affects the R&D decision."
-    )
-
-    st.write("**Plants checked in this step:**")
-    st.write(", ".join(known_plants))
-
-    if st.button("Step 2: Check market landscape", key="check_market_known"):
-        with st.spinner("Checking market and regulatory landscape..."):
-            landscape_df = engine_offline.market_landscape_df(known_plants)
-        st.session_state["rd_market_landscape_df"] = landscape_df
-
-    landscape_df = st.session_state.get("rd_market_landscape_df")
-    if landscape_df is not None:
-        st.dataframe(landscape_df, use_container_width=True)
-        _market_notice(landscape_df)
     else:
-        st.info("Run Step 2 before moving to candidate discovery.")
+        st.caption(
+            f"{inventory_df['Known_Plant'].nunique()} known plant(s), "
+            f"{inventory_df['Known_Compound'].nunique()} known compound(s) catalogued."
+        )
+        st.dataframe(inventory_df, use_container_width=True)
 
     # ------------------------------------------------------------------
-    # Step 3 — candidate discovery
+    # Step 3 — Candidate discovery + decision engine.
     # ------------------------------------------------------------------
-    st.markdown("### Step 3 — R&D candidate discovery")
+    st.markdown("---")
+    st.markdown("## Step 3 — R&D candidate discovery & decision engine")
     st.caption(
-        "Search for alternative or better botanical sources based on shared compounds, "
-        "similar compounds, targets, mechanisms, evidence, safety, and novelty."
+        "Now the engine searches for alternative or better botanical candidates "
+        "and scores them using evidence, mechanism plausibility, novelty, safety, "
+        "regulatory feasibility, and market opportunity."
     )
 
     col1, col2 = st.columns(2)
@@ -177,22 +193,17 @@ def render_rd_candidates_step(inputs):
         )
 
     use_live_search = st.checkbox(
-        "Include live Europe PMC search for candidate scoring",
+        "Include live Europe PMC evidence search (slower; may hit rate limits)",
         value=False,
-        help="Keep this off when testing the app to avoid API rate-limit errors such as 429.",
+        key="rd_live_evidence_checkbox",
     )
 
-    if st.button("Step 3: Run candidate discovery", type="primary", key="run_candidates"):
-        evidence_df = st.session_state.get("evidence_df")
-        if not isinstance(evidence_df, pd.DataFrame):
-            evidence_df = None
-
+    if st.button("Step 3: Run R&D candidate discovery", type="primary"):
         engine = BotanicalRDCandidateEngine(
             evidence_df=evidence_df,
             use_live_search=use_live_search,
         )
-
-        with st.spinner("Discovering candidate plants..."):
+        with st.spinner("Discovering and scoring R&D candidates..."):
             result_df = engine.run(
                 indication=indication,
                 dosage_form=dosage_form,
@@ -200,79 +211,30 @@ def render_rd_candidates_step(inputs):
                 reference_plant=reference_plant,
                 reference_compound=reference_compound,
             )
-
         st.session_state["rd_candidates_df"] = result_df
-        st.session_state["rd_candidates_use_live_search"] = use_live_search
 
     result_df = st.session_state.get("rd_candidates_df")
-    if result_df is None:
-        st.info("Run Step 3 after reviewing Step 1 and Step 2.")
-        return
 
-    if result_df.empty:
-        st.warning("No candidate rows were generated for this indication.")
-        return
-
-    st.success(f"{len(result_df)} candidate rows generated.")
-
-    with st.expander("Raw candidate rows", expanded=False):
+    if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+        st.success(f"{len(result_df)} candidate rows generated.")
         st.dataframe(result_df, use_container_width=True)
         st.download_button(
-            "Download raw candidate table (CSV)",
+            "Download decision table (CSV)",
             data=result_df.to_csv(index=False).encode("utf-8"),
-            file_name="botanical_rd_candidates_raw.csv",
+            file_name="botanical_rd_candidates.csv",
             mime="text/csv",
+        )
+    elif isinstance(result_df, pd.DataFrame) and result_df.empty:
+        st.warning(
+            "No R&D candidates found for this indication. Extend seed_data.py or Supabase records."
         )
 
     # ------------------------------------------------------------------
-    # Step 4 — decision engine
+    # Step 4 — Final recommendation.
     # ------------------------------------------------------------------
-    st.markdown("### Step 4 — Decision engine")
+    st.markdown("---")
+    st.markdown("## Step 4 — Final recommendation")
     st.caption(
-        "Candidate-level decision table. Duplicate compound rows are collapsed so "
-        "the user sees one decision line per candidate plant."
+        "A concise R&D recommendation based on the decision table generated in Step 3."
     )
-
-    decision_df = _build_decision_summary(result_df, landscape_df)
-    if decision_df.empty:
-        st.warning("Decision table could not be generated.")
-        return
-
-    decision_df["Final_Recommendation_Class"] = decision_df.apply(
-        lambda row: _recommendation_label(
-            float(row.get("Best_R&D_Score", 0) or 0),
-            row.get("Decision_Class", ""),
-            row.get("Safety_Notes", ""),
-        ),
-        axis=1,
-    )
-
-    st.dataframe(decision_df, use_container_width=True)
-    st.download_button(
-        "Download decision table (CSV)",
-        data=decision_df.to_csv(index=False).encode("utf-8"),
-        file_name="botanical_rd_decision_table.csv",
-        mime="text/csv",
-    )
-
-    # ------------------------------------------------------------------
-    # Step 5 — final recommendation
-    # ------------------------------------------------------------------
-    st.markdown("### Step 5 — Final recommendation")
-    top = decision_df.iloc[0]
-
-    st.success(
-        f"Top candidate: {top['Candidate_Plant']} — "
-        f"{top['Final_Recommendation_Class']} "
-        f"(score: {top['Best_R&D_Score']})."
-    )
-
-    st.write("**Why this candidate appears first:**")
-    st.write(top.get("Rationale", "No rationale available."))
-
-    st.write("**Recommended next validation work:**")
-    st.write(
-        "Confirm literature evidence, verify regulatory status for the exact market, "
-        "check supplier availability and extract standardization, then validate the "
-        "candidate experimentally before any product claim."
-    )
+    _recommendation_block(result_df)

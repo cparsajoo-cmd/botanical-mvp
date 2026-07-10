@@ -600,10 +600,99 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(rows).head(max_reference_plants)
 
     def _reference_plants_from_supabase(self, problem, max_reference_plants):
-        """Reference plants selected directly from the real
-        plant_compounds table's own `indication` column, instead of the
-        small hardcoded GLOBAL_PLANT_CANDIDATES list. This is the primary
-        path whenever Supabase data is available.
+        """Reference plants AND their reference compounds, both selected
+        directly from the real plant_compounds table's own `indication`
+        column — not from the pre-aggregated, whole-plant candidate_data.
+
+        This matters because a single plant can have dozens of compound
+        rows spanning many unrelated conditions (e.g. one of Valeriana
+        officinalis's compounds is linked, through Dr. Duke's broad
+        activity->condition chain, to 90+ conditions from Cancer to
+        Wrinkles). Grouping by plant alone and using ALL of its known
+        compounds as "reference compounds" for whatever indication is
+        being queried would pull in compounds that have nothing to do
+        with that specific indication. Filtering the raw rows FIRST means
+        only compounds actually tagged for THIS indication become
+        reference compounds — exactly the "only the active compound
+        relevant to this specific disease" behavior the discovery
+        pipeline is meant to have.
+        """
+        problem_norm = self._norm(problem)
+
+        df = self.plant_compounds_df
+
+        if (
+            df is None or df.empty
+            or "indication" not in df.columns
+            or "scientific_name" not in df.columns
+            or "compound_name" not in df.columns
+        ):
+            return self._reference_plants_from_candidate_data(
+                problem, max_reference_plants
+            )
+
+        indication_norm = df["indication"].fillna("").map(self._norm)
+
+        mask = indication_norm.apply(
+            lambda text: bool(text)
+            and (problem_norm in text or text in problem_norm)
+        )
+
+        if not mask.any():
+            problem_tokens = self._meaningful_tokens(problem_norm)
+            mask = indication_norm.apply(
+                lambda text: bool(
+                    problem_tokens
+                    and self._meaningful_tokens(text)
+                    and problem_tokens & self._meaningful_tokens(text)
+                )
+                if text else False
+            )
+
+        matched_rows = df[mask]
+
+        if matched_rows.empty:
+            return pd.DataFrame()
+
+        rows = []
+        for plant, group in matched_rows.groupby("scientific_name"):
+            compounds = self._unique_clean_list(group["compound_name"])
+            if not compounds:
+                continue
+
+            targets = []
+            if "target" in group.columns:
+                targets = self._unique_clean_list(
+                    self._split_series_terms(group["target"])
+                )
+
+            rows.append({
+                "Scientific_Name": plant,
+                "Known_Active_Compounds": ", ".join(compounds),
+                "Known_Targets": "; ".join(targets),
+                # Specificity proxy: how many indication-matched compound
+                # rows this plant has for THIS query — used only as a
+                # tiebreaker below, smaller/more-focused first.
+                "_num_matched_rows": len(group),
+            })
+
+        if not rows:
+            return pd.DataFrame()
+
+        rows.sort(key=lambda r: r["_num_matched_rows"])
+
+        for r in rows:
+            del r["_num_matched_rows"]
+
+        return pd.DataFrame(rows[:max_reference_plants])
+
+    def _reference_plants_from_candidate_data(self, problem, max_reference_plants):
+        """Fallback used only when the raw plant_compounds_df doesn't have
+        the columns needed for row-level indication filtering (e.g. a
+        candidate_data override was supplied directly instead of a real
+        Supabase table). Less precise than the row-level method above —
+        this works off whole-plant aggregated compound lists — but keeps
+        old override-based usage working.
         """
         problem_norm = self._norm(problem)
 
@@ -630,15 +719,6 @@ class BotanicalRDCandidateEngine:
         if not matched:
             return pd.DataFrame()
 
-        # Prefer plants whose indication tagging is more specific/narrow
-        # over extremely broad "does everything" generalist entries, using
-        # alphabetical order (the input order) only as the final
-        # tiebreaker. Without this, a large multi-indication import (e.g.
-        # Dr. Duke's, where many plants end up tagged with dozens of
-        # loosely-linked conditions) means the SAME alphabetically-first,
-        # broad-spectrum plants get selected as references for almost
-        # every indication queried, regardless of how specifically
-        # relevant they actually are to that one.
         def _specificity_key(item):
             indications_text = "; ".join(item.get("Indications", []))
             return len(indications_text)

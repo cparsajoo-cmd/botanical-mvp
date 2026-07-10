@@ -25,11 +25,66 @@ def _get_evidence_df():
     return None
 
 
-def _offline_engine():
+# ---------------------------------------------------------------------- #
+# Cache the raw Supabase table fetches. plant_compounds went from ~850
+# rows to 50,000+ after the Dr. Duke's import — refetching that whole
+# table over the network every single time a button is clicked (and this
+# file previously built TWO separate engines per Step 3 click, so TWO
+# full refetches) is what made Step 3 hang/stall. Caching it means the
+# network fetch happens once per session (or until ttl expires), and every
+# engine built afterwards reuses the same in-memory DataFrame — engine
+# construction itself (grouping ~50k rows by scientific_name) is a fast,
+# local pandas operation once the network fetch is out of the picture.
+# ---------------------------------------------------------------------- #
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_plant_compounds_df():
+    from supabase_data import load_plant_compounds_df
+    try:
+        return load_plant_compounds_df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_compound_profiles_df():
+    from supabase_data import load_compound_profiles_df
+    try:
+        return load_compound_profiles_df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_scientific_evidence_df():
+    from supabase_data import load_scientific_evidence_df
+    try:
+        return load_scientific_evidence_df()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _build_engine(evidence_df, use_live_search):
     return BotanicalRDCandidateEngine(
-        evidence_df=_get_evidence_df(),
-        use_live_search=False,
+        evidence_df=evidence_df,
+        use_live_search=use_live_search,
+        plant_compounds_df=_cached_plant_compounds_df(),
+        compound_profiles_df=_cached_compound_profiles_df(),
+        scientific_evidence_df=_cached_scientific_evidence_df(),
     )
+
+
+def _offline_engine():
+    return _build_engine(_get_evidence_df(), use_live_search=False)
+
+
+# Display/loop safety cap. With Dr. Duke's data, "known plants" for a
+# broad indication can run into the hundreds or low thousands — rendering
+# that as one long joined string, or running market_landscape_df across
+# all of them, is what makes the page feel unresponsive. Showing/scoring
+# the first N is enough to be useful; nothing below silently drops data,
+# it only limits what's displayed/probed by these two exploratory steps.
+_MAX_MARKET_CHECK_PLANTS = 30
 
 
 def _recommendation_block(result_df):
@@ -111,8 +166,9 @@ def render_rd_candidates_step(inputs):
 
     if st.button("Run Market Analysis", type="primary", key="run_step1_market"):
         try:
-            offline_engine = _offline_engine()
-            inventory_df = offline_engine.known_inventory_df(indication)
+            with st.spinner("Loading known plant inventory..."):
+                offline_engine = _offline_engine()
+                inventory_df = offline_engine.known_inventory_df(indication)
 
             known_plants = (
                 _unique_nonempty(inventory_df.get("Known_Plant", []))
@@ -122,6 +178,7 @@ def render_rd_candidates_step(inputs):
 
             st.session_state["rd_inventory_df_internal"] = inventory_df
             st.session_state["rd_known_plants"] = known_plants
+            st.session_state["rd_known_plants_total"] = len(known_plants)
 
             if not known_plants:
                 st.session_state["rd_market_landscape_df"] = pd.DataFrame()
@@ -130,13 +187,24 @@ def render_rd_candidates_step(inputs):
                     "Add seed data before running market analysis."
                 )
             else:
-                market_engine = BotanicalRDCandidateEngine(
-                    evidence_df=_get_evidence_df(),
-                    use_live_search=live_market,
+                # Cap how many plants actually get probed for market status.
+                # known_plants (session state) still keeps the FULL list for
+                # Step 4/5 to use — only this market-landscape loop is capped.
+                capped_plants = known_plants[:_MAX_MARKET_CHECK_PLANTS]
+
+                # Reuse the already-loaded cached tables; only the
+                # use_live_search flag differs from the offline engine, so
+                # there's no new network fetch here even though this is a
+                # second engine instance.
+                market_engine = _build_engine(
+                    _get_evidence_df(), use_live_search=live_market
                 )
 
-                with st.spinner("Checking market and competitive landscape..."):
-                    landscape_df = market_engine.market_landscape_df(known_plants)
+                with st.spinner(
+                    f"Checking market and competitive landscape for "
+                    f"{len(capped_plants)} plant(s)..."
+                ):
+                    landscape_df = market_engine.market_landscape_df(capped_plants)
 
                 st.session_state["rd_market_landscape_df"] = landscape_df
                 st.success("✅ Market analysis completed.")
@@ -145,11 +213,22 @@ def render_rd_candidates_step(inputs):
             st.error(f"Market analysis failed: {e}")
 
     known_plants = st.session_state.get("rd_known_plants", [])
+    known_plants_total = st.session_state.get("rd_known_plants_total", len(known_plants))
     landscape_df = st.session_state.get("rd_market_landscape_df")
 
     if known_plants:
-        st.write("**Known plants used for market check:**")
-        st.write(", ".join(known_plants))
+        shown = known_plants[:_MAX_MARKET_CHECK_PLANTS]
+        st.write(
+            f"**Known plants used for market check** "
+            f"(showing {len(shown)} of {known_plants_total} found):"
+        )
+        st.write(", ".join(shown))
+        if known_plants_total > len(shown):
+            st.caption(
+                f"+{known_plants_total - len(shown)} more plant(s) known for this "
+                "indication, not probed for market status to keep this step fast. "
+                "They're still available in Step 4 and Step 5."
+            )
 
     if isinstance(landscape_df, pd.DataFrame) and not landscape_df.empty:
         st.dataframe(landscape_df, use_container_width=True)
@@ -164,8 +243,9 @@ def render_rd_candidates_step(inputs):
 
     if st.button("Run Scientific Knowledge Analysis", type="primary", key="run_step2_science"):
         try:
-            offline_engine = _offline_engine()
-            inventory_df = offline_engine.known_inventory_df(indication)
+            with st.spinner("Looking up known plants, compounds, and targets..."):
+                offline_engine = _offline_engine()
+                inventory_df = offline_engine.known_inventory_df(indication)
             st.session_state["rd_inventory_df"] = inventory_df
 
             if isinstance(inventory_df, pd.DataFrame) and not inventory_df.empty:
@@ -186,7 +266,12 @@ def render_rd_candidates_step(inputs):
                 f"{inventory_df['Known_Plant'].nunique()} known plant(s), "
                 f"{inventory_df['Known_Compound'].nunique()} known compound(s) catalogued."
             )
-        st.dataframe(inventory_df, use_container_width=True)
+        st.dataframe(inventory_df.head(500), use_container_width=True)
+        if len(inventory_df) > 500:
+            st.caption(
+                f"Showing first 500 of {len(inventory_df)} rows. "
+                "Use the CSV download in Step 5 for the full result set."
+            )
 
     st.markdown("---")
     st.markdown("## Step 5 — R&D Candidate Discovery & Decision Engine")
@@ -222,10 +307,7 @@ def render_rd_candidates_step(inputs):
 
     if st.button("Run Candidate Discovery", type="primary", key="run_step3_candidates"):
         try:
-            engine = BotanicalRDCandidateEngine(
-                evidence_df=_get_evidence_df(),
-                use_live_search=use_live_search,
-            )
+            engine = _build_engine(_get_evidence_df(), use_live_search=use_live_search)
 
             with st.spinner("Discovering and scoring R&D candidates..."):
                 result_df = engine.run(
@@ -249,7 +331,9 @@ def render_rd_candidates_step(inputs):
     result_df = st.session_state.get("rd_candidates_df")
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        st.dataframe(result_df, use_container_width=True)
+        st.dataframe(result_df.head(500), use_container_width=True)
+        if len(result_df) > 500:
+            st.caption(f"Showing first 500 of {len(result_df)} rows in this preview.")
 
         st.download_button(
             "Download decision table (CSV)",

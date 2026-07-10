@@ -143,6 +143,14 @@ INDICATION_STOPWORDS = {
     "support", "health", "comfort", "care", "wellness", "relief",
 }
 
+# Precomputed once at import time so _curated_evidence_for() is an O(1)
+# dict lookup instead of a linear scan (with a _norm() call per item)
+# repeated on every single output row.
+_SLEEP_TEA_EVIDENCE_NORM_MAP = {
+    re.sub(r"\s+", " ", name.strip().lower()): evidence
+    for name, evidence in SLEEP_TEA_EVIDENCE.items()
+}
+
 
 class BotanicalRDCandidateEngine:
     """
@@ -239,6 +247,56 @@ class BotanicalRDCandidateEngine:
         all_candidates = self._candidate_frame()
         evidence_index = self._build_evidence_text_index()
 
+        # Precompute the alternative-candidate list ONCE, outside the
+        # reference/compound loops below. Previously `all_candidates
+        # .iterrows()` re-ran inside the innermost loop — once per
+        # (reference plant × reference compound) — rebuilding pandas
+        # Series objects for every one of the (now 2,000+, since the
+        # Dr. Duke's import) alt-candidate rows on every single
+        # iteration. With dozens of reference compounds that meant this
+        # full scan happened dozens of times instead of once, which is
+        # what made run() take minutes instead of seconds at this scale.
+        alt_candidate_records = []
+        for _, alt in all_candidates.iterrows():
+            alt_plant = self._pick(alt, ["Scientific_Name"])
+            if not alt_plant:
+                continue
+            alt_targets = self._split_terms(
+                self._pick(alt, ["Known_Targets"])
+            )
+            alt_compounds = self._split_terms(
+                self._pick(alt, ["Known_Active_Compounds"])
+            )
+            alt_compound_norms = [self._norm(c) for c in alt_compounds]
+            alt_candidate_records.append({
+                "alt_plant": alt_plant,
+                "alt_compounds": alt_compounds,
+                "alt_compound_norms": alt_compound_norms,
+                "alt_compound_norm_map": dict(
+                    zip(alt_compound_norms, alt_compounds)
+                ),
+                "alt_targets": alt_targets,
+                "alt_target_norms": [self._norm(t) for t in alt_targets],
+                "row": alt,
+            })
+
+        # Index alt-candidates by exact compound name and by chemical
+        # class, so matching a single reference compound is a couple of
+        # dict lookups instead of a full scan of every alt-candidate (now
+        # 2,000+ since the Dr. Duke's import). _match_compounds() itself
+        # is left completely unchanged below — any alt-candidate NOT
+        # reachable through either index is guaranteed to return "none"
+        # from it anyway (no exact-string match and no shared chemical
+        # class), so this is a pure speed-up, not a behavior change.
+        exact_compound_index = defaultdict(set)
+        class_compound_index = defaultdict(set)
+        for alt_idx, rec in enumerate(alt_candidate_records):
+            for norm_c in rec["alt_compound_norms"]:
+                exact_compound_index[norm_c].add(alt_idx)
+                cls = self.compound_to_class.get(norm_c, "")
+                if cls:
+                    class_compound_index[cls].add(alt_idx)
+
         for _, ref in references.iterrows():
             ref_plant = self._pick(
                 ref,
@@ -278,24 +336,29 @@ class BotanicalRDCandidateEngine:
                     ],
                 )
             )
+            ref_target_norms = {self._norm(t) for t in ref_targets}
 
             for ref_compound in ref_compounds:
                 if not ref_compound:
                     continue
 
-                for _, alt in all_candidates.iterrows():
-                    alt_plant = self._pick(alt, ["Scientific_Name"])
+                ref_norm = self._norm(ref_compound)
+                ref_class = self.compound_to_class.get(ref_norm, "")
 
-                    if not alt_plant:
-                        continue
+                candidate_idxs = set(exact_compound_index.get(ref_norm, ()))
+                if ref_class:
+                    candidate_idxs |= class_compound_index.get(ref_class, set())
 
-                    alt_compounds = self._split_terms(
-                        self._pick(alt, ["Known_Active_Compounds"])
-                    )
+                for alt_idx in candidate_idxs:
+                    alt_record = alt_candidate_records[alt_idx]
+                    alt_plant = alt_record["alt_plant"]
+                    alt_compounds = alt_record["alt_compounds"]
+                    alt = alt_record["row"]
 
                     matched_compound, match_quality = self._match_compounds(
                         ref_compound,
                         alt_compounds,
+                        alt_norm=alt_record["alt_compound_norm_map"],
                     )
 
                     if not matched_compound:
@@ -316,6 +379,7 @@ class BotanicalRDCandidateEngine:
                     co_compounds = self._co_compounds(
                         compounds=alt_compounds,
                         matched=matched_compound,
+                        compound_norms=alt_record["alt_compound_norms"],
                     )
 
                     safety_flags = self._extract_flags(
@@ -328,7 +392,12 @@ class BotanicalRDCandidateEngine:
                         INTERACTION_TERMS,
                     )
 
-                    target = self._target_or_mechanism(ref_targets, alt)
+                    target = self._target_or_mechanism_fast(
+                        ref_targets,
+                        ref_target_norms,
+                        alt_record["alt_targets"],
+                        alt_record["alt_target_norms"],
+                    )
 
                     market_status = self._market_status(
                         alt=alt,
@@ -560,6 +629,21 @@ class BotanicalRDCandidateEngine:
 
         if not matched:
             return pd.DataFrame()
+
+        # Prefer plants whose indication tagging is more specific/narrow
+        # over extremely broad "does everything" generalist entries, using
+        # alphabetical order (the input order) only as the final
+        # tiebreaker. Without this, a large multi-indication import (e.g.
+        # Dr. Duke's, where many plants end up tagged with dozens of
+        # loosely-linked conditions) means the SAME alphabetically-first,
+        # broad-spectrum plants get selected as references for almost
+        # every indication queried, regardless of how specifically
+        # relevant they actually are to that one.
+        def _specificity_key(item):
+            indications_text = "; ".join(item.get("Indications", []))
+            return len(indications_text)
+
+        matched = sorted(matched, key=_specificity_key)
 
         rows = []
         for item in matched[:max_reference_plants]:
@@ -817,6 +901,7 @@ class BotanicalRDCandidateEngine:
         self,
         reference_compound,
         alternative_compounds,
+        alt_norm=None,
     ):
         """Returns (matched_compound_label, match_quality).
 
@@ -832,13 +917,20 @@ class BotanicalRDCandidateEngine:
                                "flavonoids"), with no confirmed shared
                                target — a weak, hypothesis-level link.
           "none"             - no match at all.
+
+        `alt_norm` (norm(compound) -> original compound) can be passed in
+        precomputed once per alt-candidate, instead of being rebuilt from
+        `alternative_compounds` on every call — at Dr. Duke's data scale
+        this function is called millions of times per run(), and rebuilding
+        this dict every time was a major hot spot.
         """
         ref = self._norm(reference_compound)
 
-        alt_norm = {
-            self._norm(compound): compound
-            for compound in alternative_compounds
-        }
+        if alt_norm is None:
+            alt_norm = {
+                self._norm(compound): compound
+                for compound in alternative_compounds
+            }
 
         if ref in alt_norm:
             return alt_norm[ref], "exact"
@@ -1256,6 +1348,29 @@ class BotanicalRDCandidateEngine:
 
         return "; ".join(alt_targets or ref_targets)
 
+    @staticmethod
+    def _target_or_mechanism_fast(
+        ref_targets, ref_target_norms, alt_targets, alt_target_norms
+    ):
+        """Same result as _target_or_mechanism, but takes pre-normalized
+        target lists so it does zero _norm() calls itself. At Dr. Duke's
+        scale, target lists can be long (a compound's activities list),
+        and re-normalizing both sides on every single (reference, alt)
+        pair — instead of once per reference and once per alt-candidate —
+        was responsible for the vast majority of run()'s runtime (tens of
+        millions of redundant _norm() calls for a single indication).
+        """
+        shared = [
+            target
+            for target, norm in zip(alt_targets, alt_target_norms)
+            if norm in ref_target_norms
+        ]
+
+        if shared:
+            return "; ".join(shared)
+
+        return "; ".join(alt_targets or ref_targets)
+
     def _extract_concentration(self, text):
         patterns = [
             r"\b\d+(?:\.\d+)?\s?%",
@@ -1290,12 +1405,16 @@ class BotanicalRDCandidateEngine:
 
         return "; ".join(sorted(set(found)))
 
-    def _co_compounds(self, compounds, matched):
+    def _co_compounds(self, compounds, matched, compound_norms=None):
         matched_base = self._norm(matched.split("[")[0])
+
+        if compound_norms is None:
+            compound_norms = [self._norm(c) for c in compounds]
+
         co_compounds = [
             compound
-            for compound in compounds
-            if self._norm(compound) != matched_base
+            for compound, norm in zip(compounds, compound_norms)
+            if norm != matched_base
         ]
 
         return "; ".join(co_compounds[:8])
@@ -1551,11 +1670,7 @@ class BotanicalRDCandidateEngine:
     # ------------------------------------------------------------------ #
 
     def _curated_evidence_for(self, plant):
-        plant_norm = self._norm(plant)
-        for name, evidence in SLEEP_TEA_EVIDENCE.items():
-            if self._norm(name) == plant_norm:
-                return evidence
-        return None
+        return _SLEEP_TEA_EVIDENCE_NORM_MAP.get(self._norm(plant))
 
     def _eu_regulatory_status(self, plant):
         curated = self._curated_evidence_for(plant)

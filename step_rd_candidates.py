@@ -64,14 +64,31 @@ def _cached_scientific_evidence_df():
         return pd.DataFrame()
 
 
-def _build_engine(evidence_df, use_live_search):
+# Building the engine itself is the expensive part now — with 50,000+
+# plant_compounds rows, __init__ groups every row by scientific_name and
+# builds a deduplicated dict per plant (~2,200 plants). That grouping work
+# was happening from scratch on every single button click. Caching the
+# constructed ENGINE (not just the raw table) means that grouping happens
+# once per `use_live_search` value and is then reused.
+#
+# evidence_df (from live Step 2 searches, stored in session state) is
+# intentionally NOT part of the cache key — it's session-specific and
+# usually small, so baking a snapshot of it into a shared cached engine is
+# an acceptable tradeoff for speed. The short ttl below means a fresh
+# Step 2 run gets picked up again within a couple of minutes.
+@st.cache_resource(ttl=120, show_spinner=False)
+def _cached_engine(use_live_search: bool, _evidence_df=None):
     return BotanicalRDCandidateEngine(
-        evidence_df=evidence_df,
+        evidence_df=_evidence_df,
         use_live_search=use_live_search,
         plant_compounds_df=_cached_plant_compounds_df(),
         compound_profiles_df=_cached_compound_profiles_df(),
         scientific_evidence_df=_cached_scientific_evidence_df(),
     )
+
+
+def _build_engine(evidence_df, use_live_search):
+    return _cached_engine(use_live_search, _evidence_df=evidence_df)
 
 
 def _offline_engine():

@@ -507,12 +507,106 @@ class BotanicalRDCandidateEngine:
 
         output = output[~dedup_key.duplicated(keep="first")]
 
+        output = self._merge_multi_compound_matches(output)
+
         output = output.sort_values(
             by=["R&D_Opportunity_Score"],
             ascending=False,
         ).reset_index(drop=True)
 
         return output[OUTPUT_COLUMNS]
+
+    def _merge_multi_compound_matches(self, output):
+        """When the SAME alternative plant matches the SAME reference
+        plant on more than one distinct compound (e.g. it independently
+        contains both reference compound X and reference compound Z), that
+        is a materially stronger candidate than one that only shares a
+        single compound — it means multiple active substances line up, not
+        just one. Previously each compound match became its own separate
+        row with no acknowledgment that they came from the same
+        plant/plant pairing. This merges those rows into one, combines the
+        matched compounds into a single field, and adds a score bonus per
+        additional independently-matched compound (capped, and still
+        subject to the same safety/evidence caps as any other candidate).
+        """
+        if output.empty:
+            return output
+
+        group_keys = (
+            output["Reference_Plant"].map(self._norm)
+            + "||" + output["Alternative_Plant"].map(self._norm)
+        )
+
+        order = [
+            "Low priority / insufficient data",
+            "Early-stage candidate; more evidence needed",
+            "Promising candidate; verify safety and standardization",
+            "Strong R&D candidate",
+        ]
+
+        merged_rows = []
+
+        for _, group in output.groupby(group_keys, sort=False):
+            if len(group) == 1:
+                merged_rows.append(group.iloc[0].to_dict())
+                continue
+
+            group = group.sort_values("R&D_Opportunity_Score", ascending=False)
+            best = group.iloc[0].to_dict()
+
+            distinct_ref_compounds = self._unique_clean_list(group["Reference_Compound"])
+            distinct_matched = self._unique_clean_list(group["Shared_or_Similar_Compound"])
+            num_matches = len(distinct_matched)
+
+            if num_matches <= 1:
+                merged_rows.append(best)
+                continue
+
+            bonus = min(20, (num_matches - 1) * 10)
+            new_score = round(min(100, best["R&D_Opportunity_Score"] + bonus), 1)
+
+            risky = any(
+                str(v).strip() and str(v).strip() != "No explicit flag found"
+                for v in group["Safety_Flags"]
+            ) or any(
+                str(v).strip() and str(v).strip() != "No explicit flag found"
+                for v in group["Interaction_Flags"]
+            )
+
+            if new_score >= 78 and not risky:
+                new_decision = "Strong R&D candidate"
+            elif new_score >= 62:
+                new_decision = "Promising candidate; verify safety and standardization"
+            elif new_score >= 45:
+                new_decision = "Early-stage candidate; more evidence needed"
+            else:
+                new_decision = "Low priority / insufficient data"
+
+            # Stay conservative: never let the merge produce a HIGHER
+            # confidence tier than the most cautious individual match
+            # already earned (e.g. if one of the matches has no real
+            # evidence behind it, the merged row shouldn't claim more
+            # confidence than that).
+            tightest = min(
+                (str(d) for d in group["Decision_Class"]),
+                key=lambda d: order.index(d) if d in order else 0,
+            )
+            if order.index(new_decision) > order.index(tightest):
+                new_decision = tightest
+
+            best["Reference_Compound"] = "; ".join(distinct_ref_compounds)
+            best["Shared_or_Similar_Compound"] = "; ".join(distinct_matched)
+            best["R&D_Opportunity_Score"] = new_score
+            best["Decision_Class"] = new_decision
+            best["Rationale"] = (
+                f"Matches {num_matches} independent reference compounds "
+                f"({', '.join(distinct_matched)}) — a materially stronger "
+                f"signal than a single shared compound. " + str(best["Rationale"])
+            )
+
+            merged_rows.append(best)
+
+        return pd.DataFrame(merged_rows)
 
     def _get_reference_plants(
         self,

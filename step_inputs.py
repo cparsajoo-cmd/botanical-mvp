@@ -106,35 +106,24 @@ def render_inputs():
             ],
         )
 
-    target_count = st.slider(
-        "Number of global plant candidates to analyze",
-        10,
-        100,
-        50,
-    )
+    # These two controls genuinely change engine behavior (target_count caps
+    # how many reference plants Step 5 analyzes; max_pubmed_results controls
+    # how deep the live PubMed search goes) — they're kept, just tucked away
+    # by default so Step 0 isn't cluttered for the common case of using the
+    # defaults.
+    with st.expander("⚙️ Advanced settings", expanded=False):
+        target_count = st.slider(
+            "Number of global plant candidates to analyze",
+            10,
+            100,
+            50,
+        )
 
-    max_pubmed_results = st.slider(
-        "Online PubMed results per candidate plant",
-        1,
-        10,
-        3,
-    )
-
-    if st.button("✅ R&D Question Understood", type="primary", key="confirm_rd_question"):
-        st.session_state["rd_question_confirmed"] = True
-        st.session_state["rd_question_inputs"] = {
-            "product_type": product_type,
-            "indication": indication,
-            "dosage_form": dosage_form,
-            "market": market,
-            "target_count": target_count,
-            "max_pubmed_results": max_pubmed_results,
-        }
-
-    if st.session_state.get("rd_question_confirmed"):
-        st.success(
-            f"✅ R&D question confirmed: {product_type} as {dosage_form} "
-            f"for {indication} in {market}."
+        max_pubmed_results = st.slider(
+            "Online PubMed results per candidate plant",
+            1,
+            10,
+            3,
         )
 
     framework = get_market_framework(market)

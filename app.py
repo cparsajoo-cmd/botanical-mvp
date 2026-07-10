@@ -24,13 +24,13 @@ try:
 except Exception:
     evidence_df = None
 
-st.markdown("## Core workflow")
-st.info(
-    "Step 0: define the R&D question → Step 1: understand the question → "
-    "Step 2: collect online evidence → Step 3: market & competitive landscape → "
-    "Step 4: existing scientific knowledge → Step 5: R&D candidate discovery "
-    "and decision engine → Step 6: final recommendation."
-)
+with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
+    st.caption(
+        "Step 0: define the R&D question → Step 1: understand the question → "
+        "Step 2: collect online evidence → Step 3: market & competitive landscape → "
+        "Step 4: existing scientific knowledge → Step 5: R&D candidate discovery "
+        "and decision engine → Step 6: final recommendation."
+    )
 
 render_question_step(inputs)
 render_evidence_step(inputs)

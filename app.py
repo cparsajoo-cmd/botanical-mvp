@@ -18,17 +18,7 @@ st.caption("AI Botanical R&D Decision Intelligence Platform")
 
 inputs = render_inputs()
 
-@st.cache_data(ttl=600, show_spinner=False)
-def get_evidence_database():
-    return load_evidence_database()
-
-
-try:
-    evidence_df = get_evidence_database()
-    st.session_state["evidence_df"] = evidence_df
-except Exception as exc:
-    evidence_df = None
-    st.session_state["evidence_load_error"] = str(exc)
+@
 
 with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
     st.caption(
@@ -37,7 +27,11 @@ with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
         "Step 4: existing scientific knowledge → Step 5: R&D candidate discovery "
         "and decision engine → Step 6: final recommendation."
     )
-
+try:
+    evidence_df = load_evidence_database()
+    st.session_state["evidence_df"] = evidence_df
+except Exception:
+    evidence_df = None
 render_question_step(inputs)
 render_evidence_step(inputs)
 render_rd_candidates_step(inputs)

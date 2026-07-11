@@ -18,7 +18,6 @@ st.caption("AI Botanical R&D Decision Intelligence Platform")
 
 inputs = render_inputs()
 
-@
 
 with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
     st.caption(

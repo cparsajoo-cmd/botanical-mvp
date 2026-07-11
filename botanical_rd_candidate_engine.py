@@ -735,12 +735,10 @@ class BotanicalRDCandidateEngine:
         if not mask.any():
             problem_tokens = self._meaningful_tokens(problem_norm)
             mask = indication_norm.apply(
-                lambda text: bool(
-                    problem_tokens
-                    and self._meaningful_tokens(text)
-                    and problem_tokens & self._meaningful_tokens(text)
+                lambda text: bool(text)
+                and self._tokens_overlap(
+                    problem_tokens, self._meaningful_tokens(text)
                 )
-                if text else False
             )
 
         matched_rows = df[mask]
@@ -805,7 +803,10 @@ class BotanicalRDCandidateEngine:
                 item for item in self.candidate_data
                 if problem_tokens
                 and any(
-                    problem_tokens & self._meaningful_tokens(self._norm(indication))
+                    self._tokens_overlap(
+                        problem_tokens,
+                        self._meaningful_tokens(self._norm(indication)),
+                    )
                     for indication in item.get("Indications", [])
                 )
             ]
@@ -1642,11 +1643,38 @@ class BotanicalRDCandidateEngine:
         """Word tokens from an indication string, with generic/connector
         words (&, support, health, ...) removed so token-overlap fallback
         matching only fires on genuinely distinctive shared words.
+
+        Splits on ANY run of non-alphanumeric characters, not just
+        whitespace — e.g. Dr. Duke's "Premenstrual Syndrome/PMS" must
+        become the two separate tokens "syndrome" and "pms", not one
+        glued "syndrome/pms" token that can never match a standalone
+        "pms" query token.
         """
+        raw_tokens = re.split(r"[^a-z0-9]+", text)
         return {
-            token for token in text.split()
+            token for token in raw_tokens
             if token not in INDICATION_STOPWORDS and len(token) > 2
         }
+
+    @staticmethod
+    def _tokens_overlap(tokens_a, tokens_b):
+        """True on exact token overlap OR when one token is a substring
+        of another (both >=5 chars, to avoid noisy short-string false
+        positives). Plain set intersection alone misses real matches like
+        "menstrual" vs "premenstrual" — same underlying condition, just a
+        prefixed spelling — which silently starved indications of any
+        Supabase-backed match and fell back to a single old manually
+        curated plant instead of the real, much richer dataset.
+        """
+        if not tokens_a or not tokens_b:
+            return False
+        if tokens_a & tokens_b:
+            return True
+        for a in tokens_a:
+            for b in tokens_b:
+                if len(a) >= 5 and len(b) >= 5 and (a in b or b in a):
+                    return True
+        return False
 
     @staticmethod
     def _norm(value):
@@ -1746,12 +1774,10 @@ class BotanicalRDCandidateEngine:
         if not mask.any():
             indication_tokens = self._meaningful_tokens(indication_norm)
             mask = df["_indication_norm"].apply(
-                lambda text: bool(
-                    indication_tokens
-                    and self._meaningful_tokens(text)
-                    and indication_tokens & self._meaningful_tokens(text)
+                lambda text: bool(text)
+                and self._tokens_overlap(
+                    indication_tokens, self._meaningful_tokens(text)
                 )
-                if text else False
             )
 
         matched = df[mask]
@@ -1800,7 +1826,7 @@ class BotanicalRDCandidateEngine:
             indication_tokens = self._meaningful_tokens(indication_norm)
             for disease in TARGET_DISEASES:
                 disease_tokens = self._meaningful_tokens(self._norm(disease))
-                if indication_tokens and (indication_tokens & disease_tokens):
+                if self._tokens_overlap(indication_tokens, disease_tokens):
                     matched_diseases.append(disease)
 
         relevant_targets = {}

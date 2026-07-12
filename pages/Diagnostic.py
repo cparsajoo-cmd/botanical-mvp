@@ -112,6 +112,54 @@ if st.button("Run diagnostic"):
         except Exception as exc:
             report.append(("indication column inspection", "FAILED", repr(exc)))
 
+    # 7) Replicate _reference_plants_from_supabase's internal logic
+    # step-by-step, OUTSIDE the method, to see exactly where the row
+    # count collapses.
+    if df is not None and not df.empty and engine is not None:
+        try:
+            problem = "Menstrual / PMS support"
+            problem_norm = engine._norm(problem)
+
+            indication_norm = df["indication"].fillna("").map(engine._norm)
+
+            mask1 = indication_norm.apply(
+                lambda text: bool(text) and (problem_norm in text or text in problem_norm)
+            )
+            report.append((
+                "Step-by-step: full-string containment mask.sum()",
+                "OK",
+                f"{int(mask1.sum())} rows matched (expected near 0)",
+            ))
+
+            problem_tokens = engine._meaningful_tokens(problem_norm)
+            mask2 = indication_norm.apply(
+                lambda text: bool(text)
+                and engine._tokens_overlap(problem_tokens, engine._meaningful_tokens(text))
+            )
+            report.append((
+                "Step-by-step: token-overlap mask.sum()",
+                "OK",
+                f"problem_tokens={problem_tokens}, {int(mask2.sum())} rows matched",
+            ))
+
+            matched_rows = df[mask2]
+            report.append((
+                "Step-by-step: matched_rows shape / unique plants",
+                "OK",
+                f"{matched_rows.shape[0]} rows, "
+                f"{matched_rows['scientific_name'].nunique()} unique scientific_name values",
+            ))
+
+            if not matched_rows.empty:
+                sample_plants = matched_rows["scientific_name"].dropna().unique()[:15]
+                report.append((
+                    "Step-by-step: sample matched plant names",
+                    "OK",
+                    str(list(sample_plants)),
+                ))
+        except Exception as exc:
+            report.append(("Step-by-step replication", "FAILED", repr(exc)))
+
     st.markdown("### Results")
     for step, status, detail in report:
         icon = "✅" if status == "OK" else ("⚠️" if status == "EMPTY" else "❌")

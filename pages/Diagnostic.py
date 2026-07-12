@@ -75,9 +75,45 @@ if st.button("Run diagnostic"):
         except Exception as exc:
             report.append(("_get_reference_plants(...)", "FAILED", repr(exc)))
 
+    # 6) Inspect the RAW indication column content directly -- is it
+    # possibly truncated on the way into Supabase? Show length stats and
+    # a couple of real samples for rows SQL already confirmed contain
+    # "premenstrual".
+    if df is not None and not df.empty and "indication" in df.columns:
+        try:
+            lengths = df["indication"].fillna("").astype(str).str.len()
+            report.append((
+                "indication column length stats",
+                "OK",
+                f"min={lengths.min()}, max={lengths.max()}, "
+                f"mean={lengths.mean():.1f}, "
+                f"rows at exactly max length={int((lengths == lengths.max()).sum())}",
+            ))
+
+            pms_rows = df[
+                df["indication"].fillna("").astype(str).str.contains(
+                    "premenstrual", case=False
+                )
+            ]
+            report.append((
+                "Rows where indication contains 'premenstrual' (pandas-side)",
+                "OK" if not pms_rows.empty else "EMPTY",
+                f"{len(pms_rows)} row(s)",
+            ))
+            if not pms_rows.empty:
+                sample = pms_rows.iloc[0]
+                report.append((
+                    "Sample matching row",
+                    "OK",
+                    f"scientific_name={sample.get('scientific_name')}, "
+                    f"compound_name={sample.get('compound_name')}, "
+                    f"indication (repr, full)={repr(sample.get('indication'))}",
+                ))
+        except Exception as exc:
+            report.append(("indication column inspection", "FAILED", repr(exc)))
+
     st.markdown("### Results")
     for step, status, detail in report:
         icon = "✅" if status == "OK" else ("⚠️" if status == "EMPTY" else "❌")
         st.markdown(f"{icon} **{step}** — `{status}`")
         st.code(detail)
-

@@ -18,7 +18,7 @@ st.caption(
     "page and come back later; it will pick up where it left off."
 )
 
-BATCH_SIZE = 10
+MAX_SECONDS_PER_CLICK = 240  # ~4 minutes of continuous work per click
 MAX_INDICATIONS_PER_PLANT = 5
 
 
@@ -107,20 +107,32 @@ if not remaining:
     st.success("✅ All plants have been processed!")
 else:
     st.info(
-        f"Next click will process up to {min(BATCH_SIZE, len(remaining))} "
-        f"more plant(s). At roughly 10-30 seconds per plant, that's a "
-        f"couple of minutes per click."
+        f"Each click will keep processing plants for about "
+        f"{MAX_SECONDS_PER_CLICK // 60} minutes straight (however many "
+        f"that turns out to be — usually 15-30+ plants), instead of a "
+        f"fixed small batch. You can click again as soon as it finishes, "
+        f"or come back later."
     )
 
-    if st.button("▶️ Process next batch", type="primary"):
-        batch = remaining[:BATCH_SIZE]
+    if st.button("▶️ Process for the next few minutes", type="primary"):
         progress_bar = st.progress(0)
         status_area = st.empty()
         results_log = []
 
-        for i, plant in enumerate(batch, 1):
+        batch_start_time = time.time()
+        processed_count = 0
+
+        for plant in remaining:
+            if time.time() - batch_start_time > MAX_SECONDS_PER_CLICK:
+                break
+
             indication = all_plants.get(plant, "")
-            status_area.write(f"Processing **{plant}** ({i}/{len(batch)})...")
+            processed_count += 1
+            status_area.write(
+                f"Processing **{plant}** "
+                f"({processed_count} so far this click, "
+                f"{len(remaining) - processed_count} left overall)..."
+            )
 
             try:
                 result = collect_multi_source_evidence(
@@ -145,11 +157,12 @@ else:
             except Exception as exc:
                 results_log.append(f"⚠️ {plant}: processed but failed to save progress — {exc}")
 
-            progress_bar.progress(i / len(batch))
-            time.sleep(1)
+            progress_bar.progress(
+                min(1.0, (time.time() - batch_start_time) / MAX_SECONDS_PER_CLICK)
+            )
 
         status_area.empty()
-        st.success(f"Batch complete — {len(batch)} plant(s) processed.")
+        st.success(f"This click processed {processed_count} plant(s).")
         for line in results_log:
             st.write(line)
 
@@ -165,9 +178,10 @@ with st.expander("How this works / notes"):
 - Progress is tracked in the `bulk_evidence_progress` Supabase table —
   not in this browser session — so multiple people, devices, or visits
   over time all contribute to the same progress.
-- A batch size of 10 keeps each click safely within the time a single
-  page interaction is allowed to take. Larger batches risk the click
-  timing out before finishing.
+- A time budget (not a fixed count) is used per click so it adapts to
+  how fast each plant happens to respond, instead of guessing a fixed
+  number that's either too small (lots of clicking) or too large (risks
+  the click timing out before finishing).
 - If a plant fails, it's still marked "done" with `error_count` set so
   the batch keeps moving — check the `bulk_evidence_progress` table in
   Supabase SQL Editor to see which ones had errors, and manually

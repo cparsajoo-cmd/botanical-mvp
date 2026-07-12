@@ -732,14 +732,22 @@ class BotanicalRDCandidateEngine:
             and (problem_norm in text or text in problem_norm)
         )
 
-        if not mask.any():
-            problem_tokens = self._meaningful_tokens(problem_norm)
-            mask = indication_norm.apply(
-                lambda text: bool(text)
-                and self._tokens_overlap(
-                    problem_tokens, self._meaningful_tokens(text)
-                )
+        # Always ALSO compute the token-overlap mask and OR it in, rather
+        # than only falling back to it when the exact/substring mask found
+        # literally nothing. A single old/narrow row whose indication text
+        # happens to substring-match the query (e.g. one legacy row tagged
+        # exactly "Menstrual / PMS support") was enough to make mask.any()
+        # True, which silently discarded hundreds of better token-matched
+        # rows that would otherwise have been found — collapsing 991
+        # matched plants down to just the 1 behind that narrow match.
+        problem_tokens = self._meaningful_tokens(problem_norm)
+        token_mask = indication_norm.apply(
+            lambda text: bool(text)
+            and self._tokens_overlap(
+                problem_tokens, self._meaningful_tokens(text)
             )
+        )
+        mask = mask | token_mask
 
         matched_rows = df[mask]
 
@@ -788,7 +796,7 @@ class BotanicalRDCandidateEngine:
         """
         problem_norm = self._norm(problem)
 
-        matched = [
+        exact_matched = [
             item for item in self.candidate_data
             if any(
                 problem_norm in self._norm(indication)
@@ -797,19 +805,30 @@ class BotanicalRDCandidateEngine:
             )
         ]
 
-        if not matched:
-            problem_tokens = self._meaningful_tokens(problem_norm)
-            matched = [
-                item for item in self.candidate_data
-                if problem_tokens
-                and any(
-                    self._tokens_overlap(
-                        problem_tokens,
-                        self._meaningful_tokens(self._norm(indication)),
-                    )
-                    for indication in item.get("Indications", [])
+        problem_tokens = self._meaningful_tokens(problem_norm)
+        token_matched = [
+            item for item in self.candidate_data
+            if problem_tokens
+            and any(
+                self._tokens_overlap(
+                    problem_tokens,
+                    self._meaningful_tokens(self._norm(indication)),
                 )
-            ]
+                for indication in item.get("Indications", [])
+            )
+        ]
+
+        # Union both, preserving order, deduplicated by Scientific_Name.
+        # As with _reference_plants_from_supabase above: a single narrow
+        # exact-substring match must not suppress the (usually much
+        # richer) token-overlap matches.
+        seen_names = set()
+        matched = []
+        for item in exact_matched + token_matched:
+            name = item.get("Scientific_Name")
+            if name not in seen_names:
+                seen_names.add(name)
+                matched.append(item)
 
         if not matched:
             return pd.DataFrame()
@@ -1771,14 +1790,14 @@ class BotanicalRDCandidateEngine:
             and (indication_norm in text or text in indication_norm)
         )
 
-        if not mask.any():
-            indication_tokens = self._meaningful_tokens(indication_norm)
-            mask = df["_indication_norm"].apply(
-                lambda text: bool(text)
-                and self._tokens_overlap(
-                    indication_tokens, self._meaningful_tokens(text)
-                )
+        indication_tokens = self._meaningful_tokens(indication_norm)
+        token_mask = df["_indication_norm"].apply(
+            lambda text: bool(text)
+            and self._tokens_overlap(
+                indication_tokens, self._meaningful_tokens(text)
             )
+        )
+        mask = mask | token_mask
 
         matched = df[mask]
 
@@ -1822,12 +1841,13 @@ class BotanicalRDCandidateEngine:
             or self._norm(disease) in indication_norm
         ]
 
-        if not matched_diseases:
-            indication_tokens = self._meaningful_tokens(indication_norm)
-            for disease in TARGET_DISEASES:
-                disease_tokens = self._meaningful_tokens(self._norm(disease))
-                if self._tokens_overlap(indication_tokens, disease_tokens):
-                    matched_diseases.append(disease)
+        indication_tokens = self._meaningful_tokens(indication_norm)
+        for disease in TARGET_DISEASES:
+            if disease in matched_diseases:
+                continue
+            disease_tokens = self._meaningful_tokens(self._norm(disease))
+            if self._tokens_overlap(indication_tokens, disease_tokens):
+                matched_diseases.append(disease)
 
         relevant_targets = {}
         for disease in matched_diseases:

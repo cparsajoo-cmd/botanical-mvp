@@ -1,4 +1,47 @@
+import os
+import time
+
 import requests
+
+# Unauthenticated Semantic Scholar API traffic shares one very small
+# global rate-limit pool -- this is what was producing 429 (Too Many
+# Requests) errors during bulk evidence collection across thousands of
+# plants. A free API key raises this limit substantially. Register (free,
+# instant) at: https://www.semanticscholar.org/product/api
+#
+# Set it via an environment variable so it isn't hardcoded in source:
+#     export SEMANTIC_SCHOLAR_API_KEY="your-key-here"
+# Falls back to unauthenticated requests (with retry/backoff) if not set.
+SEMANTIC_SCHOLAR_API_KEY = os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
+
+MAX_RETRIES = 4
+
+
+def _get_with_retry(url, params, headers, timeout=20):
+    last_exc = None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+
+            if r.status_code == 429:
+                retry_after = r.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else (2 ** attempt) * 3
+                time.sleep(wait)
+                continue
+
+            r.raise_for_status()
+            return r
+
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt < MAX_RETRIES - 1:
+                time.sleep((2 ** attempt) * 1.5)
+
+    if last_exc:
+        raise last_exc
+
+    raise RuntimeError(f"Semantic Scholar request failed after {MAX_RETRIES} attempts.")
 
 
 def search_semantic_scholar(scientific_name, indication, dosage_form="", market="European Union", max_results=5):
@@ -11,8 +54,11 @@ def search_semantic_scholar(scientific_name, indication, dosage_form="", market=
         "fields": "title,abstract,year,url,citationCount,publicationTypes"
     }
 
-    r = requests.get(url, params=params, timeout=20)
-    r.raise_for_status()
+    headers = {}
+    if SEMANTIC_SCHOLAR_API_KEY:
+        headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
+
+    r = _get_with_retry(url, params, headers)
 
     papers = r.json().get("data", [])
     records = []

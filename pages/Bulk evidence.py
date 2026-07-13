@@ -64,13 +64,14 @@ def _get_done_plants():
     return done
 
 
-def _mark_done(plant, n_saved, n_errors):
+def _mark_done(plant, n_saved, n_errors, sample_errors=""):
     client = get_supabase_client()
     client.table("bulk_evidence_progress").upsert({
         "scientific_name": plant,
         "status": "done",
         "records_saved": n_saved,
         "error_count": n_errors,
+        "sample_errors": sample_errors[:2000],
     }).execute()
 
 
@@ -145,15 +146,21 @@ else:
                     save=True,
                 )
                 n_saved = len(result.get("saved_records", []))
-                n_errors = len(result.get("errors", []))
+                errors_list = result.get("errors", [])
+                n_errors = len(errors_list)
+                sample_errors = "; ".join(
+                    f"{e.get('source', '?')}: {e.get('error', '')}"
+                    for e in errors_list[:5]
+                )
             except Exception as exc:
                 n_saved, n_errors = 0, 1
+                sample_errors = str(exc)
                 results_log.append(f"❌ {plant}: failed entirely — {exc}")
             else:
                 results_log.append(f"✅ {plant}: {n_saved} record(s), {n_errors} error(s)")
 
             try:
-                _mark_done(plant, n_saved, n_errors)
+                _mark_done(plant, n_saved, n_errors, sample_errors)
             except Exception as exc:
                 results_log.append(f"⚠️ {plant}: processed but failed to save progress — {exc}")
 

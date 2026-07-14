@@ -85,7 +85,7 @@ st.caption(
     "page and come back later; it will pick up where it left off."
 )
 
-MAX_SECONDS_PER_CLICK = 240  # ~4 minutes of continuous work per click
+MAX_SECONDS_PER_CLICK = 600  # ~10 minutes of continuous work per click
 MAX_INDICATIONS_PER_PLANT = 5
 
 

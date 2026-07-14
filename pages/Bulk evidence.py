@@ -5,7 +5,7 @@ import streamlit as st
 
 from supabase_client import get_supabase_client
 from supabase_data import load_plant_compounds_df
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from multi_source_collector import collect_multi_source_evidence, _run_one_source
 
@@ -33,7 +33,8 @@ FAST_RETRY_SOURCES = [
 def _fast_retry_sources(plant, indication):
     all_saved, all_errors = [], []
 
-    with ThreadPoolExecutor(max_workers=len(FAST_RETRY_SOURCES)) as executor:
+    executor = ThreadPoolExecutor(max_workers=len(FAST_RETRY_SOURCES))
+    try:
         futures = {
             executor.submit(
                 _run_one_source, source_config, plant, indication,
@@ -42,17 +43,34 @@ def _fast_retry_sources(plant, indication):
             for source_config in FAST_RETRY_SOURCES
         }
 
-        for future in as_completed(futures, timeout=60):
-            try:
-                sr, er = future.result(timeout=30)
-                all_saved.extend(sr)
-                all_errors.extend(er)
-            except Exception as exc:
-                all_errors.append({
-                    "source": futures[future],
-                    "plant": plant,
-                    "error": str(exc),
-                })
+        try:
+            for future in as_completed(futures, timeout=20):
+                try:
+                    sr, er = future.result(timeout=1)
+                    all_saved.extend(sr)
+                    all_errors.extend(er)
+                except Exception as exc:
+                    all_errors.append({
+                        "source": futures[future],
+                        "plant": plant,
+                        "error": str(exc),
+                    })
+        except TimeoutError:
+            # At least one source didn't finish within the time budget.
+            # Record it as an error for THIS run and move on immediately
+            # -- do not wait for it. It'll simply be retried on a future
+            # click, same as any other still-failing plant.
+            all_errors.append({
+                "source": "fast_retry_batch",
+                "plant": plant,
+                "error": "One or more sources exceeded the 20s time budget.",
+            })
+    finally:
+        # wait=False is the key fix: don't let a slow/stuck source hold up
+        # the entire batch loop. Any still-running thread keeps running in
+        # the background and is simply discarded from this function's
+        # point of view.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return {"saved_records": all_saved, "errors": all_errors}
 

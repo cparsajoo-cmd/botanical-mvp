@@ -16,7 +16,7 @@ import requests
 # without the polite-pool benefit).
 OPENALEX_CONTACT_EMAIL = os.environ.get("OPENALEX_CONTACT_EMAIL", "")
 
-MAX_RETRIES = 4
+MAX_RETRIES = 2
 
 
 def _get_with_retry(url, params, timeout=20):
@@ -30,7 +30,7 @@ def _get_with_retry(url, params, timeout=20):
                 # Respect Retry-After if the server sent one, otherwise
                 # back off with increasing delay.
                 retry_after = r.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else (2 ** attempt) * 2
+                wait = min(5.0, float(retry_after)) if retry_after else (attempt + 1) * 2
                 time.sleep(wait)
                 continue
 
@@ -40,7 +40,7 @@ def _get_with_retry(url, params, timeout=20):
         except requests.exceptions.RequestException as exc:
             last_exc = exc
             if attempt < MAX_RETRIES - 1:
-                time.sleep((2 ** attempt) * 1.5)
+                time.sleep(1.5)
 
     if last_exc:
         raise last_exc

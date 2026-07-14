@@ -5,14 +5,24 @@ import streamlit as st
 
 from supabase_client import get_supabase_client
 from supabase_data import load_plant_compounds_df
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from multi_source_collector import collect_multi_source_evidence, _run_one_source
 
 # Most errors during the first bulk pass came from only 2-3 sources
 # (OpenAlex, Semantic Scholar, occasionally CrossRef) hitting rate
 # limits — not from the other ~11 sources, which mostly succeeded. A
 # "fast retry" that only re-queries the known-problematic sources is
-# several times faster than re-running the full collector, and avoids
-# creating duplicate saved records for sources that already succeeded.
+# meant to be several times faster than re-running the full collector.
+#
+# IMPORTANT: these must run IN PARALLEL, not sequentially — the original
+# collect_multi_source_evidence runs all ~14 sources concurrently via a
+# thread pool, so it finishes as fast as its SLOWEST single source. A
+# naive sequential loop over even just 3 sources adds each source's full
+# time (including retry/backoff delays on repeated 429s, which are still
+# expected for Semantic Scholar until its API key is configured) on top
+# of the others — which can end up SLOWER per plant than the original
+# 14-parallel-source approach, not faster.
 FAST_RETRY_SOURCES = [
     {"name": "OpenAlex", "max_results": 5},
     {"name": "Semantic Scholar", "max_results": 5},
@@ -22,12 +32,28 @@ FAST_RETRY_SOURCES = [
 
 def _fast_retry_sources(plant, indication):
     all_saved, all_errors = [], []
-    for source_config in FAST_RETRY_SOURCES:
-        sr, er = _run_one_source(
-            source_config, plant, indication, "", "European Union", 3, True
-        )
-        all_saved.extend(sr)
-        all_errors.extend(er)
+
+    with ThreadPoolExecutor(max_workers=len(FAST_RETRY_SOURCES)) as executor:
+        futures = {
+            executor.submit(
+                _run_one_source, source_config, plant, indication,
+                "", "European Union", 3, True,
+            ): source_config["name"]
+            for source_config in FAST_RETRY_SOURCES
+        }
+
+        for future in as_completed(futures, timeout=60):
+            try:
+                sr, er = future.result(timeout=30)
+                all_saved.extend(sr)
+                all_errors.extend(er)
+            except Exception as exc:
+                all_errors.append({
+                    "source": futures[future],
+                    "plant": plant,
+                    "error": str(exc),
+                })
+
     return {"saved_records": all_saved, "errors": all_errors}
 
 st.set_page_config(page_title="Bulk Evidence Collection", page_icon="📚", layout="wide")

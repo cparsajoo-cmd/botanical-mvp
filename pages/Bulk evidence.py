@@ -5,7 +5,30 @@ import streamlit as st
 
 from supabase_client import get_supabase_client
 from supabase_data import load_plant_compounds_df
-from multi_source_collector import collect_multi_source_evidence
+from multi_source_collector import collect_multi_source_evidence, _run_one_source
+
+# Most errors during the first bulk pass came from only 2-3 sources
+# (OpenAlex, Semantic Scholar, occasionally CrossRef) hitting rate
+# limits — not from the other ~11 sources, which mostly succeeded. A
+# "fast retry" that only re-queries the known-problematic sources is
+# several times faster than re-running the full collector, and avoids
+# creating duplicate saved records for sources that already succeeded.
+FAST_RETRY_SOURCES = [
+    {"name": "OpenAlex", "max_results": 5},
+    {"name": "Semantic Scholar", "max_results": 5},
+    {"name": "CrossRef", "max_results": 5},
+]
+
+
+def _fast_retry_sources(plant, indication):
+    all_saved, all_errors = [], []
+    for source_config in FAST_RETRY_SOURCES:
+        sr, er = _run_one_source(
+            source_config, plant, indication, "", "European Union", 3, True
+        )
+        all_saved.extend(sr)
+        all_errors.extend(er)
+    return {"saved_records": all_saved, "errors": all_errors}
 
 st.set_page_config(page_title="Bulk Evidence Collection", page_icon="📚", layout="wide")
 
@@ -107,15 +130,31 @@ st.progress(len(done_plants) / total if total else 0)
 if not remaining:
     st.success("✅ All plants have been processed!")
 else:
+    fast_mode = st.checkbox(
+        "⚡ Fast retry mode: only re-query OpenAlex / Semantic Scholar / "
+        "CrossRef (the sources that actually failed last time), skip the "
+        "other ~11 sources that already succeeded",
+        value=True,
+        help="Turn this OFF if these are brand-new plants that have never "
+             "been processed at all — new plants need the full 14-source "
+             "search, not just these 3.",
+    )
+
     st.info(
         f"Each click will keep processing plants for about "
         f"{MAX_SECONDS_PER_CLICK // 60} minutes straight (however many "
-        f"that turns out to be — usually 15-30+ plants), instead of a "
-        f"fixed small batch. You can click again as soon as it finishes, "
-        f"or come back later."
+        f"that turns out to be — usually 15-30+ plants in full mode, "
+        f"much more in fast mode), instead of a fixed small batch. You "
+        f"can click again as soon as it finishes, or come back later."
     )
 
-    if st.button("▶️ Process for the next few minutes", type="primary"):
+    button_label = (
+        "⚡ Fast retry for the next few minutes"
+        if fast_mode else
+        "▶️ Full search for the next few minutes"
+    )
+
+    if st.button(button_label, type="primary"):
         progress_bar = st.progress(0)
         status_area = st.empty()
         results_log = []
@@ -136,15 +175,18 @@ else:
             )
 
             try:
-                result = collect_multi_source_evidence(
-                    scientific_name=plant,
-                    indication=indication,
-                    dosage_form="",
-                    market="European Union",
-                    max_pubmed_results=3,
-                    max_clinicaltrials_results=3,
-                    save=True,
-                )
+                if fast_mode:
+                    result = _fast_retry_sources(plant, indication)
+                else:
+                    result = collect_multi_source_evidence(
+                        scientific_name=plant,
+                        indication=indication,
+                        dosage_form="",
+                        market="European Union",
+                        max_pubmed_results=3,
+                        max_clinicaltrials_results=3,
+                        save=True,
+                    )
                 n_saved = len(result.get("saved_records", []))
                 errors_list = result.get("errors", [])
                 n_errors = len(errors_list)

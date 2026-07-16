@@ -7,6 +7,22 @@ def render_evidence_step(inputs):
     st.markdown("---")
     st.markdown("## Step 2 — Collect online evidence")
 
+    st.caption(
+        "This searches live sources for a small number of plants right "
+        "now. Full coverage across all plants happens separately and "
+        "continuously via the 'Bulk Evidence Collection' page — this "
+        "step doesn't need to be exhaustive."
+    )
+
+    quick_count = st.slider(
+        "Number of plants to search right now",
+        min_value=3,
+        max_value=30,
+        value=8,
+        help="Lower = faster. Bulk Evidence Collection covers the rest "
+             "of the database in the background, so this can stay small.",
+    )
+
     if st.button("Step 2: Collect online evidence"):
         with st.spinner("Searching sources and saving evidence to Supabase..."):
             research_output = run_research_engine(
@@ -17,7 +33,7 @@ def render_evidence_step(inputs):
                 evidence_strictness="Flexible",
                 max_results_per_plant=inputs["max_pubmed_results"],
                 save=True,
-                global_candidate_count=inputs["target_count"],
+                global_candidate_count=quick_count,
             )
 
         st.session_state["research_output"] = research_output

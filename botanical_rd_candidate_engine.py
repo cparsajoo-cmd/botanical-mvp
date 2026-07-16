@@ -220,6 +220,82 @@ class BotanicalRDCandidateEngine:
             self._build_compound_indexes()
         )
 
+        # Compound "commonality" index: for every compound, how many
+        # DISTINCT plants (across the whole database, regardless of
+        # indication) contain it. This is deliberately generic — it is
+        # not tied to any specific plant, compound, or indication, so it
+        # applies the same way whether the query is about sleep, cough,
+        # skin, metabolic health, or anything else added later.
+        #
+        # The problem this fixes: a compound like an abundant, widely
+        # distributed flavonoid can appear in hundreds/thousands of
+        # unrelated plants. Before this, an "exact" name match on such a
+        # compound scored identically to an exact match on a genuinely
+        # rare, differentiating compound — so ubiquitous compounds
+        # silently dominated Step 5/6 results for ANY indication, not
+        # just one. The threshold below is derived from the actual
+        # distribution of compound frequencies in whatever database is
+        # loaded (90th percentile), so it self-adjusts as the database
+        # grows or shrinks instead of being a hardcoded number tuned to
+        # today's data.
+        self.compound_plant_count, self.compound_commonality_threshold = (
+            self._build_compound_frequency_index()
+        )
+
+    def _build_compound_frequency_index(self):
+        df = self.plant_compounds_df
+
+        if (
+            df is None or df.empty
+            or "scientific_name" not in df.columns
+            or "compound_name" not in df.columns
+        ):
+            return {}, None
+
+        work = df[["scientific_name", "compound_name"]].copy()
+        work["scientific_name"] = work["scientific_name"].fillna("").astype(str).str.strip()
+        work["compound_norm"] = work["compound_name"].fillna("").map(self._norm)
+        work = work[(work["scientific_name"] != "") & (work["compound_norm"] != "")]
+
+        if work.empty:
+            return {}, None
+
+        counts = (
+            work.drop_duplicates(["scientific_name", "compound_norm"])
+            .groupby("compound_norm")["scientific_name"]
+            .nunique()
+        )
+
+        plant_count_map = counts.to_dict()
+
+        # 90th percentile of how many distinct plants each compound
+        # appears in = "this compound is in the top 10% most common
+        # compounds in our own database". A small floor keeps this
+        # meaningful even on a tiny/sparse database (avoids flagging
+        # compounds as "common" just because everything is rare so far).
+        if len(counts) >= 5:
+            threshold = max(float(counts.quantile(0.90)), 8.0)
+        else:
+            threshold = max(float(counts.max()) + 1, 8.0)
+
+        return plant_count_map, threshold
+
+    def _compound_commonality(self, compound_label):
+        """Returns (plant_count, is_common) for a compound label that may
+        include the '[similar: ...]' suffix added by _match_compounds."""
+        if not compound_label:
+            return 0, False
+
+        clean = compound_label.split("[")[0].strip()
+        count = self.compound_plant_count.get(self._norm(clean), 0)
+
+        is_common = (
+            self.compound_commonality_threshold is not None
+            and count >= self.compound_commonality_threshold
+        )
+
+        return count, is_common
+
     def run(
         self,
         indication,
@@ -405,12 +481,26 @@ class BotanicalRDCandidateEngine:
                         market=market,
                     )
 
+                    # How many distinct plants (in the WHOLE database,
+                    # independent of this indication) already contain the
+                    # matched compound. This is the generic signal used
+                    # below to stop ubiquitous compounds (found across
+                    # hundreds/thousands of unrelated species) from being
+                    # scored/labelled as if they were a specific,
+                    # differentiating match — for any indication, any
+                    # plant, any compound.
+                    compound_plant_count, compound_is_common = (
+                        self._compound_commonality(matched_compound)
+                    )
+
                     novelty_status = self._novelty_status(
                         ref_plant=ref_plant,
                         alt_plant=alt_plant,
                         matched=matched_compound,
                         ref_compound=ref_compound,
                         alt=alt,
+                        compound_is_common=compound_is_common,
+                        compound_plant_count=compound_plant_count,
                     )
 
                     score = self._score_candidate(
@@ -429,6 +519,7 @@ class BotanicalRDCandidateEngine:
                         target=target,
                         evidence=raw_evidence,
                         evidence_level=evidence_level,
+                        compound_plant_count=compound_plant_count,
                     )
 
                     decision = self._decision_class(
@@ -438,6 +529,7 @@ class BotanicalRDCandidateEngine:
                         has_evidence=has_real_evidence,
                         match_quality=match_quality,
                         evidence_level=evidence_level,
+                        compound_is_common=compound_is_common,
                     )
 
                     rows.append(
@@ -1238,17 +1330,38 @@ class BotanicalRDCandidateEngine:
         target,
         evidence,
         evidence_level="No direct evidence",
+        compound_plant_count=0,
     ):
         score = 0
 
         # 1) Chemical/mechanistic link. Exact shared compound is strong;
         # target-verified similarity is moderate; class-only similarity is weak.
         if match_quality == "exact":
-            score += 22
+            chem_bonus = 22
         elif match_quality == "target_verified":
-            score += 15
+            chem_bonus = 15
         else:
-            score += 5
+            chem_bonus = 5
+
+        # A compound found in only a handful of plants IS the strong
+        # signal this score is meant to reward — two species sharing a
+        # rare, specific compound is genuinely informative. A compound
+        # found across hundreds/thousands of unrelated plants tells you
+        # almost nothing about THIS pair, no matter which two plants it
+        # is (any indication, any species) — so its contribution is
+        # scaled down smoothly as commonality grows, using the same
+        # database-derived threshold everywhere in the engine, rather
+        # than being capped by a fixed number of "known common
+        # compounds".
+        threshold = self.compound_commonality_threshold
+        if threshold and compound_plant_count > 0:
+            # 1x threshold -> no penalty yet; 4x threshold or more -> up
+            # to ~80% of the chemical-link bonus removed.
+            overage = max(0.0, (compound_plant_count / threshold) - 1.0)
+            penalty_ratio = min(0.8, overage / 3.0)
+            chem_bonus = chem_bonus * (1 - penalty_ratio)
+
+        score += chem_bonus
 
         # 2) Evidence quality. The previous engine rewarded any text too much.
         # Here weak/no evidence cannot produce a high-confidence candidate.
@@ -1269,8 +1382,13 @@ class BotanicalRDCandidateEngine:
         score += 8 if target else 1
 
         # 4) Novelty is valuable only after some scientific basis exists.
+        # A "common compound" novelty label (see _novelty_status) must
+        # NOT collect this bonus — a compound found everywhere is the
+        # opposite of a novel, differentiating finding.
         if evidence_level != "No direct evidence":
-            if "Alternative" in novelty_status or "Cross-region" in novelty_status:
+            if "Common" in novelty_status or "non-specific" in novelty_status:
+                score += 0
+            elif "Alternative" in novelty_status or "Cross-region" in novelty_status:
                 score += 10
             else:
                 score += 2
@@ -1383,11 +1501,24 @@ class BotanicalRDCandidateEngine:
         matched,
         ref_compound,
         alt,
+        compound_is_common=False,
+        compound_plant_count=0,
     ):
         if self._norm(ref_plant) == self._norm(alt_plant):
             return "Reference plant / benchmark"
 
         matched_clean = matched.split("[")[0].strip()
+
+        # A compound this common tells you almost nothing about THIS
+        # specific plant pair, whatever indication or species are
+        # involved — so it must not be labelled as if it were a
+        # meaningful "alternative source" finding.
+        if compound_is_common:
+            return (
+                f"Common/non-specific compound — found in "
+                f"{compound_plant_count}+ plants database-wide, "
+                f"low differentiation value"
+            )
 
         if self._norm(matched_clean) == self._norm(ref_compound):
             return "Alternative source with same compound"
@@ -1407,6 +1538,7 @@ class BotanicalRDCandidateEngine:
         has_evidence,
         match_quality,
         evidence_level="No direct evidence",
+        compound_is_common=False,
     ):
         risky = bool(safety_flags) or bool(interaction_flags)
 
@@ -1439,6 +1571,21 @@ class BotanicalRDCandidateEngine:
             ceiling = "Promising candidate; verify safety and standardization"
         else:
             ceiling = "Strong R&D candidate"
+
+        # A match resting on a compound found across hundreds/thousands
+        # of unrelated plants database-wide is not, by itself, strong
+        # enough scientific grounds for a top-tier recommendation —
+        # regardless of which plant, compound, or indication is involved.
+        # Genuinely strong independent evidence (clinical or regulatory)
+        # can still carry a candidate to "Strong", since that no longer
+        # relies on the compound match being specific.
+        if compound_is_common and evidence_level not in {
+            "Clinical / human evidence",
+            "Regulatory / monograph evidence",
+        }:
+            common_ceiling = "Early-stage candidate; more evidence needed"
+            if order.index(common_ceiling) < order.index(ceiling):
+                ceiling = common_ceiling
 
         if order.index(base) > order.index(ceiling):
             return ceiling

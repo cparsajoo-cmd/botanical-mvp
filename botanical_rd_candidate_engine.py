@@ -220,6 +220,10 @@ class BotanicalRDCandidateEngine:
             self._build_compound_indexes()
         )
 
+        self.target_compound_count, self.target_genericity_threshold = (
+            self._build_target_frequency_index(self.compound_to_targets)
+        )
+
         # Compound "commonality" index: for every compound, how many
         # DISTINCT plants (across the whole database, regardless of
         # indication) contain it. This is deliberately generic — it is
@@ -1195,13 +1199,26 @@ class BotanicalRDCandidateEngine:
           "exact"           - the alternative plant contains the exact
                                same reference compound.
           "target_verified" - a different compound, in the same broad
-                               chemical class, that ALSO shares a known
-                               biological target with the reference
-                               compound (per seed_data.COMPOUND_TARGETS).
+                               chemical class, that ALSO shares a
+                               RELATIVELY SPECIFIC biological target with
+                               the reference compound (per
+                               seed_data.COMPOUND_TARGETS) — i.e. a
+                               target/pathway that is not itself common
+                               across most members of that chemical
+                               class, so the shared-target claim is
+                               actually informative.
+          "target_verified_generic" - a different compound in the same
+                               class whose ONLY shared target(s) are
+                               broad pathway labels that most members of
+                               that class carry (e.g. "NF-kB",
+                               "Anti-inflammatory pathways"). This is
+                               barely stronger than bare class
+                               membership and is scored/labelled
+                               accordingly.
           "class_only"       - a different compound sharing only the
                                broad chemical class label (e.g. both are
-                               "flavonoids"), with no confirmed shared
-                               target — a weak, hypothesis-level link.
+                               "flavonoids"), with no shared target at
+                               all — a weak, hypothesis-level link.
           "none"             - no match at all.
 
         `alt_norm` (norm(compound) -> original compound) can be passed in
@@ -1238,21 +1255,53 @@ class BotanicalRDCandidateEngine:
             return "", "none"
 
         if ref_targets:
+            # Across every class-mate, find the SPECIFIC (rare) shared
+            # target if one exists anywhere — that is a real
+            # confirmation and should win over a merely generic one,
+            # even if a generic match would have been found first.
+            best_specific = None  # (alt_value, target, count)
+            best_generic = None
+
             for alt_value in class_matches:
                 alt_targets = self.compound_to_targets.get(
                     self._norm(alt_value), set()
                 )
-                if alt_targets & ref_targets:
-                    return (
-                        f"{alt_value} [similar: {ref_class}; shared target]",
-                        "target_verified",
-                    )
+                shared = alt_targets & ref_targets
+                if not shared:
+                    continue
+
+                for target in shared:
+                    count, is_generic = self._target_specificity(target)
+                    if is_generic:
+                        if best_generic is None:
+                            best_generic = (alt_value, target)
+                    else:
+                        if best_specific is None or count < best_specific[2]:
+                            best_specific = (alt_value, target, count)
+
+            if best_specific is not None:
+                alt_value, target, _count = best_specific
+                return (
+                    f"{alt_value} [similar: {ref_class}; shared target: "
+                    f"{target}]",
+                    "target_verified",
+                )
+
+            if best_generic is not None:
+                alt_value, target = best_generic
+                return (
+                    f"{alt_value} [similar: {ref_class}; shared pathway: "
+                    f"{target} — common across this class, weak "
+                    f"confirmation]",
+                    "target_verified_generic",
+                )
 
         return (
             f"{class_matches[0]} [similar: {ref_class}; class-only, "
             f"target not confirmed]",
             "class_only",
         )
+
 
     def _build_compound_indexes(self):
         """Returns (compound_to_class, compound_to_targets).
@@ -1304,6 +1353,54 @@ class BotanicalRDCandidateEngine:
 
         return class_index, dict(target_index)
 
+    def _build_target_frequency_index(self, compound_to_targets):
+        """Same idea as _build_compound_frequency_index, but for TARGETS
+        instead of compound names.
+
+        Why this is needed: fixing compound-name commonality alone (e.g.
+        for an abundant flavonoid matched by exact name) does not fix a
+        second, independent source of over-matching — "target_verified"
+        matches confirmed only through a broad mechanism/pathway label
+        (e.g. "NF-kB", "Anti-inflammatory pathways", "Oxidative stress
+        pathways") that dozens of unrelated compounds in the same broad
+        chemical class ALSO happen to be tagged with. Two flavonoids
+        sharing a pathway that most flavonoids share is not a specific,
+        differentiating confirmation — it is nearly as generic as bare
+        class membership. This applies to any chemical class or
+        indication, not just flavonoids, so the threshold is again
+        derived from the actual data rather than a hardcoded pathway
+        list.
+        """
+        target_to_compounds = defaultdict(set)
+        for compound, targets in compound_to_targets.items():
+            for target in targets:
+                target_to_compounds[target].add(compound)
+
+        counts = {t: len(compounds) for t, compounds in target_to_compounds.items()}
+
+        if not counts:
+            return counts, None
+
+        values = sorted(counts.values())
+        n = len(values)
+        if n >= 5:
+            idx = int(round(0.90 * (n - 1)))
+            threshold = max(float(values[idx]), 4.0)
+        else:
+            threshold = max(float(values[-1]) + 1, 4.0)
+
+        return counts, threshold
+
+    def _target_specificity(self, target_norm):
+        """Returns (compound_count, is_generic) for a single normalized
+        target/pathway label."""
+        count = self.target_compound_count.get(target_norm, 0)
+        is_generic = (
+            self.target_genericity_threshold is not None
+            and count >= self.target_genericity_threshold
+        )
+        return count, is_generic
+
     def _best_extraction(self, alt, evidence):
         base = self._pick(alt, ["Extraction_Method"])
         found = self._extract_extraction(evidence)
@@ -1335,11 +1432,16 @@ class BotanicalRDCandidateEngine:
         score = 0
 
         # 1) Chemical/mechanistic link. Exact shared compound is strong;
-        # target-verified similarity is moderate; class-only similarity is weak.
+        # target-verified similarity (via a SPECIFIC, non-generic shared
+        # target) is moderate; a shared target that's actually a common
+        # pathway across most of the class is barely more than
+        # class-only; bare class-only similarity is weak.
         if match_quality == "exact":
             chem_bonus = 22
         elif match_quality == "target_verified":
             chem_bonus = 15
+        elif match_quality == "target_verified_generic":
+            chem_bonus = 8
         else:
             chem_bonus = 5
 
@@ -1578,8 +1680,12 @@ class BotanicalRDCandidateEngine:
         # regardless of which plant, compound, or indication is involved.
         # Genuinely strong independent evidence (clinical or regulatory)
         # can still carry a candidate to "Strong", since that no longer
-        # relies on the compound match being specific.
-        if compound_is_common and evidence_level not in {
+        # relies on the compound match being specific. The same logic
+        # applies to a "target_verified" match whose only shared target
+        # is a generic pathway most of the chemical class carries — that
+        # is not a meaningfully specific confirmation either.
+        needs_cap = compound_is_common or match_quality == "target_verified_generic"
+        if needs_cap and evidence_level not in {
             "Clinical / human evidence",
             "Regulatory / monograph evidence",
         }:
@@ -1641,8 +1747,16 @@ class BotanicalRDCandidateEngine:
         basis = {
             "exact": "it contains the exact same reference compound",
             "target_verified": "it contains a chemically-related compound "
-                                "that ALSO shares a validated biological "
-                                "target with the reference compound",
+                                "that ALSO shares a specific, validated "
+                                "biological target with the reference "
+                                "compound",
+            "target_verified_generic": "it contains a chemically-related "
+                                "compound that shares only a broad, "
+                                "common pathway label with the reference "
+                                "compound — most members of this chemical "
+                                "class carry that same pathway, so this is "
+                                "barely more specific than class membership "
+                                "alone",
             "class_only": "it contains a compound from the same broad "
                           "chemical family only — no shared biological "
                           "target has been confirmed yet, so this link is "

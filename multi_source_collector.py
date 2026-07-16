@@ -302,7 +302,16 @@ def collect_multi_source_evidence(
 
     sources_checked = [s["name"] for s in enabled_sources]
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    # Fixed, reasonable ceiling on total wait time, instead of
+    # SOURCE_TIMEOUT_SECONDS * number_of_sources (which was 25 * 14 =
+    # 350 seconds -- nearly 6 minutes -- before even raising a timeout
+    # error). With MAX_WORKERS running concurrently, sources finish in
+    # waves; this budget is enough for a few such waves even in a slow
+    # case.
+    TOTAL_TIME_BUDGET = SOURCE_TIMEOUT_SECONDS * 2
+
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
         future_map = {}
 
         for source_config in enabled_sources:
@@ -318,30 +327,42 @@ def collect_multi_source_evidence(
             )
             future_map[future] = source_config["name"]
 
-        for future in as_completed(
-            future_map,
-            timeout=SOURCE_TIMEOUT_SECONDS * max(1, len(future_map))
-        ):
-            source_name = future_map[future]
+        try:
+            for future in as_completed(future_map, timeout=TOTAL_TIME_BUDGET):
+                source_name = future_map[future]
 
-            try:
-                sr, er = future.result(timeout=SOURCE_TIMEOUT_SECONDS)
-                saved_records.extend(sr)
-                errors.extend(er)
+                try:
+                    sr, er = future.result(timeout=1)
+                    saved_records.extend(sr)
+                    errors.extend(er)
 
-            except TimeoutError:
-                errors.append({
-                    "source": source_name,
-                    "plant": scientific_name,
-                    "error": f"Timeout after {SOURCE_TIMEOUT_SECONDS} seconds.",
-                })
-
-            except Exception as e:
-                errors.append({
-                    "source": source_name,
-                    "plant": scientific_name,
-                    "error": str(e),
-                })
+                except Exception as e:
+                    errors.append({
+                        "source": source_name,
+                        "plant": scientific_name,
+                        "error": str(e),
+                    })
+        except TimeoutError:
+            # Whichever sources haven't finished within the overall time
+            # budget are recorded as timed-out and abandoned -- we do NOT
+            # wait for them. They keep running in the background
+            # (harmlessly) but this function returns immediately with
+            # whatever succeeded so far, instead of blocking the whole
+            # Step 2 page indefinitely on one slow/rate-limited source.
+            finished = {f for f in future_map if f.done()}
+            for future, source_name in future_map.items():
+                if future not in finished:
+                    errors.append({
+                        "source": source_name,
+                        "plant": scientific_name,
+                        "error": f"Timed out after {TOTAL_TIME_BUDGET}s "
+                                 f"(overall budget, not this source alone).",
+                    })
+    finally:
+        # wait=False is the key fix: never let a slow/stuck source hold
+        # up the entire Step 2 page. See the same fix applied in
+        # Bulk_Evidence.py's _fast_retry_sources for the full reasoning.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return {
         "saved_records": saved_records,

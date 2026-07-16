@@ -56,7 +56,7 @@ def run_research_engine(
     evidence_strictness="Dosage-form specific only",
     max_results_per_plant=3,
     save=True,
-    global_candidate_count=50,
+    global_candidate_count=8,
 ):
     global_candidates = rank_global_candidates(
         indication=indication,

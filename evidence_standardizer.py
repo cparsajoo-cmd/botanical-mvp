@@ -21,7 +21,23 @@ def standardize_extracted_record(extracted, source_metadata):
 
     normalized = normalize_source_record(record)
 
-    if extract_evidence_with_llm is not None:
+    # If the connector that produced this record already set a real,
+    # structured Evidence_Level (regulatory connectors like EMA/WHO/ESCOP
+    # know this deterministically — it's not something that needs an LLM
+    # to infer from free text), trust it and skip the LLM re-extraction
+    # entirely for this record. Previously the LLM call below ran
+    # unconditionally and OVERWROTE Evidence_Level with its own guess
+    # from the Notes text — for regulatory records (short, structured
+    # text the extraction prompt wasn't built for), that guess collapsed
+    # to "Unknown" every time, silently discarding a correct value. This
+    # applies to any connector that sets Evidence_Level up front, not
+    # just EMA — e.g. it also protects the original curated
+    # sleep-tea/REGULATORY_DB records, which had the same exposure.
+    already_has_reliable_evidence_level = bool(
+        record.get("Evidence_Level")
+    )
+
+    if extract_evidence_with_llm is not None and not already_has_reliable_evidence_level:
         try:
             llm = extract_evidence_with_llm(
                 normalized,

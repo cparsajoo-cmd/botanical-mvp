@@ -7,3 +7,4 @@ supabase==2.31.0
 biopython==1.87
 openai==2.45.0
 requests==2.34.2
+pypdf>=4.0

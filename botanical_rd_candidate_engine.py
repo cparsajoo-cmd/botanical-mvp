@@ -435,10 +435,12 @@ class BotanicalRDCandidateEngine:
                     alt_compounds = alt_record["alt_compounds"]
                     alt = alt_record["row"]
 
-                    matched_compound, match_quality = self._match_compounds(
-                        ref_compound,
-                        alt_compounds,
-                        alt_norm=alt_record["alt_compound_norm_map"],
+                    matched_compound, match_quality, target_specificity = (
+                        self._match_compounds(
+                            ref_compound,
+                            alt_compounds,
+                            alt_norm=alt_record["alt_compound_norm_map"],
+                        )
                     )
 
                     if not matched_compound:
@@ -524,6 +526,7 @@ class BotanicalRDCandidateEngine:
                         evidence=raw_evidence,
                         evidence_level=evidence_level,
                         compound_plant_count=compound_plant_count,
+                        target_specificity=target_specificity,
                     )
 
                     decision = self._decision_class(
@@ -534,6 +537,7 @@ class BotanicalRDCandidateEngine:
                         match_quality=match_quality,
                         evidence_level=evidence_level,
                         compound_is_common=compound_is_common,
+                        target_specificity=target_specificity,
                     )
 
                     rows.append(
@@ -1193,33 +1197,38 @@ class BotanicalRDCandidateEngine:
         alternative_compounds,
         alt_norm=None,
     ):
-        """Returns (matched_compound_label, match_quality).
+        """Returns (matched_compound_label, match_quality, target_specificity).
 
         match_quality is one of:
           "exact"           - the alternative plant contains the exact
                                same reference compound.
           "target_verified" - a different compound, in the same broad
-                               chemical class, that ALSO shares a
-                               RELATIVELY SPECIFIC biological target with
-                               the reference compound (per
-                               seed_data.COMPOUND_TARGETS) — i.e. a
-                               target/pathway that is not itself common
-                               across most members of that chemical
-                               class, so the shared-target claim is
-                               actually informative.
-          "target_verified_generic" - a different compound in the same
-                               class whose ONLY shared target(s) are
-                               broad pathway labels that most members of
-                               that class carry (e.g. "NF-kB",
-                               "Anti-inflammatory pathways"). This is
-                               barely stronger than bare class
-                               membership and is scored/labelled
-                               accordingly.
+                               chemical class, that ALSO shares a known
+                               biological target with the reference
+                               compound (per seed_data.COMPOUND_TARGETS).
+                               How MUCH this is worth is not a yes/no —
+                               see target_specificity below.
           "class_only"       - a different compound sharing only the
                                broad chemical class label (e.g. both are
                                "flavonoids"), with no shared target at
                                all — a weak, hypothesis-level link.
           "none"             - no match at all.
+
+        target_specificity is the number of DISTINCT compounds (across
+        the whole COMPOUND_TARGETS / compound_profiles knowledge base)
+        that carry the best (rarest) shared target — or None when
+        match_quality isn't "target_verified". This is deliberately a
+        continuous count, not a binary "generic vs specific" classifier:
+        an early version used a single statistical cutoff (90th
+        percentile of target frequency) to split target_verified into a
+        "strong" and "weak" tier, but on a database this size that
+        cutoff has a hard edge — a pathway shared by 5 compounds got a
+        full score, one shared by 6 got almost none, even though neither
+        is meaningfully more specific than the other. The count is
+        instead fed into _score_candidate, which discounts the
+        chemical-link bonus smoothly as the shared target gets less
+        specific (see there), for any pathway, any chemical class, any
+        indication — no hardcoded cutoff to sit right next to.
 
         `alt_norm` (norm(compound) -> original compound) can be passed in
         precomputed once per alt-candidate, instead of being rebuilt from
@@ -1236,12 +1245,12 @@ class BotanicalRDCandidateEngine:
             }
 
         if ref in alt_norm:
-            return alt_norm[ref], "exact"
+            return alt_norm[ref], "exact", None
 
         ref_class = self.compound_to_class.get(ref, "")
 
         if not ref_class:
-            return "", "none"
+            return "", "none", None
 
         ref_targets = self.compound_to_targets.get(ref, set())
 
@@ -1252,54 +1261,39 @@ class BotanicalRDCandidateEngine:
         ]
 
         if not class_matches:
-            return "", "none"
+            return "", "none", None
 
         if ref_targets:
-            # Across every class-mate, find the SPECIFIC (rare) shared
-            # target if one exists anywhere — that is a real
-            # confirmation and should win over a merely generic one,
-            # even if a generic match would have been found first.
-            best_specific = None  # (alt_value, target, count)
-            best_generic = None
+            # Across every class-mate, find whichever shared target is
+            # the RAREST (lowest compound_count) — that is the strongest
+            # possible confirmation available for this pair, and its
+            # count is what determines how much it's actually worth.
+            best = None  # (alt_value, target, count)
 
             for alt_value in class_matches:
                 alt_targets = self.compound_to_targets.get(
                     self._norm(alt_value), set()
                 )
                 shared = alt_targets & ref_targets
-                if not shared:
-                    continue
-
                 for target in shared:
-                    count, is_generic = self._target_specificity(target)
-                    if is_generic:
-                        if best_generic is None:
-                            best_generic = (alt_value, target)
-                    else:
-                        if best_specific is None or count < best_specific[2]:
-                            best_specific = (alt_value, target, count)
+                    count, _ = self._target_specificity(target)
+                    if best is None or count < best[2]:
+                        best = (alt_value, target, count)
 
-            if best_specific is not None:
-                alt_value, target, _count = best_specific
+            if best is not None:
+                alt_value, target, count = best
                 return (
                     f"{alt_value} [similar: {ref_class}; shared target: "
-                    f"{target}]",
+                    f"{target} (shared by {count} known compounds)]",
                     "target_verified",
-                )
-
-            if best_generic is not None:
-                alt_value, target = best_generic
-                return (
-                    f"{alt_value} [similar: {ref_class}; shared pathway: "
-                    f"{target} — common across this class, weak "
-                    f"confirmation]",
-                    "target_verified_generic",
+                    count,
                 )
 
         return (
             f"{class_matches[0]} [similar: {ref_class}; class-only, "
             f"target not confirmed]",
             "class_only",
+            None,
         )
 
 
@@ -1428,22 +1422,39 @@ class BotanicalRDCandidateEngine:
         evidence,
         evidence_level="No direct evidence",
         compound_plant_count=0,
+        target_specificity=None,
     ):
         score = 0
 
         # 1) Chemical/mechanistic link. Exact shared compound is strong;
-        # target-verified similarity (via a SPECIFIC, non-generic shared
-        # target) is moderate; a shared target that's actually a common
-        # pathway across most of the class is barely more than
-        # class-only; bare class-only similarity is weak.
+        # target-verified similarity is moderate; class-only similarity
+        # is weak. The target-verified bonus below is further scaled by
+        # HOW specific the confirming shared target actually is.
         if match_quality == "exact":
             chem_bonus = 22
         elif match_quality == "target_verified":
             chem_bonus = 15
-        elif match_quality == "target_verified_generic":
-            chem_bonus = 8
         else:
             chem_bonus = 5
+
+        # A "target_verified" match is only as informative as the target
+        # itself is specific. Two compounds sharing a pathway that only
+        # 2 compounds in the whole knowledge base carry is a real,
+        # differentiating confirmation. Two compounds sharing a pathway
+        # that 20 compounds carry (e.g. "Anti-inflammatory pathways") is
+        # barely more informative than bare class membership. This is
+        # deliberately a smooth 1/count decay rather than a single
+        # "generic vs specific" statistical cutoff — a fixed cutoff has
+        # a hard edge (a target shared by 5 compounds scored completely
+        # differently from one shared by 6), which doesn't reflect
+        # reality and doesn't generalize well to a knowledge base this
+        # size. This applies the same way to any pathway, any chemical
+        # class, any indication.
+        if match_quality == "target_verified" and target_specificity:
+            # Full bonus only when the shared target is carried by 2
+            # compounds (the minimum for it to be "shared" at all);
+            # decays smoothly as more compounds carry it.
+            chem_bonus *= min(1.0, 2.0 / target_specificity)
 
         # A compound found in only a handful of plants IS the strong
         # signal this score is meant to reward — two species sharing a
@@ -1641,6 +1652,7 @@ class BotanicalRDCandidateEngine:
         match_quality,
         evidence_level="No direct evidence",
         compound_is_common=False,
+        target_specificity=None,
     ):
         risky = bool(safety_flags) or bool(interaction_flags)
 
@@ -1680,11 +1692,16 @@ class BotanicalRDCandidateEngine:
         # regardless of which plant, compound, or indication is involved.
         # Genuinely strong independent evidence (clinical or regulatory)
         # can still carry a candidate to "Strong", since that no longer
-        # relies on the compound match being specific. The same logic
-        # applies to a "target_verified" match whose only shared target
-        # is a generic pathway most of the chemical class carries — that
-        # is not a meaningfully specific confirmation either.
-        needs_cap = compound_is_common or match_quality == "target_verified_generic"
+        # relies on the compound match being specific. The same applies
+        # to a "target_verified" match whose confirming shared target is
+        # carried by several other compounds too — a weak confirmation,
+        # even if not literally "generic" by any fixed cutoff.
+        weak_target_match = (
+            match_quality == "target_verified"
+            and target_specificity
+            and target_specificity > 4
+        )
+        needs_cap = compound_is_common or weak_target_match
         if needs_cap and evidence_level not in {
             "Clinical / human evidence",
             "Regulatory / monograph evidence",
@@ -1747,16 +1764,12 @@ class BotanicalRDCandidateEngine:
         basis = {
             "exact": "it contains the exact same reference compound",
             "target_verified": "it contains a chemically-related compound "
-                                "that ALSO shares a specific, validated "
-                                "biological target with the reference "
-                                "compound",
-            "target_verified_generic": "it contains a chemically-related "
-                                "compound that shares only a broad, "
-                                "common pathway label with the reference "
-                                "compound — most members of this chemical "
-                                "class carry that same pathway, so this is "
-                                "barely more specific than class membership "
-                                "alone",
+                                "that ALSO shares a validated biological "
+                                "target with the reference compound (see "
+                                "the compound column for how many other "
+                                "known compounds also carry that target — "
+                                "fewer means a more specific, meaningful "
+                                "link)",
             "class_only": "it contains a compound from the same broad "
                           "chemical family only — no shared biological "
                           "target has been confirmed yet, so this link is "

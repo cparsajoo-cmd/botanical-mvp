@@ -173,8 +173,8 @@ def search_regulatory_sources_real(
             "Target_Market": market,
             "Source_Type": "Regulatory",
             "Source_Organization": "EMA HMPC (live fetch failed)",
-            "Source_Title": "EMA HMPC inventory of herbal substances",
-            "Source_URL": EMA_INVENTORY_PDF_URL,
+            "Source_Title": f"EMA HMPC inventory of herbal substances — {scientific_name}",
+            "Source_URL": f"{EMA_INVENTORY_PDF_URL}#plant={scientific_name.replace(' ', '_')}",
             "Source_Year": "",
             "Notes": f"Could not check EMA's inventory this time: {error}",
             "Evidence_Level": "Not available",
@@ -224,8 +224,8 @@ def search_regulatory_sources_real(
             "Target_Market": market,
             "Source_Type": "Regulatory",
             "Source_Organization": "EMA HMPC — Inventory of herbal substances for assessment",
-            "Source_Title": "EMA HMPC inventory of herbal substances",
-            "Source_URL": EMA_INVENTORY_PDF_URL,
+            "Source_Title": f"EMA HMPC inventory of herbal substances — {scientific_name}",
+            "Source_URL": f"{EMA_INVENTORY_PDF_URL}#plant={scientific_name.replace(' ', '_')}",
             "Source_Year": "2021",
             "Notes": (
                 f"'{scientific_name}' was not found (by genus/species stem "
@@ -253,8 +253,8 @@ def search_regulatory_sources_real(
         "Target_Market": market,
         "Source_Type": "Regulatory",
         "Source_Organization": "EMA HMPC — Inventory of herbal substances for assessment",
-        "Source_Title": "EMA HMPC inventory of herbal substances",
-        "Source_URL": EMA_INVENTORY_PDF_URL,
+        "Source_Title": f"EMA HMPC inventory of herbal substances — {scientific_name}",
+        "Source_URL": f"{EMA_INVENTORY_PDF_URL}#plant={scientific_name.replace(' ', '_')}",
         "Source_Year": "2021",
         "Notes": (
             f"Found in EMA's official HMPC inventory as: {matched_names}. "

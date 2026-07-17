@@ -147,6 +147,12 @@ def _recommendation_block(result_df):
     ]
 
     st.markdown("### ✅ Recommended / worth validating")
+    st.caption(
+        "\"Recommended\" means worth a human researcher's time to check, based "
+        "on chemical hypothesis + whatever evidence was found — it is not a "
+        "certification of efficacy. See `Decision_Class` and `Evidence_Level` "
+        "in each row for how strong the underlying basis actually is."
+    )
     st.dataframe(recommended[display_cols].head(10), use_container_width=True)
 
     if decision_col:
@@ -348,6 +354,17 @@ def render_rd_candidates_step(inputs):
     result_df = st.session_state.get("rd_candidates_df")
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+        st.info(
+            "📊 **How to read this table:** `R&D_Opportunity_Score` ranks rows by "
+            "how worth investigating they are — it is a triage/priority number, "
+            "not a claim of scientific validity. A shared compound name (even a "
+            "rare, specific one) only means two plants share a chemical hypothesis; "
+            "it says nothing about concentration, bioavailability, or proven "
+            "effect. The column that actually reflects confidence is "
+            "`Decision_Class`, together with `Evidence_Level` — only rows backed "
+            "by real clinical or regulatory evidence can reach \"Strong R&D "
+            "candidate\". Treat every row as a lead to verify, not a conclusion."
+        )
         st.dataframe(result_df.head(500), use_container_width=True)
         if len(result_df) > 500:
             st.caption(f"Showing first 500 of {len(result_df)} rows in this preview.")

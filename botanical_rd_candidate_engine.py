@@ -126,6 +126,15 @@ DB_ACTIVITY_SAFETY_TERMS = [
     "cardiotoxic", "irritant",
 ]
 
+# Documented toxicity serious enough that a candidate must never be
+# presented under "Recommended", no matter how high its score or how
+# good its evidence otherwise looks. "emetic" and "irritant" are left
+# out of this harder set — they still trigger safety_flags and the
+# score penalty/ "Promising, verify safety" cap below, but on their own
+# aren't treated as an automatic disqualifier the way kidney-stone
+# formation, carcinogenicity, or organ toxicity are.
+HARD_SAFETY_TERMS = set(DB_ACTIVITY_SAFETY_TERMS) - {"emetic", "irritant"}
+
 
 INTERACTION_TERMS = [
     "drug interaction", "interaction", "cyp", "cytochrome",
@@ -1691,6 +1700,24 @@ class BotanicalRDCandidateEngine:
         compound_is_common=False,
         target_specificity=None,
     ):
+        # A documented serious toxicity (kidney-stone formation,
+        # carcinogenicity, organ toxicity, etc.) is a hard stop: no score,
+        # no amount of "shared compound" chemistry, and no evidence level
+        # should ever let such a candidate be labelled "Strong" or
+        # "Promising" and surface under "Recommended". Previously this
+        # only capped the ceiling at "Promising candidate; verify safety
+        # and standardization" — but that string still contains the word
+        # "promising", so the Step 6 UI's keyword filter kept showing
+        # candidates like calcium oxalate (documented as "Lithogenic") in
+        # the Recommended table. This check happens first and overrides
+        # everything else below, for any compound, any plant, any
+        # indication.
+        flagged_terms = {
+            term.strip() for term in safety_flags.split("; ") if term.strip()
+        }
+        if flagged_terms & HARD_SAFETY_TERMS:
+            return "Safety concern — not suitable without expert review"
+
         risky = bool(safety_flags) or bool(interaction_flags)
 
         if score >= 78 and not risky:
@@ -2212,6 +2239,21 @@ class BotanicalRDCandidateEngine:
                 "ESCOP_Status": curated.get("escop_status", "Not listed"),
                 "Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
             }
+
+        try:
+            from ema_regulatory_connector import search_regulatory_sources_real
+            records = search_regulatory_sources_real(plant)
+            if records:
+                r = records[0]
+                return {
+                    "EMA_HMPC_Status": r.get("EMA_Status", "Not yet verified"),
+                    "WHO_Status": r.get("WHO_Status", "Not yet verified"),
+                    "ESCOP_Status": r.get("ESCOP_Status", "Not yet verified"),
+                    "Source": r.get("Notes", "") + f" ({r.get('Source_URL', '')})",
+                }
+        except Exception:
+            pass
+
         return {
             "EMA_HMPC_Status": "Not yet verified",
             "WHO_Status": "Not yet verified",

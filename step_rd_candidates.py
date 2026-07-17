@@ -285,10 +285,25 @@ def render_rd_candidates_step(inputs):
 
     if isinstance(inventory_df, pd.DataFrame) and not inventory_df.empty:
         if "Known_Plant" in inventory_df.columns and "Known_Compound" in inventory_df.columns:
+            n_known_plants = inventory_df["Known_Plant"].nunique()
             st.caption(
-                f"{inventory_df['Known_Plant'].nunique()} known plant(s), "
+                f"{n_known_plants} known plant(s), "
                 f"{inventory_df['Known_Compound'].nunique()} known compound(s) catalogued."
             )
+            if n_known_plants <= 3:
+                st.warning(
+                    f"⚠️ **Narrow reference base:** only {n_known_plants} plant(s) in "
+                    f"the database are tagged with an `indication` matching '{indication}'. "
+                    "Step 5's alternative-candidate search fans out from these few "
+                    "plants' known compounds to the whole database — so every "
+                    "downstream candidate ultimately traces back to just this "
+                    "handful of starting points, not a broad scientific base for "
+                    "this indication. This isn't a scoring error; it reflects how "
+                    "much indication-tagged data exists yet. Consider adding more "
+                    "plants for this indication via Source Ingestion or Bulk "
+                    "Evidence Collection before treating Step 6's results as "
+                    "comprehensive."
+                )
         st.dataframe(inventory_df.head(500), use_container_width=True)
         if len(inventory_df) > 500:
             st.caption(
@@ -354,6 +369,23 @@ def render_rd_candidates_step(inputs):
     result_df = st.session_state.get("rd_candidates_df")
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+        if "Reference_Plant" in result_df.columns:
+            n_ref_plants = result_df["Reference_Plant"].nunique()
+            if n_ref_plants <= 3:
+                ref_names = ", ".join(
+                    result_df["Reference_Plant"].dropna().unique()[:3]
+                )
+                st.warning(
+                    f"⚠️ **Every candidate below traces back to just "
+                    f"{n_ref_plants} reference plant(s)** ({ref_names}) — the "
+                    f"only ones tagged with an indication matching this query "
+                    "in the database. All rows are that plant's known "
+                    "compounds fanned out across the whole database by "
+                    "chemical similarity, not an independent scientific base "
+                    "for this indication. Worth broadening the indication "
+                    "tagging (Source Ingestion / Bulk Evidence Collection) "
+                    "before treating this as a comprehensive result."
+                )
         st.info(
             "📊 **How to read this table:** `R&D_Opportunity_Score` ranks rows by "
             "how worth investigating they are — it is a triage/priority number, "

@@ -154,6 +154,10 @@ if total == 0:
 
 try:
     done_plants = _get_done_plants()
+    # Keep only progress records that correspond to plants currently present
+    # in the database. This excludes old/stale rows and special backfill rows
+    # such as EMA_BACKFILL::<plant>, which would otherwise make Done exceed Total.
+    done_plants = done_plants.intersection(set(all_plants))
 except Exception as exc:
     st.error(
         f"Could not read the bulk_evidence_progress table: {exc}\n\n"
@@ -169,7 +173,8 @@ col1.metric("Total plants", total)
 col2.metric("Done", len(done_plants))
 col3.metric("Remaining", len(remaining))
 
-st.progress(len(done_plants) / total if total else 0)
+main_progress = min(max(len(done_plants) / total, 0.0), 1.0) if total else 0.0
+st.progress(main_progress)
 
 if not remaining:
     st.success("✅ All plants have been processed!")
@@ -312,6 +317,9 @@ def _mark_ema_backfilled(plant, n_saved, n_errors, sample_errors=""):
 
 try:
     ema_done_plants = _get_ema_backfilled_plants()
+    # Ignore stale EMA backfill rows for plants that are no longer present
+    # in the current plant list.
+    ema_done_plants = ema_done_plants.intersection(set(all_plants))
 except Exception as exc:
     ema_done_plants = set()
     st.warning(f"Could not read EMA backfill progress yet: {exc}")
@@ -322,7 +330,8 @@ ecol1, ecol2, ecol3 = st.columns(3)
 ecol1.metric("Total plants", total)
 ecol2.metric("EMA-checked", len(ema_done_plants))
 ecol3.metric("Remaining", len(ema_remaining))
-st.progress(len(ema_done_plants) / total if total else 0)
+ema_progress = min(max(len(ema_done_plants) / total, 0.0), 1.0) if total else 0.0
+st.progress(ema_progress)
 
 if not ema_remaining:
     st.success("✅ Every plant has been checked against the real EMA HMPC inventory!")

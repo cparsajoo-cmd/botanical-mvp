@@ -262,6 +262,124 @@ else:
         st.cache_data.clear()
         st.rerun()
 
+st.markdown("---")
+st.markdown("## 🔄 Backfill: EMA/WHO/ESCOP Regulatory (all plants)")
+st.caption(
+    "The 'EMA/WHO/ESCOP Regulatory' source used to be a stub that only "
+    "ever found data for 4 hardcoded plants — every other plant silently "
+    "got nothing from it, even in runs marked '✅ done' above. It's now "
+    "wired to a real EMA HMPC lookup. This section re-runs ONLY that one "
+    "source, for every plant, without re-touching the other 13 sources "
+    "or resetting their progress above."
+)
+
+_EMA_BACKFILL_PREFIX = "EMA_BACKFILL::"
+
+
+def _get_ema_backfilled_plants():
+    client = get_supabase_client()
+    done = set()
+    start = 0
+    page_size = 1000
+    while True:
+        resp = (
+            client.table("bulk_evidence_progress")
+            .select("scientific_name")
+            .like("scientific_name", f"{_EMA_BACKFILL_PREFIX}%")
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        rows = resp.data or []
+        done.update(
+            r["scientific_name"][len(_EMA_BACKFILL_PREFIX):] for r in rows
+        )
+        if len(rows) < page_size:
+            break
+        start += page_size
+    return done
+
+
+def _mark_ema_backfilled(plant, n_saved, n_errors, sample_errors=""):
+    client = get_supabase_client()
+    client.table("bulk_evidence_progress").upsert({
+        "scientific_name": f"{_EMA_BACKFILL_PREFIX}{plant}",
+        "status": "ema_backfill_done",
+        "records_saved": n_saved,
+        "error_count": n_errors,
+        "sample_errors": sample_errors[:2000],
+    }).execute()
+
+
+try:
+    ema_done_plants = _get_ema_backfilled_plants()
+except Exception as exc:
+    ema_done_plants = set()
+    st.warning(f"Could not read EMA backfill progress yet: {exc}")
+
+ema_remaining = [p for p in sorted(all_plants) if p not in ema_done_plants]
+
+ecol1, ecol2, ecol3 = st.columns(3)
+ecol1.metric("Total plants", total)
+ecol2.metric("EMA-checked", len(ema_done_plants))
+ecol3.metric("Remaining", len(ema_remaining))
+st.progress(len(ema_done_plants) / total if total else 0)
+
+if not ema_remaining:
+    st.success("✅ Every plant has been checked against the real EMA HMPC inventory!")
+elif st.button("🔄 Backfill EMA/WHO/ESCOP for the next few minutes", type="secondary"):
+    progress_bar = st.progress(0)
+    status_area = st.empty()
+    results_log = []
+
+    batch_start_time = time.time()
+    processed_count = 0
+
+    for plant in ema_remaining:
+        if time.time() - batch_start_time > MAX_SECONDS_PER_CLICK:
+            break
+
+        indication = all_plants.get(plant, "")
+        processed_count += 1
+        status_area.write(
+            f"Checking **{plant}** against EMA HMPC "
+            f"({processed_count} so far this click, "
+            f"{len(ema_remaining) - processed_count} left overall)..."
+        )
+
+        try:
+            saved, errors = _run_one_source(
+                {"name": "EMA/WHO/ESCOP Regulatory", "max_results": 5},
+                plant, indication, "", "European Union", 3, True,
+            )
+            n_saved, n_errors = len(saved), len(errors)
+            sample_errors = "; ".join(
+                f"{e.get('source', '?')}: {e.get('error', '')}"
+                for e in errors[:5]
+            )
+        except Exception as exc:
+            n_saved, n_errors = 0, 1
+            sample_errors = str(exc)
+            results_log.append(f"❌ {plant}: failed entirely — {exc}")
+        else:
+            results_log.append(f"✅ {plant}: {n_saved} record(s), {n_errors} error(s)")
+
+        try:
+            _mark_ema_backfilled(plant, n_saved, n_errors, sample_errors)
+        except Exception as exc:
+            results_log.append(f"⚠️ {plant}: checked but failed to save progress — {exc}")
+
+        progress_bar.progress(
+            min(1.0, (time.time() - batch_start_time) / MAX_SECONDS_PER_CLICK)
+        )
+
+    status_area.empty()
+    st.success(f"This click checked {processed_count} plant(s) against EMA HMPC.")
+    for line in results_log:
+        st.write(line)
+
+    st.cache_data.clear()
+    st.rerun()
+
 with st.expander("How this works / notes"):
     st.markdown(
         """

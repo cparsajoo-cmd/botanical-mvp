@@ -106,6 +106,27 @@ SAFETY_TERMS = [
 ]
 
 
+# Dr. Duke's own Known_Target/activity vocabulary already documents some
+# compounds as having concerning properties (e.g. "Lithogenic" = promotes
+# kidney stone formation, "Emetic" = induces vomiting) — this is
+# structured data already present in every row, not something that needs
+# a literature search to discover. Previously, safety flagging only
+# scanned free-text evidence collected from PubMed/EMA/etc, so a
+# compound could be labelled "Lithogenic; Inflammatory" in its own
+# Target_or_Mechanism column and still be presented as an unflagged
+# "Recommended" candidate. These terms are checked against the
+# mechanism/target text directly, in addition to SAFETY_TERMS being
+# checked against free-text evidence — for any compound, any plant, any
+# indication.
+DB_ACTIVITY_SAFETY_TERMS = [
+    "lithogenic", "emetic", "hepatotoxic", "nephrotoxic", "neurotoxic",
+    "carcinogenic", "mutagenic", "teratogenic", "abortifacient",
+    "convulsant", "narcotic", "poison", "vesicant", "hemolytic",
+    "nephrotoxin", "hepatotoxin", "genotoxic", "embryotoxic",
+    "cardiotoxic", "irritant",
+]
+
+
 INTERACTION_TERMS = [
     "drug interaction", "interaction", "cyp", "cytochrome",
     "warfarin", "anticoagulant", "antiplatelet", "ssri", "maoi",
@@ -464,21 +485,37 @@ class BotanicalRDCandidateEngine:
                         compound_norms=alt_record["alt_compound_norms"],
                     )
 
-                    safety_flags = self._extract_flags(
-                        raw_evidence,
-                        SAFETY_TERMS,
-                    )
-
-                    interaction_flags = self._extract_flags(
-                        raw_evidence,
-                        INTERACTION_TERMS,
-                    )
-
                     target = self._target_or_mechanism_fast(
                         ref_targets,
                         ref_target_norms,
                         alt_record["alt_targets"],
                         alt_record["alt_target_norms"],
+                    )
+
+                    # Free-text safety terms found in collected literature
+                    # evidence, PLUS concerning activities the database
+                    # itself already documents for this compound (e.g.
+                    # "Lithogenic", "Emetic") — the latter needs no
+                    # external evidence search since it's already sitting
+                    # in the same row's Target_or_Mechanism data.
+                    safety_flags = self._extract_flags(
+                        raw_evidence,
+                        SAFETY_TERMS,
+                    )
+                    db_safety_flags = self._extract_flags(
+                        target,
+                        DB_ACTIVITY_SAFETY_TERMS,
+                    )
+                    if db_safety_flags:
+                        pieces = []
+                        if safety_flags:
+                            pieces.extend(safety_flags.split("; "))
+                        pieces.extend(db_safety_flags.split("; "))
+                        safety_flags = "; ".join(sorted(set(pieces)))
+
+                    interaction_flags = self._extract_flags(
+                        raw_evidence,
+                        INTERACTION_TERMS,
                     )
 
                     market_status = self._market_status(

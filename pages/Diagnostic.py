@@ -160,8 +160,104 @@ if st.button("Run diagnostic"):
         except Exception as exc:
             report.append(("Step-by-step replication", "FAILED", repr(exc)))
 
-    st.markdown("### Results")
-    for step, status, detail in report:
-        icon = "✅" if status == "OK" else ("⚠️" if status == "EMPTY" else "❌")
+st.markdown("---")
+st.markdown("## 🌿 EMA regulatory pipeline diagnostic (temporary)")
+st.caption(
+    "Tests the REAL, currently-deployed code directly — the exact same "
+    "functions the app itself calls — with no Supabase writes/deletes "
+    "involved. If this shows the right Evidence_Level here but Supabase "
+    "still shows 'Unknown', the problem is in the save step or old "
+    "leftover data. If it's already wrong HERE, the deployed code itself "
+    "isn't what we think it is (e.g. the file didn't actually save/"
+    "deploy) — that narrows things down immediately, in one click."
+)
+
+if st.button("Run EMA pipeline diagnostic"):
+    ema_report = []
+
+    try:
+        import ema_regulatory_connector as ema_mod
+        import importlib
+        importlib.reload(ema_mod)
+        ema_report.append((
+            "import ema_regulatory_connector",
+            "OK",
+            f"module file: {ema_mod.__file__}",
+        ))
+    except Exception as exc:
+        ema_report.append(("import ema_regulatory_connector", "FAILED", repr(exc)))
+        ema_mod = None
+
+    if ema_mod is not None:
+        try:
+            records = ema_mod.search_regulatory_sources_real(
+                "Valeriana officinalis", "Sleep", "Infusion", "European Union"
+            )
+            r = records[0]
+            ema_report.append((
+                "search_regulatory_sources_real('Valeriana officinalis')",
+                "OK",
+                f"Evidence_Level={r.get('Evidence_Level')!r}, "
+                f"EMA_Status={r.get('EMA_Status')!r}, "
+                f"Source_Title={r.get('Source_Title')!r}",
+            ))
+        except Exception as exc:
+            ema_report.append((
+                "search_regulatory_sources_real('Valeriana officinalis')",
+                "FAILED", repr(exc),
+            ))
+            r = None
+
+        if r is not None:
+            try:
+                import evidence_standardizer as es_mod
+                importlib.reload(es_mod)
+                ema_report.append((
+                    "import evidence_standardizer",
+                    "OK",
+                    f"module file: {es_mod.__file__}",
+                ))
+                standardized = es_mod.standardize_extracted_record(
+                    r,
+                    {
+                        "source_type": r.get("Source_Type", "Regulatory"),
+                        "source_title": r.get("Source_Title", ""),
+                        "source_url": r.get("Source_URL", ""),
+                        "source_organization": r.get("Source_Organization", ""),
+                        "source_year": r.get("Source_Year", ""),
+                    },
+                )
+                final_level = standardized.get("Evidence_Level")
+                ema_report.append((
+                    "standardize_extracted_record(...) final Evidence_Level",
+                    "OK" if final_level and final_level != "Unknown" else "STILL WRONG",
+                    f"Evidence_Level={final_level!r}",
+                ))
+            except Exception as exc:
+                ema_report.append((
+                    "standardize_extracted_record(...)", "FAILED", repr(exc),
+                ))
+
+    try:
+        import regulatory_connector as rc_mod
+        importlib.reload(rc_mod)
+        recs = rc_mod.search_regulatory_sources(
+            "Rosa canina", "General wellness", "Infusion", "European Union"
+        )
+        ema_report.append((
+            "regulatory_connector.search_regulatory_sources('Rosa canina') "
+            "(a plant NOT in the 4-plant curated dict — should use the real connector)",
+            "OK",
+            f"{recs[0].get('EMA_Status') if recs else 'NO RECORDS'}",
+        ))
+    except Exception as exc:
+        ema_report.append((
+            "regulatory_connector.search_regulatory_sources('Rosa canina')",
+            "FAILED", repr(exc),
+        ))
+
+    st.markdown("### EMA diagnostic results")
+    for step, status, detail in ema_report:
+        icon = "✅" if status == "OK" else ("⚠️" if status == "STILL WRONG" else "❌")
         st.markdown(f"{icon} **{step}** — `{status}`")
         st.code(detail)

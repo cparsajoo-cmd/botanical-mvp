@@ -276,6 +276,43 @@ class BotanicalRDCandidateEngine:
             self._build_compound_frequency_index()
         )
 
+        # A compound-specific (NOT plant-pooled) target/activity index,
+        # built directly from Dr. Duke's raw data: compound -> the set of
+        # activities recorded for THAT compound specifically, across
+        # every plant it appears in. This is deliberately separate from
+        # self.compound_to_targets (the small hand-curated
+        # COMPOUND_TARGETS/compound_profiles set used for class-based
+        # "target_verified" matching) — that dict doesn't cover most of
+        # Dr. Duke's ~2,000+ plant database, so using it for safety
+        # flagging would silently miss real DB-documented hazards like
+        # Calcium Oxalate's "Lithogenic" tag. This index is used ONLY for
+        # safety-flag lookups, scoped to the one compound actually
+        # matched in each row — not the alternative plant's entire pooled
+        # activity profile across all of its other, unrelated compounds.
+        self.compound_own_targets = self._build_compound_target_index()
+
+    def _build_compound_target_index(self):
+        df = self.plant_compounds_df
+
+        if (
+            df is None or df.empty
+            or "compound_name" not in df.columns
+            or "target" not in df.columns
+        ):
+            return {}
+
+        index = defaultdict(set)
+        grouped = df.groupby(
+            df["compound_name"].fillna("").map(self._norm)
+        )["target"]
+
+        for compound_norm, values in grouped:
+            if not compound_norm:
+                continue
+            index[compound_norm].update(self._split_series_terms(values))
+
+        return dict(index)
+
     def _build_compound_frequency_index(self):
         df = self.plant_compounds_df
 
@@ -503,16 +540,36 @@ class BotanicalRDCandidateEngine:
 
                     # Free-text safety terms found in collected literature
                     # evidence, PLUS concerning activities the database
-                    # itself already documents for this compound (e.g.
-                    # "Lithogenic", "Emetic") — the latter needs no
-                    # external evidence search since it's already sitting
-                    # in the same row's Target_or_Mechanism data.
+                    # itself already documents for the SPECIFIC matched
+                    # compound (e.g. "Lithogenic", "Emetic").
+                    #
+                    # Deliberately NOT using `target` here: for
+                    # "class_only" matches (no confirmed shared target),
+                    # `target` falls back to the alt plant's WHOLE pooled
+                    # activity list across every compound it has — not
+                    # just the one that's actually shared/matched. Using
+                    # that broad fallback for a safety decision meant one
+                    # unrelated compound out of dozens in a plant's full
+                    # profile (Dr. Duke's data tags compounds with every
+                    # activity ever reported anywhere, including from
+                    # old/edge-case studies) could flag every single
+                    # candidate row for that plant as a "safety concern",
+                    # regardless of whether the flagged activity had
+                    # anything to do with the compound actually being
+                    # proposed. Looking up only the matched compound's own
+                    # known activities keeps this precise, for any
+                    # compound, any plant, any indication.
+                    matched_clean = matched_compound.split("[")[0].strip()
+                    matched_own_targets = self.compound_own_targets.get(
+                        self._norm(matched_clean), set()
+                    )
+
                     safety_flags = self._extract_flags(
                         raw_evidence,
                         SAFETY_TERMS,
                     )
                     db_safety_flags = self._extract_flags(
-                        target,
+                        "; ".join(matched_own_targets),
                         DB_ACTIVITY_SAFETY_TERMS,
                     )
                     if db_safety_flags:

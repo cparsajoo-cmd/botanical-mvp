@@ -128,30 +128,57 @@ DB_ACTIVITY_SAFETY_TERMS = [
 
 # Two tiers, because these are not equally trustworthy signals:
 #
-# HARD_SAFETY_TERMS — a clear, direct physiological/organ mechanism
-# (kidney stones, liver/kidney/nerve/heart damage, induced abortion,
-# convulsions, blistering, poisoning). A candidate carrying one of these
-# must never appear under "Recommended", regardless of score.
+# HARD_SAFETY_TERMS — a clear, direct physiological/mechanical/
+# reproductive mechanism with no common "protective against" research
+# framing to confuse it with (kidney stones, induced abortion,
+# convulsions, blistering, poisoning, blood-cell destruction). A
+# candidate carrying one of these must never appear under "Recommended",
+# regardless of score.
 #
-# CONTROVERSIAL_SAFETY_TERMS — the genotoxicity-assay family
-# (carcinogenic/mutagenic/genotoxic). Dr. Duke's data pulls these from
-# decades-old in-vitro/bacterial (Ames-test-style) or high-dose animal
-# studies, largely without real-world dose or exposure context. This is
-# exactly why everyday, GRAS-recognized dietary compounds — quercetin
-# (apples, onions, tea) is the clearest example in this database — carry
-# these tags despite EMA/WHO/EFSA still recognizing them as safe
-# traditional/food ingredients: the old assay finding is real, but on
-# its own it doesn't mean the same thing clinically that, say,
-# "Lithogenic" or "Hepatotoxic" does. These stay flagged and visible
-# (Safety_Flags, Rationale, and a capped score) but do NOT auto-exclude
-# a candidate from "Recommended" the way HARD_SAFETY_TERMS does — a
-# human reviewer needs to weigh dose/context, not have it decided for
-# them by a 1970s Ames test result. "Emetic" and "Irritant" are milder
-# still and are excluded from both hard tiers for the same reason.
+# CONTROVERSIAL_SAFETY_TERMS — two distinct families that share the same
+# underlying problem: Dr. Duke's activity tags are extracted from
+# publication text without distinguishing "compound X CAUSES this" from
+# "compound X PROTECTS AGAINST this caused by something else".
+#   1. The genotoxicity-assay family (carcinogenic/mutagenic/genotoxic)
+#      — typically from decades-old in-vitro/bacterial (Ames-test-style)
+#      or high-dose animal studies, without real-world dose/exposure
+#      context.
+#   2. The organ-toxicity family (hepatotoxic/nephrotoxic/cardiotoxic/
+#      neurotoxic) — verified this is a real, systematic mislabeling
+#      risk, not a one-off: "flavonoid protects against
+#      doxorubicin-induced cardiotoxicity", "...cisplatin-induced
+#      nephrotoxicity", "...against drug-induced hepatotoxicity" are
+#      each themselves extremely common, standard study designs across
+#      hundreds of published papers on plant compounds — a naive
+#      extraction pass over that literature will tag the PROTECTIVE
+#      compound with the organ-toxicity word just as readily as it would
+#      tag an actual causative agent. Quercetin is the clearest confirmed
+#      case (LiverTox/NIH: "well tolerated... not linked to serum enzyme
+#      elevations or clinically apparent liver injury... likelihood
+#      score E [unlikely cause]", while numerous studies show it
+#      protecting against hepatotoxicity induced by other agents) — but
+#      the same "protects against X-induced Y-toxicity" paradigm is
+#      equally standard for nephro-, cardio-, and neuro-toxicity, so the
+#      same risk applies to all four, for any compound, not just this
+#      one.
+# These stay flagged and visible (Safety_Flags, Rationale, and a capped
+# score — never "Strong") but do NOT auto-exclude a candidate from
+# "Recommended" the way HARD_SAFETY_TERMS does — a human reviewer needs
+# to read the actual finding and weigh dose/context/causal direction,
+# not have it decided for them by a keyword co-occurrence. "Emetic" and
+# "Irritant" are milder still and are excluded from both hard tiers for
+# the same reason.
 HARD_SAFETY_TERMS = set(DB_ACTIVITY_SAFETY_TERMS) - {
-    "emetic", "irritant", "carcinogenic", "mutagenic", "genotoxic",
+    "emetic", "irritant",
+    "carcinogenic", "mutagenic", "genotoxic",
+    "hepatotoxic", "hepatotoxin", "nephrotoxic", "nephrotoxin",
+    "cardiotoxic", "neurotoxic",
 }
-CONTROVERSIAL_SAFETY_TERMS = {"carcinogenic", "mutagenic", "genotoxic"}
+CONTROVERSIAL_SAFETY_TERMS = {
+    "carcinogenic", "mutagenic", "genotoxic",
+    "hepatotoxic", "hepatotoxin", "nephrotoxic", "nephrotoxin",
+    "cardiotoxic", "neurotoxic",
+}
 
 
 INTERACTION_TERMS = [

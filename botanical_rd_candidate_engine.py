@@ -1841,25 +1841,61 @@ class BotanicalRDCandidateEngine:
         if not text:
             return "No direct evidence"
 
+        # Specific, multi-word phrases that actually indicate a real
+        # clinical study design — deliberately NOT single common words
+        # like "human", "patient", "subjects", or "participants". Those
+        # generic words show up constantly in evidence text that has
+        # NOTHING to do with an actual clinical trial (safety
+        # disclaimers, food-use history, unrelated abstracts pooled in
+        # from other records about the same plant) — using them as
+        # triggers was silently classifying the vast majority of
+        # candidates as having "Clinical / human evidence" regardless of
+        # whether any such evidence actually existed.
         clinical_terms = [
-            "clinical trial", "randomized", "randomised", "placebo",
-            "human", "patient", "subjects", "participants", "meta-analysis",
-            "systematic review",
+            "clinical trial", "randomized controlled trial",
+            "randomised controlled trial", "double-blind", "double blind",
+            "placebo-controlled", "placebo controlled", "human trial",
+            "human study", "clinical study", "cohort study",
+            "case-control study", "phase i trial", "phase ii trial",
+            "phase iii trial", "meta-analysis", "systematic review",
+            "clinicaltrials.gov",
         ]
         regulatory_terms = [
-            "ema", "hmcp", "escop", "who monograph", "monograph",
+            "ema", "hmpc", "hmcp", "escop", "who monograph", "monograph",
             "traditional use", "well-established use",
         ]
         preclinical_terms = [
-            "in vitro", "in vivo", "animal", "mouse", "rat",
-            "mechanism", "pathway", "receptor", "enzyme", "target",
+            "in vitro", "in vivo", "animal model", "mouse model",
+            "rat model", "mechanism of action", "signaling pathway",
+            "receptor binding", "enzyme inhibition",
         ]
 
-        if any(term in text for term in clinical_terms):
+        # A term immediately preceded by a negation cue within a short
+        # word window doesn't count as positive evidence — "no clinical
+        # trials have been conducted" and "insufficient human studies"
+        # should not be scored the same as an actual reported trial.
+        negation_cues = (
+            "no ", "not ", "lack of ", "lacks ", "insufficient ",
+            "absence of ", "without ", "none found", "no evidence of ",
+            "no direct ", "unproven", "unconfirmed", "no reported ",
+        )
+
+        def _has_term(terms):
+            for term in terms:
+                idx = text.find(term)
+                while idx != -1:
+                    window_start = max(0, idx - 40)
+                    preceding = text[window_start:idx]
+                    if not any(cue in preceding[-25:] for cue in negation_cues):
+                        return True
+                    idx = text.find(term, idx + 1)
+            return False
+
+        if _has_term(clinical_terms):
             return "Clinical / human evidence"
-        if any(term in text for term in regulatory_terms):
+        if _has_term(regulatory_terms):
             return "Regulatory / monograph evidence"
-        if any(term in text for term in preclinical_terms):
+        if _has_term(preclinical_terms):
             return "Preclinical / mechanistic evidence"
         return "General literature signal"
 

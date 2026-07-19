@@ -126,14 +126,32 @@ DB_ACTIVITY_SAFETY_TERMS = [
     "cardiotoxic", "irritant",
 ]
 
-# Documented toxicity serious enough that a candidate must never be
-# presented under "Recommended", no matter how high its score or how
-# good its evidence otherwise looks. "emetic" and "irritant" are left
-# out of this harder set — they still trigger safety_flags and the
-# score penalty/ "Promising, verify safety" cap below, but on their own
-# aren't treated as an automatic disqualifier the way kidney-stone
-# formation, carcinogenicity, or organ toxicity are.
-HARD_SAFETY_TERMS = set(DB_ACTIVITY_SAFETY_TERMS) - {"emetic", "irritant"}
+# Two tiers, because these are not equally trustworthy signals:
+#
+# HARD_SAFETY_TERMS — a clear, direct physiological/organ mechanism
+# (kidney stones, liver/kidney/nerve/heart damage, induced abortion,
+# convulsions, blistering, poisoning). A candidate carrying one of these
+# must never appear under "Recommended", regardless of score.
+#
+# CONTROVERSIAL_SAFETY_TERMS — the genotoxicity-assay family
+# (carcinogenic/mutagenic/genotoxic). Dr. Duke's data pulls these from
+# decades-old in-vitro/bacterial (Ames-test-style) or high-dose animal
+# studies, largely without real-world dose or exposure context. This is
+# exactly why everyday, GRAS-recognized dietary compounds — quercetin
+# (apples, onions, tea) is the clearest example in this database — carry
+# these tags despite EMA/WHO/EFSA still recognizing them as safe
+# traditional/food ingredients: the old assay finding is real, but on
+# its own it doesn't mean the same thing clinically that, say,
+# "Lithogenic" or "Hepatotoxic" does. These stay flagged and visible
+# (Safety_Flags, Rationale, and a capped score) but do NOT auto-exclude
+# a candidate from "Recommended" the way HARD_SAFETY_TERMS does — a
+# human reviewer needs to weigh dose/context, not have it decided for
+# them by a 1970s Ames test result. "Emetic" and "Irritant" are milder
+# still and are excluded from both hard tiers for the same reason.
+HARD_SAFETY_TERMS = set(DB_ACTIVITY_SAFETY_TERMS) - {
+    "emetic", "irritant", "carcinogenic", "mutagenic", "genotoxic",
+}
+CONTROVERSIAL_SAFETY_TERMS = {"carcinogenic", "mutagenic", "genotoxic"}
 
 
 INTERACTION_TERMS = [
@@ -1775,6 +1793,14 @@ class BotanicalRDCandidateEngine:
         if flagged_terms & HARD_SAFETY_TERMS:
             return "Safety concern — not suitable without expert review"
 
+        # Controversial-only flags (carcinogenic/mutagenic/genotoxic with
+        # no accompanying hard-tier term) fall straight through past the
+        # hard-exclusion check above — they don't force exclusion. They
+        # still can't reach "Strong" on their own: `safety_flags` being
+        # non-empty already makes `risky` True below, which caps the
+        # ceiling at "Promising candidate; verify safety and
+        # standardization" — visible and capped, but a human still gets
+        # to see and weigh it rather than having it silently excluded.
         risky = bool(safety_flags) or bool(interaction_flags)
 
         if score >= 78 and not risky:

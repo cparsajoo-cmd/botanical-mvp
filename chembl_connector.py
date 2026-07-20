@@ -15,8 +15,25 @@ def search_chembl(scientific_name, indication, dosage_form="", market="European 
     records = []
 
     for m in molecules:
-        name = m.get("pref_name") or scientific_name
+        name = m.get("pref_name")
         chembl_id = m.get("molecule_chembl_id", "")
+
+        # ChEMBL sometimes catalogs a crude/whole-plant extract as its
+        # own "molecule" entry under a common name (e.g. a record whose
+        # pref_name is literally "CHAMOMILE") rather than an isolated
+        # chemical constituent. Blindly trusting `pref_name` here meant
+        # the plant's own common name could get stored as if it were one
+        # of its phytochemical compounds — for any plant whose ChEMBL
+        # synonym search happens to surface this kind of record, not
+        # just one. A genuine single chemical substance always has
+        # structural data (SMILES/InChI) in ChEMBL; a whole-extract or
+        # mixture entry does not — that's a reliable, generic way to
+        # tell the two apart without hardcoding any plant or compound
+        # name.
+        has_structure = bool(m.get("molecule_structures"))
+
+        if not name or not has_structure:
+            continue
 
         records.append({
             "Scientific_Name": scientific_name,

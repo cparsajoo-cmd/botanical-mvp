@@ -785,12 +785,26 @@ class BotanicalRDCandidateEngine:
             + "||" + output["Alternative_Plant"].map(self._norm)
         )
 
+        # Ranked worst-to-best. "Safety concern" sits below "Low priority"
+        # since it's a harder, more certain reason to deprioritize a
+        # candidate than merely having a weak/generic match. This list
+        # must stay in sync with every Decision_Class string
+        # _decision_class() can produce — an earlier version of this list
+        # didn't know about "Safety concern — not suitable without expert
+        # review" (added later, see _decision_class), which crashed
+        # order.index() below the moment any duplicate-reference-plant
+        # group contained a safety-flagged row.
         order = [
+            "Safety concern — not suitable without expert review",
             "Low priority / insufficient data",
             "Early-stage candidate; more evidence needed",
             "Promising candidate; verify safety and standardization",
             "Strong R&D candidate",
         ]
+
+        def _rank(decision):
+            decision = str(decision)
+            return order.index(decision) if decision in order else 0
 
         merged_rows = []
 
@@ -837,9 +851,9 @@ class BotanicalRDCandidateEngine:
             # confidence than that).
             tightest = min(
                 (str(d) for d in group["Decision_Class"]),
-                key=lambda d: order.index(d) if d in order else 0,
+                key=_rank,
             )
-            if order.index(new_decision) > order.index(tightest):
+            if _rank(new_decision) > _rank(tightest):
                 new_decision = tightest
 
             best["Reference_Compound"] = "; ".join(distinct_ref_compounds)

@@ -425,18 +425,43 @@ class BotanicalRDCandidateEngine:
         problem = indication
         product_type = product_type or (dosage_form or "botanical product")
 
-        references = self._get_reference_plants(
-            problem=problem,
-            dosage_form=dosage_form,
-            market=market,
-            max_reference_plants=max_reference_plants,
-        )
+        all_candidates = self._candidate_frame()
+
+        if reference_plant:
+            # A user who explicitly names a reference plant already knows
+            # their starting point — they shouldn't be at the mercy of
+            # whatever (at most `max_reference_plants`, default 12)
+            # plants the indication-based selection happens to surface
+            # first. Previously this searched only within that small,
+            # indication-restricted shortlist post-hoc (line below used
+            # to be `for _, ref in references.iterrows()` where
+            # `references` came from _get_reference_plants() BEFORE this
+            # name filter ran) — if the named plant wasn't among those
+            # first ~12 candidates, EVERY row got filtered out and Step 5
+            # silently returned "No R&D candidates found", regardless of
+            # whether the plant actually exists in the database at all.
+            # Searching the full, unrestricted candidate universe here
+            # instead means an explicitly-named reference plant is found
+            # whenever it exists anywhere in the database, for any
+            # indication, any plant.
+            name_norm = self._norm(reference_plant)
+            references = all_candidates[
+                all_candidates["Scientific_Name"].map(self._norm).apply(
+                    lambda n: name_norm in n or n in name_norm
+                )
+            ]
+        else:
+            references = self._get_reference_plants(
+                problem=problem,
+                dosage_form=dosage_form,
+                market=market,
+                max_reference_plants=max_reference_plants,
+            )
 
         if references.empty:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
         rows = []
-        all_candidates = self._candidate_frame()
         evidence_index = self._build_evidence_text_index()
 
         # Precompute the alternative-candidate list ONCE, outside the

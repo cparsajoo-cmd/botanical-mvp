@@ -146,6 +146,41 @@ def _find_plant_part(text):
     return "; ".join(sorted(set(found)))
 
 
+def _plant_name_mentions(scientific_name, lower_text):
+    """Returns the character positions where the plant is actually
+    mentioned in the text — its full scientific name, or just its genus
+    (the first word) as a looser fallback, since papers often abbreviate
+    after first use (e.g. "M. chamomilla")."""
+    positions = []
+    name_lower = scientific_name.lower().strip()
+
+    if not name_lower:
+        return positions
+
+    start = 0
+    while True:
+        idx = lower_text.find(name_lower, start)
+        if idx == -1:
+            break
+        positions.append(idx)
+        start = idx + 1
+
+    if positions:
+        return positions
+
+    genus = name_lower.split()[0] if name_lower.split() else ""
+    if len(genus) >= 4:
+        start = 0
+        while True:
+            idx = lower_text.find(genus, start)
+            if idx == -1:
+                break
+            positions.append(idx)
+            start = idx + 1
+
+    return positions
+
+
 def extract_plant_compounds_from_text(
     scientific_name,
     text,
@@ -166,10 +201,36 @@ def extract_plant_compounds_from_text(
     extraction_method = _find_extraction_method(text)
     plant_part = _find_plant_part(text)
 
+    # A source paper mentioning a compound SOMEWHERE does not mean that
+    # compound belongs to the plant being searched — review papers
+    # routinely cover several different plants (e.g. a stress/cortisol
+    # review discussing both chamomile's flavonoids AND ashwagandha's
+    # withanolides in different sections). Requiring the plant's own
+    # name to actually appear reasonably close to the compound mention
+    # is a cheap, generalizable way to avoid attributing one plant's
+    # chemistry to a completely different one — this applies to any
+    # plant and any compound, not a special case for any single pair.
+    PROXIMITY_WINDOW = 400
+    plant_mentions = _plant_name_mentions(scientific_name, lower_text)
+
+    def _mentioned_near(position):
+        if not plant_mentions:
+            # The plant's own name never appears in the text at all —
+            # can't confirm relevance either way, so don't attribute
+            # anything from this source to be safe.
+            return False
+        return any(
+            abs(position - mention) <= PROXIMITY_WINDOW
+            for mention in plant_mentions
+        )
+
     for compound_name, meta in COMPOUND_PATTERNS.items():
         pattern = re.escape(compound_name.lower())
 
-        if re.search(pattern, lower_text):
+        for match in re.finditer(pattern, lower_text):
+            if not _mentioned_near(match.start()):
+                continue
+
             confidence = 80
 
             if extraction_method:
@@ -214,5 +275,8 @@ def extract_plant_compounds_from_text(
                     pass
 
             extracted_records.append(record)
+            # One saved record per compound is enough even if it's
+            # mentioned near the plant's name more than once in the text.
+            break
 
     return extracted_records

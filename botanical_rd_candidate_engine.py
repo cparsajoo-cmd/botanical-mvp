@@ -885,6 +885,29 @@ class BotanicalRDCandidateEngine:
             best["Shared_or_Similar_Compound"] = "; ".join(distinct_matched)
             best["R&D_Opportunity_Score"] = new_score
             best["Decision_Class"] = new_decision
+
+            # The decision above already accounts for flags anywhere in
+            # the group, not just on the single highest-scoring sub-row
+            # ("best"). The displayed Safety_Flags/Interaction_Flags must
+            # do the same — otherwise a merged row can show "Safety
+            # concern" with a Safety_Flags column that says "No explicit
+            # flag found", because that column silently kept whichever
+            # value the (unflagged) top-scoring sub-row happened to have
+            # while a DIFFERENT, lower-scoring sub-row in the same group
+            # was the one that actually carried the flag. A decision the
+            # displayed columns can't explain isn't trustworthy, for any
+            # plant, any compound, any indication.
+            def _merged_flags(column):
+                pieces = []
+                for v in group[column]:
+                    v = str(v).strip()
+                    if v and v != "No explicit flag found":
+                        pieces.extend(p.strip() for p in v.split("; ") if p.strip())
+                return "; ".join(sorted(set(pieces))) if pieces else "No explicit flag found"
+
+            best["Safety_Flags"] = _merged_flags("Safety_Flags")
+            best["Interaction_Flags"] = _merged_flags("Interaction_Flags")
+
             best["Rationale"] = (
                 f"Matches {num_matches} independent reference compounds "
                 f"({', '.join(distinct_matched)}) — a materially stronger "

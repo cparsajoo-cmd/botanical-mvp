@@ -1329,15 +1329,43 @@ class BotanicalRDCandidateEngine:
         compound,
         problem,
     ):
+        """Builds the evidence text used to determine Evidence_Level and
+        safety flags for one candidate row.
+
+        `evidence_index` has two kinds of entries per record: one bucket
+        keyed by PLANT (every evidence record tied to that plant, however
+        many different compounds those records are actually about), and
+        one bucket keyed by COMPOUND (every evidence record whose text
+        mentions that specific compound, across whichever plants). The
+        compound bucket is the one that's actually scoped to what this
+        row's claim is about; the plant bucket is not — it was the
+        source of the whole-plant-pooling cross-contamination problem
+        (a plant's evidence about an unrelated compound getting credited
+        to a completely different compound match just because it's the
+        "same plant").
+        
+        So: compound- and problem-specific text is used as the PRIMARY
+        signal. The whole-plant bucket is only added as a fallback when
+        there is no compound-specific evidence at all for this compound
+        — better than nothing when that's genuinely all there is, but no
+        longer blended in unconditionally on every row regardless of
+        whether it's actually relevant to the compound being evaluated.
+        """
         compound_clean = compound.split("[")[0].strip()
 
-        parts = [
-            evidence_index.get(self._norm(plant), ""),
-            evidence_index.get(self._norm(compound_clean), ""),
-            evidence_index.get(self._norm(problem), ""),
-        ]
+        compound_text = evidence_index.get(self._norm(compound_clean), "")
+        problem_text = evidence_index.get(self._norm(problem), "")
 
-        return " ".join(part for part in parts if part).strip()[:6000]
+        primary = " ".join(part for part in (compound_text, problem_text) if part).strip()
+
+        if primary:
+            return primary[:6000]
+
+        # No compound-specific evidence found anywhere — fall back to
+        # whatever's known about the plant in general, clearly weaker
+        # but still better than treating it as zero evidence outright.
+        plant_text = evidence_index.get(self._norm(plant), "")
+        return plant_text.strip()[:6000]
 
     def _match_compounds(
         self,

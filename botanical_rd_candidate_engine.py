@@ -908,6 +908,24 @@ class BotanicalRDCandidateEngine:
             best["Safety_Flags"] = _merged_flags("Safety_Flags")
             best["Interaction_Flags"] = _merged_flags("Interaction_Flags")
 
+            # The pre-merge Rationale text (from _rationale(), on the
+            # single "best" sub-row) ends with a hardcoded
+            # "Decision: <that sub-row's own decision>." sentence. If the
+            # group-level recompute above changed the decision (e.g. a
+            # DIFFERENT sub-row's safety flag pulled the merged result
+            # down to "Safety concern"), that trailing sentence goes
+            # stale — the Rationale text would keep saying "Decision:
+            # Strong R&D candidate" even though the Decision_Class column
+            # right next to it says "Safety concern". Replacing it here
+            # keeps the free text and the structured column in agreement,
+            # for any decision change, not just this one.
+            old_rationale = str(best["Rationale"])
+            best["Rationale"] = re.sub(
+                r"Decision: .+\.$",
+                f"Decision: {new_decision}.",
+                old_rationale,
+            )
+
             best["Rationale"] = (
                 f"Matches {num_matches} independent reference compounds "
                 f"({', '.join(distinct_matched)}) — a materially stronger "

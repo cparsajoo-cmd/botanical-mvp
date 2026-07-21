@@ -711,6 +711,7 @@ class BotanicalRDCandidateEngine:
                         evidence_level=evidence_level,
                         compound_is_common=compound_is_common,
                         target_specificity=target_specificity,
+                        same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                     )
 
                     rows.append(
@@ -1909,6 +1910,7 @@ class BotanicalRDCandidateEngine:
         evidence_level="No direct evidence",
         compound_is_common=False,
         target_specificity=None,
+        same_plant=False,
     ):
         # A documented serious toxicity (kidney-stone formation,
         # carcinogenicity, organ toxicity, etc.) is a hard stop: no score,
@@ -1922,10 +1924,25 @@ class BotanicalRDCandidateEngine:
         # the Recommended table. This check happens first and overrides
         # everything else below, for any compound, any plant, any
         # indication.
+        #
+        # EXCEPT for the reference plant matched to itself (same_plant).
+        # That row isn't a candidate being proposed as an alternative —
+        # it's a description of the reference plant's own baseline
+        # compound profile, which the merge step (see the row-merging
+        # function) can combine dozens of that plant's compounds into.
+        # If even one minor/trace compound out of dozens carries a hard
+        # safety term, the reference plant itself — which may be a
+        # long-established, widely-used herb — would get labelled
+        # "Safety concern — not suitable", which is misleading: it reads
+        # as a judgment on the whole plant, when it's really a flag on
+        # one of many minor constituents. The flags themselves are still
+        # shown either way (Safety_Flags column, Rationale) — only the
+        # hard auto-exclusion is skipped for the self-row, for any
+        # plant, not a special case for any one species.
         flagged_terms = {
             term.strip() for term in safety_flags.split("; ") if term.strip()
         }
-        if flagged_terms & HARD_SAFETY_TERMS:
+        if (flagged_terms & HARD_SAFETY_TERMS) and not same_plant:
             return "Safety concern — not suitable without expert review"
 
         # Controversial-only flags (carcinogenic/mutagenic/genotoxic with

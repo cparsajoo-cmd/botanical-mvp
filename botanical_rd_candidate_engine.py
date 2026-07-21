@@ -444,9 +444,24 @@ class BotanicalRDCandidateEngine:
             # instead means an explicitly-named reference plant is found
             # whenever it exists anywhere in the database, for any
             # indication, any plant.
-            name_norm = self._norm(reference_plant)
+            #
+            # _norm_taxon (not just _norm) is used for this comparison:
+            # many real botanical database entries use full taxonomic
+            # nomenclature — a hybrid marker ("×"/" x ") and
+            # infraspecific rank qualifiers ("subsp.", "var.", "f.",
+            # "cv.") — that a person typing a common working name (e.g.
+            # "Mentha piperita" for what the database has filed as
+            # "Mentha x piperita subsp. nothosubsp. piperita") won't
+            # include. Plain substring matching breaks here because the
+            # hybrid marker sits in the middle, splitting what would
+            # otherwise be a clean substring match. Stripping these
+            # taxonomic embellishments before comparing (for matching
+            # purposes only — the database's full name is still what's
+            # displayed and used downstream) fixes this for any hybrid
+            # or infraspecific taxon, not just this one species.
+            name_norm = self._norm_taxon(reference_plant)
             references = all_candidates[
-                all_candidates["Scientific_Name"].map(self._norm).apply(
+                all_candidates["Scientific_Name"].map(self._norm_taxon).apply(
                     lambda n: name_norm in n or n in name_norm
                 )
             ]
@@ -520,8 +535,19 @@ class BotanicalRDCandidateEngine:
                 ["Scientific_Name", "scientific_name", "Plant", "plant"],
             )
 
-            if reference_plant and self._norm(reference_plant) not in self._norm(ref_plant):
-                continue
+            # No further reference_plant filtering needed here — the
+            # `references` DataFrame built above (via _norm_taxon) is
+            # already exactly the reference-plant-restricted set. An
+            # older version of this function re-checked `reference_plant`
+            # here too, using plain _norm instead of _norm_taxon — which
+            # silently re-excluded the very row that had just been
+            # correctly matched upstream whenever the database's full
+            # taxonomic name (hybrid marker, subspecies, etc.) didn't
+            # literally contain the plain user-typed name as a substring
+            # (e.g. "Mentha piperita" vs "Mentha x piperita subsp.
+            # nothosubsp. piperita"). Keeping a second, inconsistent
+            # filter here defeats the fix above for any hybrid or
+            # infraspecific taxon, not just this one.
 
             ref_compounds = self._split_terms(
                 self._pick(
@@ -2315,6 +2341,25 @@ class BotanicalRDCandidateEngine:
             return ""
 
         return re.sub(r"\s+", " ", value)
+
+    @classmethod
+    def _norm_taxon(cls, value):
+        """Like _norm, but also strips botanical-nomenclature tokens
+        (the hybrid marker "×"/standalone "x", and infraspecific rank
+        abbreviations subsp./ssp./var./f./cv./nothosubsp.) that a
+        database's full taxonomic name carries but a person's everyday
+        working name for the same plant usually won't. Used only for
+        MATCHING a user-supplied plant name against the database — the
+        database's actual full name is still what gets displayed and
+        used everywhere else."""
+        text = cls._norm(value)
+        text = text.replace("×", " x ")
+        text = re.sub(
+            r"\b(x|subsp|ssp|nothosubsp|var|f|cv)\b\.?",
+            " ",
+            text,
+        )
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
     def _split_terms(value):

@@ -660,7 +660,7 @@ class BotanicalRDCandidateEngine:
                         self._norm(matched_clean), set()
                     )
 
-                    safety_flags = self._extract_flags(
+                    safety_flags = self._extract_flags_negation_aware(
                         raw_evidence,
                         SAFETY_TERMS,
                     )
@@ -675,7 +675,7 @@ class BotanicalRDCandidateEngine:
                         pieces.extend(db_safety_flags.split("; "))
                         safety_flags = "; ".join(sorted(set(pieces)))
 
-                    interaction_flags = self._extract_flags(
+                    interaction_flags = self._extract_flags_negation_aware(
                         raw_evidence,
                         INTERACTION_TERMS,
                     )
@@ -2256,6 +2256,57 @@ class BotanicalRDCandidateEngine:
             for term in terms
             if term in text_norm
         ]
+
+        return "; ".join(sorted(set(found)))
+
+    # Negation cues that flip a nearby hazard word from "present" to
+    # "explicitly absent" — "no adverse events", "without toxicity",
+    # "lacks contraindications" should not be flagged the same as an
+    # actual reported hazard. Shared with _evidence_level's own
+    # negation handling below (same technique, same reasoning).
+    _NEGATION_CUES = (
+        "no ", "not ", "lack of ", "lacks ", "insufficient ",
+        "absence of ", "without ", "none found", "no evidence of ",
+        "no direct ", "unproven", "unconfirmed", "no reported ",
+        "did not show", "did not exhibit", "devoid of",
+    )
+
+    @classmethod
+    def _extract_flags_negation_aware(cls, text, terms):
+        """Like _extract_flags, but for free prose (paper abstracts,
+        regulatory notes) rather than a database's own structured
+        activity list. Two independent ways a hazard word's plain
+        substring can mean the OPPOSITE of a hazard, both very common in
+        safety-literature phrasing:
+          1. A negation phrase just before it: "no adverse events",
+             "without toxicity", "did not show hepatotoxicity".
+          2. An "anti-" prefix fused directly onto the word with no
+             space: "antitoxic", "antihepatotoxic" — the same collision
+             already found and fixed for Dr. Duke's own structured
+             activity tags (e.g. "anticonvulsant"), but free text needs
+             its own check since it isn't a clean list of discrete terms
+             to exact-match against.
+        Applies to every term in `terms`, not a special case for any one
+        word or compound.
+        """
+        text_norm = cls._norm(text)
+        if not text_norm:
+            return ""
+
+        found = []
+        for term in terms:
+            idx = text_norm.find(term)
+            while idx != -1:
+                anti_fused = text_norm[max(0, idx - 4):idx] == "anti"
+                window_start = max(0, idx - 40)
+                preceding = text_norm[window_start:idx]
+                negated = anti_fused or any(
+                    cue in preceding[-25:] for cue in cls._NEGATION_CUES
+                )
+                if not negated:
+                    found.append(term)
+                    break
+                idx = text_norm.find(term, idx + 1)
 
         return "; ".join(sorted(set(found)))
 

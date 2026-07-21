@@ -664,8 +664,8 @@ class BotanicalRDCandidateEngine:
                         raw_evidence,
                         SAFETY_TERMS,
                     )
-                    db_safety_flags = self._extract_flags(
-                        "; ".join(matched_own_targets),
+                    db_safety_flags = self._extract_hazard_flags_exact(
+                        matched_own_targets,
                         DB_ACTIVITY_SAFETY_TERMS,
                     )
                     if db_safety_flags:
@@ -2257,6 +2257,38 @@ class BotanicalRDCandidateEngine:
             if term in text_norm
         ]
 
+        return "; ".join(sorted(set(found)))
+
+    @staticmethod
+    def _extract_hazard_flags_exact(known_terms, hazard_terms):
+        """For matching against a DISCRETE set of known activity terms
+        (e.g. a compound's own Dr. Duke's Known_Target list, already
+        split into individual named activities) rather than free-text
+        prose. Checks each term for an EXACT match (after normalizing)
+        against the hazard vocabulary, instead of substring-searching a
+        joined blob.
+
+        This distinction matters: Dr. Duke's own vocabulary includes
+        both a hazard term AND its protective opposite as separate,
+        deliberate entries — "Convulsant" and "Anticonvulsant",
+        "Carcinogenic" and "Anticarcinogenic", "Mutagenic" and
+        "Antimutagenic", "Hepatotoxic" and "Antihepatotoxic", "Emetic"
+        and "Antiemetic", "Genotoxic" and "Antigenotoxic", "Hemolytic"
+        and "Antihemolytic" all coexist in the same database. Substring
+        matching (`"convulsant" in text`) can't tell these apart —
+        "convulsant" is trivially a substring of "anticonvulsant", so a
+        compound extensively documented as PROTECTIVE against seizures
+        (linalool has a substantial body of published anticonvulsant
+        research) was being flagged as if it caused them. Comparing
+        each already-discrete term for an exact match closes this off
+        for every hazard term with an "anti-" counterpart, not just
+        this one compound or this one term.
+        """
+        known_norm = {BotanicalRDCandidateEngine._norm(t) for t in known_terms}
+        found = [
+            term for term in hazard_terms
+            if term in known_norm
+        ]
         return "; ".join(sorted(set(found)))
 
     def _evidence_source(self, plant, compound, evidence):

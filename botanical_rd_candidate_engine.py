@@ -496,7 +496,7 @@ class BotanicalRDCandidateEngine:
             alt_targets = self._split_terms(
                 self._pick(alt, ["Known_Targets"])
             )
-            alt_compounds = self._split_terms(
+            alt_compounds = self._split_compound_terms(
                 self._pick(alt, ["Known_Active_Compounds"])
             )
             alt_compound_norms = [self._norm(c) for c in alt_compounds]
@@ -549,7 +549,7 @@ class BotanicalRDCandidateEngine:
             # filter here defeats the fix above for any hybrid or
             # infraspecific taxon, not just this one.
 
-            ref_compounds = self._split_terms(
+            ref_compounds = self._split_compound_terms(
                 self._pick(
                     ref,
                     [
@@ -1042,7 +1042,7 @@ class BotanicalRDCandidateEngine:
 
             rows.append({
                 "Scientific_Name": plant,
-                "Known_Active_Compounds": ", ".join(compounds),
+                "Known_Active_Compounds": "; ".join(compounds),
                 "Known_Targets": "; ".join(targets),
             })
 
@@ -1123,7 +1123,7 @@ class BotanicalRDCandidateEngine:
 
             rows.append({
                 "Scientific_Name": plant,
-                "Known_Active_Compounds": ", ".join(compounds),
+                "Known_Active_Compounds": "; ".join(compounds),
                 "Known_Targets": "; ".join(targets),
                 # Specificity proxy: how many indication-matched compound
                 # rows this plant has for THIS query — used only as a
@@ -1197,7 +1197,7 @@ class BotanicalRDCandidateEngine:
         rows = []
         for item in matched[:max_reference_plants]:
             row = dict(item)
-            row["Known_Active_Compounds"] = ", ".join(
+            row["Known_Active_Compounds"] = "; ".join(
                 item.get("Known_Active_Compounds", [])
             )
             row["Known_Targets"] = ", ".join(item.get("Known_Targets", []))
@@ -1340,7 +1340,7 @@ class BotanicalRDCandidateEngine:
         for item in self.candidate_data:
             row = dict(item)
 
-            row["Known_Active_Compounds"] = ", ".join(
+            row["Known_Active_Compounds"] = "; ".join(
                 item.get("Known_Active_Compounds", [])
             )
 
@@ -1774,7 +1774,7 @@ class BotanicalRDCandidateEngine:
         # overpower poor evidence.
         score += 10 if concentration else 2
         score += min(18, self._extraction_fit_score(extraction, dosage_form))
-        score += min(8, len(self._split_terms(co_compounds)) * 2)
+        score += min(8, len(self._split_compound_terms(co_compounds)) * 2)
         score += 8 if target else 1
 
         # 4) Novelty is valuable only after some scientific basis exists.
@@ -2370,6 +2370,37 @@ class BotanicalRDCandidateEngine:
             raw_items = value
         else:
             raw_items = re.split(r"[,;|/]", str(value))
+
+        clean_items = []
+
+        for item in raw_items:
+            item = str(item).strip()
+
+            if item and item.lower() not in {"nan", "none", "null"}:
+                clean_items.append(item)
+
+        return clean_items
+
+    @staticmethod
+    def _split_compound_terms(value):
+        """Like _split_terms, but for lists of COMPOUND NAMES
+        specifically. Chemical nomenclature routinely uses a comma as
+        part of a single compound's own name — "1,8-Cineole",
+        "2,3-dihydrobenzofuran", "3,4-Dihydroxyphenylacetic acid" are all
+        one compound each. _split_terms splitting on "," was fragmenting
+        these into nonsense tokens (a bare "1" plus "8-Cineole" as two
+        separate "compounds") every time a compound list got serialized
+        and re-parsed. This splits only on ";" and "|" — real delimiters
+        this codebase actually uses between distinct compounds in a
+        list — never on "," or "/", for any compound name, not just the
+        ones that happened to surface this."""
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = re.split(r"[;|]", str(value))
 
         clean_items = []
 

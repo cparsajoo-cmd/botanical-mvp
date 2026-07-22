@@ -628,7 +628,49 @@ def test_confidence_note_is_recomputed_after_merge_not_left_stale():
 
 
 # ---------------------------------------------------------------------
-# 21) ChEMBL connector rejects molecule records with no structure data.
+# 22) Decision_Class_AH (Phase 6, audit 4.7) must be populated
+#     end-to-end through engine.run() and always be one of the 8
+#     documented classes.
+# ---------------------------------------------------------------------
+def test_decision_class_ah_is_populated_end_to_end_and_always_valid():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="ActiveCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    assert "Decision_Class_AH" in result.columns
+    assert "_match_quality" not in result.columns, (
+        "internal-only helper column leaked into the final output"
+    )
+    assert "_same_plant" not in result.columns, (
+        "internal-only helper column leaked into the final output"
+    )
+
+    valid_classes = {
+        "A — Verified commercial route",
+        "B — Established scientific candidate",
+        "C — Alternative-source R&D candidate",
+        "D — Mechanism-based R&D candidate",
+        "E — White-space opportunity",
+        "F — Exploratory hypothesis",
+        "G — Hold / insufficient evidence",
+        "H — No-go / safety concern",
+    }
+    assert set(result["Decision_Class_AH"]).issubset(valid_classes), (
+        f"unexpected Decision_Class_AH values: {set(result['Decision_Class_AH']) - valid_classes}"
+    )
+
+
+# ---------------------------------------------------------------------
+# 23) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

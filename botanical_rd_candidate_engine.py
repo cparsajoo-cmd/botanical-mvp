@@ -1848,12 +1848,26 @@ class BotanicalRDCandidateEngine:
                 score += 2
 
         # 5) Market signal is a small modifier, not the core scientific score.
+        # Matches the MarketVerificationStatus vocabulary from
+        # _market_status() (audit 4.6/4.7). "Search not performed" is
+        # deliberately neutral, not a white-space bonus — a real
+        # product/patent search hasn't actually been run, so this must
+        # not be scored as if emptiness had been confirmed. "No
+        # verified product found" (only returned once a real retail/
+        # patent search is wired in — currently dead code path, kept
+        # for forward compatibility) is the only status that earns the
+        # white-space-style bonus, because it's the only one that
+        # reflects an actual completed search.
         market_lower = market_status.lower()
-        if "saturated" in market_lower:
+        if "verified marketed product" in market_lower:
             score += 1
-        elif "emerging" in market_lower or "white-space" in market_lower:
+        elif "regulatory monograph" in market_lower or "traditional-use" in market_lower:
+            score += 2
+        elif "commercial evidence reported" in market_lower:
+            score += 2
+        elif "no verified product found" in market_lower:
             score += 6
-        else:
+        else:  # "Search not performed", "Source unavailable", "Unknown"
             score += 3
 
         # 6) Penalize safety and interaction flags strongly. A candidate with
@@ -1925,28 +1939,52 @@ class BotanicalRDCandidateEngine:
         return min(score, 26)
 
     def _market_status(self, alt, evidence, market):
+        """Market status, using the same controlled vocabulary as
+        data_contracts.MarketVerificationStatus (audit 4.6/4.7).
+
+        HONESTY CONSTRAINT: this engine has no real retail-product or
+        patent-database connection wired in for the default pipeline —
+        see _search_retail_products() below, which literally returns
+        "Not implemented", and the patent connector, which only
+        activates with EPO_OPS_KEY/EPO_OPS_SECRET env vars set. So the
+        default result here MUST be "Search not performed" — not "no
+        verified product found" (which claims a real search happened
+        and came back empty) and never "Verified marketed product"
+        (which this function has no way to actually verify). The
+        previous version returned "Known / possibly saturated market"
+        whenever the word "product" or "market" appeared ANYWHERE in
+        unrelated PubMed/EMA abstract text — a false-positive risk the
+        audit called out directly (4.5: a plant name or commercial-
+        sounding word appearing in text is not evidence of a real
+        commercial product).
+        """
         ema = self._pick(alt, ["EMA_Status"])
         text = self._norm(evidence)
 
-        product_signal = any(
-            term in text
-            for term in [
-                "product",
-                "market",
-                "label",
-                "patent",
-                "dailymed",
-                "fda",
-            ]
-        )
+        if ema == "Yes":
+            return "Regulatory monograph exists"
 
-        if ema == "Yes" or product_signal:
-            return "Known / possibly saturated market"
+        # Narrow, multi-word phrase patterns — not bare words like
+        # "product" or "market", which show up constantly in text that
+        # has nothing to do with a real commercial product ("the
+        # product of this reaction", "on the world market for herbal
+        # teas in general").
+        commercial_phrase_patterns = [
+            r"\bmarketed as\b", r"\bmarketed product\b",
+            r"\bavailable as a supplement\b", r"\bavailable as an? product\b",
+            r"\bcommercially available\b", r"\bsold as\b", r"\bbranded as\b",
+        ]
+        if any(re.search(p, text) for p in commercial_phrase_patterns):
+            return "Commercial evidence reported, not independently verified"
 
-        if self._norm(market) in self._norm(self._pick(alt, ["Region"])):
-            return "Regional fit / emerging opportunity"
+        traditional_use_patterns = [
+            r"\btraditional(?:ly)? use\b", r"\bwell-established use\b",
+            r"\btraditional medicine\b",
+        ]
+        if any(re.search(p, text) for p in traditional_use_patterns):
+            return "Traditional-use status"
 
-        return "Limited market signal / possible white-space"
+        return "Search not performed"
 
     def _novelty_status(
         self,

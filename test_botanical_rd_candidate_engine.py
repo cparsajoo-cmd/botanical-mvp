@@ -23,38 +23,28 @@ earlier. Think of this file as the seatbelt for the ENGINE, not a
 replacement for real-world spot checks.
 
 HOW TO RUN
-    python3 test_botanical_rd_candidate_engine.py
-Exits with code 0 and prints "ALL TESTS PASSED" if everything's fine,
-or prints each failure and exits with code 1 otherwise. No pytest or
-other test framework required — plain asserts, plain Python.
-"""
+    pytest -q test_botanical_rd_candidate_engine.py
+    (or just `pytest -q` from the repo root — this file is auto-discovered)
 
-import sys
-import traceback
+This file used to run its own hand-rolled pass/fail collector (a
+module-level `test(name)` decorator wrapping anonymous `def _():`
+bodies). That pattern never produced anything pytest could discover —
+no function in the file matched pytest's default `test_*` collection
+pattern, so `pytest -q` silently collected zero tests from it. Every
+check below is now a real `def test_...():` function using plain
+`assert`, which is exactly what pytest is built to collect and report
+on — no custom runner, no fixtures beyond pytest's own, nothing else
+needed.
+"""
 
 import pandas as pd
 
+try:
+    import pytest
+except ImportError:
+    pytest = None
+
 import botanical_rd_candidate_engine as eng
-
-
-PASSED = []
-FAILED = []
-
-
-def test(name):
-    """Decorator: runs the test, records pass/fail, never lets one
-    test's exception stop the rest from running."""
-    def decorator(fn):
-        try:
-            fn()
-        except AssertionError as exc:
-            FAILED.append((name, str(exc) or "assertion failed"))
-        except Exception as exc:
-            FAILED.append((name, f"{type(exc).__name__}: {exc}"))
-        else:
-            PASSED.append(name)
-        return fn
-    return decorator
 
 
 def make_engine(rows, similar_groups=None, compound_targets=None):
@@ -88,8 +78,7 @@ def make_engine(rows, similar_groups=None, compound_targets=None):
 # 1) Ubiquitous compounds (the original "Quercetin problem") must not
 #    dominate results just because they're common everywhere.
 # ---------------------------------------------------------------------
-@test("compound commonality demotes an ubiquitous compound match")
-def _():
+def test_compound_commonality_demotes_an_ubiquitous_compound_match():
     rows = [
         dict(scientific_name="PlantRef", compound_name="CommonCompound",
              indication="TestIndication", target="Laxative",
@@ -101,8 +90,6 @@ def _():
              indication="Other", target="Laxative",
              common_name="", plant_part="", extraction_method=""),
     ]
-    # CommonCompound shows up in 30 unrelated plants -> should be
-    # detected as "common" and demoted; RareCompound stays specific.
     for i in range(30):
         rows.append(dict(scientific_name=f"CommonHost{i}", compound_name="CommonCompound",
                           indication="unrelated", target="",
@@ -126,8 +113,7 @@ def _():
 # 2) A shared target confirmation is only as strong as how specific
 #    that target actually is (not a hard cutoff — a smooth decay).
 # ---------------------------------------------------------------------
-@test("target specificity scales the target_verified bonus continuously")
-def _():
+def test_target_specificity_scales_the_target_verified_bonus_continuously():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompound", "SpecificAlt", "GenericAlt"]}
     eng.COMPOUND_TARGETS = {
         "RefCompound": ["GenericPathway", "RareSpecificTarget"],
@@ -161,8 +147,7 @@ def _():
 # 3) Safety flags must be scoped to the MATCHED compound only, never
 #    contaminated by an unrelated compound elsewhere in the same plant.
 # ---------------------------------------------------------------------
-@test("safety flags don't leak from an unrelated compound in the same plant")
-def _():
+def test_safety_flags_dont_leak_from_an_unrelated_compound_in_the_same_plant():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefClassCompound", "InnocentClassCompound"]}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -183,12 +168,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 4) Hard vs. controversial safety tiers: clear physical/organ hazards
-#    hard-exclude; genotoxicity-assay-family hazards (which coexist with
-#    GRAS-recognized dietary compounds) only cap the score, don't exclude.
+# 4) Hard vs. controversial safety tiers.
 # ---------------------------------------------------------------------
-@test("hard safety terms exclude; controversial-only terms just cap")
-def _():
+def test_hard_safety_terms_exclude_controversial_only_terms_just_cap():
     d1 = eng.BotanicalRDCandidateEngine._decision_class(
         None, score=80, safety_flags="lithogenic", interaction_flags="",
         has_evidence=True, match_quality="exact", evidence_level="Clinical / human evidence",
@@ -205,12 +187,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 5) The "anti-X" collision: a compound's own DB-documented activities
-#    must be checked as discrete exact terms, not substring-matched —
-#    "anticonvulsant" must never trigger the "convulsant" hazard flag.
+# 5) The "anti-X" collision.
 # ---------------------------------------------------------------------
-@test("DB activity flags don't trigger on their own anti-X opposite")
-def _():
+def test_db_activity_flags_dont_trigger_on_their_own_anti_x_opposite():
     engine = make_engine([], similar_groups={})
     protective_only = {"Anticonvulsant", "Antihepatotoxic", "Sedative"}
     result = engine._extract_hazard_flags_exact(protective_only, eng.DB_ACTIVITY_SAFETY_TERMS)
@@ -222,11 +201,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 6) Same collision, but in free-text evidence — plus negation phrases
-#    ("no adverse events") must not trigger a flag either.
+# 6) Same collision, but in free-text evidence — plus negation phrases.
 # ---------------------------------------------------------------------
-@test("free-text safety extraction handles anti-prefix and negation")
-def _():
+def test_free_text_safety_extraction_handles_anti_prefix_and_negation():
     engine = make_engine([], similar_groups={})
     cases = [
         ("No adverse events were reported.", False),
@@ -244,12 +221,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 7) Compound names containing a comma (e.g. "1,8-Cineole") must survive
-#    being joined into a list and re-split, intact — not fragmented into
-#    a bogus "1" token plus "8-Cineole".
+# 7) Compound names containing a comma must survive intact.
 # ---------------------------------------------------------------------
-@test("compound names with internal commas aren't fragmented")
-def _():
+def test_compound_names_with_internal_commas_arent_fragmented():
     engine = make_engine([], similar_groups={})
     result = engine._split_compound_terms("1,8-Cineole; Limonene; Rosmarinic acid")
     assert result == ["1,8-Cineole", "Limonene", "Rosmarinic acid"], result
@@ -257,13 +231,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 8) A hybrid/infraspecific taxonomic name (e.g. the real database entry
-#    for peppermint, "Mentha x piperita subsp. nothosubsp. piperita")
-#    must be findable by a person typing the common working name
-#    ("Mentha piperita").
+# 8) Hybrid/infraspecific taxonomic name matching.
 # ---------------------------------------------------------------------
-@test("reference_plant matching handles hybrid/infraspecific taxonomy")
-def _():
+def test_reference_plant_matching_handles_hybrid_infraspecific_taxonomy():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompoundX", "AltCompoundY"]}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -283,25 +253,18 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 9) reference_plant restriction must search the FULL plant universe,
-#    not just whichever ~12 plants an indication-based shortlist
-#    happened to surface first.
+# 9) reference_plant restriction must search the FULL plant universe.
 # ---------------------------------------------------------------------
-@test("reference_plant restriction isn't limited to the indication shortlist")
-def _():
+def test_reference_plant_restriction_isnt_limited_to_the_indication_shortlist():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompoundA", "AltCompoundB"]}
     eng.COMPOUND_TARGETS = {}
     rows = [
-        # Tagged for a DIFFERENT indication than the one being queried —
-        # so it would never be in an indication-based top-12 shortlist.
         dict(scientific_name="ObscurePlant", compound_name="RefCompoundA",
              indication="Some other indication entirely", target="",
              common_name="", plant_part="", extraction_method=""),
         dict(scientific_name="AltPlant", compound_name="AltCompoundB",
              indication="Other", target="", common_name="", plant_part="", extraction_method=""),
     ]
-    # Plenty of OTHER plants genuinely tagged for the query indication,
-    # so the indication-based shortlist has somewhere else to look first.
     for i in range(15):
         rows.append(dict(scientific_name=f"Decoy{i}", compound_name=f"DecoyCompound{i}",
                           indication="TestIndication", target="",
@@ -316,14 +279,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 10) A plant matched to ITSELF (the baseline profile row) must not be
-#     hard-excluded just because one of many minor/trace compounds in
-#     its full profile carries a hazard tag — that's a judgment on one
-#     minor constituent, not the whole (possibly well-established, safe)
-#     plant.
+# 10) Self-row must not be hard-excluded by one trace compound's flag.
 # ---------------------------------------------------------------------
-@test("self-row isn't hard-excluded by one trace compound's hazard flag")
-def _():
+def test_self_row_isnt_hard_excluded_by_one_trace_compounds_hazard_flag():
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -341,19 +299,13 @@ def _():
     ]
     assert not self_row.empty
     assert self_row.iloc[0]["Decision_Class"] != "Safety concern — not suitable without expert review"
-    # The flag should still be visible, just not auto-exclude the row.
     assert "convulsant" in str(self_row.iloc[0]["Safety_Flags"]).lower()
 
 
 # ---------------------------------------------------------------------
-# 11) When multiple compound matches get merged into one row, the
-#     displayed Safety_Flags AND the "Decision: ..." sentence inside
-#     Rationale must both reflect the FINAL merged decision — not a
-#     stale value from whichever single sub-row happened to score
-#     highest before merging.
+# 11) Merged rows keep Safety_Flags, Decision_Class, and Rationale in sync.
 # ---------------------------------------------------------------------
-@test("merged rows keep Safety_Flags, Decision_Class, and Rationale in sync")
-def _():
+def test_merged_rows_keep_safety_flags_decision_class_and_rationale_in_sync():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompoundA", "RefCompoundB", "AltCompound"]}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -382,12 +334,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 12) No crash: merging duplicate reference-compound matches into one
-#     row must not throw when one of the sub-rows resolved to the
-#     (relatively new) "Safety concern" decision tier.
+# 12) No crash when merging rows with a Safety-concern sub-row.
 # ---------------------------------------------------------------------
-@test("merging rows with a Safety-concern sub-row doesn't crash")
-def _():
+def test_merging_rows_with_a_safety_concern_sub_row_doesnt_crash():
     eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompoundA", "RefCompoundC", "AltCompound"]}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -402,19 +351,14 @@ def _():
              common_name="", plant_part="", extraction_method=""),
     ]
     engine = make_engine(rows)
-    # Just needs to not raise.
     engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
 
 
 # ---------------------------------------------------------------------
-# 13) A strong multi-compound match must not be dragged down to "Low
-#     priority" just because ONE of its many matched compounds happens
-#     to be a common/non-specific one with a weak sub-row on its own.
-#     Only sub-rows that are themselves informative (not flagged common/
-#     non-specific in Novelty_Status) may act as the conservative cap.
+# 13) A common-compound sub-row can't single-handedly cap a strong
+#     multi-compound match.
 # ---------------------------------------------------------------------
-@test("a common-compound sub-row can't single-handedly cap a strong multi-match")
-def _():
+def test_a_common_compound_sub_row_cant_single_handedly_cap_a_strong_multi_match():
     engine = make_engine([], similar_groups={})
 
     strong_row = dict(
@@ -446,10 +390,6 @@ def _():
         f"to '{result_decision}'"
     )
 
-    # Sanity check the OTHER direction still holds: if every sub-row is
-    # common/non-specific, there's no informative sub-row to fall back
-    # on, so the conservative cap must still apply (using the full,
-    # unfiltered group) rather than silently letting the match through.
     both_common = output.copy()
     both_common.loc[0, "Novelty_Status"] = "Common/non-specific compound — found in 40+ plants database-wide"
     merged_both_common = engine._merge_multi_compound_matches(both_common)
@@ -459,13 +399,9 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 14) ChEMBL-style connector safety net: a "molecule" record with no
-#     real chemical structure (i.e. not an isolated compound — often a
-#     whole-plant/crude-extract entry mislabeled with the plant's own
-#     common name) must be rejected, not saved as a phytochemical.
+# 14) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
-@test("ChEMBL connector rejects molecule records with no structure data")
-def _():
+def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector
 
     class _FakeResponse:
@@ -489,30 +425,53 @@ def _():
     finally:
         chembl_connector.requests.get = orig_get
 
-    names = [r["Notes"] for r in records]
-    assert not any("CHAMOMILE" in n for n in names) or True  # structural check below is the real one
     chembl_ids_kept = [r for r in records]
     assert len(chembl_ids_kept) == 1, (
         f"expected only the structurally-real molecule to survive, got {len(chembl_ids_kept)}"
     )
+    assert not any("CHAMOMILE" in r["Notes"] for r in records), (
+        "a whole-plant record with no real chemical structure survived as a phytochemical"
+    )
 
 
 # ---------------------------------------------------------------------
-# Runner
+# Direct-execution fallback: `python3 test_botanical_rd_candidate_engine.py`
+# still works with no pytest installed (useful with no local Python
+# environment to pip install into) by delegating to pytest.main() when
+# pytest is importable, and otherwise falling back to a plain
+# introspection-based runner over every real test_* function here.
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"\n{len(PASSED) + len(FAILED)} test(s) run.\n")
+    import sys
 
-    if PASSED:
-        for name in PASSED:
+    if pytest is not None:
+        sys.exit(pytest.main([__file__, "-v"]))
+    else:
+        this_module = sys.modules[__name__]
+        test_fns = [
+            getattr(this_module, name)
+            for name in dir(this_module)
+            if name.startswith("test_") and callable(getattr(this_module, name))
+        ]
+        passed, failed = [], []
+        for fn in test_fns:
+            try:
+                fn()
+            except AssertionError as exc:
+                failed.append((fn.__name__, str(exc) or "assertion failed"))
+            except Exception as exc:  # noqa: BLE001
+                failed.append((fn.__name__, f"{type(exc).__name__}: {exc}"))
+            else:
+                passed.append(fn.__name__)
+
+        print(f"\n{len(passed) + len(failed)} test(s) run.\n")
+        for name in passed:
             print(f"  \u2705 {name}")
-
-    if FAILED:
-        print()
-        for name, reason in FAILED:
-            print(f"  \u274c {name}\n     -> {reason}")
-        print(f"\n{len(FAILED)} FAILED, {len(PASSED)} passed.\n")
-        sys.exit(1)
-
-    print(f"\nALL TESTS PASSED ({len(PASSED)}/{len(PASSED)}).\n")
-    sys.exit(0)
+        if failed:
+            print()
+            for name, reason in failed:
+                print(f"  \u274c {name}\n     -> {reason}")
+            print(f"\n{len(failed)} FAILED, {len(passed)} passed.\n")
+            sys.exit(1)
+        print(f"\nALL TESTS PASSED ({len(passed)}/{len(passed)}).\n")
+        sys.exit(0)

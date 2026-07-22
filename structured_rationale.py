@@ -101,23 +101,42 @@ def scientific_rationale(
     return " ".join(parts)
 
 
-def commercial_regulatory_rationale(market_status: str, white_space_type: str) -> str:
+def commercial_regulatory_rationale(
+    market_status: str,
+    white_space_type: str,
+    regulatory_barriers: Optional[str] = None,
+) -> str:
     """Answers Gap 8's "WHY is this commercially interesting?" — one
     sentence combining Market_Status (Gap 2) and White_Space_Type
-    (Gap 4), which are the only two market-facing signals this engine
-    currently computes."""
+    (Gap 4).
+
+    regulatory_barriers (architecture audit Q8, "what regulatory
+    barriers exist?"): optional, defaults to None so every existing
+    caller keeps working unchanged. Market_Status/White_Space_Type only
+    ever describe whether regulatory RECOGNITION exists — a barrier
+    (banned, prescription-only, novel-food status) is the opposite
+    concept and can coexist with recognition (e.g. prescription-only
+    AND monograph-recognized), so it's stated as its own sentence
+    rather than folded into the market_status branches above.
+    """
     base = f"Market status: {market_status}."
     if white_space_type == "Industrial R&D White Space":
-        return base + " Real scientific signal exists alongside an open commercial/regulatory space — the combination that most directly argues for R&D investment."
-    if white_space_type == "Commercial White Space":
-        return base + " A completed commercial search found no verified product — a genuine market gap, if the underlying science holds up."
-    if white_space_type == "Regulatory White Space":
-        return base + " No regulatory monograph or traditional-use recognition was found for this application."
-    if white_space_type == "Scientific White Space":
-        return base + " The market picture is secondary here — the more immediate gap is scientific, not commercial (see Scientific_Rationale)."
-    if white_space_type == "Data Gap":
-        return base + " Neither the scientific nor the commercial picture has actually been investigated yet — this is not a finding, just missing data."
-    return base
+        result = base + " Real scientific signal exists alongside an open commercial/regulatory space — the combination that most directly argues for R&D investment."
+    elif white_space_type == "Commercial White Space":
+        result = base + " A completed commercial search found no verified product — a genuine market gap, if the underlying science holds up."
+    elif white_space_type == "Regulatory White Space":
+        result = base + " No regulatory monograph or traditional-use recognition was found for this application."
+    elif white_space_type == "Scientific White Space":
+        result = base + " The market picture is secondary here — the more immediate gap is scientific, not commercial (see Scientific_Rationale)."
+    elif white_space_type == "Data Gap":
+        result = base + " Neither the scientific nor the commercial picture has actually been investigated yet — this is not a finding, just missing data."
+    else:
+        result = base
+
+    if regulatory_barriers:
+        result += f" Regulatory barrier(s) identified: {regulatory_barriers}."
+
+    return result
 
 
 def evidence_strengths(
@@ -148,6 +167,7 @@ def evidence_weaknesses(
     negative_evidence_types: str,
     safety_flags: str,
     market_status: str,
+    regulatory_barriers: Optional[str] = None,
 ) -> list[str]:
     """Itemized, traceable gaps — the counterpart to evidence_strengths,
     so a reviewer sees both sides in the same structured form instead
@@ -167,6 +187,8 @@ def evidence_weaknesses(
         weaknesses.append(f"Market picture not established: {market_status}")
     if market_status == "Conflicting market evidence":
         weaknesses.append("Market evidence conflicts and needs manual review")
+    if regulatory_barriers:
+        weaknesses.append(f"Regulatory barrier(s): {regulatory_barriers}")
     return weaknesses
 
 

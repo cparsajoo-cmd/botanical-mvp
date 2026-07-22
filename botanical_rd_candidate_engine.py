@@ -2115,14 +2115,14 @@ class BotanicalRDCandidateEngine:
 
         # 5) Market signal is a small modifier, not the core scientific score.
         # Matches the MarketVerificationStatus vocabulary from
-        # _market_status() (audit 4.6/4.7). "Search not performed" is
-        # deliberately neutral, not a white-space bonus — a real
-        # product/patent search hasn't actually been run, so this must
-        # not be scored as if emptiness had been confirmed. "No
-        # verified product found" (only returned once a real retail/
-        # patent search is wired in — currently dead code path, kept
-        # for forward compatibility) is the only status that earns the
-        # white-space-style bonus, because it's the only one that
+        # _market_status() (audit 4.6/4.7, extended Gap 2). "Search not
+        # performed" is deliberately neutral, not a white-space bonus —
+        # a real product/patent search hasn't actually been run, so
+        # this must not be scored as if emptiness had been confirmed.
+        # "No verified product found" (only returned once a real
+        # retail/patent search is wired in — currently dead code path,
+        # kept for forward compatibility) is the only status that earns
+        # the white-space-style bonus, because it's the only one that
         # reflects an actual completed search.
         market_lower = market_status.lower()
         if "verified marketed product" in market_lower:
@@ -2133,6 +2133,19 @@ class BotanicalRDCandidateEngine:
             score += 2
         elif "no verified product found" in market_lower:
             score += 6
+        elif "conflicting market evidence" in market_lower:
+            # A real, detected disagreement between two signals (e.g.
+            # regulatory recognition vs. a discontinuation mention) is
+            # worth flagging with a small penalty, not treated as
+            # neutral — it means the market picture for this candidate
+            # genuinely needs a human to resolve before acting on it.
+            score -= 2
+        elif "search incomplete" in market_lower:
+            # Slightly more informative than "not performed" (a live
+            # search did run this session), but still no market signal
+            # was actually found — same neutral treatment as "not
+            # performed", not a bonus.
+            score += 3
         else:  # "Search not performed", "Source unavailable", "Unknown"
             score += 3
 
@@ -2206,29 +2219,45 @@ class BotanicalRDCandidateEngine:
 
     def _market_status(self, alt, evidence, market):
         """Market status, using the same controlled vocabulary as
-        data_contracts.MarketVerificationStatus (audit 4.6/4.7).
+        data_contracts.MarketVerificationStatus (audit 4.6/4.7), plus
+        two additional honest states (Gap 2, "Market Intelligence
+        completeness"): "Conflicting market evidence" and "Search
+        incomplete" — both built from signals this function already
+        computes, not from any new data source.
 
         HONESTY CONSTRAINT: this engine has no real retail-product or
-        patent-database connection wired in for the default pipeline —
-        see _search_retail_products() below, which literally returns
-        "Not implemented", and the patent connector, which only
-        activates with EPO_OPS_KEY/EPO_OPS_SECRET env vars set. So the
-        default result here MUST be "Search not performed" — not "no
-        verified product found" (which claims a real search happened
-        and came back empty) and never "Verified marketed product"
-        (which this function has no way to actually verify). The
-        previous version returned "Known / possibly saturated market"
-        whenever the word "product" or "market" appeared ANYWHERE in
-        unrelated PubMed/EMA abstract text — a false-positive risk the
-        audit called out directly (4.5: a plant name or commercial-
-        sounding word appearing in text is not evidence of a real
-        commercial product).
+        patent-database connection wired into this per-row path — see
+        _search_retail_products() below, which literally returns "Not
+        implemented", and the patent connector, which only activates
+        with EPO_OPS_KEY/EPO_OPS_SECRET env vars set (those two DO run,
+        but on a separate, per-plant "market landscape" panel —
+        market_landscape() below — not per candidate row; calling them
+        here would mean a live network/API call for every single
+        alternative-plant row in a run, which is a cost/latency
+        decision that deserves its own review, not a side effect of
+        this fix). So "Verified marketed product" and "No verified
+        product found" remain unreachable from this function specifically
+        — kept in the vocabulary for forward compatibility with
+        market_landscape()'s own, separately-verified results.
+
+        "Conflicting market evidence": when two of this function's OWN
+        signals disagree — e.g. EMA_Status says "Yes" (a regulatory
+        monograph exists) but the same evidence text explicitly says
+        the product has been discontinued/withdrawn. That's a genuine,
+        detectable disagreement between two real, present signals, not
+        a guess.
+
+        "Search incomplete": distinguishes "a live search ran this
+        session but returned nothing about this SPECIFIC candidate"
+        (self.use_live_search is True, evidence is still empty) from
+        "no search was ever attempted for this candidate at all"
+        (self.use_live_search is False — a curated/seed-only run). The
+        old version treated both as identically "Search not performed",
+        which overstated how little was actually done for the
+        live-search case.
         """
         ema = self._pick(alt, ["EMA_Status"])
         text = self._norm(evidence)
-
-        if ema == "Yes":
-            return "Regulatory monograph exists"
 
         # Narrow, multi-word phrase patterns — not bare words like
         # "product" or "market", which show up constantly in text that
@@ -2240,7 +2269,28 @@ class BotanicalRDCandidateEngine:
             r"\bavailable as a supplement\b", r"\bavailable as an? product\b",
             r"\bcommercially available\b", r"\bsold as\b", r"\bbranded as\b",
         ]
-        if any(re.search(p, text) for p in commercial_phrase_patterns):
+        commercial_signal = any(re.search(p, text) for p in commercial_phrase_patterns)
+
+        discontinued_patterns = [
+            r"\bdiscontinued\b", r"\bwithdrawn from the market\b",
+            r"\bno longer (?:available|marketed|sold)\b",
+            r"\bnot currently (?:available|marketed|sold)\b",
+            r"\bproduct recall\b",
+        ]
+        discontinued_signal = any(re.search(p, text) for p in discontinued_patterns)
+
+        # A real disagreement: something asserts market presence
+        # (regulatory recognition or a commercial-phrase mention) AND
+        # something else in the SAME evidence asserts the product is
+        # gone/unavailable. Checked first — this is more informative to
+        # surface than picking one side and silently discarding the other.
+        if (ema == "Yes" or commercial_signal) and discontinued_signal:
+            return "Conflicting market evidence"
+
+        if ema == "Yes":
+            return "Regulatory monograph exists"
+
+        if commercial_signal:
             return "Commercial evidence reported, not independently verified"
 
         traditional_use_patterns = [
@@ -2249,6 +2299,13 @@ class BotanicalRDCandidateEngine:
         ]
         if any(re.search(p, text) for p in traditional_use_patterns):
             return "Traditional-use status"
+
+        if self.use_live_search:
+            # A live search ran this session (Step 2 was used), but
+            # nothing turned up about THIS specific candidate — a
+            # genuinely different, more-informative claim than "no
+            # search was ever attempted."
+            return "Search incomplete"
 
         return "Search not performed"
 

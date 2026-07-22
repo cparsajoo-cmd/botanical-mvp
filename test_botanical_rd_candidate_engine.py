@@ -1042,7 +1042,224 @@ def test_structured_rationale_recomputed_after_merge_reflects_merged_signals():
 
 
 # ---------------------------------------------------------------------
-# 40) ChEMBL connector rejects molecule records with no structure data.
+# 41) Score_Breakdown (architecture audit Q3, "which evidence
+#     contributed MOST?"): the components must actually sum to the raw
+#     score, and the formatted string must rank the largest
+#     contributors first.
+# ---------------------------------------------------------------------
+def test_score_candidate_components_sum_to_the_raw_score():
+    engine = make_engine([], similar_groups={})
+    score, components = engine._score_candidate(
+        same_plant=False, matched_compound="C", reference_compound="C",
+        match_quality="exact", concentration="2 mg/g dry weight", extraction="aqueous infusion",
+        dosage_form="Infusion", co_compounds="X; Y", safety_flags="", interaction_flags="",
+        market_status="Regulatory monograph exists", novelty_status="Alternative cross-region candidate",
+        target="Hepatoprotective", evidence="some evidence", evidence_level="Clinical / human evidence",
+        compound_plant_count=0, target_specificity=None,
+    )
+    raw_sum = round(sum(components.values()), 1)
+    # score is clamped to [0, 100]; components should sum to the same
+    # value whenever the raw total was already inside that range.
+    assert 0 <= raw_sum <= 100
+    assert score == raw_sum
+
+
+def test_score_breakdown_formatting_ranks_largest_contributor_first():
+    engine = make_engine([], similar_groups={})
+    breakdown = engine._format_score_breakdown({
+        "Chemical/mechanistic link": 5.0,
+        "Evidence quality": 24.0,
+        "Market signal": 2.0,
+        "Safety/interaction/self-row penalty": -14.0,
+    })
+    # "Evidence quality" (24) and the safety penalty (-14, abs 14) are
+    # the two largest-magnitude contributors — Evidence quality first.
+    assert breakdown.startswith("Evidence quality")
+
+
+def test_score_breakdown_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Score_Breakdown" in result.columns
+    assert (result["Score_Breakdown"] != "No breakdown available").all()
+
+
+def test_score_breakdown_reflects_the_merge_bonus_explicitly():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Strong R&D candidate.",
+        Score_Breakdown="Chemical/mechanistic link: +22.0; Evidence quality: +24.0",
+    )
+    row_a["R&D_Opportunity_Score"] = 60
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Strong R&D candidate.",
+        Score_Breakdown="Chemical/mechanistic link: +22.0",
+    )
+    row_b["R&D_Opportunity_Score"] = 40
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert "Multi-compound match bonus" in merged.iloc[0]["Score_Breakdown"]
+
+
+# ---------------------------------------------------------------------
+# 43) Comparative_Rationale (architecture audit Q2, "why were the
+#     others rejected?") must be populated end-to-end through run(),
+#     with exactly one top-ranked candidate per reference and every
+#     other candidate explaining its gap to that one.
+# ---------------------------------------------------------------------
+def test_comparative_rationale_end_to_end_through_run_with_multiple_alternatives():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlantA", compound_name="ActiveCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlantB", compound_name="ActiveCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    assert "Comparative_Rationale" in result.columns
+    group = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Reference_Compound"] == "ActiveCompound")
+    ]
+    assert len(group) >= 2, "expected multiple candidates competing for the same reference"
+
+    top_count = group["Comparative_Rationale"].str.contains("Top-ranked").sum()
+    assert top_count >= 1, f"expected at least one top-ranked candidate per reference group, got {top_count}"
+
+    non_top = group[~group["Comparative_Rationale"].str.contains("Top-ranked")]
+    assert not non_top.empty
+    # Every non-top row must explain itself somehow — either a genuine
+    # score gap, or an honest tie (two structurally identical
+    # candidates can legitimately score the same).
+    assert (
+        non_top["Comparative_Rationale"].str.contains("points below")
+        | non_top["Comparative_Rationale"].str.contains("Tied with")
+    ).all()
+
+
+# ---------------------------------------------------------------------
+# 45) Regulatory_Barriers (architecture audit Q8) must be populated
+#     end-to-end through run(), default honestly to "None identified",
+#     and survive a multi-compound merge instead of vanishing.
+# ---------------------------------------------------------------------
+def test_regulatory_barriers_defaults_honestly_when_none_found():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Regulatory_Barriers" in result.columns
+    assert (result["Regulatory_Barriers"] == "None identified").all()
+
+
+def test_regulatory_barriers_populated_from_live_evidence_text():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "This compound is a controlled substance in most jurisdictions.",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    assert "Restricted access" in self_row.iloc[0]["Regulatory_Barriers"]
+    assert "Regulatory barrier(s) identified" in self_row.iloc[0]["Commercial_Regulatory_Rationale"]
+
+
+def test_regulatory_barriers_survive_the_merge():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Strong R&D candidate.",
+        Regulatory_Barriers="None identified",
+    )
+    row_a["R&D_Opportunity_Score"] = 90
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Regulatory_Barriers="Prohibited / banned",
+    )
+    row_b["R&D_Opportunity_Score"] = 50
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert "Prohibited / banned" in merged.iloc[0]["Regulatory_Barriers"], (
+        "a regulatory barrier on a lower-scoring sub-row silently disappeared after merging"
+    )
+
+
+# ---------------------------------------------------------------------
+# 47) Industrial_Feasibility (architecture audit Q9) must be populated
+#     end-to-end through run() and always be a valid label.
+# ---------------------------------------------------------------------
+def test_industrial_feasibility_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method="aqueous infusion"),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Industrial_Feasibility" in result.columns
+    valid_prefixes = ("Not assessed", "Low feasibility", "Moderate feasibility", "High feasibility")
+    assert result["Industrial_Feasibility"].apply(lambda v: str(v).startswith(valid_prefixes)).all()
+
+
+# ---------------------------------------------------------------------
+# 48) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

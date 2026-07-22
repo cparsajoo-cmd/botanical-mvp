@@ -62,6 +62,7 @@ OUTPUT_COLUMNS = [
     "Alternative_Plant",
     "Shared_or_Similar_Compound",
     "Target_or_Mechanism",
+    "Target_Provenance",
     "Concentration_Info",
     "Extraction_Method",
     "Co_Compounds",
@@ -304,7 +305,7 @@ class BotanicalRDCandidateEngine:
             )
             self.candidate_source = "local_fallback"
 
-        self.compound_to_class, self.compound_to_targets = (
+        self.compound_to_class, self.compound_to_targets, self.compound_to_target_sources = (
             self._build_compound_indexes()
         )
 
@@ -611,7 +612,7 @@ class BotanicalRDCandidateEngine:
                     alt_compounds = alt_record["alt_compounds"]
                     alt = alt_record["row"]
 
-                    matched_compound, match_quality, target_specificity = (
+                    matched_compound, match_quality, target_specificity, target_provenance = (
                         self._match_compounds(
                             ref_compound,
                             alt_compounds,
@@ -781,6 +782,7 @@ class BotanicalRDCandidateEngine:
                             "Alternative_Plant": alt_plant,
                             "Shared_or_Similar_Compound": matched_compound,
                             "Target_or_Mechanism": target or "Not clearly extracted",
+                            "Target_Provenance": target_provenance or "Not applicable (no shared-target claim for this match type)",
                             "Concentration_Info": concentration or "Not clearly reported",
                             "Extraction_Method": extraction or "Not clearly reported",
                             "Co_Compounds": co_compounds or "Not clearly extracted",
@@ -1674,7 +1676,8 @@ class BotanicalRDCandidateEngine:
         alternative_compounds,
         alt_norm=None,
     ):
-        """Returns (matched_compound_label, match_quality, target_specificity).
+        """Returns (matched_compound_label, match_quality, target_specificity,
+        target_provenance).
 
         match_quality is one of:
           "exact"           - the alternative plant contains the exact
@@ -1707,6 +1710,14 @@ class BotanicalRDCandidateEngine:
         specific (see there), for any pathway, any chemical class, any
         indication — no hardcoded cutoff to sit right next to.
 
+        target_provenance (Gap 5, "target relationship provenance"):
+        which source(s) — the hardcoded seed_data.COMPOUND_TARGETS
+        knowledge base, the real/maintained Supabase compound_profiles
+        table, or both — actually asserted the shared target that
+        earned this match its "target_verified" quality. Empty string
+        when match_quality isn't "target_verified" (there's no specific
+        target claim to attribute for an exact or class-only match).
+
         `alt_norm` (norm(compound) -> original compound) can be passed in
         precomputed once per alt-candidate, instead of being rebuilt from
         `alternative_compounds` on every call — at Dr. Duke's data scale
@@ -1722,12 +1733,12 @@ class BotanicalRDCandidateEngine:
             }
 
         if ref in alt_norm:
-            return alt_norm[ref], "exact", None
+            return alt_norm[ref], "exact", None, ""
 
         ref_class = self.compound_to_class.get(ref, "")
 
         if not ref_class:
-            return "", "none", None
+            return "", "none", None, ""
 
         ref_targets = self.compound_to_targets.get(ref, set())
 
@@ -1738,7 +1749,7 @@ class BotanicalRDCandidateEngine:
         ]
 
         if not class_matches:
-            return "", "none", None
+            return "", "none", None, ""
 
         if ref_targets:
             # Across every class-mate, find whichever shared target is
@@ -1759,11 +1770,16 @@ class BotanicalRDCandidateEngine:
 
             if best is not None:
                 alt_value, target, count = best
+                sources = self.compound_to_target_sources.get(
+                    self._norm(alt_value), {}
+                ).get(target, frozenset())
+                provenance = "; ".join(sorted(sources)) if sources else "Source not tracked"
                 return (
                     f"{alt_value} [similar: {ref_class}; shared target: "
                     f"{target} (shared by {count} known compounds)]",
                     "target_verified",
                     count,
+                    provenance,
                 )
 
         return (
@@ -1771,11 +1787,12 @@ class BotanicalRDCandidateEngine:
             f"target not confirmed]",
             "class_only",
             None,
+            "",
         )
 
 
     def _build_compound_indexes(self):
-        """Returns (compound_to_class, compound_to_targets).
+        """Returns (compound_to_class, compound_to_targets, compound_to_target_sources).
 
         Layered, cheapest/narrowest first so richer sources can override:
           1. seed_data.PLANT_COMPOUNDS's own per-compound chemical class
@@ -1788,6 +1805,17 @@ class BotanicalRDCandidateEngine:
              families for compounds not listed with a class anywhere else.
           3. The real Supabase `compound_profiles` table (310 records) —
              the richest, maintained source — wins over both when present.
+
+        compound_to_target_sources (Gap 5, "target relationship
+        provenance"): a target claim from the hardcoded seed dict
+        (COMPOUND_TARGETS) and one confirmed by a real, maintained
+        Supabase record (compound_profiles.major_target) are very
+        different claims — one is an editorial judgment call baked into
+        this codebase, the other is a specific database record someone
+        can go look up. Both used to get unioned into the same
+        compound_to_targets set with no way to tell which was which.
+        This parallel index keeps that distinction: for every
+        (compound, target) pair, which source(s) actually asserted it.
         """
         class_index = {}
 
@@ -1801,10 +1829,17 @@ class BotanicalRDCandidateEngine:
                 class_index[self._norm(compound)] = compound_class
 
         target_index = defaultdict(set)
+        target_source_index = defaultdict(lambda: defaultdict(set))
+
+        SEED_SOURCE_LABEL = "seed_data.COMPOUND_TARGETS (hardcoded knowledge base, not a specific study/database record)"
+        SUPABASE_SOURCE_LABEL = "Supabase compound_profiles.major_target (maintained database record)"
 
         for compound, targets in COMPOUND_TARGETS.items():
+            compound_key = self._norm(compound)
             for target in targets:
-                target_index[self._norm(compound)].add(self._norm(target))
+                target_key = self._norm(target)
+                target_index[compound_key].add(target_key)
+                target_source_index[compound_key][target_key].add(SEED_SOURCE_LABEL)
 
         if not self.compound_profiles_df.empty:
             for _, row in self.compound_profiles_df.iterrows():
@@ -1820,9 +1855,19 @@ class BotanicalRDCandidateEngine:
                     class_index[compound] = compound_class
 
                 for target in self._split_terms(row.get("major_target")):
-                    target_index[compound].add(self._norm(target))
+                    target_key = self._norm(target)
+                    target_index[compound].add(target_key)
+                    target_source_index[compound][target_key].add(SUPABASE_SOURCE_LABEL)
 
-        return class_index, dict(target_index)
+        # Convert the nested defaultdict to plain dicts of frozensets so
+        # this behaves like a normal, picklable, easily-tested data
+        # structure once construction is done.
+        plain_target_source_index = {
+            compound: {target: frozenset(sources) for target, sources in targets.items()}
+            for compound, targets in target_source_index.items()
+        }
+
+        return class_index, dict(target_index), plain_target_source_index
 
     def _build_target_frequency_index(self, compound_to_targets):
         """Same idea as _build_compound_frequency_index, but for TARGETS

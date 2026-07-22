@@ -407,7 +407,59 @@ def _():
 
 
 # ---------------------------------------------------------------------
-# 13) ChEMBL-style connector safety net: a "molecule" record with no
+# 13) A strong multi-compound match must not be dragged down to "Low
+#     priority" just because ONE of its many matched compounds happens
+#     to be a common/non-specific one with a weak sub-row on its own.
+#     Only sub-rows that are themselves informative (not flagged common/
+#     non-specific in Novelty_Status) may act as the conservative cap.
+# ---------------------------------------------------------------------
+@test("a common-compound sub-row can't single-handedly cap a strong multi-match")
+def _():
+    engine = make_engine([], similar_groups={})
+
+    strong_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate",
+        Novelty_Status="Novel cross-region candidate", Rationale="... Decision: Strong R&D candidate.",
+    )
+    strong_row["R&D_Opportunity_Score"] = 90
+
+    weak_common_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CommonCompoundB", Shared_or_Similar_Compound="CommonCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Low priority / insufficient data",
+        Novelty_Status="Common/non-specific compound — found in 50+ plants database-wide, low differentiation value",
+        Rationale="... Decision: Low priority / insufficient data.",
+    )
+    weak_common_row["R&D_Opportunity_Score"] = 20
+
+    output = pd.DataFrame([strong_row, weak_common_row])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    result_decision = merged.iloc[0]["Decision_Class"]
+    assert result_decision != "Low priority / insufficient data", (
+        f"a common/non-specific sub-row alone dragged a strong multi-compound match down "
+        f"to '{result_decision}'"
+    )
+
+    # Sanity check the OTHER direction still holds: if every sub-row is
+    # common/non-specific, there's no informative sub-row to fall back
+    # on, so the conservative cap must still apply (using the full,
+    # unfiltered group) rather than silently letting the match through.
+    both_common = output.copy()
+    both_common.loc[0, "Novelty_Status"] = "Common/non-specific compound — found in 40+ plants database-wide"
+    merged_both_common = engine._merge_multi_compound_matches(both_common)
+    assert merged_both_common.iloc[0]["Decision_Class"] == "Low priority / insufficient data", (
+        "when EVERY sub-row is common/non-specific, the conservative cap should still apply"
+    )
+
+
+# ---------------------------------------------------------------------
+# 14) ChEMBL-style connector safety net: a "molecule" record with no
 #     real chemical structure (i.e. not an isolated compound — often a
 #     whole-plant/crude-extract entry mislabeled with the plant's own
 #     common name) must be rejected, not saved as a phytochemical.

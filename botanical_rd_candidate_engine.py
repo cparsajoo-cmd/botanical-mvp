@@ -897,12 +897,40 @@ class BotanicalRDCandidateEngine:
                 new_decision = "Low priority / insufficient data"
 
             # Stay conservative: never let the merge produce a HIGHER
-            # confidence tier than the most cautious individual match
-            # already earned (e.g. if one of the matches has no real
-            # evidence behind it, the merged row shouldn't claim more
-            # confidence than that).
+            # confidence tier than the most cautious *informative*
+            # individual match already earned (e.g. if one of the matches
+            # has no real evidence behind it, the merged row shouldn't
+            # claim more confidence than that).
+            #
+            # BUT: a sub-row whose own match rests on a common,
+            # non-specific compound (the same "found in dozens/hundreds
+            # of unrelated plants database-wide" signal _score_candidate
+            # and _decision_class already penalize on that sub-row itself
+            # — see the "Common"/"non-specific" checks elsewhere in this
+            # file) is not informative about the OVERALL multi-compound
+            # candidate. Letting it also act as a veto on the merged
+            # result is double-penalizing the same weak signal, and once
+            # a candidate matches on enough distinct compounds (which is
+            # exactly what should make it a STRONGER candidate), at least
+            # one such common/trace compound is almost always present —
+            # silently dragging nearly every multi-compound match down to
+            # "Low priority" regardless of how strong the rest of the
+            # evidence is. Only sub-rows that aren't themselves flagged
+            # as common/non-specific get a vote in the conservative cap.
+            # If every sub-row in the group is common/non-specific, none
+            # of them are informative, so the cap falls back to the full,
+            # unfiltered group — the conservative behavior is preserved
+            # exactly for the case it exists for: a group with no strong
+            # signal at all.
+            def _is_common_match(novelty_status):
+                text = str(novelty_status)
+                return "Common" in text or "non-specific" in text
+
+            informative = group[~group["Novelty_Status"].map(_is_common_match)]
+            tightest_pool = informative if not informative.empty else group
+
             tightest = min(
-                (str(d) for d in group["Decision_Class"]),
+                (str(d) for d in tightest_pool["Decision_Class"]),
                 key=_rank,
             )
             if _rank(new_decision) > _rank(tightest):

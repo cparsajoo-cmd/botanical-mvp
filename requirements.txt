@@ -1,5 +1,10 @@
-# Dev/CI-only dependencies. NOT installed on Streamlit Cloud (which only
-# reads requirements.txt) — this file is for running the test suite
-# locally or in GitHub Actions.
--r requirements.txt
-pytest==8.3.4
+streamlit==1.59.1
+pandas==2.3.3
+numpy==2.3.5
+pyarrow==22.0.0
+openpyxl==3.1.5
+supabase==2.31.0
+biopython==1.87
+openai==2.45.0
+requests==2.34.2
+pypdf>=4.0

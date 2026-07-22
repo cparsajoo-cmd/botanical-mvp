@@ -12,6 +12,14 @@ from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from decision_class_ah import classify_decision_ah
 from white_space_classifier import classify_white_space
+from structured_rationale import (
+    go_investigate_hold_no_go,
+    scientific_rationale,
+    commercial_regulatory_rationale,
+    evidence_strengths,
+    evidence_weaknesses,
+    next_experiment_suggestion,
+)
 
 try:
     from evidence_database import load_evidence_database
@@ -84,6 +92,12 @@ OUTPUT_COLUMNS = [
     "Decision_Class_AH",
     "White_Space_Type",
     "Confidence_Note",
+    "Go_Investigate_Hold_NoGo",
+    "Scientific_Rationale",
+    "Commercial_Regulatory_Rationale",
+    "Evidence_Strengths",
+    "Evidence_Weaknesses",
+    "Next_Experiment_Suggestion",
     "Rationale",
 ]
 
@@ -782,6 +796,42 @@ class BotanicalRDCandidateEngine:
                         market_status=market_status,
                         use_live_search=self.use_live_search,
                     )
+                    occurrence_corroboration = self._occurrence_corroboration(evidence_source_ids)
+
+                    # Gap 6 + Gap 8: structured rationale, built purely
+                    # from signals already computed above — no new data
+                    # collection, no LLM call. See structured_rationale.py.
+                    go_call = go_investigate_hold_no_go(decision_class_ah)
+                    sci_rationale = scientific_rationale(
+                        match_quality=match_quality,
+                        target_provenance=target_provenance,
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                        occurrence_corroboration=occurrence_corroboration,
+                        has_negative_evidence=negative_evidence.is_negative,
+                    )
+                    comm_reg_rationale = commercial_regulatory_rationale(
+                        market_status=market_status,
+                        white_space_type=white_space_type or "",
+                    )
+                    strengths = evidence_strengths(
+                        match_quality=match_quality,
+                        evidence_confidence=evidence_confidence,
+                        occurrence_corroboration=occurrence_corroboration,
+                        market_status=market_status,
+                    )
+                    weaknesses = evidence_weaknesses(
+                        evidence_confidence=evidence_confidence,
+                        occurrence_corroboration=occurrence_corroboration,
+                        has_negative_evidence=negative_evidence.is_negative,
+                        negative_evidence_types="; ".join(negative_evidence.finding_types),
+                        safety_flags=safety_flags or "No explicit flag found",
+                        market_status=market_status,
+                    )
+                    next_experiment = next_experiment_suggestion(
+                        decision_class_ah=decision_class_ah,
+                        evidence_weaknesses_list=weaknesses,
+                        alt_plant=alt_plant,
+                    )
 
                     rows.append(
                         {
@@ -802,7 +852,7 @@ class BotanicalRDCandidateEngine:
                                 raw_evidence,
                             ),
                             "Source_Record_IDs": "; ".join(evidence_source_ids) if evidence_source_ids else "No specific source record identified",
-                            "Occurrence_Corroboration": self._occurrence_corroboration(evidence_source_ids),
+                            "Occurrence_Corroboration": occurrence_corroboration,
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Has_Negative_Evidence": negative_evidence.is_negative,
@@ -822,6 +872,12 @@ class BotanicalRDCandidateEngine:
                             # run(). Never reaches the CSV.
                             "_match_quality": match_quality,
                             "_same_plant": self._norm(ref_plant) == self._norm(alt_plant),
+                            "Go_Investigate_Hold_NoGo": go_call,
+                            "Scientific_Rationale": sci_rationale,
+                            "Commercial_Regulatory_Rationale": comm_reg_rationale,
+                            "Evidence_Strengths": "; ".join(strengths) if strengths else "None identified",
+                            "Evidence_Weaknesses": "; ".join(weaknesses) if weaknesses else "None identified",
+                            "Next_Experiment_Suggestion": next_experiment,
                             "Rationale": self._rationale(
                                 product_type=product_type,
                                 problem=problem,
@@ -1102,6 +1158,49 @@ class BotanicalRDCandidateEngine:
                     market_status=str(best.get("Market_Status", "")),
                     use_live_search=self.use_live_search,
                 ) or ""
+
+            if "Go_Investigate_Hold_NoGo" in group.columns:
+                # Recomputed from the just-updated Decision_Class_AH,
+                # Evidence_Confidence, Market_Status, White_Space_Type,
+                # etc. — the same staleness concern as every other
+                # merge-recomputed field above: these must reflect the
+                # GROUP-level merged result, not whichever single
+                # sub-row happened to score highest before merging.
+                best["Go_Investigate_Hold_NoGo"] = go_investigate_hold_no_go(
+                    str(best.get("Decision_Class_AH", ""))
+                )
+                best["Scientific_Rationale"] = scientific_rationale(
+                    match_quality=str(best.get("_match_quality", "")),
+                    target_provenance=str(best.get("Target_Provenance", "")),
+                    evidence_hierarchy_detail=str(best.get("Evidence_Hierarchy_Detail", "")),
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
+                )
+                best["Commercial_Regulatory_Rationale"] = commercial_regulatory_rationale(
+                    market_status=str(best.get("Market_Status", "")),
+                    white_space_type=str(best.get("White_Space_Type", "")),
+                )
+                merged_strengths = evidence_strengths(
+                    match_quality=str(best.get("_match_quality", "")),
+                    evidence_confidence=best["Evidence_Confidence"],
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    market_status=str(best.get("Market_Status", "")),
+                )
+                merged_weaknesses = evidence_weaknesses(
+                    evidence_confidence=best["Evidence_Confidence"],
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
+                    negative_evidence_types=str(best.get("Negative_Evidence_Types", "")),
+                    safety_flags=str(best.get("Safety_Flags", "")),
+                    market_status=str(best.get("Market_Status", "")),
+                )
+                best["Evidence_Strengths"] = "; ".join(merged_strengths) if merged_strengths else "None identified"
+                best["Evidence_Weaknesses"] = "; ".join(merged_weaknesses) if merged_weaknesses else "None identified"
+                best["Next_Experiment_Suggestion"] = next_experiment_suggestion(
+                    decision_class_ah=str(best.get("Decision_Class_AH", "")),
+                    evidence_weaknesses_list=merged_weaknesses,
+                    alt_plant=str(best.get("Alternative_Plant", "")),
+                )
 
             # The pre-merge Rationale text (from _rationale(), on the
             # single "best" sub-row) ends with a hardcoded

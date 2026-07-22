@@ -71,13 +71,30 @@ def _cached_scientific_evidence_df():
 # constructed ENGINE (not just the raw table) means that grouping happens
 # once per `use_live_search` value and is then reused.
 #
-# evidence_df (from live Step 2 searches, stored in session state) is
-# intentionally NOT part of the cache key — it's session-specific and
-# usually small, so baking a snapshot of it into a shared cached engine is
-# an acceptable tradeoff for speed. The short ttl below means a fresh
-# Step 2 run gets picked up again within a couple of minutes.
+# evidence_df (from live Step 2 searches, stored in session state) is kept
+# out of the *hashed* argument (it's still underscore-prefixed, since
+# Streamlit can't hash a DataFrame directly) but its CONTENT now feeds the
+# cache key via `evidence_fingerprint` below. Previously evidence_df was
+# excluded from the cache key entirely, so a fresh Step 2 run could sit
+# unused in a stale cached engine for up to `ttl` seconds. Fingerprinting
+# is deliberately cheap (row count + a vectorized content hash) rather
+# than hashing the whole DataFrame structurally, since this data is
+# usually small (a handful of live-search results per session).
+def _evidence_fingerprint(evidence_df):
+    if evidence_df is None or evidence_df.empty:
+        return ("empty", 0)
+    try:
+        content_hash = int(pd.util.hash_pandas_object(evidence_df, index=True).sum())
+    except Exception:
+        # If hashing ever fails on some exotic column dtype, fall back to
+        # row count alone — still catches the common "Step 2 just added
+        # N new rows" case, just not an in-place content edit.
+        content_hash = 0
+    return (len(evidence_df), content_hash)
+
+
 @st.cache_resource(ttl=120, show_spinner=False)
-def _cached_engine(use_live_search: bool, _evidence_df=None):
+def _cached_engine(use_live_search: bool, evidence_fingerprint, _evidence_df=None):
     return BotanicalRDCandidateEngine(
         evidence_df=_evidence_df,
         use_live_search=use_live_search,
@@ -88,7 +105,8 @@ def _cached_engine(use_live_search: bool, _evidence_df=None):
 
 
 def _build_engine(evidence_df, use_live_search):
-    return _cached_engine(use_live_search, _evidence_df=evidence_df)
+    fingerprint = _evidence_fingerprint(evidence_df)
+    return _cached_engine(use_live_search, fingerprint, _evidence_df=evidence_df)
 
 
 def _offline_engine():
@@ -153,7 +171,7 @@ def _recommendation_block(result_df):
         "certification of efficacy. See `Decision_Class` and `Evidence_Level` "
         "in each row for how strong the underlying basis actually is."
     )
-    st.dataframe(recommended[display_cols].head(10), use_container_width=True)
+    st.dataframe(recommended[display_cols].head(10), width="stretch")
 
     if decision_col:
         weak = best_rows[
@@ -163,7 +181,7 @@ def _recommendation_block(result_df):
         ]
         if not weak.empty:
             st.markdown("### 🔴 Weak / not recommended")
-            st.dataframe(weak[display_cols].head(10), use_container_width=True)
+            st.dataframe(weak[display_cols].head(10), width="stretch")
 
 
 def render_rd_candidates_step(inputs):
@@ -254,7 +272,7 @@ def render_rd_candidates_step(inputs):
             )
 
     if isinstance(landscape_df, pd.DataFrame) and not landscape_df.empty:
-        st.dataframe(landscape_df, use_container_width=True)
+        st.dataframe(landscape_df, width="stretch")
 
     st.markdown("---")
     st.markdown("## Step 4 — Existing Scientific Knowledge")
@@ -304,7 +322,7 @@ def render_rd_candidates_step(inputs):
                     "Evidence Collection before treating Step 6's results as "
                     "comprehensive."
                 )
-        st.dataframe(inventory_df.head(500), use_container_width=True)
+        st.dataframe(inventory_df.head(500), width="stretch")
         if len(inventory_df) > 500:
             st.caption(
                 f"Showing first 500 of {len(inventory_df)} rows. "
@@ -397,7 +415,7 @@ def render_rd_candidates_step(inputs):
             "by real clinical or regulatory evidence can reach \"Strong R&D "
             "candidate\". Treat every row as a lead to verify, not a conclusion."
         )
-        st.dataframe(result_df.head(500), use_container_width=True)
+        st.dataframe(result_df.head(500), width="stretch")
         if len(result_df) > 500:
             st.caption(f"Showing first 500 of {len(result_df)} rows in this preview.")
 

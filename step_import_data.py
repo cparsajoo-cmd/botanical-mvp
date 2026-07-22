@@ -139,7 +139,7 @@ def render_import_step():
             return
 
         st.write(f"{len(df)} row(s) found in the file.")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
 
         rows, skipped, unknown_cols = _rows_from_dataframe(df, table)
 

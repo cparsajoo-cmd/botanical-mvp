@@ -9,6 +9,7 @@ import pandas as pd
 from concentration_normalizer import parse_concentration, format_concentration_info
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from negative_evidence_classifier import classify_negative_evidence
+from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 
 try:
     from evidence_database import load_evidence_database
@@ -73,7 +74,9 @@ OUTPUT_COLUMNS = [
     "Market_Status",
     "Novelty_Status",
     "R&D_Opportunity_Score",
+    "Evidence_Confidence",
     "Decision_Class",
+    "Confidence_Note",
     "Rationale",
 ]
 
@@ -749,6 +752,16 @@ class BotanicalRDCandidateEngine:
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                     )
 
+                    evidence_confidence = compute_evidence_confidence(
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                        evidence_level=evidence_level,
+                        has_negative_evidence=negative_evidence.is_negative,
+                    )
+                    confidence_note = confidence_adjusted_framing_note(
+                        rd_opportunity_score=score,
+                        evidence_confidence=evidence_confidence,
+                    )
+
                     rows.append(
                         {
                             "Reference_Plant": ref_plant,
@@ -773,7 +786,9 @@ class BotanicalRDCandidateEngine:
                             "Market_Status": market_status,
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
+                            "Evidence_Confidence": evidence_confidence,
                             "Decision_Class": decision,
+                            "Confidence_Note": confidence_note or "",
                             "Rationale": self._rationale(
                                 product_type=product_type,
                                 problem=problem,
@@ -992,6 +1007,24 @@ class BotanicalRDCandidateEngine:
                     if v:
                         types.extend(t.strip() for t in v.split("; ") if t.strip())
                 best["Negative_Evidence_Types"] = "; ".join(sorted(set(types)))
+
+            # Evidence_Confidence and Confidence_Note (Phase 6, audit
+            # 4.16) must be recomputed here too — otherwise they'd stay
+            # frozen at whatever the single pre-merge "best" sub-row had,
+            # silently going stale the moment new_score (just above)
+            # differs from that sub-row's original score. Confidence
+            # itself uses the MAX across the group's sub-rows: if any one
+            # matched compound has strong evidence behind it, that's a
+            # genuine, real signal about the candidate as a whole, the
+            # same "any sub-row can contribute a real positive" logic
+            # already used for Has_Negative_Evidence above (just the
+            # positive-signal direction of it).
+            if "Evidence_Confidence" in group.columns:
+                best["Evidence_Confidence"] = float(group["Evidence_Confidence"].max())
+                best["Confidence_Note"] = confidence_adjusted_framing_note(
+                    rd_opportunity_score=new_score,
+                    evidence_confidence=best["Evidence_Confidence"],
+                ) or ""
 
             # The pre-merge Rationale text (from _rationale(), on the
             # single "best" sub-row) ends with a hardcoded

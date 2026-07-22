@@ -955,7 +955,94 @@ def test_occurrence_corroboration_increases_after_merge_when_sources_combine():
 
 
 # ---------------------------------------------------------------------
-# 38) ChEMBL connector rejects molecule records with no structure data.
+# 39) Structured rationale (Gap 6 + Gap 8) must be populated end-to-end
+#     through engine.run(), and must be correctly RECOMPUTED (not
+#     stale) after a multi-compound merge.
+# ---------------------------------------------------------------------
+def test_structured_rationale_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    for col in [
+        "Go_Investigate_Hold_NoGo", "Scientific_Rationale", "Commercial_Regulatory_Rationale",
+        "Evidence_Strengths", "Evidence_Weaknesses", "Next_Experiment_Suggestion",
+    ]:
+        assert col in result.columns
+        assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
+
+    valid_go_calls = {"Go", "Investigate", "Investigate — verify before proceeding", "Hold", "No-Go"}
+    assert set(result["Go_Investigate_Hold_NoGo"]).issubset(valid_go_calls)
+
+
+def test_structured_rationale_recomputed_after_merge_reflects_merged_signals():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=10.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Decision_Class_AH="G — Hold / insufficient evidence",
+        White_Space_Type="", Target_Provenance="Not applicable",
+        Evidence_Hierarchy_Detail="Unclassified", Market_Status="Search not performed",
+        Go_Investigate_Hold_NoGo="Hold", Scientific_Rationale="stale", Commercial_Regulatory_Rationale="stale",
+        Evidence_Strengths="stale", Evidence_Weaknesses="stale", Next_Experiment_Suggestion="stale",
+        _match_quality="class_only", _same_plant=False,
+    )
+    row_a["R&D_Opportunity_Score"] = 40
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=15.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/2/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Decision_Class_AH="G — Hold / insufficient evidence",
+        White_Space_Type="", Target_Provenance="Not applicable",
+        Evidence_Hierarchy_Detail="Unclassified", Market_Status="Search not performed",
+        Go_Investigate_Hold_NoGo="Hold", Scientific_Rationale="stale", Commercial_Regulatory_Rationale="stale",
+        Evidence_Strengths="stale", Evidence_Weaknesses="stale", Next_Experiment_Suggestion="stale",
+        _match_quality="class_only", _same_plant=False,
+    )
+    row_b["R&D_Opportunity_Score"] = 40
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    r = merged.iloc[0]
+    # Occurrence_Corroboration should have gone from single-source to
+    # 2-source after the merge, and every "stale" placeholder above
+    # must have been overwritten by the recompute, not passed through.
+    assert "2 independent sources" in r["Occurrence_Corroboration"]
+    assert r["Scientific_Rationale"] != "stale"
+    assert r["Commercial_Regulatory_Rationale"] != "stale"
+    assert r["Evidence_Strengths"] != "stale"
+    assert r["Evidence_Weaknesses"] != "stale"
+    assert r["Next_Experiment_Suggestion"] != "stale"
+    assert "2 independent sources" in r["Scientific_Rationale"], (
+        "Scientific_Rationale wasn't rebuilt from the merged Occurrence_Corroboration"
+    )
+
+
+# ---------------------------------------------------------------------
+# 40) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

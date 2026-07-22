@@ -62,7 +62,7 @@ def render_inputs():
         demo_cols = st.columns(len(DEMO_SCENARIOS))
         for col, (key, scenario) in zip(demo_cols, DEMO_SCENARIOS.items()):
             with col:
-                if st.button(scenario["label"], key=f"demo_btn_{key}", use_container_width=True):
+                if st.button(scenario["label"], key=f"demo_btn_{key}", width="stretch"):
                     _apply_demo_scenario(key)
                     st.rerun()
 

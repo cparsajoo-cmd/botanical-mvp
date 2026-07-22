@@ -10,6 +10,7 @@ from concentration_normalizer import parse_concentration, format_concentration_i
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
+from decision_class_ah import classify_decision_ah
 
 try:
     from evidence_database import load_evidence_database
@@ -76,6 +77,7 @@ OUTPUT_COLUMNS = [
     "R&D_Opportunity_Score",
     "Evidence_Confidence",
     "Decision_Class",
+    "Decision_Class_AH",
     "Confidence_Note",
     "Rationale",
 ]
@@ -761,6 +763,14 @@ class BotanicalRDCandidateEngine:
                         rd_opportunity_score=score,
                         evidence_confidence=evidence_confidence,
                     )
+                    decision_class_ah = classify_decision_ah(
+                        existing_decision_class=decision,
+                        evidence_confidence=evidence_confidence,
+                        rd_opportunity_score=score,
+                        market_status=market_status,
+                        match_quality=match_quality,
+                        same_plant=self._norm(ref_plant) == self._norm(alt_plant),
+                    )
 
                     rows.append(
                         {
@@ -788,7 +798,15 @@ class BotanicalRDCandidateEngine:
                             "R&D_Opportunity_Score": score,
                             "Evidence_Confidence": evidence_confidence,
                             "Decision_Class": decision,
+                            "Decision_Class_AH": decision_class_ah,
                             "Confidence_Note": confidence_note or "",
+                            # Internal-only — used by _merge_multi_compound_matches
+                            # to correctly recompute Decision_Class_AH after a
+                            # merge, then dropped by the final
+                            # output[OUTPUT_COLUMNS] selection at the end of
+                            # run(). Never reaches the CSV.
+                            "_match_quality": match_quality,
+                            "_same_plant": self._norm(ref_plant) == self._norm(alt_plant),
                             "Rationale": self._rationale(
                                 product_type=product_type,
                                 problem=problem,
@@ -1025,6 +1043,21 @@ class BotanicalRDCandidateEngine:
                     rd_opportunity_score=new_score,
                     evidence_confidence=best["Evidence_Confidence"],
                 ) or ""
+
+            if "Decision_Class_AH" in group.columns:
+                # best's own _match_quality/_same_plant (from the
+                # highest-scoring sub-row) are reused here — same
+                # "best sub-row's own values, recombined with the
+                # group-level recomputed score/decision" pattern the
+                # rest of this merge function already uses.
+                best["Decision_Class_AH"] = classify_decision_ah(
+                    existing_decision_class=new_decision,
+                    evidence_confidence=best["Evidence_Confidence"],
+                    rd_opportunity_score=new_score,
+                    market_status=str(best.get("Market_Status", "")),
+                    match_quality=str(best.get("_match_quality", "")),
+                    same_plant=bool(best.get("_same_plant", False)),
+                )
 
             # The pre-merge Rationale text (from _rationale(), on the
             # single "best" sub-row) ends with a hardcoded
@@ -1798,6 +1831,91 @@ class BotanicalRDCandidateEngine:
         compound_plant_count=0,
         target_specificity=None,
     ):
+        """R&D_Opportunity_Score (0-100). See evidence_confidence.py for
+        the SEPARATE Evidence_Confidence score (audit 4.16) — this
+        function is intentionally untouched by that split; every weight
+        below is exactly what it was before Phase 6.
+
+        COMPLETE WEIGHTS TABLE (audit 4.16: "تمام weightها مستند شوند").
+        All numbers below are verified against the code in this function
+        as of Phase 6 — this docstring documents, it does not define;
+        if the code below changes, this table must be updated with it.
+
+        1) Chemical/mechanistic link (base, before the two modifiers
+           below):
+             exact match                    22
+             target_verified match          15
+             class-only/similar match        5
+           target_verified modifier: multiplied by min(1.0, 2.0 /
+             target_specificity) — full bonus only when the shared
+             target is carried by just 2 compounds DB-wide, decaying
+             smoothly as more compounds share it.
+           commonality modifier: multiplied by (1 - penalty_ratio),
+             where penalty_ratio = min(0.8, overage / 3.0) and
+             overage = max(0, compound_plant_count/threshold - 1.0) —
+             no penalty at or below the DB's own commonality threshold,
+             up to 80% removed at 4x that threshold or more.
+
+        2) Evidence quality (evidence_points, by Evidence_Level):
+             Clinical / human evidence         24
+             Regulatory / monograph evidence   20
+             Preclinical / mechanistic ev.     12
+             General literature signal          7
+             No direct evidence                 0
+
+        3) Product-development fit:
+             concentration reported            +10  (else +2)
+             extraction fit                     up to +18 (see
+                                                  _extraction_fit_score's
+                                                  own weights below)
+             co-compounds (2 pts each)          up to +8
+             target/mechanism identified        +8   (else +1)
+
+        4) Novelty (only awarded when evidence_level != "No direct
+           evidence" — novelty on an unevidenced candidate isn't a real
+           finding yet):
+             "Common"/"non-specific" novelty     +0
+             "Alternative"/"Cross-region"        +10
+             anything else                       +2
+
+        5) Market signal (small modifier; matches the
+           MarketVerificationStatus vocabulary from _market_status(),
+           Phase 5/audit 4.6-4.7):
+             "Verified marketed product"         +1
+             "Regulatory monograph exists" /
+               "Traditional-use status"          +2
+             "Commercial evidence reported..."   +2
+             "No verified product found"         +6   (currently a dead
+                                                  code path — no real
+                                                  retail/patent search
+                                                  is wired in yet, so
+                                                  _market_status never
+                                                  actually returns this)
+             "Search not performed" / "Source
+               unavailable" / "Unknown"          +3   (neutral default)
+
+        6) Safety/interaction/self-row penalties:
+             any safety flag                    -14
+             any interaction flag               -10
+             same_plant (reference-vs-itself)   -15
+
+        Final score: round(max(0, min(100, sum_of_above)), 1).
+
+        _extraction_fit_score's own internal weights (feeds into #3
+        above, capped there at 18):
+             no extraction method reported        3
+             any extraction method reported       8  (base)
+             aqueous/water/infusion/decoction    +10 (+8 more if dosage
+                                                   form is infusion/tea/
+                                                   herbal)
+             ethanol/hydroalcoholic/extract       +8 (+6 more if dosage
+                                                   form is capsule/
+                                                   tablet/extract/cream/
+                                                   gel/ointment)
+             essential oil/distillation           +6 (+5 more if dosage
+                                                   form is cream/gel/
+                                                   essential oil)
+        """
         score = 0
 
         # 1) Chemical/mechanistic link. Exact shared compound is strong;

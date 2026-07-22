@@ -821,7 +821,53 @@ def test_match_compounds_return_arity_is_consistent_across_all_paths():
 
 
 # ---------------------------------------------------------------------
-# 29) ChEMBL connector rejects molecule records with no structure data.
+# 31) Market status (Gap 2): a genuine disagreement between two signals
+#     this function already computes (regulatory recognition vs. a
+#     discontinuation mention) must be surfaced as "Conflicting market
+#     evidence" rather than silently picking one side.
+# ---------------------------------------------------------------------
+def test_market_status_detects_conflicting_evidence_ema_vs_discontinued():
+    engine = make_engine([], similar_groups={})
+    text = "This product was discontinued and is no longer available in the EU market."
+    status = engine._market_status(alt={"EMA_Status": "Yes"}, evidence=text, market="EU")
+    assert status == "Conflicting market evidence"
+
+
+def test_market_status_detects_conflicting_evidence_commercial_vs_discontinued():
+    engine = make_engine([], similar_groups={})
+    text = "Once commercially available, the product has since been withdrawn from the market."
+    status = engine._market_status(alt={}, evidence=text, market="EU")
+    assert status == "Conflicting market evidence"
+
+
+def test_market_status_no_conflict_when_only_discontinued_mentioned_alone():
+    # Discontinuation alone (no positive market-presence signal to
+    # conflict with) isn't a "conflict" — it just doesn't match any of
+    # the positive-signal branches, so it should fall through normally.
+    engine = make_engine([], similar_groups={})
+    text = "The product was discontinued years ago for unrelated reasons."
+    status = engine._market_status(alt={}, evidence=text, market="EU")
+    assert status != "Conflicting market evidence"
+
+
+# ---------------------------------------------------------------------
+# 32) Market status (Gap 2): "search incomplete" (a live search ran
+#     this session but found nothing about this specific candidate)
+#     must be distinguished from "search not performed" (no search was
+#     ever attempted for this candidate — e.g. a curated/seed-only run).
+# ---------------------------------------------------------------------
+def test_market_status_search_incomplete_vs_not_performed():
+    live_engine = make_engine([], similar_groups={})
+    live_engine.use_live_search = True
+    assert live_engine._market_status(alt={}, evidence="", market="EU") == "Search incomplete"
+
+    seed_only_engine = make_engine([], similar_groups={})
+    seed_only_engine.use_live_search = False
+    assert seed_only_engine._market_status(alt={}, evidence="", market="EU") == "Search not performed"
+
+
+# ---------------------------------------------------------------------
+# 33) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

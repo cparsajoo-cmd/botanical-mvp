@@ -68,6 +68,7 @@ OUTPUT_COLUMNS = [
     "Safety_Flags",
     "Interaction_Flags",
     "Evidence_Source",
+    "Source_Record_IDs",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
     "Has_Negative_Evidence",
@@ -489,7 +490,7 @@ class BotanicalRDCandidateEngine:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
         rows = []
-        evidence_index = self._build_evidence_text_index()
+        evidence_index, evidence_source_index = self._build_evidence_text_index()
 
         # Precompute the alternative-candidate list ONCE, outside the
         # reference/compound loops below. Previously `all_candidates
@@ -621,11 +622,12 @@ class BotanicalRDCandidateEngine:
                     if not matched_compound:
                         continue
 
-                    raw_evidence = self._collect_raw_evidence(
+                    raw_evidence, evidence_source_ids = self._collect_raw_evidence(
                         evidence_index=evidence_index,
                         plant=alt_plant,
                         compound=matched_compound,
                         problem=problem,
+                        source_index=evidence_source_index,
                     )
 
                     has_real_evidence = bool(raw_evidence.strip())
@@ -789,6 +791,7 @@ class BotanicalRDCandidateEngine:
                                 matched_compound,
                                 raw_evidence,
                             ),
+                            "Source_Record_IDs": "; ".join(evidence_source_ids) if evidence_source_ids else "No specific source record identified",
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Has_Negative_Evidence": negative_evidence.is_negative,
@@ -1025,6 +1028,21 @@ class BotanicalRDCandidateEngine:
                     if v:
                         types.extend(t.strip() for t in v.split("; ") if t.strip())
                 best["Negative_Evidence_Types"] = "; ".join(sorted(set(types)))
+
+            # Gap 1 (traceability): union every source ID cited by ANY
+            # sub-row in this group, same reasoning as
+            # Negative_Evidence_Types just above — a citation backing
+            # one of several matched compounds must not vanish because
+            # a different compound's sub-row happened to score higher.
+            if "Source_Record_IDs" in group.columns:
+                ids = []
+                for v in group["Source_Record_IDs"]:
+                    v = str(v).strip()
+                    if v and v != "No specific source record identified":
+                        ids.extend(i.strip() for i in v.split("; ") if i.strip())
+                best["Source_Record_IDs"] = (
+                    "; ".join(sorted(set(ids))) if ids else "No specific source record identified"
+                )
 
             # Evidence_Confidence and Confidence_Note (Phase 6, audit
             # 4.16) must be recomputed here too — otherwise they'd stay
@@ -1485,7 +1503,32 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(rows)
 
     def _build_evidence_text_index(self):
+        """Returns (text_index, source_index).
+
+        text_index: unchanged from before Gap 1 — dict of
+        normalized_key -> concatenated evidence text, used for
+        Evidence_Level/safety-flag/hierarchy extraction.
+
+        source_index: NEW (audit "Gap 1: traceability"). Every
+        connector that saves evidence to Supabase already writes a real
+        Source_URL for that specific record (pubmed_connector.py:
+        https://pubmed.ncbi.nlm.nih.gov/{pmid}/, and the same pattern in
+        chembl_connector.py, clinicaltrials_connector.py,
+        crossref_connector.py, chebi_connector.py, etc.) — that URL was
+        previously discarded the moment a row got folded into the flat
+        text_index string. source_index keeps the SAME normalized_key
+        structure as text_index, but maps to a list of the specific
+        Source_URLs that contributed to that key, so a downstream
+        candidate row can cite exactly which record(s) it came from
+        instead of only a generic "Live-collected evidence" label.
+        """
         index = defaultdict(str)
+        source_index = defaultdict(list)
+
+        def _record_source(key, row):
+            url = self._pick(row, ["Source_URL", "source_url", "URL", "url"])
+            if url:
+                source_index[key].append(url)
 
         if not self.evidence_df.empty:
             for _, row in self.evidence_df.iterrows():
@@ -1508,10 +1551,14 @@ class BotanicalRDCandidateEngine:
                 )
 
                 if plant:
-                    index[self._norm(plant)] += " " + text
+                    plant_key = self._norm(plant)
+                    index[plant_key] += " " + text
+                    _record_source(plant_key, row)
 
                 for compound in self._known_compounds_from_text(text):
-                    index[self._norm(compound)] += " " + text
+                    compound_key = self._norm(compound)
+                    index[compound_key] += " " + text
+                    _record_source(compound_key, row)
 
         if not self.scientific_evidence_df.empty:
             text_columns = [
@@ -1529,10 +1576,14 @@ class BotanicalRDCandidateEngine:
                 plant = str(row.get("plant") or "").strip()
 
                 if plant:
-                    index[self._norm(plant)] += " " + text
+                    plant_key = self._norm(plant)
+                    index[plant_key] += " " + text
+                    _record_source(plant_key, row)
 
                 for compound in self._known_compounds_from_text(text):
-                    index[self._norm(compound)] += " " + text
+                    compound_key = self._norm(compound)
+                    index[compound_key] += " " + text
+                    _record_source(compound_key, row)
 
         # Curated regulatory/clinical evidence (seed_data.SLEEP_TEA_EVIDENCE)
         # — this is the manually-verified EMA/WHO/ESCOP + cited-study
@@ -1549,9 +1600,14 @@ class BotanicalRDCandidateEngine:
                 f"ESCOP: {curated.get('escop_status', '')}. "
                 f"Safety: {curated.get('safety_desc', '')}."
             )
-            index[self._norm(plant)] += " " + text
+            plant_key = self._norm(plant)
+            index[plant_key] += " " + text
+            # Curated evidence has no per-record URL, but it does have a
+            # named, citable source — record that instead of leaving
+            # this key's source list empty.
+            source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
 
-        return index
+        return index, source_index
 
     def _collect_raw_evidence(
         self,
@@ -1559,9 +1615,11 @@ class BotanicalRDCandidateEngine:
         plant,
         compound,
         problem,
+        source_index=None,
     ):
         """Builds the evidence text used to determine Evidence_Level and
-        safety flags for one candidate row.
+        safety flags for one candidate row, and (Gap 1) the specific
+        source identifiers that back it.
 
         `evidence_index` has two kinds of entries per record: one bucket
         keyed by PLANT (every evidence record tied to that plant, however
@@ -1581,22 +1639,34 @@ class BotanicalRDCandidateEngine:
         — better than nothing when that's genuinely all there is, but no
         longer blended in unconditionally on every row regardless of
         whether it's actually relevant to the compound being evaluated.
+
+        Returns (text, source_ids) — source_ids empty list when
+        source_index isn't provided (keeps this callable exactly as
+        before for any other caller that only wants the text).
         """
+        source_index = source_index or {}
         compound_clean = compound.split("[")[0].strip()
 
-        compound_text = evidence_index.get(self._norm(compound_clean), "")
-        problem_text = evidence_index.get(self._norm(problem), "")
+        compound_key = self._norm(compound_clean)
+        problem_key = self._norm(problem)
+
+        compound_text = evidence_index.get(compound_key, "")
+        problem_text = evidence_index.get(problem_key, "")
 
         primary = " ".join(part for part in (compound_text, problem_text) if part).strip()
 
         if primary:
-            return primary[:6000]
+            sources = list(dict.fromkeys(
+                source_index.get(compound_key, []) + source_index.get(problem_key, [])
+            ))
+            return primary[:6000], sources
 
         # No compound-specific evidence found anywhere — fall back to
         # whatever's known about the plant in general, clearly weaker
         # but still better than treating it as zero evidence outright.
-        plant_text = evidence_index.get(self._norm(plant), "")
-        return plant_text.strip()[:6000]
+        plant_key = self._norm(plant)
+        plant_text = evidence_index.get(plant_key, "")
+        return plant_text.strip()[:6000], list(dict.fromkeys(source_index.get(plant_key, [])))
 
     def _match_compounds(
         self,

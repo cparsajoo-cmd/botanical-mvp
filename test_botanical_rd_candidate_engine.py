@@ -504,7 +504,55 @@ def test_negative_evidence_in_a_non_best_sub_row_survives_the_merge():
 
 
 # ---------------------------------------------------------------------
-# 18) ChEMBL connector rejects molecule records with no structure data.
+# 18) Market status (Phase 5, audit 4.6/4.7): a bare word like "product"
+#     or "market" appearing anywhere in unrelated evidence text must NOT
+#     be read as a verified commercial product. The honest default,
+#     since no real retail/patent search is wired in, is "Search not
+#     performed" — never "no verified product found" (which would claim
+#     a real search happened) and never "Verified marketed product"
+#     (which this function can't actually verify).
+# ---------------------------------------------------------------------
+def test_market_status_does_not_false_positive_on_bare_product_or_market_words():
+    engine = make_engine([], similar_groups={})
+
+    unrelated_text = (
+        "The reaction product of this synthesis was characterized by NMR; "
+        "the compound is found on every continent's flora market of species."
+    )
+    status = engine._market_status(alt={}, evidence=unrelated_text, market="EU")
+    assert status == "Search not performed", (
+        f"a bare mention of 'product'/'market' in unrelated text triggered "
+        f"a commercial claim: got {status!r}"
+    )
+
+
+def test_market_status_recognizes_a_real_commercial_phrase():
+    engine = make_engine([], similar_groups={})
+    text = "This extract is commercially available and marketed as a liver-support supplement."
+    status = engine._market_status(alt={}, evidence=text, market="EU")
+    assert status == "Commercial evidence reported, not independently verified"
+
+
+def test_market_status_ema_yes_maps_to_regulatory_monograph():
+    engine = make_engine([], similar_groups={})
+    status = engine._market_status(alt={"EMA_Status": "Yes"}, evidence="", market="EU")
+    assert status == "Regulatory monograph exists"
+
+
+def test_market_status_never_silently_returns_the_old_string():
+    # Locks in that the old, overclaiming vocabulary is fully gone.
+    engine = make_engine([], similar_groups={})
+    for text in ["", "no relevant text at all", "product market label patent dailymed fda"]:
+        status = engine._market_status(alt={}, evidence=text, market="EU")
+        assert status not in {
+            "Known / possibly saturated market",
+            "Regional fit / emerging opportunity",
+            "Limited market signal / possible white-space",
+        }, f"old overclaiming market status string leaked through: {status!r}"
+
+
+# ---------------------------------------------------------------------
+# 19) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

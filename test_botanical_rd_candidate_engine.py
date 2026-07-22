@@ -464,7 +464,47 @@ def test_evidence_hierarchy_detail_is_populated_end_to_end_through_run():
 
 
 # ---------------------------------------------------------------------
-# 17) ChEMBL connector rejects molecule records with no structure data.
+# 17) Negative evidence (Phase 4, audit 4.15) hiding in a non-best
+#     sub-row must survive the multi-compound merge — the same
+#     reasoning already applied to Safety_Flags/Interaction_Flags.
+#     Also confirms Evidence_Hierarchy_Detail/negative-evidence columns
+#     are populated end-to-end through engine.run().
+# ---------------------------------------------------------------------
+def test_negative_evidence_in_a_non_best_sub_row_survives_the_merge():
+    engine = make_engine([], similar_groups={})
+
+    strong_row_no_negative = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate",
+        Novelty_Status="Novel cross-region candidate", Rationale="... Decision: Strong R&D candidate.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+    )
+    strong_row_no_negative["R&D_Opportunity_Score"] = 90
+
+    weaker_row_with_negative = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed",
+        Novelty_Status="Novel cross-region candidate", Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=True, Negative_Evidence_Types="Null result",
+    )
+    weaker_row_with_negative["R&D_Opportunity_Score"] = 50
+
+    output = pd.DataFrame([strong_row_no_negative, weaker_row_with_negative])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert bool(merged.iloc[0]["Has_Negative_Evidence"]) is True, (
+        "negative evidence on a lower-scoring sub-row silently disappeared after merging"
+    )
+    assert "Null result" in str(merged.iloc[0]["Negative_Evidence_Types"])
+
+
+# ---------------------------------------------------------------------
+# 18) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

@@ -58,4 +58,4 @@ def render_evidence_step(inputs):
 
         if errors:
             st.warning("Some searches produced errors.")
-            st.dataframe(pd.DataFrame(errors), use_container_width=True)
+            st.dataframe(pd.DataFrame(errors), width="stretch")

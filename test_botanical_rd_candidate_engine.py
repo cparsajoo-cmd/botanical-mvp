@@ -399,7 +399,32 @@ def test_a_common_compound_sub_row_cant_single_handedly_cap_a_strong_multi_match
 
 
 # ---------------------------------------------------------------------
-# 14) ChEMBL connector rejects molecule records with no structure data.
+# 15) _extract_concentration (Phase 4, audit 4.10) must return "" — not
+#     a placeholder string — when nothing is found, since the score
+#     bonus and two display fallbacks elsewhere in the engine rely on
+#     that falsiness. And when text mixes two different concentration
+#     bases, the result must say so explicitly rather than silently
+#     joining them as if they were on equal footing.
+# ---------------------------------------------------------------------
+def test_extract_concentration_stays_falsy_when_empty_and_flags_mixed_bases():
+    engine = make_engine([], similar_groups={})
+
+    assert engine._extract_concentration("no numbers in this text at all") == ""
+    assert engine._extract_concentration("") == ""
+
+    mixed = engine._extract_concentration(
+        "One study reported 2 mg/g dry weight while another reported 5% total extract."
+    )
+    assert mixed.startswith("Not directly comparable"), mixed
+
+    single_basis = engine._extract_concentration(
+        "Two batches: 2 mg/g dry weight and 6 mg/g dry weight."
+    )
+    assert "Not directly comparable" not in single_basis, single_basis
+
+
+# ---------------------------------------------------------------------
+# 16) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

@@ -20,6 +20,9 @@ from structured_rationale import (
     evidence_weaknesses,
     next_experiment_suggestion,
 )
+from comparative_rationale import build_comparative_rationale
+from regulatory_barrier_classifier import classify_regulatory_barriers
+from industrial_feasibility import classify_industrial_feasibility
 
 try:
     from evidence_database import load_evidence_database
@@ -74,6 +77,7 @@ OUTPUT_COLUMNS = [
     "Target_Provenance",
     "Concentration_Info",
     "Extraction_Method",
+    "Industrial_Feasibility",
     "Co_Compounds",
     "Safety_Flags",
     "Interaction_Flags",
@@ -85,6 +89,7 @@ OUTPUT_COLUMNS = [
     "Has_Negative_Evidence",
     "Negative_Evidence_Types",
     "Market_Status",
+    "Regulatory_Barriers",
     "Novelty_Status",
     "R&D_Opportunity_Score",
     "Score_Breakdown",
@@ -99,6 +104,7 @@ OUTPUT_COLUMNS = [
     "Evidence_Strengths",
     "Evidence_Weaknesses",
     "Next_Experiment_Suggestion",
+    "Comparative_Rationale",
     "Rationale",
 ]
 
@@ -656,6 +662,10 @@ class BotanicalRDCandidateEngine:
 
                     extraction = self._best_extraction(alt, raw_evidence)
                     concentration = self._extract_concentration(raw_evidence)
+                    industrial_feasibility = classify_industrial_feasibility(
+                        extraction_fit_score=self._extraction_fit_score(extraction, dosage_form),
+                        has_concentration_data=bool(concentration),
+                    )
                     co_compounds = self._co_compounds(
                         compounds=alt_compounds,
                         matched=matched_compound,
@@ -720,6 +730,7 @@ class BotanicalRDCandidateEngine:
                         evidence=raw_evidence,
                         market=market,
                     )
+                    regulatory_barrier_result = classify_regulatory_barriers(raw_evidence)
 
                     # How many distinct plants (in the WHOLE database,
                     # independent of this indication) already contain the
@@ -813,6 +824,7 @@ class BotanicalRDCandidateEngine:
                     comm_reg_rationale = commercial_regulatory_rationale(
                         market_status=market_status,
                         white_space_type=white_space_type or "",
+                        regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
                     )
                     strengths = evidence_strengths(
                         match_quality=match_quality,
@@ -827,6 +839,7 @@ class BotanicalRDCandidateEngine:
                         negative_evidence_types="; ".join(negative_evidence.finding_types),
                         safety_flags=safety_flags or "No explicit flag found",
                         market_status=market_status,
+                        regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
                     )
                     next_experiment = next_experiment_suggestion(
                         decision_class_ah=decision_class_ah,
@@ -844,6 +857,7 @@ class BotanicalRDCandidateEngine:
                             "Target_Provenance": target_provenance or "Not applicable (no shared-target claim for this match type)",
                             "Concentration_Info": concentration or "Not clearly reported",
                             "Extraction_Method": extraction or "Not clearly reported",
+                            "Industrial_Feasibility": industrial_feasibility,
                             "Co_Compounds": co_compounds or "Not clearly extracted",
                             "Safety_Flags": safety_flags or "No explicit flag found",
                             "Interaction_Flags": interaction_flags or "No explicit flag found",
@@ -859,6 +873,7 @@ class BotanicalRDCandidateEngine:
                             "Has_Negative_Evidence": negative_evidence.is_negative,
                             "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,
+                            "Regulatory_Barriers": "; ".join(regulatory_barrier_result.barrier_types) if regulatory_barrier_result.has_barrier else "None identified",
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
                             "Score_Breakdown": self._format_score_breakdown(score_components),
@@ -931,6 +946,13 @@ class BotanicalRDCandidateEngine:
             by=["R&D_Opportunity_Score"],
             ascending=False,
         ).reset_index(drop=True)
+
+        # Architecture audit Q2 ("why were the others rejected?"): a
+        # post-processing pass over the now-complete, now-merged result
+        # — every row's FINAL score has to exist before any comparison
+        # is meaningful, so this runs last, exactly like
+        # _merge_multi_compound_matches already does one pass earlier.
+        output["Comparative_Rationale"] = build_comparative_rationale(output)
 
         return output[OUTPUT_COLUMNS]
 
@@ -1109,6 +1131,20 @@ class BotanicalRDCandidateEngine:
                         types.extend(t.strip() for t in v.split("; ") if t.strip())
                 best["Negative_Evidence_Types"] = "; ".join(sorted(set(types)))
 
+            # Q8 (regulatory barriers): same union-across-group
+            # reasoning as Negative_Evidence_Types just above — a
+            # barrier attached to one matched compound must not vanish
+            # because a different compound's sub-row scored higher.
+            if "Regulatory_Barriers" in group.columns:
+                barrier_types = []
+                for v in group["Regulatory_Barriers"]:
+                    v = str(v).strip()
+                    if v and v != "None identified":
+                        barrier_types.extend(t.strip() for t in v.split("; ") if t.strip())
+                best["Regulatory_Barriers"] = (
+                    "; ".join(sorted(set(barrier_types))) if barrier_types else "None identified"
+                )
+
             # Gap 1 (traceability): union every source ID cited by ANY
             # sub-row in this group, same reasoning as
             # Negative_Evidence_Types just above — a citation backing
@@ -1191,6 +1227,11 @@ class BotanicalRDCandidateEngine:
                 best["Commercial_Regulatory_Rationale"] = commercial_regulatory_rationale(
                     market_status=str(best.get("Market_Status", "")),
                     white_space_type=str(best.get("White_Space_Type", "")),
+                    regulatory_barriers=(
+                        str(best.get("Regulatory_Barriers", ""))
+                        if str(best.get("Regulatory_Barriers", "")) != "None identified"
+                        else None
+                    ),
                 )
                 merged_strengths = evidence_strengths(
                     match_quality=str(best.get("_match_quality", "")),
@@ -1205,6 +1246,11 @@ class BotanicalRDCandidateEngine:
                     negative_evidence_types=str(best.get("Negative_Evidence_Types", "")),
                     safety_flags=str(best.get("Safety_Flags", "")),
                     market_status=str(best.get("Market_Status", "")),
+                    regulatory_barriers=(
+                        str(best.get("Regulatory_Barriers", ""))
+                        if str(best.get("Regulatory_Barriers", "")) != "None identified"
+                        else None
+                    ),
                 )
                 best["Evidence_Strengths"] = "; ".join(merged_strengths) if merged_strengths else "None identified"
                 best["Evidence_Weaknesses"] = "; ".join(merged_weaknesses) if merged_weaknesses else "None identified"
@@ -2209,4 +2255,1221 @@ class BotanicalRDCandidateEngine:
             # Full bonus only when the shared target is carried by 2
             # compounds (the minimum for it to be "shared" at all);
             # decays smoothly as more compounds carry it.
-            chem_bonus *= min
+            chem_bonus *= min(1.0, 2.0 / target_specificity)
+
+        # A compound found in only a handful of plants IS the strong
+        # signal this score is meant to reward — two species sharing a
+        # rare, specific compound is genuinely informative. A compound
+        # found across hundreds/thousands of unrelated plants tells you
+        # almost nothing about THIS pair, no matter which two plants it
+        # is (any indication, any species) — so its contribution is
+        # scaled down smoothly as commonality grows, using the same
+        # database-derived threshold everywhere in the engine, rather
+        # than being capped by a fixed number of "known common
+        # compounds".
+        threshold = self.compound_commonality_threshold
+        if threshold and compound_plant_count > 0:
+            # 1x threshold -> no penalty yet; 4x threshold or more -> up
+            # to ~80% of the chemical-link bonus removed.
+            overage = max(0.0, (compound_plant_count / threshold) - 1.0)
+            penalty_ratio = min(0.8, overage / 3.0)
+            chem_bonus = chem_bonus * (1 - penalty_ratio)
+
+        score += chem_bonus
+        components["Chemical/mechanistic link"] = round(chem_bonus, 1)
+
+        # 2) Evidence quality. The previous engine rewarded any text too much.
+        # Here weak/no evidence cannot produce a high-confidence candidate.
+        evidence_points = {
+            "Clinical / human evidence": 24,
+            "Regulatory / monograph evidence": 20,
+            "Preclinical / mechanistic evidence": 12,
+            "General literature signal": 7,
+            "No direct evidence": 0,
+        }
+        evidence_component = evidence_points.get(evidence_level, 0)
+        score += evidence_component
+        components["Evidence quality"] = evidence_component
+
+        # 3) Product-development fit. These matter, but they must not
+        # overpower poor evidence.
+        product_fit_component = 0
+        product_fit_component += 10 if concentration else 2
+        product_fit_component += min(18, self._extraction_fit_score(extraction, dosage_form))
+        product_fit_component += min(8, len(self._split_compound_terms(co_compounds)) * 2)
+        product_fit_component += 8 if target else 1
+        score += product_fit_component
+        components["Product-development fit"] = product_fit_component
+
+        # 4) Novelty is valuable only after some scientific basis exists.
+        # A "common compound" novelty label (see _novelty_status) must
+        # NOT collect this bonus — a compound found everywhere is the
+        # opposite of a novel, differentiating finding.
+        novelty_component = 0
+        if evidence_level != "No direct evidence":
+            if "Common" in novelty_status or "non-specific" in novelty_status:
+                novelty_component = 0
+            elif "Alternative" in novelty_status or "Cross-region" in novelty_status:
+                novelty_component = 10
+            else:
+                novelty_component = 2
+        score += novelty_component
+        components["Novelty"] = novelty_component
+
+        # 5) Market signal is a small modifier, not the core scientific score.
+        # Matches the MarketVerificationStatus vocabulary from
+        # _market_status() (audit 4.6/4.7, extended Gap 2). "Search not
+        # performed" is deliberately neutral, not a white-space bonus —
+        # a real product/patent search hasn't actually been run, so
+        # this must not be scored as if emptiness had been confirmed.
+        # "No verified product found" (only returned once a real
+        # retail/patent search is wired in — currently dead code path,
+        # kept for forward compatibility) is the only status that earns
+        # the white-space-style bonus, because it's the only one that
+        # reflects an actual completed search.
+        market_lower = market_status.lower()
+        if "verified marketed product" in market_lower:
+            market_component = 1
+        elif "regulatory monograph" in market_lower or "traditional-use" in market_lower:
+            market_component = 2
+        elif "commercial evidence reported" in market_lower:
+            market_component = 2
+        elif "no verified product found" in market_lower:
+            market_component = 6
+        elif "conflicting market evidence" in market_lower:
+            # A real, detected disagreement between two signals (e.g.
+            # regulatory recognition vs. a discontinuation mention) is
+            # worth flagging with a small penalty, not treated as
+            # neutral — it means the market picture for this candidate
+            # genuinely needs a human to resolve before acting on it.
+            market_component = -2
+        elif "search incomplete" in market_lower:
+            # Slightly more informative than "not performed" (a live
+            # search did run this session), but still no market signal
+            # was actually found — same neutral treatment as "not
+            # performed", not a bonus.
+            market_component = 3
+        else:  # "Search not performed", "Source unavailable", "Unknown"
+            market_component = 3
+        score += market_component
+        components["Market signal"] = market_component
+
+        # 6) Penalize safety and interaction flags strongly. A candidate with
+        # clear safety issues should not be presented as attractive without
+        # qualification.
+        safety_component = 0
+        if safety_flags:
+            safety_component -= 14
+
+        if interaction_flags:
+            safety_component -= 10
+
+        if same_plant:
+            safety_component -= 15
+
+        score += safety_component
+        components["Safety/interaction/self-row penalty"] = safety_component
+
+        final_score = round(max(0, min(100, score)), 1)
+        return final_score, components
+
+    def _extraction_fit_score(self, extraction, dosage_form):
+        extraction_norm = self._norm(extraction)
+        dosage_norm = self._norm(dosage_form)
+
+        if not extraction_norm:
+            return 3
+
+        score = 8
+
+        if any(
+            term in extraction_norm
+            for term in ["aqueous", "water", "infusion", "decoction"]
+        ):
+            score += 10
+
+            if any(
+                term in dosage_norm
+                for term in ["infusion", "tea", "herbal"]
+            ):
+                score += 8
+
+        if any(
+            term in extraction_norm
+            for term in ["ethanol", "hydroalcoholic", "extract"]
+        ):
+            score += 8
+
+            if any(
+                term in dosage_norm
+                for term in [
+                    "capsule",
+                    "tablet",
+                    "extract",
+                    "cream",
+                    "gel",
+                    "ointment",
+                ]
+            ):
+                score += 6
+
+        if any(
+            term in extraction_norm
+            for term in ["essential oil", "distillation"]
+        ):
+            score += 6
+
+            if any(
+                term in dosage_norm
+                for term in ["cream", "gel", "essential oil"]
+            ):
+                score += 5
+
+        return min(score, 26)
+
+    def _market_status(self, alt, evidence, market):
+        """Market status, using the same controlled vocabulary as
+        data_contracts.MarketVerificationStatus (audit 4.6/4.7), plus
+        two additional honest states (Gap 2, "Market Intelligence
+        completeness"): "Conflicting market evidence" and "Search
+        incomplete" — both built from signals this function already
+        computes, not from any new data source.
+
+        HONESTY CONSTRAINT: this engine has no real retail-product or
+        patent-database connection wired into this per-row path — see
+        _search_retail_products() below, which literally returns "Not
+        implemented", and the patent connector, which only activates
+        with EPO_OPS_KEY/EPO_OPS_SECRET env vars set (those two DO run,
+        but on a separate, per-plant "market landscape" panel —
+        market_landscape() below — not per candidate row; calling them
+        here would mean a live network/API call for every single
+        alternative-plant row in a run, which is a cost/latency
+        decision that deserves its own review, not a side effect of
+        this fix). So "Verified marketed product" and "No verified
+        product found" remain unreachable from this function specifically
+        — kept in the vocabulary for forward compatibility with
+        market_landscape()'s own, separately-verified results.
+
+        "Conflicting market evidence": when two of this function's OWN
+        signals disagree — e.g. EMA_Status says "Yes" (a regulatory
+        monograph exists) but the same evidence text explicitly says
+        the product has been discontinued/withdrawn. That's a genuine,
+        detectable disagreement between two real, present signals, not
+        a guess.
+
+        "Search incomplete": distinguishes "a live search ran this
+        session but returned nothing about this SPECIFIC candidate"
+        (self.use_live_search is True, evidence is still empty) from
+        "no search was ever attempted for this candidate at all"
+        (self.use_live_search is False — a curated/seed-only run). The
+        old version treated both as identically "Search not performed",
+        which overstated how little was actually done for the
+        live-search case.
+        """
+        ema = self._pick(alt, ["EMA_Status"])
+        text = self._norm(evidence)
+
+        # Narrow, multi-word phrase patterns — not bare words like
+        # "product" or "market", which show up constantly in text that
+        # has nothing to do with a real commercial product ("the
+        # product of this reaction", "on the world market for herbal
+        # teas in general").
+        commercial_phrase_patterns = [
+            r"\bmarketed as\b", r"\bmarketed product\b",
+            r"\bavailable as a supplement\b", r"\bavailable as an? product\b",
+            r"\bcommercially available\b", r"\bsold as\b", r"\bbranded as\b",
+        ]
+        commercial_signal = any(re.search(p, text) for p in commercial_phrase_patterns)
+
+        discontinued_patterns = [
+            r"\bdiscontinued\b", r"\bwithdrawn from the market\b",
+            r"\bno longer (?:available|marketed|sold)\b",
+            r"\bnot currently (?:available|marketed|sold)\b",
+            r"\bproduct recall\b",
+        ]
+        discontinued_signal = any(re.search(p, text) for p in discontinued_patterns)
+
+        # A real disagreement: something asserts market presence
+        # (regulatory recognition or a commercial-phrase mention) AND
+        # something else in the SAME evidence asserts the product is
+        # gone/unavailable. Checked first — this is more informative to
+        # surface than picking one side and silently discarding the other.
+        if (ema == "Yes" or commercial_signal) and discontinued_signal:
+            return "Conflicting market evidence"
+
+        if ema == "Yes":
+            return "Regulatory monograph exists"
+
+        if commercial_signal:
+            return "Commercial evidence reported, not independently verified"
+
+        traditional_use_patterns = [
+            r"\btraditional(?:ly)? use\b", r"\bwell-established use\b",
+            r"\btraditional medicine\b",
+        ]
+        if any(re.search(p, text) for p in traditional_use_patterns):
+            return "Traditional-use status"
+
+        if self.use_live_search:
+            # A live search ran this session (Step 2 was used), but
+            # nothing turned up about THIS specific candidate — a
+            # genuinely different, more-informative claim than "no
+            # search was ever attempted."
+            return "Search incomplete"
+
+        return "Search not performed"
+
+    def _novelty_status(
+        self,
+        ref_plant,
+        alt_plant,
+        matched,
+        ref_compound,
+        alt,
+        compound_is_common=False,
+        compound_plant_count=0,
+    ):
+        if self._norm(ref_plant) == self._norm(alt_plant):
+            return "Reference plant / benchmark"
+
+        matched_clean = matched.split("[")[0].strip()
+
+        # A compound this common tells you almost nothing about THIS
+        # specific plant pair, whatever indication or species are
+        # involved — so it must not be labelled as if it were a
+        # meaningful "alternative source" finding.
+        if compound_is_common:
+            return (
+                f"Common/non-specific compound — found in "
+                f"{compound_plant_count}+ plants database-wide, "
+                f"low differentiation value"
+            )
+
+        if self._norm(matched_clean) == self._norm(ref_compound):
+            return "Alternative source with same compound"
+
+        region = self._pick(alt, ["Region"])
+
+        if region:
+            return f"Cross-region similar-compound opportunity ({region})"
+
+        return "Alternative source with similar compound"
+
+    def _decision_class(
+        self,
+        score,
+        safety_flags,
+        interaction_flags,
+        has_evidence,
+        match_quality,
+        evidence_level="No direct evidence",
+        compound_is_common=False,
+        target_specificity=None,
+        same_plant=False,
+    ):
+        # A documented serious toxicity (kidney-stone formation,
+        # carcinogenicity, organ toxicity, etc.) is a hard stop: no score,
+        # no amount of "shared compound" chemistry, and no evidence level
+        # should ever let such a candidate be labelled "Strong" or
+        # "Promising" and surface under "Recommended". Previously this
+        # only capped the ceiling at "Promising candidate; verify safety
+        # and standardization" — but that string still contains the word
+        # "promising", so the Step 6 UI's keyword filter kept showing
+        # candidates like calcium oxalate (documented as "Lithogenic") in
+        # the Recommended table. This check happens first and overrides
+        # everything else below, for any compound, any plant, any
+        # indication.
+        #
+        # EXCEPT for the reference plant matched to itself (same_plant).
+        # That row isn't a candidate being proposed as an alternative —
+        # it's a description of the reference plant's own baseline
+        # compound profile, which the merge step (see the row-merging
+        # function) can combine dozens of that plant's compounds into.
+        # If even one minor/trace compound out of dozens carries a hard
+        # safety term, the reference plant itself — which may be a
+        # long-established, widely-used herb — would get labelled
+        # "Safety concern — not suitable", which is misleading: it reads
+        # as a judgment on the whole plant, when it's really a flag on
+        # one of many minor constituents. The flags themselves are still
+        # shown either way (Safety_Flags column, Rationale) — only the
+        # hard auto-exclusion is skipped for the self-row, for any
+        # plant, not a special case for any one species.
+        flagged_terms = {
+            term.strip() for term in safety_flags.split("; ") if term.strip()
+        }
+        if (flagged_terms & HARD_SAFETY_TERMS) and not same_plant:
+            return "Safety concern — not suitable without expert review"
+
+        # Controversial-only flags (carcinogenic/mutagenic/genotoxic with
+        # no accompanying hard-tier term) fall straight through past the
+        # hard-exclusion check above — they don't force exclusion. They
+        # still can't reach "Strong" on their own: `safety_flags` being
+        # non-empty already makes `risky` True below, which caps the
+        # ceiling at "Promising candidate; verify safety and
+        # standardization" — visible and capped, but a human still gets
+        # to see and weigh it rather than having it silently excluded.
+        risky = bool(safety_flags) or bool(interaction_flags)
+
+        if score >= 78 and not risky:
+            base = "Strong R&D candidate"
+        elif score >= 62:
+            base = "Promising candidate; verify safety and standardization"
+        elif score >= 45:
+            base = "Early-stage candidate; more evidence needed"
+        else:
+            base = "Low priority / insufficient data"
+
+        order = [
+            "Low priority / insufficient data",
+            "Early-stage candidate; more evidence needed",
+            "Promising candidate; verify safety and standardization",
+            "Strong R&D candidate",
+        ]
+
+        # Confidence caps make the output scientifically defensible.
+        if not has_evidence or evidence_level == "No direct evidence":
+            ceiling = (
+                "Promising candidate; verify safety and standardization"
+                if match_quality == "exact"
+                else "Early-stage candidate; more evidence needed"
+            )
+        elif evidence_level in {"General literature signal", "Preclinical / mechanistic evidence"}:
+            ceiling = "Promising candidate; verify safety and standardization"
+        elif risky:
+            ceiling = "Promising candidate; verify safety and standardization"
+        else:
+            ceiling = "Strong R&D candidate"
+
+        # A match resting on a compound found across hundreds/thousands
+        # of unrelated plants database-wide is not, by itself, strong
+        # enough scientific grounds for a top-tier recommendation —
+        # regardless of which plant, compound, or indication is involved.
+        # Genuinely strong independent evidence (clinical or regulatory)
+        # can still carry a candidate to "Strong", since that no longer
+        # relies on the compound match being specific. The same applies
+        # to a "target_verified" match whose confirming shared target is
+        # carried by several other compounds too — a weak confirmation,
+        # even if not literally "generic" by any fixed cutoff.
+        weak_target_match = (
+            match_quality == "target_verified"
+            and target_specificity
+            and target_specificity > 4
+        )
+        needs_cap = compound_is_common or weak_target_match
+        if needs_cap and evidence_level not in {
+            "Clinical / human evidence",
+            "Regulatory / monograph evidence",
+        }:
+            common_ceiling = "Early-stage candidate; more evidence needed"
+            if order.index(common_ceiling) < order.index(ceiling):
+                ceiling = common_ceiling
+
+        if order.index(base) > order.index(ceiling):
+            return ceiling
+
+        return base
+
+    def _evidence_level(self, evidence):
+        text = self._norm(evidence)
+        if not text:
+            return "No direct evidence"
+
+        # Specific, multi-word phrases that actually indicate a real
+        # clinical study design — deliberately NOT single common words
+        # like "human", "patient", "subjects", or "participants". Those
+        # generic words show up constantly in evidence text that has
+        # NOTHING to do with an actual clinical trial (safety
+        # disclaimers, food-use history, unrelated abstracts pooled in
+        # from other records about the same plant) — using them as
+        # triggers was silently classifying the vast majority of
+        # candidates as having "Clinical / human evidence" regardless of
+        # whether any such evidence actually existed.
+        clinical_terms = [
+            "clinical trial", "randomized controlled trial",
+            "randomised controlled trial", "double-blind", "double blind",
+            "placebo-controlled", "placebo controlled", "human trial",
+            "human study", "clinical study", "cohort study",
+            "case-control study", "phase i trial", "phase ii trial",
+            "phase iii trial", "meta-analysis", "systematic review",
+            "clinicaltrials.gov",
+        ]
+        regulatory_terms = [
+            "ema", "hmpc", "hmcp", "escop", "who monograph", "monograph",
+            "traditional use", "well-established use",
+        ]
+        preclinical_terms = [
+            "in vitro", "in vivo", "animal model", "mouse model",
+            "rat model", "mechanism of action", "signaling pathway",
+            "receptor binding", "enzyme inhibition",
+        ]
+
+        # A term immediately preceded by a negation cue within a short
+        # word window doesn't count as positive evidence — "no clinical
+        # trials have been conducted" and "insufficient human studies"
+        # should not be scored the same as an actual reported trial.
+        negation_cues = (
+            "no ", "not ", "lack of ", "lacks ", "insufficient ",
+            "absence of ", "without ", "none found", "no evidence of ",
+            "no direct ", "unproven", "unconfirmed", "no reported ",
+        )
+
+        def _has_term(terms):
+            for term in terms:
+                # Word-boundary match, not a bare substring search — a
+                # short term like "ema" otherwise matches inside
+                # unrelated words ("hematology", "remain"). Same bug
+                # class as the anti-X collision already fixed for
+                # DB_ACTIVITY_SAFETY_TERMS elsewhere in this file.
+                pattern = re.compile(r"\b" + re.escape(term) + r"\b")
+                for match in pattern.finditer(text):
+                    window_start = max(0, match.start() - 40)
+                    preceding = text[window_start:match.start()]
+                    if not any(cue in preceding[-25:] for cue in negation_cues):
+                        return True
+            return False
+
+        if _has_term(clinical_terms):
+            return "Clinical / human evidence"
+        if _has_term(regulatory_terms):
+            return "Regulatory / monograph evidence"
+        if _has_term(preclinical_terms):
+            return "Preclinical / mechanistic evidence"
+        return "General literature signal"
+
+    def _rationale(
+        self,
+        product_type,
+        problem,
+        dosage_form,
+        ref_plant,
+        ref_compound,
+        alt_plant,
+        matched,
+        match_quality,
+        has_evidence,
+        evidence_level,
+        extraction,
+        concentration,
+        co_compounds,
+        market_status,
+        novelty_status,
+        decision,
+    ):
+        basis = {
+            "exact": "it contains the exact same reference compound",
+            "target_verified": "it contains a chemically-related compound "
+                                "that ALSO shares a validated biological "
+                                "target with the reference compound (see "
+                                "the compound column for how many other "
+                                "known compounds also carry that target — "
+                                "fewer means a more specific, meaningful "
+                                "link)",
+            "class_only": "it contains a compound from the same broad "
+                          "chemical family only — no shared biological "
+                          "target has been confirmed yet, so this link is "
+                          "a hypothesis, not evidence",
+        }.get(match_quality, "an unspecified link")
+
+        evidence_note = (
+            f"Evidence level: {evidence_level}."
+            if has_evidence else
+            "No literature evidence text was found yet for this "
+            "plant/compound pair — this candidate's confidence has been "
+            "capped accordingly until evidence is collected."
+        )
+
+        return (
+            f"For {product_type} targeting {problem}, {alt_plant} is compared "
+            f"with {ref_plant} because {basis} ({matched}), linked to the "
+            f"reference compound {ref_compound}. Extraction fit for "
+            f"{dosage_form}: {extraction or 'not clearly reported'}. "
+            f"Concentration: {concentration or 'not clearly reported'}. "
+            f"Co-compounds: {co_compounds or 'not clearly extracted'}. "
+            f"Market: {market_status}. Novelty: {novelty_status}. "
+            f"{evidence_note} Decision: {decision}."
+        )
+
+    def _target_or_mechanism(self, ref_targets, alt):
+        alt_targets = self._split_terms(
+            self._pick(alt, ["Known_Targets"])
+        )
+
+        ref_target_norms = {
+            self._norm(target)
+            for target in ref_targets
+        }
+
+        shared = [
+            target
+            for target in alt_targets
+            if self._norm(target) in ref_target_norms
+        ]
+
+        if shared:
+            return "; ".join(shared)
+
+        return "; ".join(alt_targets or ref_targets)
+
+    @staticmethod
+    def _target_or_mechanism_fast(
+        ref_targets, ref_target_norms, alt_targets, alt_target_norms
+    ):
+        """Same result as _target_or_mechanism, but takes pre-normalized
+        target lists so it does zero _norm() calls itself. At Dr. Duke's
+        scale, target lists can be long (a compound's activities list),
+        and re-normalizing both sides on every single (reference, alt)
+        pair — instead of once per reference and once per alt-candidate —
+        was responsible for the vast majority of run()'s runtime (tens of
+        millions of redundant _norm() calls for a single indication).
+        """
+        shared = [
+            target
+            for target, norm in zip(alt_targets, alt_target_norms)
+            if norm in ref_target_norms
+        ]
+
+        if shared:
+            return "; ".join(shared)
+
+        return "; ".join(alt_targets or ref_targets)
+
+    def _extract_concentration(self, text):
+        # Was: a flat set of regexes joined into one string with no
+        # indication of WHAT BASIS each number was on (see audit 4.10 —
+        # "0.5%; 3 mg/g" tells a reader nothing about whether those two
+        # numbers are even meant to sit side by side). Now: every value
+        # is classified by basis, and if a single text mixes bases, the
+        # returned string says so explicitly instead of leaving it to
+        # the reader to notice. See concentration_normalizer.py.
+        #
+        # Returns "" (not a placeholder string) when nothing is found —
+        # existing callers rely on that falsiness: the score-presence
+        # bonus ("score += 10 if concentration else 2") and the two
+        # "concentration or 'not clearly reported'" display fallbacks
+        # elsewhere in this file both break if this always returns a
+        # non-empty string.
+        parsed = parse_concentration(text)
+        if not parsed:
+            return ""
+        return format_concentration_info(parsed)[:300]
+
+    def _extract_extraction(self, text):
+        text_norm = self._norm(text)
+        found = []
+
+        for label, keywords in EXTRACTION_KEYWORDS.items():
+            if any(keyword in text_norm for keyword in keywords):
+                found.append(label)
+
+        return "; ".join(sorted(set(found)))
+
+    def _co_compounds(self, compounds, matched, compound_norms=None):
+        matched_base = self._norm(matched.split("[")[0])
+
+        if compound_norms is None:
+            compound_norms = [self._norm(c) for c in compounds]
+
+        co_compounds = [
+            compound
+            for compound, norm in zip(compounds, compound_norms)
+            if norm != matched_base
+        ]
+
+        return "; ".join(co_compounds[:8])
+
+    def _extract_flags(self, text, terms):
+        text_norm = self._norm(text)
+
+        found = [
+            term
+            for term in terms
+            if term in text_norm
+        ]
+
+        return "; ".join(sorted(set(found)))
+
+    # Negation cues that flip a nearby hazard word from "present" to
+    # "explicitly absent" — "no adverse events", "without toxicity",
+    # "lacks contraindications" should not be flagged the same as an
+    # actual reported hazard. Shared with _evidence_level's own
+    # negation handling below (same technique, same reasoning).
+    _NEGATION_CUES = (
+        "no ", "not ", "lack of ", "lacks ", "insufficient ",
+        "absence of ", "without ", "none found", "no evidence of ",
+        "no direct ", "unproven", "unconfirmed", "no reported ",
+        "did not show", "did not exhibit", "devoid of",
+    )
+
+    @classmethod
+    def _extract_flags_negation_aware(cls, text, terms):
+        """Like _extract_flags, but for free prose (paper abstracts,
+        regulatory notes) rather than a database's own structured
+        activity list. Two independent ways a hazard word's plain
+        substring can mean the OPPOSITE of a hazard, both very common in
+        safety-literature phrasing:
+          1. A negation phrase just before it: "no adverse events",
+             "without toxicity", "did not show hepatotoxicity".
+          2. An "anti-" prefix fused directly onto the word with no
+             space: "antitoxic", "antihepatotoxic" — the same collision
+             already found and fixed for Dr. Duke's own structured
+             activity tags (e.g. "anticonvulsant"), but free text needs
+             its own check since it isn't a clean list of discrete terms
+             to exact-match against.
+        Applies to every term in `terms`, not a special case for any one
+        word or compound.
+        """
+        text_norm = cls._norm(text)
+        if not text_norm:
+            return ""
+
+        found = []
+        for term in terms:
+            idx = text_norm.find(term)
+            while idx != -1:
+                anti_fused = text_norm[max(0, idx - 4):idx] == "anti"
+                window_start = max(0, idx - 40)
+                preceding = text_norm[window_start:idx]
+                negated = anti_fused or any(
+                    cue in preceding[-25:] for cue in cls._NEGATION_CUES
+                )
+                if not negated:
+                    found.append(term)
+                    break
+                idx = text_norm.find(term, idx + 1)
+
+        return "; ".join(sorted(set(found)))
+
+    @staticmethod
+    def _extract_hazard_flags_exact(known_terms, hazard_terms):
+        """For matching against a DISCRETE set of known activity terms
+        (e.g. a compound's own Dr. Duke's Known_Target list, already
+        split into individual named activities) rather than free-text
+        prose. Checks each term for an EXACT match (after normalizing)
+        against the hazard vocabulary, instead of substring-searching a
+        joined blob.
+
+        This distinction matters: Dr. Duke's own vocabulary includes
+        both a hazard term AND its protective opposite as separate,
+        deliberate entries — "Convulsant" and "Anticonvulsant",
+        "Carcinogenic" and "Anticarcinogenic", "Mutagenic" and
+        "Antimutagenic", "Hepatotoxic" and "Antihepatotoxic", "Emetic"
+        and "Antiemetic", "Genotoxic" and "Antigenotoxic", "Hemolytic"
+        and "Antihemolytic" all coexist in the same database. Substring
+        matching (`"convulsant" in text`) can't tell these apart —
+        "convulsant" is trivially a substring of "anticonvulsant", so a
+        compound extensively documented as PROTECTIVE against seizures
+        (linalool has a substantial body of published anticonvulsant
+        research) was being flagged as if it caused them. Comparing
+        each already-discrete term for an exact match closes this off
+        for every hazard term with an "anti-" counterpart, not just
+        this one compound or this one term.
+        """
+        known_norm = {BotanicalRDCandidateEngine._norm(t) for t in known_terms}
+        found = [
+            term for term in hazard_terms
+            if term in known_norm
+        ]
+        return "; ".join(sorted(set(found)))
+
+    def _evidence_source(self, plant, compound, evidence):
+        if self._curated_evidence_for(plant):
+            return (
+                "Curated regulatory & clinical evidence "
+                "(EMA/WHO/ESCOP-reviewed, cited studies) — "
+                "seed_data.SLEEP_TEA_EVIDENCE"
+            )
+
+        if evidence:
+            return "Live-collected evidence (PubMed/Europe PMC/Supabase)"
+
+        return f"Seed candidate database: {plant} / {compound}"
+
+    @staticmethod
+    def _format_score_breakdown(components):
+        """Formats _score_candidate's components dict, ranked by
+        absolute contribution (largest first) — directly answers the
+        architecture-audit question "which evidence contributed MOST
+        to this score?" without requiring the reader to recompute
+        anything."""
+        if not components:
+            return "No breakdown available"
+        ranked = sorted(components.items(), key=lambda kv: abs(kv[1]), reverse=True)
+        return "; ".join(f"{name}: {value:+.1f}" for name, value in ranked)
+
+    @staticmethod
+    def _occurrence_corroboration(evidence_source_ids):
+        """Gap 3, "Alternative Source scientific defensibility": how many
+        INDEPENDENT sources actually back this row's concentration/
+        extraction/co-compound claims, not just whether any text was
+        found at all. Built directly from Gap 1's evidence_source_ids
+        (the distinct Source_URLs that contributed to this row's
+        raw_evidence) — no new data collection, just an honest count of
+        what's already there.
+
+        This does NOT attempt to attribute individual claims (e.g.
+        "concentration came from source A, extraction from source B")
+        to specific sources — that would require preserving per-record
+        text boundaries all the way through _build_evidence_text_index's
+        flattening step, a larger change than this one. What this DOES
+        give: a row backed by 3 independent papers is honestly
+        distinguishable from a row backed by 1, or by none at all —
+        the single most important defensibility signal missing before
+        this, at the cost of the smallest possible change.
+        """
+        count = len(evidence_source_ids) if evidence_source_ids else 0
+        if count == 0:
+            return "No independent source identified — not corroborated"
+        if count == 1:
+            return "Single-source claim — not independently corroborated"
+        return f"Corroborated by {count} independent sources"
+
+    def _known_compounds_from_text(self, text):
+        text_norm = self._norm(text)
+        found = []
+
+        for compound in self.compound_to_class:
+            if compound in text_norm:
+                found.append(compound)
+
+        return found
+
+    @staticmethod
+    def _to_dataframe(data):
+        if data is None:
+            return pd.DataFrame()
+
+        if isinstance(data, pd.DataFrame):
+            return data.copy()
+
+        return pd.DataFrame(data)
+
+    @staticmethod
+    def _meaningful_tokens(text):
+        """Word tokens from an indication string, with generic/connector
+        words (&, support, health, ...) removed so token-overlap fallback
+        matching only fires on genuinely distinctive shared words.
+
+        Splits on ANY run of non-alphanumeric characters, not just
+        whitespace — e.g. Dr. Duke's "Premenstrual Syndrome/PMS" must
+        become the two separate tokens "syndrome" and "pms", not one
+        glued "syndrome/pms" token that can never match a standalone
+        "pms" query token.
+        """
+        raw_tokens = re.split(r"[^a-z0-9]+", text)
+        return {
+            token for token in raw_tokens
+            if token not in INDICATION_STOPWORDS and len(token) > 2
+        }
+
+    @staticmethod
+    def _tokens_overlap(tokens_a, tokens_b):
+        """True on exact token overlap OR when one token is a substring
+        of another (both >=5 chars, to avoid noisy short-string false
+        positives). Plain set intersection alone misses real matches like
+        "menstrual" vs "premenstrual" — same underlying condition, just a
+        prefixed spelling — which silently starved indications of any
+        Supabase-backed match and fell back to a single old manually
+        curated plant instead of the real, much richer dataset.
+        """
+        if not tokens_a or not tokens_b:
+            return False
+        if tokens_a & tokens_b:
+            return True
+        for a in tokens_a:
+            for b in tokens_b:
+                if len(a) >= 5 and len(b) >= 5 and (a in b or b in a):
+                    return True
+        return False
+
+    @staticmethod
+    def _norm(value):
+        if value is None:
+            return ""
+
+        value = str(value).strip().lower()
+
+        if value in {"nan", "none", "null"}:
+            return ""
+
+        return re.sub(r"\s+", " ", value)
+
+    @classmethod
+    def _norm_taxon(cls, value):
+        """Like _norm, but also strips botanical-nomenclature tokens
+        (the hybrid marker "×"/standalone "x", and infraspecific rank
+        abbreviations subsp./ssp./var./f./cv./nothosubsp.) that a
+        database's full taxonomic name carries but a person's everyday
+        working name for the same plant usually won't. Used only for
+        MATCHING a user-supplied plant name against the database — the
+        database's actual full name is still what gets displayed and
+        used everywhere else."""
+        text = cls._norm(value)
+        text = text.replace("×", " x ")
+        text = re.sub(
+            r"\b(x|subsp|ssp|nothosubsp|var|f|cv)\b\.?",
+            " ",
+            text,
+        )
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _split_terms(value):
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = re.split(r"[,;|/]", str(value))
+
+        clean_items = []
+
+        for item in raw_items:
+            item = str(item).strip()
+
+            if item and item.lower() not in {"nan", "none", "null"}:
+                clean_items.append(item)
+
+        return clean_items
+
+    @staticmethod
+    def _split_compound_terms(value):
+        """Like _split_terms, but for lists of COMPOUND NAMES
+        specifically. Chemical nomenclature routinely uses a comma as
+        part of a single compound's own name — "1,8-Cineole",
+        "2,3-dihydrobenzofuran", "3,4-Dihydroxyphenylacetic acid" are all
+        one compound each. _split_terms splitting on "," was fragmenting
+        these into nonsense tokens (a bare "1" plus "8-Cineole" as two
+        separate "compounds") every time a compound list got serialized
+        and re-parsed. This splits only on ";" and "|" — real delimiters
+        this codebase actually uses between distinct compounds in a
+        list — never on "," or "/", for any compound name, not just the
+        ones that happened to surface this."""
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = re.split(r"[;|]", str(value))
+
+        clean_items = []
+
+        for item in raw_items:
+            item = str(item).strip()
+
+            if item and item.lower() not in {"nan", "none", "null"}:
+                clean_items.append(item)
+
+        return clean_items
+
+    @staticmethod
+    def _pick(row, names):
+        for name in names:
+            try:
+                value = row.get(name, "")
+            except AttributeError:
+                value = ""
+
+            if (
+                value is not None
+                and str(value).strip()
+                and str(value).lower() not in {"nan", "none", "null"}
+            ):
+                return str(value).strip()
+
+        return ""
+
+    # ------------------------------------------------------------------ #
+    # Known inventory: what is already known for this problem, before any
+    # alternative-plant discovery runs. Pure offline lookup against
+    # seed_data (PLANT_COMPOUNDS / COMPOUND_TARGETS / TARGET_DISEASES).
+    # ------------------------------------------------------------------ #
+
+    def known_inventory_df(self, indication):
+        columns = [
+            "Known_Plant",
+            "Known_Compound",
+            "Chemical_Class",
+            "Known_Target",
+            "Evidence_Level",
+            "Typical_Extraction",
+        ]
+
+        indication_norm = self._norm(indication)
+
+        if not indication_norm:
+            return pd.DataFrame(columns=columns)
+
+        if not self.plant_compounds_df.empty:
+            supabase_result = self._known_inventory_from_supabase(
+                indication_norm, columns
+            )
+            if not supabase_result.empty:
+                return supabase_result
+
+        return self._known_inventory_from_seed_data(indication_norm, columns)
+
+    def _known_inventory_from_supabase(self, indication_norm, columns):
+        """Primary path: filter the real plant_compounds table (806
+        records) directly by its own `indication` column.
+        """
+        df = self.plant_compounds_df.copy()
+
+        if "indication" not in df.columns:
+            return pd.DataFrame(columns=columns)
+
+        df["_indication_norm"] = df["indication"].fillna("").map(self._norm)
+
+        mask = df["_indication_norm"].apply(
+            lambda text: bool(text)
+            and (indication_norm in text or text in indication_norm)
+        )
+
+        indication_tokens = self._meaningful_tokens(indication_norm)
+        token_mask = df["_indication_norm"].apply(
+            lambda text: bool(text)
+            and self._tokens_overlap(
+                indication_tokens, self._meaningful_tokens(text)
+            )
+        )
+        mask = mask | token_mask
+
+        matched = df[mask]
+
+        if matched.empty:
+            return pd.DataFrame(columns=columns)
+
+        rows = []
+        for _, row in matched.iterrows():
+            known_plant = str(row.get("scientific_name") or "").strip()
+            known_compound = str(row.get("compound_name") or "").strip()
+
+            if not known_plant or not known_compound:
+                continue
+
+            rows.append({
+                "Known_Plant": known_plant,
+                "Known_Compound": known_compound,
+                "Chemical_Class": str(row.get("compound_class") or "").strip(),
+                "Known_Target": str(row.get("target") or "").strip(),
+                "Evidence_Level": str(row.get("evidence_level") or "").strip(),
+                "Typical_Extraction": str(row.get("extraction_method") or "").strip(),
+            })
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return (
+            pd.DataFrame(rows)
+            .drop_duplicates()
+            .sort_values(["Known_Plant", "Known_Compound"])
+            .reset_index(drop=True)
+        )
+
+    def _known_inventory_from_seed_data(self, indication_norm, columns):
+        """Fallback path used only when Supabase data is unavailable:
+        the small local seed_data.py dataset (~30 plants).
+        """
+        matched_diseases = [
+            disease for disease in TARGET_DISEASES
+            if indication_norm in self._norm(disease)
+            or self._norm(disease) in indication_norm
+        ]
+
+        indication_tokens = self._meaningful_tokens(indication_norm)
+        for disease in TARGET_DISEASES:
+            if disease in matched_diseases:
+                continue
+            disease_tokens = self._meaningful_tokens(self._norm(disease))
+            if self._tokens_overlap(indication_tokens, disease_tokens):
+                matched_diseases.append(disease)
+
+        relevant_targets = {}
+        for disease in matched_diseases:
+            for target, level in TARGET_DISEASES[disease].items():
+                relevant_targets[self._norm(target)] = level
+
+        if not relevant_targets:
+            return pd.DataFrame(columns=columns)
+
+        rows = []
+        for plant, compounds in PLANT_COMPOUNDS.items():
+            for compound_name, chem_class, extraction in compounds:
+                for target in COMPOUND_TARGETS.get(compound_name, []):
+                    if self._norm(target) in relevant_targets:
+                        rows.append({
+                            "Known_Plant": plant,
+                            "Known_Compound": compound_name,
+                            "Chemical_Class": chem_class,
+                            "Known_Target": target,
+                            "Evidence_Level": relevant_targets[self._norm(target)],
+                            "Typical_Extraction": extraction,
+                        })
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return (
+            pd.DataFrame(rows)
+            .drop_duplicates()
+            .sort_values(["Known_Plant", "Known_Compound"])
+            .reset_index(drop=True)
+        )
+
+    # ------------------------------------------------------------------ #
+    # Market landscape: EU regulatory status, patents, retail products.
+    #
+    # This answers the "what already exists in the market" question and is
+    # intentionally a SEPARATE table from run()'s decision table, not extra
+    # columns bolted onto it — the OUTPUT_COLUMNS contract stays as-is.
+    # ------------------------------------------------------------------ #
+
+    def _curated_evidence_for(self, plant):
+        return _SLEEP_TEA_EVIDENCE_NORM_MAP.get(self._norm(plant))
+
+    def _eu_regulatory_status(self, plant):
+        curated = self._curated_evidence_for(plant)
+        if curated:
+            return {
+                "EMA_HMPC_Status": curated.get("ema_status", "Not evaluated"),
+                "WHO_Status": curated.get("who_status", "Not listed"),
+                "ESCOP_Status": curated.get("escop_status", "Not listed"),
+                "Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
+            }
+
+        try:
+            from ema_regulatory_connector import search_regulatory_sources_real
+            records = search_regulatory_sources_real(plant)
+            if records:
+                r = records[0]
+                return {
+                    "EMA_HMPC_Status": r.get("EMA_Status", "Not yet verified"),
+                    "WHO_Status": r.get("WHO_Status", "Not yet verified"),
+                    "ESCOP_Status": r.get("ESCOP_Status", "Not yet verified"),
+                    "Source": r.get("Notes", "") + f" ({r.get('Source_URL', '')})",
+                }
+        except Exception:
+            pass
+
+        return {
+            "EMA_HMPC_Status": "Not yet verified",
+            "WHO_Status": "Not yet verified",
+            "ESCOP_Status": "Not yet verified",
+            "Source": "No EMA HMPC bulk API exists (browse-only site) — "
+                      "needs manual lookup at ema.europa.eu and adding to "
+                      "seed_data.py, same pattern as the sleep-tea plants",
+        }
+
+    def _search_patents(self, query, max_results=5):
+        """
+        EPO Open Patent Services (OPS) — real free API, needs registration:
+        https://developers.epo.org/ (free account -> consumer key/secret).
+        Set env vars EPO_OPS_KEY and EPO_OPS_SECRET to activate.
+        """
+        if not self.use_live_search:
+            return [{"status": "Skipped", "detail": "Live search disabled."}]
+
+        key, secret = os.environ.get("EPO_OPS_KEY"), os.environ.get("EPO_OPS_SECRET")
+        if not key or not secret:
+            return [{
+                "status": "Not configured",
+                "detail": "Set EPO_OPS_KEY and EPO_OPS_SECRET (free registration "
+                          "at https://developers.epo.org/) to enable patent search.",
+            }]
+
+        try:
+            auth = base64.b64encode(f"{key}:{secret}".encode()).decode()
+            token_r = requests.post(
+                "https://ops.epo.org/3.2/auth/accesstoken",
+                headers={"Authorization": f"Basic {auth}",
+                         "Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "client_credentials"},
+                timeout=20,
+            )
+            token_r.raise_for_status()
+            access_token = token_r.json().get("access_token")
+
+            search_r = requests.get(
+                "https://ops.epo.org/3.2/rest-services/published-data/search",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"q": f'ctxt="{query}"', "Range": f"1-{max_results}"},
+                timeout=20,
+            )
+            search_r.raise_for_status()
+            return [{"status": "OK", "raw_response": search_r.json()}]
+        except Exception as e:
+            return [{"status": "Error", "detail": str(e)}]
+
+    def _search_retail_products(self, query):
+        """
+        Retail/brand product presence needs a paid web-search API (there is
+        no free, structured, ToS-compliant source for 'which brands sell
+        X'). Set SEARCH_API_KEY (+ optionally SEARCH_API_PROVIDER) to
+        activate once you've picked a provider (Bing Web Search API,
+        SerpAPI, etc.) — this function is the single place to wire it in.
+        """
+        if not self.use_live_search:
+            return [{"status": "Skipped", "detail": "Live search disabled."}]
+
+        api_key = os.environ.get("SEARCH_API_KEY")
+        if not api_key:
+            return [{
+                "status": "Not configured",
+                "detail": "Set SEARCH_API_KEY to a paid web-search provider "
+                          "(e.g. Bing Web Search API, SerpAPI) to enable "
+                          "retail/brand product scanning. No free source "
+                          "exists for this data.",
+            }]
+        return [{
+            "status": "Not implemented",
+            "detail": "SEARCH_API_KEY is set, but no provider call is wired "
+                      "in yet. Implement the request for your chosen "
+                      "provider inside _search_retail_products().",
+        }]
+
+    def market_landscape(self, plant):
+        """Single-plant market snapshot: regulatory + patents + retail."""
+        return {
+            "plant": plant,
+            "region": get_region(plant),
+            "regulatory": self._eu_regulatory_status(plant),
+            "patents": self._search_patents(plant),
+            "retail_products": self._search_retail_products(plant),
+        }
+
+    def market_landscape_df(self, plants):
+        """Market landscape table: one row per plant."""
+        rows = []
+        for plant in plants:
+            snap = self.market_landscape(plant)
+            reg = snap["regulatory"]
+            patents = snap["patents"]
+            retail = snap["retail_products"]
+            us_uk = get_us_uk_status(plant) or {}
+            rows.append({
+                "Plant": snap["plant"],
+                "Region_of_Origin": snap["region"],
+                "EMA_HMPC_Status": reg["EMA_HMPC_Status"],
+                "WHO_Status": reg["WHO_Status"],
+                "ESCOP_Status": reg["ESCOP_Status"],
+                "Regulatory_Source": reg["Source"],
+                "US_Status": us_uk.get(
+                    "us_status", "Not yet catalogued for this plant"
+                ),
+                "UK_Status": us_uk.get(
+                    "uk_status", "Not yet catalogued for this plant"
+                ),
+                "Patent_Search_Status": patents[0].get("status", "Unknown"),
+                "Patent_Detail": patents[0].get("detail", patents[0].get("raw_response", "")),
+                "Retail_Products_Status": retail[0].get("status", "Unknown"),
+                "Retail_Products_Detail": retail[0].get("detail", ""),
+            })
+        return pd.DataFrame(rows)
+
+
+def load_default_evidence():
+    try:
+        return pd.DataFrame(load_evidence_database())
+    except Exception:
+        return pd.DataFrame()

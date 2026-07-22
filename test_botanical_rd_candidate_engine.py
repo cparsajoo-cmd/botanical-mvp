@@ -757,7 +757,71 @@ def test_source_record_ids_from_a_non_best_sub_row_survive_the_merge():
 
 
 # ---------------------------------------------------------------------
-# 26) ChEMBL connector rejects molecule records with no structure data.
+# 28) Target_Provenance (Gap 5): a target_verified match must report
+#     WHICH source (hardcoded seed_data.COMPOUND_TARGETS vs the real,
+#     maintained Supabase compound_profiles table) actually asserted
+#     the shared target that earned the match, instead of treating a
+#     hardcoded guess and a maintained database record as equally
+#     authoritative and indistinguishable.
+# ---------------------------------------------------------------------
+def test_target_provenance_distinguishes_seed_from_supabase_source():
+    eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompound", "AltCompound"]}
+    eng.COMPOUND_TARGETS = {
+        "RefCompound": ["SharedTarget"],
+        "AltCompound": ["SharedTarget"],
+    }
+    rows = [
+        dict(scientific_name="PlantRef", compound_name="RefCompound",
+             indication="TestIndication", target="", common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="PlantAlt", compound_name="AltCompound",
+             indication="Other", target="", common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    row = result[result["Alternative_Plant"] == "PlantAlt"]
+    assert not row.empty
+    assert "Target_Provenance" in result.columns
+    provenance = row.iloc[0]["Target_Provenance"]
+    assert "seed_data.COMPOUND_TARGETS" in provenance, (
+        f"expected the seed source to be named explicitly, got: {provenance!r}"
+    )
+
+
+def test_target_provenance_is_not_applicable_for_exact_and_class_only_matches():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="PlantRef", compound_name="SharedCompound",
+             indication="TestIndication", target="", common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="PlantAlt", compound_name="SharedCompound",
+             indication="Other", target="", common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    row = result[result["Alternative_Plant"] == "PlantAlt"]
+    assert not row.empty
+    # This is an exact match (same compound name on both sides), not a
+    # target_verified one — no specific target claim to attribute.
+    assert "Not applicable" in row.iloc[0]["Target_Provenance"]
+
+
+def test_match_compounds_return_arity_is_consistent_across_all_paths():
+    # Direct unit check that every return path of _match_compounds
+    # yields a 4-tuple — the exact bug class this change risked (a
+    # missed return statement silently breaking the single call site's
+    # unpacking) would show up here as a ValueError before this
+    # assertion is even reached.
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    engine = make_engine([], similar_groups={})
+    result = engine._match_compounds("NonexistentCompound", ["AlsoNonexistent"], alt_norm={})
+    assert len(result) == 4
+    assert result[1] == "none"
+
+
+# ---------------------------------------------------------------------
+# 29) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

@@ -552,7 +552,83 @@ def test_market_status_never_silently_returns_the_old_string():
 
 
 # ---------------------------------------------------------------------
-# 19) ChEMBL connector rejects molecule records with no structure data.
+# 20) Evidence_Confidence and Confidence_Note (Phase 6, audit 4.16) must
+#     be populated end-to-end through engine.run(), and — critically —
+#     must NOT go stale after a multi-compound merge changes the score.
+# ---------------------------------------------------------------------
+def test_evidence_confidence_is_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A systematic review and meta-analysis confirmed significant effects.",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    assert "Evidence_Confidence" in result.columns
+    assert "Confidence_Note" in result.columns
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Evidence_Confidence"] > 0
+
+
+def test_confidence_note_is_recomputed_after_merge_not_left_stale():
+    engine = make_engine([], similar_groups={})
+
+    # Pre-merge: a row whose OWN score doesn't trigger the mismatch note
+    # (score below HIGH_OPPORTUNITY_THRESHOLD), but the merge bonus will
+    # push the group's new_score up past that threshold — the note must
+    # reflect the POST-merge score, not the stale pre-merge one.
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed",
+        Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=10.0, Confidence_Note="",
+    )
+    row_a["R&D_Opportunity_Score"] = 55  # below 62 alone
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed",
+        Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=12.0, Confidence_Note="",
+    )
+    row_b["R&D_Opportunity_Score"] = 55
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    merged_score = merged.iloc[0]["R&D_Opportunity_Score"]
+    assert merged_score > 55, "merge bonus should have raised the score above either sub-row's own score"
+    assert merged_score >= 62, "test setup expected the merge bonus to cross the high-opportunity threshold"
+    assert merged.iloc[0]["Confidence_Note"] != "", (
+        "post-merge score crossed the high-opportunity/low-confidence threshold, "
+        "but Confidence_Note stayed stale (empty) instead of being recomputed"
+    )
+    assert "Exploratory" in merged.iloc[0]["Confidence_Note"]
+
+
+# ---------------------------------------------------------------------
+# 21) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

@@ -7,6 +7,7 @@ from collections import defaultdict
 import pandas as pd
 
 from concentration_normalizer import parse_concentration, format_concentration_info
+from evidence_hierarchy_classifier import classify_evidence_hierarchy
 
 try:
     from evidence_database import load_evidence_database
@@ -65,6 +66,7 @@ OUTPUT_COLUMNS = [
     "Interaction_Flags",
     "Evidence_Source",
     "Evidence_Level",
+    "Evidence_Hierarchy_Detail",
     "Market_Status",
     "Novelty_Status",
     "R&D_Opportunity_Score",
@@ -620,6 +622,7 @@ class BotanicalRDCandidateEngine:
 
                     has_real_evidence = bool(raw_evidence.strip())
                     evidence_level = self._evidence_level(raw_evidence)
+                    evidence_hierarchy_detail = classify_evidence_hierarchy(raw_evidence)
 
                     extraction = self._best_extraction(alt, raw_evidence)
                     concentration = self._extract_concentration(raw_evidence)
@@ -760,6 +763,7 @@ class BotanicalRDCandidateEngine:
                                 raw_evidence,
                             ),
                             "Evidence_Level": evidence_level,
+                            "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Market_Status": market_status,
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
@@ -2116,13 +2120,17 @@ class BotanicalRDCandidateEngine:
 
         def _has_term(terms):
             for term in terms:
-                idx = text.find(term)
-                while idx != -1:
-                    window_start = max(0, idx - 40)
-                    preceding = text[window_start:idx]
+                # Word-boundary match, not a bare substring search — a
+                # short term like "ema" otherwise matches inside
+                # unrelated words ("hematology", "remain"). Same bug
+                # class as the anti-X collision already fixed for
+                # DB_ACTIVITY_SAFETY_TERMS elsewhere in this file.
+                pattern = re.compile(r"\b" + re.escape(term) + r"\b")
+                for match in pattern.finditer(text):
+                    window_start = max(0, match.start() - 40)
+                    preceding = text[window_start:match.start()]
                     if not any(cue in preceding[-25:] for cue in negation_cues):
                         return True
-                    idx = text.find(term, idx + 1)
             return False
 
         if _has_term(clinical_terms):

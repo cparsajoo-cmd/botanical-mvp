@@ -11,6 +11,7 @@ from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from decision_class_ah import classify_decision_ah
+from white_space_classifier import classify_white_space
 
 try:
     from evidence_database import load_evidence_database
@@ -80,6 +81,7 @@ OUTPUT_COLUMNS = [
     "Evidence_Confidence",
     "Decision_Class",
     "Decision_Class_AH",
+    "White_Space_Type",
     "Confidence_Note",
     "Rationale",
 ]
@@ -774,6 +776,11 @@ class BotanicalRDCandidateEngine:
                         match_quality=match_quality,
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                     )
+                    white_space_type = classify_white_space(
+                        evidence_confidence=evidence_confidence,
+                        market_status=market_status,
+                        use_live_search=self.use_live_search,
+                    )
 
                     rows.append(
                         {
@@ -804,6 +811,7 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Confidence": evidence_confidence,
                             "Decision_Class": decision,
                             "Decision_Class_AH": decision_class_ah,
+                            "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
                             # Internal-only — used by _merge_multi_compound_matches
                             # to correctly recompute Decision_Class_AH after a
@@ -1078,6 +1086,13 @@ class BotanicalRDCandidateEngine:
                     match_quality=str(best.get("_match_quality", "")),
                     same_plant=bool(best.get("_same_plant", False)),
                 )
+
+            if "White_Space_Type" in group.columns:
+                best["White_Space_Type"] = classify_white_space(
+                    evidence_confidence=best["Evidence_Confidence"],
+                    market_status=str(best.get("Market_Status", "")),
+                    use_live_search=self.use_live_search,
+                ) or ""
 
             # The pre-merge Rationale text (from _rationale(), on the
             # single "best" sub-row) ends with a hardcoded

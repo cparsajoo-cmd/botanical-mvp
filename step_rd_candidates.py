@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
+from pharma_report_generator import generate_pharma_report
 
 
 def _unique_nonempty(values):
@@ -425,6 +426,22 @@ def render_rd_candidates_step(inputs):
             file_name="botanical_rd_candidates.csv",
             mime="text/csv",
         )
+
+        report_markdown = generate_pharma_report(
+            result_df, indication=indication, dosage_form=dosage_form, market=market,
+        )
+        st.download_button(
+            "Download R&D report (Markdown)",
+            data=report_markdown.encode("utf-8"),
+            file_name="botanical_rd_report.md",
+            mime="text/markdown",
+            help="A structured, per-candidate write-up (scientific/commercial/regulatory "
+                 "rationale, evidence strengths & weaknesses, next-experiment suggestion, "
+                 "sources) for the top-scoring candidates, plus a summary table for the rest.",
+        )
+
+        with st.expander("Preview R&D report"):
+            st.markdown(report_markdown)
 
     st.markdown("---")
     st.markdown("## Step 6 — Final Recommendation")

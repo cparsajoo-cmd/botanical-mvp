@@ -8,6 +8,7 @@ import pandas as pd
 
 from concentration_normalizer import parse_concentration, format_concentration_info
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
+from negative_evidence_classifier import classify_negative_evidence
 
 try:
     from evidence_database import load_evidence_database
@@ -67,6 +68,8 @@ OUTPUT_COLUMNS = [
     "Evidence_Source",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
+    "Has_Negative_Evidence",
+    "Negative_Evidence_Types",
     "Market_Status",
     "Novelty_Status",
     "R&D_Opportunity_Score",
@@ -623,6 +626,7 @@ class BotanicalRDCandidateEngine:
                     has_real_evidence = bool(raw_evidence.strip())
                     evidence_level = self._evidence_level(raw_evidence)
                     evidence_hierarchy_detail = classify_evidence_hierarchy(raw_evidence)
+                    negative_evidence = classify_negative_evidence(raw_evidence)
 
                     extraction = self._best_extraction(alt, raw_evidence)
                     concentration = self._extract_concentration(raw_evidence)
@@ -764,6 +768,8 @@ class BotanicalRDCandidateEngine:
                             ),
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
+                            "Has_Negative_Evidence": negative_evidence.is_negative,
+                            "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
@@ -968,6 +974,24 @@ class BotanicalRDCandidateEngine:
 
             best["Safety_Flags"] = _merged_flags("Safety_Flags")
             best["Interaction_Flags"] = _merged_flags("Interaction_Flags")
+
+            # Same reasoning as Safety_Flags/Interaction_Flags just
+            # above, applied to negative evidence (audit 4.15): if ANY
+            # sub-row in this group carries a negative/contradictory
+            # finding, the merged row must show it — a negative finding
+            # attached to one of several matched compounds silently
+            # vanishing because a DIFFERENT compound's sub-row happened
+            # to score higher is exactly the confirmation-bias failure
+            # mode this column exists to prevent.
+            if "Has_Negative_Evidence" in group.columns:
+                best["Has_Negative_Evidence"] = bool(group["Has_Negative_Evidence"].any())
+            if "Negative_Evidence_Types" in group.columns:
+                types = []
+                for v in group["Negative_Evidence_Types"]:
+                    v = str(v).strip()
+                    if v:
+                        types.extend(t.strip() for t in v.split("; ") if t.strip())
+                best["Negative_Evidence_Types"] = "; ".join(sorted(set(types)))
 
             # The pre-merge Rationale text (from _rationale(), on the
             # single "best" sub-row) ends with a hardcoded

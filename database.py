@@ -138,6 +138,25 @@ def save_evidence_record(record):
     return evidence_result.data[0]["id"]
 
 
+def get_evidence_record_count():
+    """Total row count in evidence_records, without fetching row bodies.
+
+    Uses PostgREST's exact count (returned in the response metadata
+    regardless of how many rows are actually returned) combined with
+    range(0, 0) so at most one row's data crosses the wire. This lets
+    the UI show "N total records" without paying for a full-table fetch
+    just to find out N.
+    """
+    supabase = get_supabase_client()
+    response = (
+        supabase.table("evidence_records")
+        .select("id", count="exact")
+        .range(0, 0)
+        .execute()
+    )
+    return response.count if response.count is not None else 0
+
+
 def load_evidence_records():
     supabase = get_supabase_client()
 

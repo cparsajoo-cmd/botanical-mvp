@@ -670,7 +670,94 @@ def test_decision_class_ah_is_populated_end_to_end_and_always_valid():
 
 
 # ---------------------------------------------------------------------
-# 23) ChEMBL connector rejects molecule records with no structure data.
+# 25) Source_Record_IDs (Gap 1, traceability): a real Source_URL
+#     already captured by every connector at ingestion must survive
+#     into the final output, not be discarded when _build_evidence_text_index
+#     flattens rows into one text blob.
+# ---------------------------------------------------------------------
+def test_source_record_ids_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A clinical trial confirmed significant effects.",
+        "Source_URL": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    assert "Source_Record_IDs" in result.columns
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    assert "pubmed.ncbi.nlm.nih.gov/12345678" in self_row.iloc[0]["Source_Record_IDs"], (
+        "the real Source_URL captured at evidence ingestion did not survive to the final row"
+    )
+
+
+def test_source_record_ids_defaults_honestly_when_nothing_matched():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)  # no evidence_df set — no sources available
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Source_Record_IDs"] == "No specific source record identified"
+
+
+def test_source_record_ids_from_a_non_best_sub_row_survive_the_merge():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Strong R&D candidate.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=80.0, Confidence_Note="",
+        Source_Record_IDs="No specific source record identified",
+    )
+    row_a["R&D_Opportunity_Score"] = 90
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=20.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/99999999/",
+    )
+    row_b["R&D_Opportunity_Score"] = 50
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert "99999999" in merged.iloc[0]["Source_Record_IDs"], (
+        "a citation on a lower-scoring sub-row silently disappeared after merging"
+    )
+
+
+# ---------------------------------------------------------------------
+# 26) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

@@ -6,6 +6,8 @@ from collections import defaultdict
 
 import pandas as pd
 
+from concentration_normalizer import parse_concentration, format_concentration_info
+
 try:
     from evidence_database import load_evidence_database
 except Exception:
@@ -2229,28 +2231,24 @@ class BotanicalRDCandidateEngine:
         return "; ".join(alt_targets or ref_targets)
 
     def _extract_concentration(self, text):
-        patterns = [
-            r"\b\d+(?:\.\d+)?\s?%",
-            r"\b\d+(?:\.\d+)?\s?mg/g\b",
-            r"\b\d+(?:\.\d+)?\s?mg/kg\b",
-            r"\b\d+(?:\.\d+)?\s?mg/100g\b",
-            r"\b\d+(?:\.\d+)?\s?(?:µg/g|ug/g)\b",
-            r"\b\d+(?:\.\d+)?\s?mg/ml\b",
-        ]
-
-        matches = []
-
-        for pattern in patterns:
-            matches.extend(
-                match.group(0)
-                for match in re.finditer(
-                    pattern,
-                    text,
-                    flags=re.IGNORECASE,
-                )
-            )
-
-        return "; ".join(sorted(set(matches)))[:300]
+        # Was: a flat set of regexes joined into one string with no
+        # indication of WHAT BASIS each number was on (see audit 4.10 —
+        # "0.5%; 3 mg/g" tells a reader nothing about whether those two
+        # numbers are even meant to sit side by side). Now: every value
+        # is classified by basis, and if a single text mixes bases, the
+        # returned string says so explicitly instead of leaving it to
+        # the reader to notice. See concentration_normalizer.py.
+        #
+        # Returns "" (not a placeholder string) when nothing is found —
+        # existing callers rely on that falsiness: the score-presence
+        # bonus ("score += 10 if concentration else 2") and the two
+        # "concentration or 'not clearly reported'" display fallbacks
+        # elsewhere in this file both break if this always returns a
+        # non-empty string.
+        parsed = parse_concentration(text)
+        if not parsed:
+            return ""
+        return format_concentration_info(parsed)[:300]
 
     def _extract_extraction(self, text):
         text_norm = self._norm(text)

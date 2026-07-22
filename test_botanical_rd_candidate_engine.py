@@ -424,7 +424,47 @@ def test_extract_concentration_stays_falsy_when_empty_and_flags_mixed_bases():
 
 
 # ---------------------------------------------------------------------
-# 16) ChEMBL connector rejects molecule records with no structure data.
+# 16) Evidence_Hierarchy_Detail (Phase 4, audit 4.14) must actually show
+#     up end-to-end through engine.run() and distinguish a real RCT from
+#     a run-of-the-mill literature mention — not just work in isolation
+#     on the classifier module.
+# ---------------------------------------------------------------------
+def test_evidence_hierarchy_detail_is_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    # Feed a live-search-shaped evidence_df so raw_evidence text actually
+    # reaches _evidence_level / classify_evidence_hierarchy — a bare
+    # plant_compounds row alone has no free-text evidence to classify.
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": (
+            "A randomized controlled trial, double-blind and "
+            "placebo-controlled, found significant hepatoprotective effects."
+        ),
+    }])
+    engine_with_evidence = make_engine(rows)
+    engine_with_evidence.evidence_df = evidence_df
+    result = engine_with_evidence.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    assert "Evidence_Hierarchy_Detail" in result.columns
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    # Whatever the exact value, it must be a real classification, not a
+    # silently-empty/missing column.
+    assert self_row.iloc[0]["Evidence_Hierarchy_Detail"] != ""
+
+
+# ---------------------------------------------------------------------
+# 17) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

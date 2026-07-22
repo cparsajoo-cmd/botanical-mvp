@@ -71,6 +71,7 @@ OUTPUT_COLUMNS = [
     "Interaction_Flags",
     "Evidence_Source",
     "Source_Record_IDs",
+    "Occurrence_Corroboration",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
     "Has_Negative_Evidence",
@@ -801,6 +802,7 @@ class BotanicalRDCandidateEngine:
                                 raw_evidence,
                             ),
                             "Source_Record_IDs": "; ".join(evidence_source_ids) if evidence_source_ids else "No specific source record identified",
+                            "Occurrence_Corroboration": self._occurrence_corroboration(evidence_source_ids),
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Has_Negative_Evidence": negative_evidence.is_negative,
@@ -1053,6 +1055,13 @@ class BotanicalRDCandidateEngine:
                 best["Source_Record_IDs"] = (
                     "; ".join(sorted(set(ids))) if ids else "No specific source record identified"
                 )
+                # Gap 3: recompute corroboration from the just-unioned
+                # source list — merging can genuinely INCREASE
+                # corroboration (multiple matched compounds can each
+                # bring their own independent source), so this must be
+                # derived AFTER the union above, not carried over from
+                # whichever single sub-row happened to score highest.
+                best["Occurrence_Corroboration"] = self._occurrence_corroboration(ids)
 
             # Evidence_Confidence and Confidence_Note (Phase 6, audit
             # 4.16) must be recomputed here too — otherwise they'd stay
@@ -2788,6 +2797,33 @@ class BotanicalRDCandidateEngine:
             return "Live-collected evidence (PubMed/Europe PMC/Supabase)"
 
         return f"Seed candidate database: {plant} / {compound}"
+
+    @staticmethod
+    def _occurrence_corroboration(evidence_source_ids):
+        """Gap 3, "Alternative Source scientific defensibility": how many
+        INDEPENDENT sources actually back this row's concentration/
+        extraction/co-compound claims, not just whether any text was
+        found at all. Built directly from Gap 1's evidence_source_ids
+        (the distinct Source_URLs that contributed to this row's
+        raw_evidence) — no new data collection, just an honest count of
+        what's already there.
+
+        This does NOT attempt to attribute individual claims (e.g.
+        "concentration came from source A, extraction from source B")
+        to specific sources — that would require preserving per-record
+        text boundaries all the way through _build_evidence_text_index's
+        flattening step, a larger change than this one. What this DOES
+        give: a row backed by 3 independent papers is honestly
+        distinguishable from a row backed by 1, or by none at all —
+        the single most important defensibility signal missing before
+        this, at the cost of the smallest possible change.
+        """
+        count = len(evidence_source_ids) if evidence_source_ids else 0
+        if count == 0:
+            return "No independent source identified — not corroborated"
+        if count == 1:
+            return "Single-source claim — not independently corroborated"
+        return f"Corroborated by {count} independent sources"
 
     def _known_compounds_from_text(self, text):
         text_norm = self._norm(text)

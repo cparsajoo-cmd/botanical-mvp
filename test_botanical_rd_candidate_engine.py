@@ -895,7 +895,67 @@ def test_white_space_type_is_populated_end_to_end_and_always_valid():
 
 
 # ---------------------------------------------------------------------
-# 36) ChEMBL connector rejects molecule records with no structure data.
+# 37) Occurrence_Corroboration (Gap 3, alternative-source defensibility):
+#     honest corroboration strength built from Gap 1's source-count,
+#     not a fabricated confidence number.
+# ---------------------------------------------------------------------
+def test_occurrence_corroboration_reflects_distinct_source_count():
+    engine = make_engine([], similar_groups={})
+    assert "not corroborated" in eng.BotanicalRDCandidateEngine._occurrence_corroboration([]).lower()
+    assert "single-source" in eng.BotanicalRDCandidateEngine._occurrence_corroboration(
+        ["https://pubmed.ncbi.nlm.nih.gov/1/"]
+    ).lower()
+    two_source_result = eng.BotanicalRDCandidateEngine._occurrence_corroboration([
+        "https://pubmed.ncbi.nlm.nih.gov/1/", "https://pubmed.ncbi.nlm.nih.gov/2/",
+    ])
+    assert "corroborated by 2 independent sources" in two_source_result.lower()
+
+
+def test_occurrence_corroboration_increases_after_merge_when_sources_combine():
+    # Two sub-rows, each backed by ONE distinct source — after merging,
+    # the row is backed by BOTH, so corroboration must go from
+    # "single-source" to "corroborated by 2", not stay frozen at
+    # whichever sub-row happened to score highest.
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Strong R&D candidate.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=80.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+    )
+    row_a["R&D_Opportunity_Score"] = 90
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=20.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/2/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+    )
+    row_b["R&D_Opportunity_Score"] = 50
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert "corroborated by 2 independent sources" in merged.iloc[0]["Occurrence_Corroboration"].lower(), (
+        f"expected corroboration to reflect the merged source union, got: "
+        f"{merged.iloc[0]['Occurrence_Corroboration']!r}"
+    )
+
+
+# ---------------------------------------------------------------------
+# 38) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
     import chembl_connector

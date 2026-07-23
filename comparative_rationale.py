@@ -27,6 +27,16 @@ Comparing two rows' breakdowns tells you EXACTLY which component
 explains most of the gap between them — reusing that instead of
 writing a second scoring comparison from scratch, which would have
 been duplicate logic.
+
+SPRINT SCOPE NOTE (added during Sprint 1 review): this module and
+Comparative_Rationale belong conceptually to a later "Comparative
+Reasoning" sprint, not Sprint 1 ("Explainable Recommendation"). They
+were implemented ahead of that planned sprint, in an earlier session,
+and are working, tested code that predates Sprint 1 — nothing here has
+been expanded or redesigned as part of Sprint 1, and this module is
+explicitly NOT part of Sprint 1's acceptance criteria. Any further
+comparative-reasoning work (e.g. extending this module) should be
+scoped to that later sprint, not folded into Sprint 1 corrections.
 """
 
 from __future__ import annotations
@@ -51,15 +61,6 @@ def _parse_score_breakdown(breakdown: str) -> dict:
         except ValueError:
             continue
     return components
-
-
-# Public alias — same function, exposed under a non-underscore name so
-# other modules (pharma_report_generator.py's build_recommendation_card,
-# Sprint 1) can reuse this exact parsing logic instead of duplicating
-# it. The private name and every existing call site above are
-# untouched, so nothing that already depends on _parse_score_breakdown
-# is affected by this.
-parse_score_breakdown = _parse_score_breakdown
 
 
 def _explain_gap(top_row: pd.Series, this_row: pd.Series) -> str:

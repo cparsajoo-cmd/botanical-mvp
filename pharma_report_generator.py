@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from comparative_rationale import parse_score_breakdown
+from structured_rationale import build_recommendation_card
 
 GO_CALL_ORDER = [
     "Go",
@@ -61,95 +61,25 @@ GO_CALL_ORDER = [
     "No-Go",
 ]
 
-# Maps botanical_rd_candidate_engine.py's actual Score_Breakdown
-# component names (see _format_score_breakdown / _score_candidate's
-# docstring) onto the 5 dimensions Sprint 1 asks for. This is an
-# HONEST mapping, not a forced clean split: "Market signal" is a
-# single component that the engine itself doesn't separate into
-# commercial vs. regulatory, so it's counted toward both rather than
-# arbitrarily assigned to one. No new scoring is introduced here —
-# this only re-reads the same ranked breakdown the engine already
-# produces per row.
-_COMPONENT_TO_DIMENSIONS = {
-    "Chemical/mechanistic link": ["Scientific"],
-    "Novelty": ["Scientific"],
-    "Multi-compound match bonus": ["Scientific"],
-    "Evidence quality": ["Clinical"],
-    "Product-development fit": ["Commercial"],
-    "Market signal": ["Commercial", "Regulatory"],
-    "Safety/interaction/self-row penalty": ["Safety"],
-}
-
-
-def _top_contributor_for_dimension(components: dict, dimension: str) -> str:
-    """Largest-magnitude Score_Breakdown component that maps to
-    `dimension`, formatted as "Name: +N.0" — or an explicit
-    "No score-affecting factor identified for this dimension" when
-    none of the row's actual components touch it, rather than
-    guessing."""
-    relevant = {
-        name: value for name, value in components.items()
-        if dimension in _COMPONENT_TO_DIMENSIONS.get(name, [])
-    }
-    if not relevant:
-        return f"No {dimension.lower()} factor identified in the score breakdown for this candidate."
-    top_name = max(relevant, key=lambda n: abs(relevant[n]))
-    return f"{top_name}: {relevant[top_name]:+.1f}"
-
-
-def build_recommendation_card(row) -> dict:
-    """Sprint 1 — the Explainable Recommendation Card. Assembles fields
-    that ALREADY exist on a run() output row (Scientific_Rationale,
-    Clinical_Rationale, Target_or_Mechanism, Regulatory_Rationale,
-    Commercial_Rationale, Safety_Rationale, Evidence_Weaknesses,
-    Evidence_Confidence, Recommendation_Confidence_Statement,
-    Go_Investigate_Hold_NoGo) into one structured object, plus a
-    dimension-mapped read of Score_Breakdown to answer "which X
-    contributed most" precisely (audit questions 2-7). No new data is
-    collected or invented — every value here traces to an existing
-    column, and the mapping used to build the dimension breakdown is
-    documented above (_COMPONENT_TO_DIMENSIONS).
-
-    Returns a plain dict (not markdown) so it can be reused anywhere a
-    structured view is more useful than prose — a future UI card,
-    JSON export, or (as done here) the existing markdown report.
-    """
-    components = parse_score_breakdown(str(row.get("Score_Breakdown", "")))
-    score_reducing = {name: value for name, value in components.items() if value < 0}
-
-    return {
-        "botanical": row.get("Alternative_Plant", "Unknown plant"),
-        "final_recommendation": row.get("Go_Investigate_Hold_NoGo", "Unknown"),
-        # Q1: why selected
-        "scientific_rationale": row.get("Scientific_Rationale", ""),
-        # Q2: which scientific evidence contributed most
-        "top_scientific_contributor": _top_contributor_for_dimension(components, "Scientific"),
-        # Q3: which clinical evidence contributed most
-        "clinical_rationale": row.get("Clinical_Rationale", ""),
-        "top_clinical_contributor": _top_contributor_for_dimension(components, "Clinical"),
-        "mechanism_of_action": row.get("Target_or_Mechanism", "Not clearly extracted"),
-        # Q4: which regulatory information increased confidence
-        "regulatory_rationale": row.get("Regulatory_Rationale", ""),
-        "top_regulatory_contributor": _top_contributor_for_dimension(components, "Regulatory"),
-        # Q5: which commercial factors improved the recommendation
-        "commercial_rationale": row.get("Commercial_Rationale", ""),
-        "top_commercial_contributor": _top_contributor_for_dimension(components, "Commercial"),
-        # Q6: which safety considerations affected the score
-        "safety_profile": row.get("Safety_Rationale", ""),
-        "top_safety_factor": _top_contributor_for_dimension(components, "Safety"),
-        # Q7: which factors reduced the final score
-        "score_reducing_factors": score_reducing if score_reducing else "None — no component reduced the score.",
-        "limitations": row.get("Evidence_Weaknesses", "None identified"),
-        "confidence_level": row.get("Evidence_Confidence", ""),
-        "confidence_statement": row.get("Recommendation_Confidence_Statement", ""),
-        "evidence_conflict_reasoning": row.get("Evidence_Conflict_Reasoning", ""),
-    }
-
 
 def _candidate_section(row: pd.Series, rank: int) -> str:
+    """Formats the ONE canonical Recommendation Card
+    (structured_rationale.build_recommendation_card) as markdown. This
+    function does not compute, re-derive, or duplicate any of the
+    card's own reasoning (no local Score_Breakdown parsing, no local
+    dimension mapping) — every scientific/clinical/regulatory/
+    commercial/safety judgment below comes from the single shared
+    build_recommendation_card() call. Only a handful of separate,
+    already-existing per-row columns that are NOT part of the card's
+    own reasoning scope (R&D_Opportunity_Score, Decision_Class_AH,
+    White_Space_Type, Competitive_Positioning, Product_Development_Concept,
+    Confidence_Note) are read directly from `row` for surrounding
+    context.
+    """
+    card = build_recommendation_card(row)
+
     lines = [
-        f"### {rank}. {row.get('Alternative_Plant', 'Unknown plant')} — "
-        f"{row.get('Go_Investigate_Hold_NoGo', 'Unknown')}",
+        f"### {rank}. {card['botanical']} — {card['final_recommendation']}",
         "",
         f"**Reference:** {row.get('Reference_Plant', '')} / {row.get('Reference_Compound', '')}  ",
         f"**Matched compound:** {row.get('Shared_or_Similar_Compound', '')}  ",
@@ -182,43 +112,59 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
 
     lines += [
         "",
-        f"**Scientific rationale:** {row.get('Scientific_Rationale', '')}",
+        f"**Scientific rationale:** {card['scientific_rationale']}",
+        f"**Top scientific contributor:** {card['top_scientific_contributor']}",
         "",
-        f"**Evidence conflict reasoning:** {row.get('Evidence_Conflict_Reasoning', '')}",
+        f"**Clinical rationale:** {card['clinical_rationale']}",
+        f"**Top clinical contributor:** {card['top_clinical_contributor']}",
+        f"**Mechanism of action:** {card['mechanism_of_action']}",
         "",
-        f"**Commercial & regulatory rationale:** {row.get('Commercial_Regulatory_Rationale', '')}",
+        f"**Regulatory rationale:** {card['regulatory_rationale']}",
+        f"**Regulatory score contribution:** {card['top_regulatory_contributor']}",
+        "",
+        f"**Commercial rationale:** {card['commercial_rationale']}",
+        f"**Top commercial contributor:** {card['top_commercial_contributor']}",
+        "",
+        f"**Safety profile:** {card['safety_profile']}",
+        f"**Top safety factor:** {card['top_safety_factor']}",
+        "",
+        f"**Evidence conflict reasoning:** {card['evidence_conflict_reasoning']}",
+        "",
+        f"**Positive drivers:** {card['positive_drivers']}",
+        f"**Negative drivers:** {card['negative_drivers']}",
+        "",
+        f"**Limitations:** {card['limitations']}",
+    ]
+
+    if card["missing_information"]:
+        lines.append(f"**Missing information:** {'; '.join(card['missing_information'])}")
+    if card["not_searched"]:
+        lines.append(f"**Not searched:** {'; '.join(card['not_searched'])}")
+
+    connectors = card["connector_unavailable"]
+    lines.append(
+        f"**Connector status:** patent — {connectors['patent_connector']}; "
+        f"retail — {connectors['retail_connector']}"
+    )
+
+    lines += [
+        "",
+        f"**Recommended next step:** {card['recommended_next_step']}",
+        "",
+        f"**Traceability:** sources — {card['traceability']['source_record_ids']}; "
+        f"corroboration — {card['traceability']['corroboration']}",
         "",
     ]
 
-    card = build_recommendation_card(row)
+    basis = card["confidence_basis"]
     lines += [
-        "**Score drivers by dimension** (Sprint 1 — which factor contributed "
-        "most in each area, read directly from Score_Breakdown):",
-        f"- Scientific: {card['top_scientific_contributor']}",
-        f"- Clinical: {card['top_clinical_contributor']}",
-        f"- Regulatory: {card['top_regulatory_contributor']}",
-        f"- Commercial: {card['top_commercial_contributor']}",
-        f"- Safety: {card['top_safety_factor']}",
-        "",
-    ]
-
-    lines += [
-        f"**Evidence strengths:** {row.get('Evidence_Strengths', 'None identified')}",
-        "",
-        f"**Evidence weaknesses:** {row.get('Evidence_Weaknesses', 'None identified')}",
-        "",
-        f"**Safety considerations:** {row.get('Safety_Flags', 'No explicit flag found')}"
-        + (
-            f" | **Interactions:** {row.get('Interaction_Flags')}"
-            if str(row.get("Interaction_Flags", "")).strip()
-            and row.get("Interaction_Flags") != "No explicit flag found"
-            else ""
-        ),
-        "",
-        f"**Suggested next step:** {row.get('Next_Experiment_Suggestion', '')}",
-        "",
-        f"**Corroboration:** {row.get('Occurrence_Corroboration', '')}  ",
-        f"**Sources:** {row.get('Source_Record_IDs', 'No specific source record identified')}",
+        "**Confidence basis:**",
+        f"- Confidence level: {basis['confidence_level']} | Tier: {basis['confidence_tier']}",
+        f"- Evidence completeness: {basis['evidence_completeness']}",
+        f"- Human evidence availability: {basis['human_evidence_availability']}",
+        f"- Regulatory data availability: {basis['regulatory_data_availability']}",
+        f"- Safety data availability: {basis['safety_data_availability']}",
+        f"- Fallback/default values used: {basis['fallback_or_default_values_used']}",
         "",
         "---",
         "",

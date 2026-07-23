@@ -2,7 +2,10 @@
 
 import pandas as pd
 
-from comparative_rationale import build_comparative_rationale, _parse_score_breakdown
+from comparative_rationale import (
+    build_comparative_rationale, _parse_score_breakdown,
+    build_comparative_rationale_structured,
+)
 
 
 def _row(ref_plant, ref_compound, alt_plant, score, breakdown):
@@ -140,6 +143,229 @@ def test_missing_reference_columns_returns_not_applicable_instead_of_crashing():
     df = pd.DataFrame([{"Alternative_Plant": "X", "R&D_Opportunity_Score": 50}])
     result = build_comparative_rationale(df)
     assert (result == "Not applicable").all()
+
+
+# =====================================================================
+# Sprint 2 — Comparative Decision Intelligence: structured comparison
+# object. Test numbering below matches the 15 required scenarios.
+# =====================================================================
+
+def _row(ref_plant, ref_compound, alt_plant, score, breakdown):
+    return {
+        "Reference_Plant": ref_plant, "Reference_Compound": ref_compound,
+        "Alternative_Plant": alt_plant, "R&D_Opportunity_Score": score,
+        "Score_Breakdown": breakdown,
+    }
+
+
+# 1. Winner has a clear group-winner structured status.
+def test_winner_has_clear_group_winner_status():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Chemical/mechanistic link: +22.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0; Chemical/mechanistic link: +22.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    winner_obj = structured.iloc[0]
+    assert winner_obj["status"] == "group_winner"
+    assert winner_obj["candidate"] is None
+    assert winner_obj["score_gap"] is None
+    assert winner_obj["winner_advantages"] == []
+    assert winner_obj["candidate_advantages"] == []
+
+
+# 2. Losing candidate receives winner and candidate metadata.
+def test_losing_candidate_receives_winner_and_candidate_metadata():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Chemical/mechanistic link: +22.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0; Chemical/mechanistic link: +22.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert obj["status"] == "compared"
+    assert obj["winner"]["candidate_name"] == "Lavender"
+    assert obj["candidate"]["candidate_name"] == "Passionflower"
+    assert obj["winner"]["score"] == 91.0
+    assert obj["candidate"]["score"] == 88.0
+
+
+# 3. Score gap matches the existing scores.
+def test_score_gap_matches_existing_scores():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    assert structured.iloc[1]["score_gap"] == 3.0
+
+
+# 4. Largest winner-favouring component becomes primary reason.
+def test_largest_winner_favouring_component_is_primary_reason():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Chemical/mechanistic link: +22.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +12.0; Chemical/mechanistic link: +21.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    # Evidence quality differs by 12, Chemical link by only 1 — Evidence
+    # quality must be named, not chemical link.
+    assert "Evidence quality" in obj["primary_reason"]
+    assert obj["winner_advantages"][0]["dimension"] == "Evidence quality"
+
+
+def test_no_dominant_component_message_when_no_winner_advantage_exists():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +10.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +15.0"),  # candidate stronger on the only component
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert obj["primary_reason"] == "No dominant score-component difference could be identified from the available breakdown."
+
+
+# 5. Candidate-favouring components are retained and exposed — the
+#    exact "data currently discarded" bug the audit identified.
+def test_candidate_favouring_components_are_retained_not_discarded():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Novelty: +2.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +10.0; Novelty: +10.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert len(obj["candidate_advantages"]) == 1
+    assert obj["candidate_advantages"][0]["dimension"] == "Novelty"
+    assert obj["candidate_advantages"][0]["favours"] == "candidate"
+    assert obj["candidate_advantages"][0]["difference"] == -8.0
+
+
+# 6. Equal components are represented safely.
+def test_equal_components_represented_safely_as_ties():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Novelty: +5.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +21.0; Novelty: +5.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert len(obj["ties"]) == 1
+    assert obj["ties"][0]["dimension"] == "Novelty"
+    assert obj["ties"][0]["favours"] == "tie"
+
+
+# 7. Missing Score_Breakdown does not crash.
+def test_missing_score_breakdown_does_not_crash():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, None),
+        _row("Ref", "C", "Passionflower", 88, None),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert obj["dimension_comparison"] == []
+    assert obj["comparison_confidence"]["level"] == "Insufficient"
+
+
+# 8. Unparseable Score_Breakdown produces an honest limitation.
+def test_unparseable_score_breakdown_produces_honest_limitation():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "garbled nonsense text"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert any("missing or unparseable" in lim for lim in obj["limitations"])
+
+
+# 9. Component present for one candidate only is marked incomplete.
+def test_component_present_for_one_candidate_only_marked_unavailable():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Novelty: +5.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    novelty_entry = next(e for e in obj["dimension_comparison"] if e["dimension"] == "Novelty")
+    assert novelty_entry["favours"] == "unavailable"
+    assert novelty_entry["candidate_value"] is None  # never defaulted to zero
+    assert any("present for only one candidate" in lim for lim in obj["limitations"])
+
+
+# 10. Comparative_Rationale string remains backward compatible.
+def test_comparative_rationale_string_output_unchanged_by_sprint_2():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    string_result = build_comparative_rationale(df)
+    assert isinstance(string_result.iloc[0], str)
+    assert isinstance(string_result.iloc[1], str)
+    assert "Top-ranked candidate" in string_result.iloc[0]
+    assert "points below" in string_result.iloc[1]
+
+
+# 11. Structured object does not alter ranking or scores.
+def test_structured_object_does_not_alter_ranking_or_scores():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    original_scores = df["R&D_Opportunity_Score"].tolist()
+    build_comparative_rationale_structured(df)
+    assert df["R&D_Opportunity_Score"].tolist() == original_scores  # untouched
+
+
+# 14. No fabricated regulatory contribution where none exists.
+def test_no_fabricated_regulatory_score_contribution():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Market signal: +3.0; Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Market signal: +2.0; Evidence quality: +20.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert any("No independent regulatory score contribution" in lim for lim in obj["limitations"])
+    market_entry = next(e for e in obj["dimension_comparison"] if e["dimension"] == "Market signal")
+    assert market_entry["dimension"] != "Regulatory"  # never relabeled as a regulatory score
+
+
+# 15. Legacy rows remain supported.
+def test_legacy_row_missing_alternative_plant_does_not_crash():
+    df = pd.DataFrame([
+        _row("Ref", "C", None, 91, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert obj["winner"]["candidate_name"] == "Unknown"
+    assert any("Legacy row" in lim for lim in obj["limitations"])
+
+
+def test_global_rank_is_populated_in_structured_object():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0"),
+        _row("Ref2", "C2", "Chamomile", 95, "Evidence quality: +30.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    assert obj["candidate"]["global_rank"] == 3  # lowest of the three
+    assert obj["winner"]["global_rank"] == 2
+
+
+def test_comparison_confidence_high_when_full_overlap():
+    df = pd.DataFrame([
+        _row("Ref", "C", "Lavender", 91, "Evidence quality: +24.0; Chemical/mechanistic link: +22.0"),
+        _row("Ref", "C", "Passionflower", 88, "Evidence quality: +20.0; Chemical/mechanistic link: +21.0"),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    assert structured.iloc[1]["comparison_confidence"]["level"] == "High"
+
+
+def test_empty_dataframe_structured_does_not_crash():
+    result = build_comparative_rationale_structured(pd.DataFrame())
+    assert len(result) == 0
+
+
+def test_missing_reference_columns_returns_none_not_crash_for_structured():
+    df = pd.DataFrame([{"Alternative_Plant": "X", "R&D_Opportunity_Score": 50}])
+    result = build_comparative_rationale_structured(df)
+    assert result.iloc[0] is None
 
 
 if __name__ == "__main__":

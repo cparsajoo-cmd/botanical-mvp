@@ -62,6 +62,52 @@ GO_CALL_ORDER = [
 ]
 
 
+def _format_comparison_section(comparison) -> list:
+    """Sprint 2 — formats Comparative_Rationale_Structured concisely.
+    Formatting only: every value here already exists on the structured
+    object built by comparative_rationale.build_comparative_rationale_structured();
+    nothing is recomputed or reinterpreted. Deliberately does NOT print
+    the raw dict — only the top 2 advantages per side, the primary
+    reason, confidence, and limitations, per the "keep the report
+    concise" requirement.
+    """
+    if not comparison:
+        return []
+
+    if comparison.get("status") == "group_winner":
+        return ["**Head-to-head comparison:** This is the top-ranked candidate for its reference group."]
+
+    lines = [
+        "**Head-to-head comparison:**",
+        f"- {comparison['candidate']['candidate_name']} vs. {comparison['winner']['candidate_name']} "
+        f"(winner) — score gap: {comparison['score_gap']:+.1f}",
+        f"- Primary reason: {comparison['primary_reason']}",
+    ]
+
+    if comparison["winner_advantages"]:
+        top = comparison["winner_advantages"][:2]
+        lines.append(
+            "- Winner ahead on: " + "; ".join(
+                f"{e['dimension']} ({e['difference']:+.1f})" for e in top
+            )
+        )
+    if comparison["candidate_advantages"]:
+        top = comparison["candidate_advantages"][:2]
+        lines.append(
+            "- Candidate ahead on: " + "; ".join(
+                f"{e['dimension']} ({abs(e['difference']):+.1f})" for e in top
+            )
+        )
+
+    confidence = comparison["comparison_confidence"]
+    lines.append(f"- Comparison confidence: {confidence['level']} — {confidence['reason']}")
+
+    if comparison["limitations"]:
+        lines.append(f"- Comparison limitations: {'; '.join(comparison['limitations'][:2])}")
+
+    return lines
+
+
 def _candidate_section(row: pd.Series, rank: int) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
@@ -165,6 +211,12 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
         f"- Regulatory data availability: {basis['regulatory_data_availability']}",
         f"- Safety data availability: {basis['safety_data_availability']}",
         f"- Fallback/default values used: {basis['fallback_or_default_values_used']}",
+        "",
+    ]
+
+    lines += _format_comparison_section(row.get("Comparative_Rationale_Structured"))
+
+    lines += [
         "",
         "---",
         "",

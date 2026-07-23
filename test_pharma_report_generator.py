@@ -121,6 +121,64 @@ def test_report_does_not_fabricate_a_positive_claim_from_missing_data():
     assert "Positive drivers:** None" in report
 
 
+def test_report_renders_head_to_head_comparison_without_recomputing_it():
+    comparison_obj = {
+        "status": "compared",
+        "winner": {"candidate_name": "Lavender", "score": 91.0, "local_rank": 1, "global_rank": 1},
+        "candidate": {"candidate_name": "Passionflower", "score": 88.0, "local_rank": 2, "global_rank": 2},
+        "score_gap": 3.0,
+        "primary_reason": "Evidence quality favours the winner by 4.0 points (+24.0 vs +20.0).",
+        "winner_advantages": [{"dimension": "Evidence quality", "winner_value": 24.0, "candidate_value": 20.0, "difference": 4.0, "favours": "winner", "explanation": "..."}],
+        "candidate_advantages": [{"dimension": "Novelty", "winner_value": 2.0, "candidate_value": 8.0, "difference": -6.0, "favours": "candidate", "explanation": "..."}],
+        "ties": [],
+        "dimension_comparison": [],
+        "comparison_confidence": {"level": "High", "reason": "2 of 2 score components are directly comparable (100% overlap)."},
+        "limitations": ["This comparison is based on scoring components, not raw scientific records."],
+        "traceability": ["Score_Breakdown (winner)", "Score_Breakdown (candidate)"],
+    }
+    result = pd.DataFrame([_make_row(Comparative_Rationale_Structured=comparison_obj)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Passionflower vs. Lavender" in report
+    assert "score gap: +3.0" in report
+    assert "Evidence quality favours the winner" in report
+    assert "Winner ahead on: Evidence quality" in report
+    assert "Candidate ahead on: Novelty" in report
+    assert "Comparison confidence: High" in report
+    # The raw dict must never appear literally in the report text.
+    assert "'status': 'compared'" not in report
+    assert "{'candidate_name'" not in report
+
+
+def test_report_shows_group_winner_status_concisely():
+    result = pd.DataFrame([_make_row(
+        Comparative_Rationale_Structured={"status": "group_winner", "candidate": None},
+    )])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "top-ranked candidate for its reference group" in report
+
+
+def test_report_handles_missing_comparison_object_gracefully():
+    result = pd.DataFrame([_make_row(Comparative_Rationale_Structured=None)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "AltPlant" in report  # still renders the rest of the section
+
+
+def test_report_introduces_no_business_objective_simulation_language():
+    comparison_obj = {
+        "status": "compared",
+        "winner": {"candidate_name": "Lavender", "score": 91.0, "local_rank": 1, "global_rank": 1},
+        "candidate": {"candidate_name": "Passionflower", "score": 88.0, "local_rank": 2, "global_rank": 2},
+        "score_gap": 3.0, "primary_reason": "Evidence quality favours the winner by 4.0 points.",
+        "winner_advantages": [], "candidate_advantages": [], "ties": [], "dimension_comparison": [],
+        "comparison_confidence": {"level": "High", "reason": "..."}, "limitations": [], "traceability": [],
+    }
+    result = pd.DataFrame([_make_row(Comparative_Rationale_Structured=comparison_obj)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    forbidden_terms = ["business objective", "alternative weighting", "if we prioritized", "under a different objective"]
+    for term in forbidden_terms:
+        assert term.lower() not in report.lower()
+
+
 def test_report_has_title_and_question():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="Liver support", dosage_form="Infusion", market="EU")

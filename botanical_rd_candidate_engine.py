@@ -27,7 +27,7 @@ from structured_rationale import (
     safety_rationale,
     clinical_rationale,
 )
-from comparative_rationale import build_comparative_rationale
+from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -123,6 +123,7 @@ OUTPUT_COLUMNS = [
     "Safety_Rationale",
     "Clinical_Rationale",
     "Comparative_Rationale",
+    "Comparative_Rationale_Structured",
     "Rationale",
 ]
 
@@ -1041,6 +1042,9 @@ class BotanicalRDCandidateEngine:
         # is meaningful, so this runs last, exactly like
         # _merge_multi_compound_matches already does one pass earlier.
         output["Comparative_Rationale"] = build_comparative_rationale(output)
+        # Sprint 2: additive structured companion to the string above —
+        # never replaces it, never changes its type.
+        output["Comparative_Rationale_Structured"] = build_comparative_rationale_structured(output)
 
         return output[OUTPUT_COLUMNS]
 

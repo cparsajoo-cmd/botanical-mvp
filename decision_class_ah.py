@@ -113,11 +113,23 @@ def classify_decision_ah(
        about the application itself, which same_plant rows represent.
 
     C. Alternative-source R&D candidate
-       Rule: NOT same_plant, match_quality == "exact",
-       evidence_confidence >= MODEST_CONFIDENCE_THRESHOLD.
-       Reasoning: literally class C's definition — same active
-       compound, in a DIFFERENT plant, with real (if not necessarily
-       strong) supporting evidence.
+       Rule: NOT same_plant, match_quality in
+       {"exact", "target_verified"}, evidence_confidence >=
+       MODEST_CONFIDENCE_THRESHOLD.
+       Reasoning: audit 4.7's own definition of class C is "همان
+       compound مؤثر یا compound بسیار مرتبط از نظر ساختار، target یا
+       mechanism" — explicitly INCLUDES a very closely related
+       compound (i.e. target_verified), not only an exact match. An
+       earlier version of this rule required match_quality == "exact"
+       only, which meant a target_verified match with STRONG evidence
+       (confidence above MODEST_CONFIDENCE_THRESHOLD) matched neither
+       this rule (wrong match_quality) nor D below (D requires LOW
+       confidence) — it fell through every rule and landed in G/Hold,
+       misclassifying a genuinely strong candidate as "insufficient
+       evidence." Found via an end-to-end smoke test combining a real
+       target_verified match with a high Evidence_Confidence, not by
+       inspection — the unit tests alone hadn't covered that specific
+       combination of match_quality and confidence level.
 
     D. Mechanism-based R&D candidate
        Rule: NOT same_plant, match_quality in
@@ -172,7 +184,7 @@ def classify_decision_ah(
 
     if (
         not same_plant
-        and match_quality == "exact"
+        and match_quality in {"exact", "target_verified"}
         and evidence_confidence >= MODEST_CONFIDENCE_THRESHOLD
     ):
         return "C — Alternative-source R&D candidate"

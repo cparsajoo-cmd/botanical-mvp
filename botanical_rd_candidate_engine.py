@@ -23,6 +23,7 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from industrial_feasibility import classify_industrial_feasibility
+from evidence_coverage import classify_evidence_coverage
 
 try:
     from evidence_database import load_evidence_database
@@ -84,6 +85,7 @@ OUTPUT_COLUMNS = [
     "Evidence_Source",
     "Source_Record_IDs",
     "Occurrence_Corroboration",
+    "Evidence_Coverage_Tier",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
     "Has_Negative_Evidence",
@@ -809,6 +811,11 @@ class BotanicalRDCandidateEngine:
                         use_live_search=self.use_live_search,
                     )
                     occurrence_corroboration = self._occurrence_corroboration(evidence_source_ids)
+                    evidence_coverage_tier = classify_evidence_coverage(
+                        occurrence_corroboration=occurrence_corroboration,
+                        evidence_confidence=evidence_confidence,
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                    )
 
                     # Gap 6 + Gap 8: structured rationale, built purely
                     # from signals already computed above — no new data
@@ -868,6 +875,7 @@ class BotanicalRDCandidateEngine:
                             ),
                             "Source_Record_IDs": "; ".join(evidence_source_ids) if evidence_source_ids else "No specific source record identified",
                             "Occurrence_Corroboration": occurrence_corroboration,
+                            "Evidence_Coverage_Tier": evidence_coverage_tier,
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Has_Negative_Evidence": negative_evidence.is_negative,
@@ -1184,6 +1192,18 @@ class BotanicalRDCandidateEngine:
                     rd_opportunity_score=new_score,
                     evidence_confidence=best["Evidence_Confidence"],
                 ) or ""
+
+            if "Evidence_Coverage_Tier" in group.columns:
+                # Depends on Occurrence_Corroboration and Evidence_Confidence,
+                # both just finalized above — recomputed here, not carried
+                # over from the pre-merge best sub-row, for the same
+                # staleness reasons as every other derived column in
+                # this function.
+                best["Evidence_Coverage_Tier"] = classify_evidence_coverage(
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    evidence_confidence=best["Evidence_Confidence"],
+                    evidence_hierarchy_detail=str(best.get("Evidence_Hierarchy_Detail", "")),
+                )
 
             if "Decision_Class_AH" in group.columns:
                 # best's own _match_quality/_same_plant (from the

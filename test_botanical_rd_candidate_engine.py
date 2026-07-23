@@ -1295,6 +1295,69 @@ def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
 
 
 # ---------------------------------------------------------------------
+# 49) Evidence_Coverage_Tier (architecture item 1) must be populated
+#     end-to-end through run(), and must be correctly RECOMPUTED (not
+#     stale) after a multi-compound merge changes the underlying
+#     Occurrence_Corroboration/Evidence_Confidence it depends on.
+# ---------------------------------------------------------------------
+def test_evidence_coverage_tier_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Evidence_Coverage_Tier" in result.columns
+    valid_tiers = {"Preliminary", "Partial Evidence", "Broad Evidence", "Decision-grade Evidence"}
+    assert set(result["Evidence_Coverage_Tier"]).issubset(valid_tiers)
+
+
+def test_evidence_coverage_tier_upgrades_after_merge_combines_sources():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=60.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Evidence_Coverage_Tier="Partial Evidence",
+        Evidence_Hierarchy_Detail="Observational human evidence",
+    )
+    row_a["R&D_Opportunity_Score"] = 60
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=55.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/2/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Evidence_Coverage_Tier="Partial Evidence",
+        Evidence_Hierarchy_Detail="Observational human evidence",
+    )
+    row_b["R&D_Opportunity_Score"] = 55
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert merged.iloc[0]["Evidence_Coverage_Tier"] == "Broad Evidence", (
+        f"expected upgrade to Broad Evidence after merge, got: {merged.iloc[0]['Evidence_Coverage_Tier']!r}"
+    )
+
+
+# ---------------------------------------------------------------------
 # Direct-execution fallback: `python3 test_botanical_rd_candidate_engine.py`
 # still works with no pytest installed (useful with no local Python
 # environment to pip install into) by delegating to pytest.main() when

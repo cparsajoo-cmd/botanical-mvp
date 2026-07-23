@@ -79,6 +79,25 @@ def test_weak_everything_falls_back_to_g_hold():
     assert result == "G — Hold / insufficient evidence"
 
 
+def test_target_verified_match_with_strong_evidence_maps_to_c_not_hold():
+    # The exact bug found via an end-to-end smoke test: a
+    # target_verified match with confidence high enough to clear the
+    # "real evidence" bar (>= MODEST_CONFIDENCE_THRESHOLD) used to match
+    # neither C (which required match_quality == "exact" only) nor D
+    # (which requires LOW confidence) — it fell through every rule and
+    # wrongly landed in G/Hold, misclassifying a genuinely strong
+    # candidate as "insufficient evidence."
+    result = classify_decision_ah(
+        existing_decision_class="Promising candidate; verify safety and standardization",
+        evidence_confidence=85, rd_opportunity_score=72,
+        market_status="Commercial evidence reported, not independently verified",
+        match_quality="target_verified", same_plant=False,
+    )
+    assert result == "C — Alternative-source R&D candidate", (
+        f"a target_verified match with strong evidence (85) wrongly fell through to {result!r}"
+    )
+
+
 def test_every_candidate_gets_exactly_one_of_the_eight_classes():
     valid_classes = {
         "A — Verified commercial route",

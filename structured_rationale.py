@@ -567,3 +567,333 @@ def next_experiment_suggestion(
         return f"Confirm the commercial gap for {alt_plant} with a dedicated retail/patent search before investing further."
 
     return f"Review available evidence for {alt_plant} manually before deciding on next steps."
+
+
+# =====================================================================
+# Sprint 1 (post-review corrections) — the Explainable Recommendation
+# Card, and the missing-data/confidence-basis machinery it needs.
+#
+# SCOPE NOTE, per reviewer feedback: an earlier version of this card
+# lived in pharma_report_generator.py and imported a shared parser from
+# comparative_rationale.py. Both of those files pre-date Sprint 1 and
+# belong to earlier work (Gap 9 / the "why were the others rejected"
+# work respectively) — reusing/expanding them inside Sprint 1 blurred
+# sprint boundaries. Both files have been reverted to their exact
+# pre-Sprint-1 state (verified byte-identical). Everything below is
+# self-contained within this file, which IS Sprint 1's correct home —
+# it only assembles OTHER functions already defined in this same file.
+# The cost of this: _local_parse_score_breakdown() below duplicates
+# ~15 lines already present in comparative_rationale.py. That
+# duplication is intentional and accepted here specifically to avoid
+# crossing sprint boundaries, not an oversight.
+# =====================================================================
+
+def _local_parse_score_breakdown(breakdown: Optional[str]) -> dict:
+    """Self-contained copy of the Score_Breakdown parser (see
+    comparative_rationale.py's _parse_score_breakdown — intentionally
+    NOT imported from there; see the scope note above). Reverses
+    _format_score_breakdown()'s "Name: +12.3; Other: -4.0" format back
+    into a dict."""
+    if not breakdown or breakdown == "No breakdown available":
+        return {}
+    components = {}
+    for part in breakdown.split("; "):
+        if ":" not in part:
+            continue
+        name, _, value_str = part.rpartition(":")
+        try:
+            components[name.strip()] = float(value_str.strip())
+        except ValueError:
+            continue
+    return components
+
+
+# Maps botanical_rd_candidate_engine.py's actual Score_Breakdown
+# component names onto the dimensions this card reports on.
+#
+# CORRECTION (review point 2): an earlier version mapped "Market
+# signal" to BOTH Commercial and Regulatory. That was wrong — market
+# evidence and regulatory evidence are not the same thing, and
+# _score_candidate() genuinely does not compute any independent
+# regulatory score contribution (its "Market signal" component is
+# built entirely from Market_Status, which conflates commercial and
+# regulatory signals into one bucket — see botanical_rd_candidate_engine.py).
+# "Regulatory" is deliberately NOT a value anywhere in this mapping;
+# regulatory_top_contributor() below always returns the honest
+# unavailable message rather than ever attributing a score to it.
+_COMPONENT_TO_DIMENSIONS = {
+    "Chemical/mechanistic link": ["Scientific"],
+    "Novelty": ["Scientific"],
+    "Multi-compound match bonus": ["Scientific"],
+    "Evidence quality": ["Clinical"],
+    "Product-development fit": ["Commercial"],
+    "Market signal": ["Commercial"],
+    "Safety/interaction/self-row penalty": ["Safety"],
+}
+
+NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE = (
+    "No independent regulatory score contribution is available in the current "
+    "scoring model. Market_Status/regulatory signals are folded into a single "
+    "\"Market signal\" component in Score_Breakdown that does not separate "
+    "commercial from regulatory effects — see Regulatory_Rationale for "
+    "contextual (non-scored) regulatory evidence instead."
+)
+
+
+def _top_contributor_for_dimension(components: dict, dimension: str) -> str:
+    """Largest-magnitude Score_Breakdown component that maps to
+    `dimension`. Returns an explicit "not identified" message — never a
+    guess — when no component in this row's actual breakdown touches
+    that dimension."""
+    if dimension == "Regulatory":
+        return NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE
+    relevant = {
+        name: value for name, value in components.items()
+        if dimension in _COMPONENT_TO_DIMENSIONS.get(name, [])
+    }
+    if not relevant:
+        return f"No {dimension.lower()} factor identified in the score breakdown for this candidate."
+    top_name = max(relevant, key=lambda n: abs(relevant[n]))
+    return f"{top_name}: {relevant[top_name]:+.1f}"
+
+
+# ---------------------------------------------------------------------
+# Missing-data semantics (review point 5). One consistent vocabulary,
+# applied wherever this card has to say whether something is known:
+#   "available"              — a real value/finding is present
+#   "limited"                — some signal exists but is thin/partial
+#   "searched but not found" — a search ran and genuinely found nothing
+#   "not searched"           — no search was ever attempted
+#   "connector unavailable"  — the specific data source is not wired in
+#                               / not configured for this row
+#   "unknown / legacy state" — the row doesn't carry enough information
+#                               (e.g. an older/incomplete row) to tell
+#                               which of the above applies
+# An empty string or missing key is NEVER silently read as "no
+# evidence" — every helper below is explicit about which of the six
+# states it's reporting and why.
+# ---------------------------------------------------------------------
+
+_NO_SEARCH_MARKET_STATES = {"Search not performed", "Search incomplete", "Unknown", "Source unavailable"}
+_POSITIVE_REGULATORY_STATES = {"Regulatory monograph exists", "Traditional-use status"}
+_HUMAN_EVIDENCE_HIERARCHY_TIERS = {
+    "Systematic review / meta-analysis", "Clinical trial", "Observational human evidence",
+}
+_NON_HUMAN_EVIDENCE_HIERARCHY_TIERS = {
+    "Validated ex vivo / in vivo", "In vitro / mechanistic",
+}
+
+
+def _regulatory_data_availability(market_status: Optional[str]) -> str:
+    if not market_status:
+        return "unknown / legacy state"
+    if market_status in _POSITIVE_REGULATORY_STATES:
+        return "available"
+    if market_status in _NO_SEARCH_MARKET_STATES:
+        return "not searched"
+    if market_status in {"Conflicting market evidence", "Commercial evidence reported, not independently verified"}:
+        return "limited"
+    return "unknown / legacy state"
+
+
+def _human_evidence_availability(evidence_hierarchy_detail: Optional[str]) -> str:
+    if not evidence_hierarchy_detail or evidence_hierarchy_detail == "Unclassified":
+        return "unknown / legacy state"
+    if evidence_hierarchy_detail in _HUMAN_EVIDENCE_HIERARCHY_TIERS:
+        return "available"
+    if evidence_hierarchy_detail in _NON_HUMAN_EVIDENCE_HIERARCHY_TIERS:
+        return "searched but not found"  # a hierarchy WAS classified, just not a human one
+    if evidence_hierarchy_detail == "Traditional-use / regulatory monograph":
+        return "limited"
+    if evidence_hierarchy_detail == "Occurrence / analytical chemistry only":
+        return "searched but not found"
+    return "unknown / legacy state"
+
+
+def _safety_data_availability(evidence_level: Optional[str], safety_flags: Optional[str]) -> str:
+    """"No explicit flag found" on its own does NOT mean "no safety
+    data available" — it could mean a search ran over real evidence
+    text and found nothing (searched but not found) or that there was
+    no evidence text to search in the first place (not searched). This
+    distinguishes the two using Evidence_Level as the signal for
+    whether extraction actually had text to run over."""
+    if not evidence_level:
+        return "unknown / legacy state"
+    if evidence_level == "No direct evidence":
+        return "not searched"
+    if safety_flags and safety_flags != "No explicit flag found":
+        return "available"
+    return "searched but not found"
+
+
+def _connector_availability(row) -> dict:
+    """Patent/retail connector status is only ever present on a row
+    when enrich_candidates_with_market_landscape() (an OPT-IN,
+    separate call — see botanical_rd_candidate_engine.py, not part of
+    the default run()) was actually applied to this result. On a
+    standard, non-enriched row, this is honestly reported as
+    "connector unavailable" — not "not searched" and not a guess at
+    what the status might be — since this card genuinely cannot tell
+    whether a connector exists without that enrichment having run."""
+    has_enrichment = any(
+        key in row.index if hasattr(row, "index") else key in row
+        for key in ("Market_Landscape_Patent_Search_Status", "Market_Landscape_Retail_Search_Status")
+    )
+    if not has_enrichment:
+        return {
+            "patent_connector": "connector unavailable — market/patent landscape enrichment was not run for this result",
+            "retail_connector": "connector unavailable — market/patent landscape enrichment was not run for this result",
+        }
+    return {
+        "patent_connector": row.get("Market_Landscape_Patent_Search_Status", "unknown / legacy state"),
+        "retail_connector": row.get("Market_Landscape_Retail_Search_Status", "unknown / legacy state"),
+    }
+
+
+def _fallback_or_default_values_used(go_call: Optional[str]) -> str:
+    """Fallback/data-reliability status (see
+    BotanicalRDCandidateEngine.data_source_reliable and
+    go_investigate_hold_no_go()'s fallback_occurred parameter) is
+    tracked at the RUN level, not per-candidate — this is the only
+    signal visible on an individual row, and is reported as such
+    rather than implying a per-row check was made."""
+    if go_call and "data source reliability could not be confirmed" in go_call:
+        return (
+            "YES — this run's Go_Investigate_Hold_NoGo call was capped because core "
+            "data reliability could not be confirmed this run (see "
+            "BotanicalRDCandidateEngine.data_source_reliable). This is a run-level "
+            "signal, not independently verified per candidate."
+        )
+    return (
+        "Not detected on this row (no fallback-capping language in "
+        "Go_Investigate_Hold_NoGo) — but fallback status is only tracked at the "
+        "run level; this is the best available per-row signal, not an independent "
+        "per-candidate check."
+    )
+
+
+def build_confidence_basis(row) -> dict:
+    """Review point 4 — structured confidence basis, distinguishing
+    every piece the review named explicitly. No arbitrary thresholds
+    are introduced anywhere here; every value below is read directly
+    from an existing categorical column."""
+    evidence_hierarchy_detail = row.get("Evidence_Hierarchy_Detail")
+    evidence_level = row.get("Evidence_Level")
+    market_status = row.get("Market_Status")
+
+    return {
+        "confidence_level": row.get("Evidence_Confidence", None),
+        "confidence_tier": row.get("Candidate_Evidence_Strength_Tier", None),
+        "evidence_completeness": (
+            "Not distinctly tracked as its own field in the current repository — "
+            "Candidate_Evidence_Strength_Tier is the closest available proxy "
+            "(combines source count, confidence, and hierarchy tier)."
+        ),
+        "human_evidence_availability": _human_evidence_availability(evidence_hierarchy_detail),
+        "regulatory_data_availability": _regulatory_data_availability(market_status),
+        "safety_data_availability": _safety_data_availability(evidence_level, row.get("Safety_Flags")),
+        "critical_missing_information": build_missing_information(row),
+        "fallback_or_default_values_used": _fallback_or_default_values_used(row.get("Go_Investigate_Hold_NoGo")),
+    }
+
+
+def build_missing_information(row) -> list:
+    """Itemized, traceable list of what's genuinely absent for this
+    candidate — each item traces to a specific column's documented
+    "nothing found"/"not reported" sentinel value, never inferred from
+    a bare empty string."""
+    missing = []
+
+    if row.get("Evidence_Level") == "No direct evidence":
+        missing.append("No direct evidence text was found for this candidate.")
+
+    corroboration = str(row.get("Occurrence_Corroboration", "") or "")
+    if "No independent source identified" in corroboration:
+        missing.append("No independent corroborating source was identified.")
+
+    if str(row.get("Concentration_Info", "")) in {"", "Not clearly reported"}:
+        missing.append("Compound concentration was not clearly reported.")
+
+    if str(row.get("Extraction_Method", "")) in {"", "Not clearly reported"}:
+        missing.append("Extraction method was not clearly reported.")
+
+    market_status = row.get("Market_Status")
+    if market_status in _NO_SEARCH_MARKET_STATES:
+        missing.append(f"Market/regulatory picture not established: {market_status}.")
+
+    return missing
+
+
+def build_not_searched(row) -> list:
+    """Review point 3's not_searched field — states that were
+    genuinely NEVER searched, distinct from a search that ran and
+    found nothing (see build_missing_information for the latter)."""
+    not_searched = []
+    market_status = row.get("Market_Status")
+    if market_status in {"Search not performed", "Search incomplete"}:
+        not_searched.append(f"Commercial/regulatory market search: {market_status}.")
+
+    connectors = _connector_availability(row)
+    if "not run for this result" in connectors["patent_connector"]:
+        not_searched.append("Patent search: enrichment not run for this result (opt-in step not applied).")
+    if "not run for this result" in connectors["retail_connector"]:
+        not_searched.append("Retail product search: enrichment not run for this result (opt-in step not applied).")
+
+    return not_searched
+
+
+def build_recommendation_card(row) -> dict:
+    """Sprint 1 (post-review corrections) — the Explainable
+    Recommendation Card. Every field below is required by the review
+    and populated ONLY from data that already exists on a run() output
+    row — nothing here is invented, and every "not available"/"not
+    searched"/"connector unavailable" state is stated explicitly
+    rather than inferred from an empty string.
+    """
+    components = _local_parse_score_breakdown(row.get("Score_Breakdown"))
+    positive_drivers = {name: value for name, value in components.items() if value > 0}
+    negative_drivers = {name: value for name, value in components.items() if value < 0}
+    connectors = _connector_availability(row)
+
+    return {
+        "botanical": row.get("Alternative_Plant", "Unknown plant"),
+        "final_recommendation": row.get("Go_Investigate_Hold_NoGo", "Unknown"),
+
+        # Q1: why selected
+        "scientific_rationale": row.get("Scientific_Rationale", ""),
+        "top_scientific_contributor": _top_contributor_for_dimension(components, "Scientific"),
+
+        # Q3 (audit numbering): which clinical evidence contributed most
+        "clinical_rationale": row.get("Clinical_Rationale", ""),
+        "top_clinical_contributor": _top_contributor_for_dimension(components, "Clinical"),
+        "mechanism_of_action": row.get("Target_or_Mechanism", "Not clearly extracted"),
+
+        # Q4: regulatory — CORRECTED, never a fabricated score contribution
+        "regulatory_rationale": row.get("Regulatory_Rationale", ""),
+        "top_regulatory_contributor": _top_contributor_for_dimension(components, "Regulatory"),
+
+        # Q5: commercial
+        "commercial_rationale": row.get("Commercial_Rationale", ""),
+        "top_commercial_contributor": _top_contributor_for_dimension(components, "Commercial"),
+
+        # Q6: safety
+        "safety_profile": row.get("Safety_Rationale", ""),
+        "top_safety_factor": _top_contributor_for_dimension(components, "Safety"),
+
+        # Review point 3's required fields, verbatim names:
+        "positive_drivers": positive_drivers if positive_drivers else "None — no component increased the score.",
+        "negative_drivers": negative_drivers if negative_drivers else "None — no component reduced the score.",
+        "limitations": row.get("Evidence_Weaknesses", "None identified"),
+        "missing_information": build_missing_information(row),
+        "not_searched": build_not_searched(row),
+        "connector_unavailable": connectors,
+        "recommended_next_step": row.get("Next_Experiment_Suggestion", ""),
+        "traceability": {
+            "source_record_ids": row.get("Source_Record_IDs", "No specific source record identified"),
+            "corroboration": row.get("Occurrence_Corroboration", ""),
+        },
+        "confidence_basis": build_confidence_basis(row),
+
+        # Retained from the pre-correction version, still valid:
+        "evidence_conflict_reasoning": row.get("Evidence_Conflict_Reasoning", ""),
+    }

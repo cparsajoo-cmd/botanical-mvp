@@ -14,6 +14,11 @@ from structured_rationale import (
     commercial_rationale,
     safety_rationale,
     clinical_rationale,
+    build_recommendation_card,
+    build_confidence_basis,
+    build_missing_information,
+    build_not_searched,
+    NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE,
 )
 
 
@@ -401,6 +406,258 @@ def test_next_experiment_always_mentions_the_specific_plant():
         decision_class_ah="C — Alternative-source R&D candidate", evidence_weaknesses_list=[], alt_plant="Silybum marianum",
     )
     assert "Silybum marianum" in result
+
+
+# =====================================================================
+# Sprint 1 (post-review corrections) — the Explainable Recommendation
+# Card. Realistic row fixtures matching the ACTUAL current
+# OUTPUT_COLUMNS shape (verified against botanical_rd_candidate_engine.py),
+# not simplified stand-ins.
+# =====================================================================
+
+def _full_row(**overrides):
+    """A complete, realistic run() output row — every field a real
+    candidate would have. Individual tests override only what they
+    need to isolate."""
+    base = dict(
+        Alternative_Plant="AltPlant", Reference_Plant="RefPlant",
+        Target_or_Mechanism="Hepatoprotective",
+        Scientific_Rationale="Shares a validated biological target.",
+        Clinical_Rationale="Clinical-grade evidence exists: Clinical trial (Evidence_Confidence 70.0).",
+        Regulatory_Rationale="A regulatory monograph exists for this application. No regulatory barrier was identified in the available evidence text.",
+        Commercial_Rationale="Market status: Regulatory monograph exists.",
+        Safety_Rationale="No explicit safety flag or drug-interaction concern was identified in the available evidence text.",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Clinical trial",
+        Market_Status="Regulatory monograph exists",
+        Occurrence_Corroboration="Corroborated by 3 independent sources",
+        Concentration_Info="2 mg/g dry weight", Extraction_Method="Aqueous",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
+        Candidate_Evidence_Strength_Tier="Broad Evidence",
+        Evidence_Confidence=70.0,
+        Score_Breakdown="Chemical/mechanistic link: +15.0; Evidence quality: +24.0; Market signal: +2.0; Safety/interaction/self-row penalty: -14.0",
+        Evidence_Weaknesses="None identified",
+        Next_Experiment_Suggestion="Quantify compound concentration in AltPlant.",
+        Go_Investigate_Hold_NoGo="Investigate",
+        Evidence_Conflict_Reasoning="POSITIVE, CONSISTENT: 3 independent sources were found and none contradicts the finding.",
+    )
+    base.update(overrides)
+    return base
+
+
+# ---------------------------------------------------------------------
+# 1. No independent regulatory score component (review point 2's core fix)
+# ---------------------------------------------------------------------
+def test_no_independent_regulatory_score_component():
+    card = build_recommendation_card(_full_row())
+    assert card["top_regulatory_contributor"] == NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE
+    assert "not available" in card["top_regulatory_contributor"].lower() or \
+           "no independent regulatory score contribution" in card["top_regulatory_contributor"].lower()
+
+
+def test_market_signal_never_attributed_to_regulatory_even_when_present():
+    row = _full_row(Score_Breakdown="Market signal: +6.0")
+    card = build_recommendation_card(row)
+    # Market signal must count toward Commercial only.
+    assert "Market signal" in card["top_commercial_contributor"]
+    assert card["top_regulatory_contributor"] == NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE
+
+
+# ---------------------------------------------------------------------
+# 2. Market search not performed
+# ---------------------------------------------------------------------
+def test_market_search_not_performed_is_distinguished():
+    row = _full_row(Market_Status="Search not performed")
+    card = build_recommendation_card(row)
+    assert any("Market/regulatory picture not established" in m for m in card["missing_information"])
+    assert any("Commercial/regulatory market search" in n for n in card["not_searched"])
+    assert build_confidence_basis(row)["regulatory_data_availability"] == "not searched"
+
+
+# ---------------------------------------------------------------------
+# 3. Regulatory/patent connector unavailable
+# ---------------------------------------------------------------------
+def test_patent_connector_unavailable_when_enrichment_never_ran():
+    # A standard (non-enriched) row has no Market_Landscape_* columns at all.
+    card = build_recommendation_card(_full_row())
+    assert "connector unavailable" in card["connector_unavailable"]["patent_connector"]
+    assert "connector unavailable" in card["connector_unavailable"]["retail_connector"]
+    assert any("Patent search" in n for n in card["not_searched"])
+
+
+def test_connector_status_read_honestly_when_enrichment_did_run():
+    row = _full_row(
+        Market_Landscape_Patent_Search_Status="Not configured",
+        Market_Landscape_Retail_Search_Status="Skipped",
+    )
+    card = build_recommendation_card(row)
+    assert card["connector_unavailable"]["patent_connector"] == "Not configured"
+    assert card["connector_unavailable"]["retail_connector"] == "Skipped"
+
+
+# ---------------------------------------------------------------------
+# 4. Safety data unavailable
+# ---------------------------------------------------------------------
+def test_safety_data_unavailable_when_no_evidence_text_existed():
+    row = _full_row(Evidence_Level="No direct evidence", Safety_Flags="No explicit flag found")
+    basis = build_confidence_basis(row)
+    assert basis["safety_data_availability"] == "not searched"
+
+
+def test_safety_data_searched_but_not_found_when_evidence_existed_but_no_flag():
+    row = _full_row(Evidence_Level="Clinical / human evidence", Safety_Flags="No explicit flag found")
+    basis = build_confidence_basis(row)
+    assert basis["safety_data_availability"] == "searched but not found"
+
+
+def test_safety_data_available_when_a_real_flag_exists():
+    row = _full_row(Evidence_Level="Clinical / human evidence", Safety_Flags="lithogenic")
+    basis = build_confidence_basis(row)
+    assert basis["safety_data_availability"] == "available"
+
+
+# ---------------------------------------------------------------------
+# 5. Empty value versus searched-but-not-found
+# ---------------------------------------------------------------------
+def test_empty_string_is_not_silently_read_as_no_evidence():
+    # A missing/empty Evidence_Level (e.g. a malformed row) must be
+    # "unknown / legacy state", NOT silently treated as "not searched"
+    # or "no evidence" — those are different, stronger claims than
+    # "we don't know."
+    row = _full_row(Evidence_Level="", Market_Status="")
+    basis = build_confidence_basis(row)
+    assert basis["regulatory_data_availability"] == "unknown / legacy state"
+
+
+def test_searched_but_not_found_is_distinct_from_not_searched():
+    searched_empty = _human_evidence_helper_row(Evidence_Hierarchy_Detail="In vitro / mechanistic")
+    not_searched = _human_evidence_helper_row(Evidence_Hierarchy_Detail=None)
+    basis_searched = build_confidence_basis(searched_empty)
+    basis_not_searched = build_confidence_basis(not_searched)
+    assert basis_searched["human_evidence_availability"] == "searched but not found"
+    assert basis_not_searched["human_evidence_availability"] == "unknown / legacy state"
+    assert basis_searched["human_evidence_availability"] != basis_not_searched["human_evidence_availability"]
+
+
+def _human_evidence_helper_row(**overrides):
+    return _full_row(**overrides)
+
+
+# ---------------------------------------------------------------------
+# 6. Legacy rows without the new explainability fields
+# ---------------------------------------------------------------------
+def test_legacy_row_without_new_fields_does_not_crash():
+    # A minimal, old-shaped row missing every new column this card
+    # reads — must degrade gracefully, not raise.
+    legacy_row = {"Alternative_Plant": "OldPlant"}
+    card = build_recommendation_card(legacy_row)
+    assert card["botanical"] == "OldPlant"
+    assert card["scientific_rationale"] == ""
+    assert card["confidence_basis"]["regulatory_data_availability"] == "unknown / legacy state"
+    assert card["confidence_basis"]["human_evidence_availability"] == "unknown / legacy state"
+    assert card["confidence_basis"]["safety_data_availability"] == "unknown / legacy state"
+
+
+# ---------------------------------------------------------------------
+# 7. Incomplete Score_Breakdown
+# ---------------------------------------------------------------------
+def test_incomplete_score_breakdown_does_not_crash_and_reports_honestly():
+    row = _full_row(Score_Breakdown="Chemical/mechanistic link: +15.0")  # only one component
+    card = build_recommendation_card(row)
+    assert "Chemical/mechanistic link" in card["top_scientific_contributor"]
+    assert "No clinical factor identified" in card["top_clinical_contributor"]
+    assert "No safety factor identified" in card["top_safety_factor"]
+    assert card["negative_drivers"] == "None — no component reduced the score."
+
+
+def test_missing_score_breakdown_entirely_does_not_crash():
+    row = _full_row(Score_Breakdown=None)
+    card = build_recommendation_card(row)
+    assert card["positive_drivers"] == "None — no component increased the score."
+    assert card["negative_drivers"] == "None — no component reduced the score."
+
+
+# ---------------------------------------------------------------------
+# 8. No fabricated positive claim from missing data
+# ---------------------------------------------------------------------
+def test_no_fabricated_positive_claim_when_data_is_missing():
+    row = _full_row(
+        Evidence_Level="No direct evidence", Market_Status="Search not performed",
+        Occurrence_Corroboration="No independent source identified — not corroborated",
+        Concentration_Info="Not clearly reported", Extraction_Method="Not clearly reported",
+        Score_Breakdown=None,
+    )
+    card = build_recommendation_card(row)
+    # Every "missing" signal must show up as missing, not as a positive finding.
+    assert len(card["missing_information"]) >= 4
+    assert card["positive_drivers"] == "None — no component increased the score."
+    basis = card["confidence_basis"]
+    assert basis["regulatory_data_availability"] == "not searched"
+    assert basis["safety_data_availability"] == "not searched"
+
+
+# ---------------------------------------------------------------------
+# 9. Score contribution consistency with the original score
+# ---------------------------------------------------------------------
+def test_score_contributions_sum_consistently_with_positive_and_negative_split():
+    row = _full_row(
+        Score_Breakdown="Chemical/mechanistic link: +15.0; Evidence quality: +24.0; "
+                        "Market signal: +2.0; Safety/interaction/self-row penalty: -14.0"
+    )
+    card = build_recommendation_card(row)
+    positive_sum = sum(card["positive_drivers"].values())
+    negative_sum = sum(card["negative_drivers"].values())
+    assert positive_sum == 41.0  # 15 + 24 + 2
+    assert negative_sum == -14.0
+    # Every component from the raw breakdown must appear in exactly one bucket.
+    all_components = {**card["positive_drivers"], **card["negative_drivers"]}
+    assert set(all_components) == {
+        "Chemical/mechanistic link", "Evidence quality", "Market signal",
+        "Safety/interaction/self-row penalty",
+    }
+
+
+# ---------------------------------------------------------------------
+# General card correctness
+# ---------------------------------------------------------------------
+def test_recommendation_card_includes_every_reviewer_required_field():
+    card = build_recommendation_card(_full_row())
+    for field in [
+        "positive_drivers", "negative_drivers", "limitations", "missing_information",
+        "not_searched", "connector_unavailable", "recommended_next_step",
+        "traceability", "confidence_basis",
+    ]:
+        assert field in card, f"required field {field!r} missing from the recommendation card"
+
+
+def test_confidence_basis_includes_every_reviewer_required_dimension():
+    basis = build_confidence_basis(_full_row())
+    for field in [
+        "confidence_level", "confidence_tier", "evidence_completeness",
+        "human_evidence_availability", "regulatory_data_availability",
+        "safety_data_availability", "critical_missing_information",
+        "fallback_or_default_values_used",
+    ]:
+        assert field in basis, f"required confidence-basis field {field!r} missing"
+
+
+def test_traceability_includes_sources_and_corroboration():
+    card = build_recommendation_card(_full_row())
+    assert "pubmed.ncbi.nlm.nih.gov" in card["traceability"]["source_record_ids"]
+    assert "3 independent sources" in card["traceability"]["corroboration"]
+
+
+def test_fallback_detected_from_go_call_language():
+    row = _full_row(Go_Investigate_Hold_NoGo="Investigate — data source reliability could not be confirmed this run")
+    basis = build_confidence_basis(row)
+    assert basis["fallback_or_default_values_used"].startswith("YES")
+
+
+def test_fallback_not_detected_on_normal_go_call():
+    row = _full_row(Go_Investigate_Hold_NoGo="Go")
+    basis = build_confidence_basis(row)
+    assert basis["fallback_or_default_values_used"].startswith("Not detected")
 
 
 if __name__ == "__main__":

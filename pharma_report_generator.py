@@ -23,8 +23,12 @@ WHY NOT report_generator.py
 That file (confirmed in the Phase 1/7 audit as unreachable from app.py)
 references a completely different, older column schema
 (Scientific_Name, Evidence_Score, Commercial_Potential, Decision_Reason
-— none of which exist in the current OUTPUT_COLUMNS) and was moved to
-archive/ rather than reused.
+— none of which exist in the current OUTPUT_COLUMNS). It's on the
+confirmed-legacy list (.github/legacy-files.txt) and should be moved
+to archive/ the next time that workflow actually runs — as of this
+writing it's identified as legacy but not yet physically moved (see
+ARCHITECTURE.md's "Legacy files" section for the current, accurate
+status of that migration).
 
 HOW TO USE
     from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
@@ -34,9 +38,13 @@ HOW TO USE
     result = engine.run(indication=..., dosage_form=..., market=...)
     report_markdown = generate_pharma_report(result, indication=..., dosage_form=..., market=...)
 
-Not wired into the Streamlit UI in this change — that's a one-line
-follow-up (a "Download report" button in step_rd_candidates.py calling
-this function) once the report format itself has been reviewed.
+WIRED INTO THE UI
+step_rd_candidates.py calls this function directly (a "Download R&D
+report (Markdown)" button, plus an in-app preview expander) — this
+docstring previously said "not wired into the Streamlit UI," which
+became stale the moment that wiring landed and was never corrected
+here. If you're reading this and it's stale again, check
+step_rd_candidates.py directly rather than trusting this comment.
 """
 
 from __future__ import annotations
@@ -67,6 +75,12 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
     white_space = str(row.get("White_Space_Type", "") or "").strip()
     if white_space:
         lines.append(f"**White space type:** {white_space}")
+
+    development_concept = row.get("Product_Development_Concept")
+    if development_concept:
+        lines.append("")
+        lines.append("**Development concept:**")
+        lines.append(str(development_concept))
 
     confidence_note = str(row.get("Confidence_Note", "") or "").strip()
     if confidence_note:
@@ -107,11 +121,18 @@ def generate_pharma_report(
     dosage_form: str,
     market: str,
     top_n: int = 20,
+    standardized_project: dict = None,
 ) -> str:
     """Builds the full Markdown report. Returns a short, explicit
     "no candidates" report (not an empty string, not an exception) if
     `result` is empty — a report with zero findings is itself a
-    finding worth stating plainly."""
+    finding worth stating plainly.
+
+    standardized_project (optional): the dict question_understanding_engine.
+    standardize_project_definition() already builds in step_inputs.py —
+    passed straight through, not recomputed here, so this stays a
+    formatting layer, not a second source of the same information.
+    """
     lines = [
         "# Botanical R&D Decision Intelligence Report",
         "",
@@ -119,6 +140,24 @@ def generate_pharma_report(
         f"investigating for {dosage_form} products targeting {indication} in {market}?",
         "",
     ]
+
+    if standardized_project:
+        lines.append("## Project Definition")
+        lines.append("")
+        lines.append(f"- **Product type:** {standardized_project.get('product_type', 'Not specified')}")
+        lines.append(f"- **Route:** {standardized_project.get('route', 'Not specified')}")
+        lines.append(f"- **Target population:** {standardized_project.get('target_population', 'Not specified')}")
+        lines.append(f"- **Target market:** {standardized_project.get('target_market', market)}")
+        constraints = standardized_project.get("constraints") or []
+        if constraints:
+            lines.append(f"- **Safety constraints:** {', '.join(constraints)}")
+        reg_focus = standardized_project.get("regulatory_focus") or []
+        if reg_focus:
+            lines.append(f"- **Regulatory focus:** {', '.join(reg_focus)}")
+        evidence_reqs = standardized_project.get("evidence_requirements") or []
+        if evidence_reqs:
+            lines.append(f"- **Evidence requirements:** {', '.join(evidence_reqs)}")
+        lines.append("")
 
     if result.empty:
         lines += [

@@ -3,6 +3,8 @@ import streamlit as st
 
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pharma_report_generator import generate_pharma_report
+from product_development_concept import add_development_concept_column
+from candidate_output_adapter import validate_result_df
 
 
 def _unique_nonempty(values):
@@ -410,6 +412,13 @@ def render_rd_candidates_step(inputs):
     result_df = st.session_state.get("rd_candidates_df")
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+        # Cheap (no network calls, pure string formatting over columns
+        # already on the row) — applied automatically, unlike market
+        # landscape enrichment which stays opt-in due to its real
+        # network cost.
+        result_df = add_development_concept_column(result_df, inputs.get("standardized_project"))
+
+    if isinstance(result_df, pd.DataFrame) and not result_df.empty:
         if "Reference_Plant" in result_df.columns:
             n_ref_plants = result_df["Reference_Plant"].nunique()
             if n_ref_plants <= 3:
@@ -442,6 +451,72 @@ def render_rd_candidates_step(inputs):
         if len(result_df) > 500:
             st.caption(f"Showing first 500 of {len(result_df)} rows in this preview.")
 
+        with st.expander("🌍 Enrich with market/patent landscape (optional, per-candidate)"):
+            st.caption(
+                "Merges each candidate's real regulatory (EMA/WHO/ESCOP), patent, "
+                "and retail search status into the table above — kept separate "
+                "from the default run because patent search makes a real network "
+                "call when EPO_OPS_KEY/EPO_OPS_SECRET are configured. Retail "
+                "search has no free data source and will honestly show "
+                "\"Not configured\"/\"Not implemented\" until a paid search API "
+                "is wired in (see _search_retail_products())."
+            )
+            unique_plant_count = result_df["Alternative_Plant"].nunique() if "Alternative_Plant" in result_df.columns else 0
+            max_plants = st.slider(
+                "Max unique plants to check", 5, 100, min(30, max(unique_plant_count, 5)),
+                key="rd_market_landscape_max_plants",
+                help=f"This result has {unique_plant_count} unique alternative plants.",
+            )
+            if st.button("Run market/patent landscape check", key="rd_enrich_market_btn"):
+                with st.spinner("Checking regulatory/patent/retail status per plant..."):
+                    enrich_engine = _build_engine(_get_evidence_df(), use_live_search=use_live_search)
+                    enriched_df = enrich_engine.enrich_candidates_with_market_landscape(
+                        result_df, max_plants=max_plants,
+                    )
+                st.session_state["rd_candidates_df_enriched"] = enriched_df
+
+            enriched_df = st.session_state.get("rd_candidates_df_enriched")
+            if isinstance(enriched_df, pd.DataFrame) and not enriched_df.empty:
+                note = enriched_df["Market_Landscape_Note"].iloc[0] if "Market_Landscape_Note" in enriched_df.columns else ""
+                if note:
+                    st.warning(note)
+                display_cols = [c for c in enriched_df.columns if c.startswith("Market_Landscape_") or c in ("Alternative_Plant", "Reference_Plant")]
+                st.dataframe(enriched_df[display_cols].drop_duplicates(subset=["Alternative_Plant"]).head(200), width="stretch")
+                st.download_button(
+                    "Download enriched table (CSV)",
+                    data=enriched_df.to_csv(index=False).encode("utf-8"),
+                    file_name="botanical_rd_candidates_market_enriched.csv",
+                    mime="text/csv",
+                    key="rd_download_enriched_csv",
+                )
+
+        with st.expander("📐 Validate output contract (Data Contracts adapter)"):
+            st.caption(
+                "Checks every row against data_contracts.CandidateAssessment — "
+                "the named schema this output is supposed to have. A clean "
+                "result means the real columns and the documented contract "
+                "still agree; any errors here mean something drifted (a "
+                "renamed column, an unexpected type) and point to exactly "
+                "which row and field."
+            )
+            if st.button("Run contract validation", key="rd_validate_contract_btn"):
+                records, errors_df = validate_result_df(
+                    result_df, indication=indication, project_id=f"{indication}-{market}",
+                )
+                if errors_df.empty:
+                    st.success(
+                        f"✅ All {len(records)} rows validated cleanly against "
+                        f"the CandidateAssessment contract."
+                    )
+                else:
+                    st.error(
+                        f"⚠️ {len(errors_df)} contract issue(s) found across "
+                        f"{errors_df['row_index'].nunique()} row(s) — "
+                        f"{len(records)} of {len(result_df)} rows still "
+                        f"validated cleanly."
+                    )
+                    st.dataframe(errors_df, width="stretch")
+
         st.download_button(
             "Download decision table (CSV)",
             data=result_df.to_csv(index=False).encode("utf-8"),
@@ -451,6 +526,7 @@ def render_rd_candidates_step(inputs):
 
         report_markdown = generate_pharma_report(
             result_df, indication=indication, dosage_form=dosage_form, market=market,
+            standardized_project=inputs.get("standardized_project"),
         )
         st.download_button(
             "Download R&D report (Markdown)",

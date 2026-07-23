@@ -37,6 +37,34 @@ def _make_row(**overrides):
     return base
 
 
+def test_standardized_project_section_appears_when_provided():
+    result = pd.DataFrame([_make_row()])
+    standardized_project = {
+        "product_type": "Botanical Food Supplement",
+        "route": "Oral",
+        "target_population": "Elderly / older adults",
+        "target_market": "European Union",
+        "constraints": ["Low CYP interaction risk"],
+        "regulatory_focus": ["EU Regulatory Framework", "EMA-HMPC Monographs"],
+        "evidence_requirements": ["Clinical Evidence", "Safety Evidence"],
+    }
+    report = generate_pharma_report(
+        result, indication="Liver support", dosage_form="Infusion", market="EU",
+        standardized_project=standardized_project,
+    )
+    assert "## Project Definition" in report
+    assert "Botanical Food Supplement" in report
+    assert "Elderly / older adults" in report
+    assert "Low CYP interaction risk" in report
+    assert "EMA-HMPC Monographs" in report
+
+
+def test_no_project_definition_section_when_not_provided():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "## Project Definition" not in report
+
+
 def test_report_has_title_and_question():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="Liver support", dosage_form="Infusion", market="EU")

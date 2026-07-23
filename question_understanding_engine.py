@@ -9,8 +9,25 @@ def normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _prettify_if_lowercase(raw: str) -> str:
+    """Only title-cases input that looks like unformatted free text
+    (all-lowercase). A value that already has any uppercase (an
+    already-canonical value like "Cognitive decline / Alzheimer's
+    support", or an acronym like "GCC") is passed through unchanged —
+    blindly calling .title() on those mangles apostrophes
+    ("Alzheimer's" -> "Alzheimer'S") and acronyms ("GCC" -> "Gcc").
+    This surfaced as a real bug once this module was actually wired
+    into the live pipeline for the first time (it was previously
+    unreachable, so nothing had ever exercised this path with a
+    real mixed-case value)."""
+    if not raw:
+        return raw
+    return raw.title() if raw == raw.lower() else raw
+
+
 def normalize_market(market: str) -> str:
-    market = normalize_text(market).lower()
+    market_raw = normalize_text(market)
+    market = market_raw.lower()
 
     market_map = {
         "eu": "European Union",
@@ -26,7 +43,7 @@ def normalize_market(market: str) -> str:
         "global": "Global"
     }
 
-    return market_map.get(market, market.title() if market else "Not specified")
+    return market_map.get(market, _prettify_if_lowercase(market_raw) or "Not specified")
 
 
 def infer_route(dosage_form: str) -> str:
@@ -69,7 +86,7 @@ def normalize_dosage_form(dosage_form: str) -> str:
         "drops": "Drops"
     }
 
-    return dosage_map.get(dosage_form, dosage_form_raw.title() if dosage_form_raw else "Not specified")
+    return dosage_map.get(dosage_form, _prettify_if_lowercase(dosage_form_raw) or "Not specified")
 
 
 def normalize_indication(indication: str) -> str:
@@ -90,7 +107,7 @@ def normalize_indication(indication: str) -> str:
         "menopause": "Menopausal Symptoms"
     }
 
-    return indication_map.get(indication, indication_raw.title() if indication_raw else "Not specified")
+    return indication_map.get(indication, _prettify_if_lowercase(indication_raw) or "Not specified")
 
 
 def infer_product_type(dosage_form: str, indication: str) -> str:

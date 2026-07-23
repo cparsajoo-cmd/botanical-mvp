@@ -71,8 +71,10 @@ from seed_data import (
 
 OUTPUT_COLUMNS = [
     "Reference_Plant",
+    "Reference_Plant_Part",
     "Reference_Compound",
     "Alternative_Plant",
+    "Alternative_Plant_Part",
     "Shared_or_Similar_Compound",
     "Target_or_Mechanism",
     "Target_Provenance",
@@ -588,6 +590,7 @@ class BotanicalRDCandidateEngine:
                 ref,
                 ["Scientific_Name", "scientific_name", "Plant", "plant"],
             )
+            ref_plant_part = self._pick(ref, ["Plant_Part", "plant_part"])
 
             # No further reference_plant filtering needed here — the
             # `references` DataFrame built above (via _norm_taxon) is
@@ -651,6 +654,7 @@ class BotanicalRDCandidateEngine:
                     alt_plant = alt_record["alt_plant"]
                     alt_compounds = alt_record["alt_compounds"]
                     alt = alt_record["row"]
+                    alt_plant_part = self._pick(alt, ["Plant_Part", "plant_part"])
 
                     matched_compound, match_quality, target_specificity, target_provenance = (
                         self._match_compounds(
@@ -874,8 +878,10 @@ class BotanicalRDCandidateEngine:
                     rows.append(
                         {
                             "Reference_Plant": ref_plant,
+                            "Reference_Plant_Part": ref_plant_part or "Not specified in database",
                             "Reference_Compound": ref_compound,
                             "Alternative_Plant": alt_plant,
+                            "Alternative_Plant_Part": alt_plant_part or "Not specified in database",
                             "Shared_or_Similar_Compound": matched_compound,
                             "Target_or_Mechanism": target or "Not clearly extracted",
                             "Target_Provenance": target_provenance or "Not applicable (no shared-target claim for this match type)",
@@ -1484,10 +1490,15 @@ class BotanicalRDCandidateEngine:
                     self._split_series_terms(group["target"])
                 )
 
+            plant_part = ""
+            if "plant_part" in group.columns:
+                plant_part = self._first_non_empty(group["plant_part"])
+
             rows.append({
                 "Scientific_Name": plant,
                 "Known_Active_Compounds": "; ".join(compounds),
                 "Known_Targets": "; ".join(targets),
+                "Plant_Part": plant_part,
                 # Specificity proxy: how many indication-matched compound
                 # rows this plant has for THIS query — used only as a
                 # tiebreaker below, smaller/more-focused first.
@@ -3511,6 +3522,79 @@ class BotanicalRDCandidateEngine:
                 "Retail_Products_Detail": retail[0].get("detail", ""),
             })
         return pd.DataFrame(rows)
+
+    def enrich_candidates_with_market_landscape(self, result_df, max_plants=30):
+        """OPT-IN post-processing: merges market_landscape_df()'s
+        regulatory/patent/retail snapshot into a COPY of result_df, one
+        lookup per UNIQUE Alternative_Plant (not once per row — a
+        result can have many rows sharing the same alternative plant
+        across different reference comparisons, and market_landscape()
+        is the same cost regardless of how many rows ask about that
+        plant).
+
+        NOT called by run() itself. market_landscape() can trigger a
+        real network call (patent search, when EPO_OPS_KEY/SECRET are
+        configured) — baking that into every default run without
+        review is exactly the unreviewed cost/latency change earlier
+        passes (Gap 2's _market_status() work) deliberately avoided.
+        This stays an explicit, separate call the caller opts into
+        (see step_rd_candidates.py's "Enrich with market/patent
+        landscape" button) once they've decided that cost is worth it.
+
+        max_plants caps how many unique plants get looked up in one
+        call (default 30) — a large result set could otherwise trigger
+        dozens of sequential network calls from a single button click;
+        the returned DataFrame's Market_Landscape_Checked column shows
+        exactly which plants were actually included, so a truncated
+        enrichment is visible, not silent.
+
+        HONESTY ABOUT WHAT'S REAL VS STUB:
+        - Regulatory (EMA/WHO/ESCOP) status is real — same
+          _eu_regulatory_status() logic already used elsewhere.
+        - Patent_Search_Status is real IF EPO_OPS_KEY/SECRET are set
+          ("OK" or "Error"), otherwise honestly "Not configured".
+        - Retail_Products_Status is currently always "Not implemented"
+          — _search_retail_products() is a documented stub. This
+          function does not hide that; it surfaces the real status
+          string as-is rather than omitting the column.
+        """
+        if result_df is None or result_df.empty or "Alternative_Plant" not in result_df.columns:
+            return result_df.copy() if result_df is not None else result_df
+
+        unique_plants = [
+            p for p in result_df["Alternative_Plant"].dropna().unique().tolist() if p
+        ]
+        checked_plants = unique_plants[:max_plants]
+        truncated = len(unique_plants) > max_plants
+
+        landscape_df = self.market_landscape_df(checked_plants)
+        landscape_df = landscape_df.rename(columns={
+            "Plant": "Alternative_Plant",
+            "EMA_HMPC_Status": "Market_Landscape_EMA_HMPC_Status",
+            "WHO_Status": "Market_Landscape_WHO_Status",
+            "ESCOP_Status": "Market_Landscape_ESCOP_Status",
+            "Regulatory_Source": "Market_Landscape_Regulatory_Source",
+            "US_Status": "Market_Landscape_US_Status",
+            "UK_Status": "Market_Landscape_UK_Status",
+            "Patent_Search_Status": "Market_Landscape_Patent_Search_Status",
+            "Patent_Detail": "Market_Landscape_Patent_Detail",
+            "Retail_Products_Status": "Market_Landscape_Retail_Search_Status",
+            "Retail_Products_Detail": "Market_Landscape_Retail_Detail",
+        })
+
+        enriched = result_df.merge(landscape_df, on="Alternative_Plant", how="left")
+        enriched["Market_Landscape_Checked"] = enriched["Alternative_Plant"].isin(checked_plants)
+
+        if truncated:
+            enriched["Market_Landscape_Note"] = (
+                f"Only the first {max_plants} of {len(unique_plants)} unique "
+                f"alternative plants were checked this run — increase max_plants "
+                f"or re-run to cover the rest."
+            )
+        else:
+            enriched["Market_Landscape_Note"] = ""
+
+        return enriched
 
 
 def load_default_evidence():

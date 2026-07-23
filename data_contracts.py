@@ -386,6 +386,36 @@ class CandidateAssessment:
     source_record_ids: list = field(default_factory=list)
     last_verified: Optional[date] = None
 
+    # ------------------------------------------------------------------
+    # Added post-Phase-3, as the real OUTPUT_COLUMNS grew (Phase 4-6,
+    # architecture-audit gap fixes, and the external-review fixes
+    # rounds). Appended here rather than interleaved above so every
+    # EXISTING positional or keyword instantiation of this class keeps
+    # working unchanged — this class's job is to track the real schema,
+    # not to enforce a particular field order.
+    # ------------------------------------------------------------------
+    target_provenance: Optional[str] = None
+    evidence_source: Optional[str] = None
+    occurrence_corroboration: Optional[str] = None
+    candidate_evidence_strength_tier: Optional[str] = None
+    evidence_level: Optional[str] = None
+    evidence_hierarchy_detail: Optional[str] = None
+    has_negative_evidence: Optional[bool] = None
+    negative_evidence_types: list = field(default_factory=list)
+    regulatory_barriers: list = field(default_factory=list)
+    industrial_feasibility: Optional[str] = None
+    score_breakdown: Optional[str] = None
+    decision_class_ah: Optional[str] = None
+    white_space_type: Optional[str] = None
+    confidence_note: Optional[str] = None
+    go_investigate_hold_no_go: Optional[str] = None
+    scientific_rationale: Optional[str] = None
+    commercial_regulatory_rationale: Optional[str] = None
+    evidence_strengths: list = field(default_factory=list)
+    evidence_weaknesses: list = field(default_factory=list)
+    next_experiment_suggestion: Optional[str] = None
+    comparative_rationale: Optional[str] = None
+
 
 # ======================================================================
 # Shared helpers

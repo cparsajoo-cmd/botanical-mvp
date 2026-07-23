@@ -1,6 +1,8 @@
 import streamlit as st
 
 from regulatory_frameworks import get_market_framework
+from free_text_question_parser import parse_free_text_question
+from question_understanding_engine import standardize_project_definition
 
 
 # Each hero scenario was one of the plants actually run through the
@@ -65,6 +67,66 @@ def render_inputs():
                 if st.button(scenario["label"], key=f"demo_btn_{key}", width="stretch"):
                     _apply_demo_scenario(key)
                     st.rerun()
+
+    with st.expander("✍️ Or describe your question in your own words"):
+        st.caption(
+            "e.g. \"A botanical oral product for mild cognitive impairment, "
+            "suitable for the elderly, with low CYP interaction risk, for "
+            "the European Union market.\" This pre-fills the fields below "
+            "from what it recognizes — it never submits anything on your "
+            "behalf; review and adjust the selections below before running "
+            "Step 5."
+        )
+        free_text_question = st.text_area(
+            "Your question", key="rd_free_text_question", label_visibility="collapsed",
+        )
+        if st.button("Parse this question", key="rd_parse_free_text_btn"):
+            parsed = parse_free_text_question(free_text_question)
+            st.session_state["rd_parsed_question"] = parsed
+            if parsed.indication:
+                st.session_state["rd_indication"] = parsed.indication
+            if parsed.dosage_form:
+                st.session_state["rd_dosage_form"] = parsed.dosage_form
+            if parsed.market:
+                st.session_state["rd_market"] = parsed.market
+            st.session_state["rd_demo_scenario_active"] = None
+            st.rerun()
+
+        parsed_question = st.session_state.get("rd_parsed_question")
+        if parsed_question is not None and free_text_question:
+            found = []
+            if parsed_question.indication:
+                found.append(f"Indication: **{parsed_question.indication}** (matched \"{parsed_question.indication_matched_phrase}\")")
+            if parsed_question.dosage_form:
+                found.append(f"Dosage form: **{parsed_question.dosage_form}** (matched \"{parsed_question.dosage_form_matched_phrase}\")")
+            if parsed_question.market:
+                found.append(f"Market: **{parsed_question.market}** (matched \"{parsed_question.market_matched_phrase}\")")
+            if parsed_question.target_population:
+                found.append(f"Target population: **{', '.join(parsed_question.target_population)}**")
+            if parsed_question.safety_constraints:
+                found.append(f"Safety constraints: **{', '.join(parsed_question.safety_constraints)}**")
+
+            if found:
+                st.success("Recognized from your question:\n\n" + "\n\n".join(f"- {f}" for f in found))
+            else:
+                st.warning(
+                    "Nothing recognized in that question — the fields below are "
+                    "keyword-matched against a fixed vocabulary, not free NLU. "
+                    "Please select manually below, or try rephrasing using terms "
+                    "closer to the dropdown options."
+                )
+            unmatched_notice = []
+            if not parsed_question.indication:
+                unmatched_notice.append("indication")
+            if not parsed_question.dosage_form:
+                unmatched_notice.append("dosage form")
+            if not parsed_question.market:
+                unmatched_notice.append("market")
+            if unmatched_notice and found:
+                st.caption(
+                    f"Not recognized: {', '.join(unmatched_notice)} — please select "
+                    f"{'these' if len(unmatched_notice) > 1 else 'this'} manually below."
+                )
 
     col1, col2 = st.columns(2)
 
@@ -204,6 +266,25 @@ def render_inputs():
                 "plant-specific or product-specific legal opinion."
             )
 
+    parsed_question = st.session_state.get("rd_parsed_question")
+    standardized_project = standardize_project_definition({
+        "product": indication,  # no separate free-text "product name" field exists yet; indication is the closest proxy
+        "dosage_form": dosage_form,
+        "indication": indication,
+        "market": market,
+        "population": ", ".join(parsed_question.target_population) if parsed_question and parsed_question.target_population else None,
+        "constraints": parsed_question.safety_constraints if parsed_question else [],
+    })
+
+    with st.expander("📐 Standardized project definition", expanded=False):
+        st.caption(
+            "Built by question_understanding_engine.py from the fields above "
+            "— route, product type, regulatory focus, and evidence "
+            "requirements inferred from your indication/dosage form/market, "
+            "not just passed through unchanged."
+        )
+        st.json(standardized_project)
+
     return {
         "product_type": product_type,
         "indication": indication,
@@ -211,4 +292,5 @@ def render_inputs():
         "market": market,
         "target_count": target_count,
         "max_pubmed_results": max_pubmed_results,
+        "standardized_project": standardized_project,
     }

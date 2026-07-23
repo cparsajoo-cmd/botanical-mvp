@@ -1259,6 +1259,126 @@ def test_industrial_feasibility_populated_end_to_end_through_run():
 
 
 # ---------------------------------------------------------------------
+# Plant_Part surfacing (Product Development Concept prep): real
+# plant_part data from plant_compounds_df was being collected into the
+# candidate DataFrame and then silently discarded before reaching the
+# final output — never a fabricated value, just previously-dropped
+# real data now actually reaching the row.
+# ---------------------------------------------------------------------
+def test_alternative_plant_part_surfaces_real_data():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="Root", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="ActiveCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="Leaf", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Alternative_Plant_Part" in result.columns
+    assert "Reference_Plant_Part" in result.columns
+    alt_row = result[result["Alternative_Plant"] == "AltPlant"]
+    assert not alt_row.empty
+    assert alt_row.iloc[0]["Alternative_Plant_Part"] == "Leaf"
+
+
+def test_plant_part_defaults_honestly_when_not_in_database():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "TestPlant") & (result["Alternative_Plant"] == "TestPlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Alternative_Plant_Part"] == "Not specified in database"
+
+
+# ---------------------------------------------------------------------
+# Market landscape enrichment (external review: "Market Landscape and
+# Candidate Decision aren't unified") must merge ONCE per unique
+# Alternative_Plant, cap at max_plants with a visible truncation note,
+# and never hide the honest "Not implemented" retail status.
+# ---------------------------------------------------------------------
+def test_market_landscape_enrichment_merges_once_per_unique_plant():
+    engine = make_engine([], similar_groups={})
+    result_df = pd.DataFrame([
+        {"Alternative_Plant": "PlantA", "Reference_Plant": "Ref1"},
+        {"Alternative_Plant": "PlantA", "Reference_Plant": "Ref2"},  # same plant, different reference
+        {"Alternative_Plant": "PlantB", "Reference_Plant": "Ref1"},
+    ])
+    calls = []
+    original = engine.market_landscape_df
+    def _tracking_market_landscape_df(plants):
+        calls.append(list(plants))
+        return original(plants)
+    engine.market_landscape_df = _tracking_market_landscape_df
+
+    enriched = engine.enrich_candidates_with_market_landscape(result_df)
+
+    assert len(calls) == 1
+    assert sorted(calls[0]) == ["PlantA", "PlantB"], (
+        "market_landscape_df should be called once with the DEDUPLICATED plant "
+        "list, not once per row"
+    )
+    assert len(enriched) == 3  # every original row preserved
+    assert "Market_Landscape_EMA_HMPC_Status" in enriched.columns
+    assert "Market_Landscape_Retail_Search_Status" in enriched.columns
+    assert (enriched["Market_Landscape_Checked"] == True).all()  # noqa: E712
+
+
+def test_market_landscape_enrichment_caps_at_max_plants_with_visible_note():
+    engine = make_engine([], similar_groups={})
+    result_df = pd.DataFrame([
+        {"Alternative_Plant": f"Plant{i}"} for i in range(5)
+    ])
+    enriched = engine.enrich_candidates_with_market_landscape(result_df, max_plants=2)
+
+    checked = enriched[enriched["Market_Landscape_Checked"] == True]  # noqa: E712
+    not_checked = enriched[enriched["Market_Landscape_Checked"] == False]  # noqa: E712
+    assert len(checked) == 2
+    assert len(not_checked) == 3
+    assert (enriched["Market_Landscape_Note"] != "").all(), (
+        "truncation must be visible on every row, not silent"
+    )
+
+
+def test_market_landscape_enrichment_never_hides_the_retail_search_status():
+    # _search_retail_products() has 3 honest states depending on
+    # use_live_search/SEARCH_API_KEY — "Skipped" when live search is
+    # off (the default test engine), "Not configured" when live search
+    # is on but no paid API key is set, "Not implemented" only once a
+    # key IS set (this sandbox never has SEARCH_API_KEY set, so that
+    # third state isn't reachable here — checking the two that are).
+    offline_engine = make_engine([], similar_groups={})
+    offline_engine.use_live_search = False
+    result_df = pd.DataFrame([{"Alternative_Plant": "SomePlant"}])
+    enriched = offline_engine.enrich_candidates_with_market_landscape(result_df)
+    assert enriched.iloc[0]["Market_Landscape_Retail_Search_Status"] == "Skipped"
+
+    online_engine = make_engine([], similar_groups={})
+    online_engine.use_live_search = True
+    enriched_online = online_engine.enrich_candidates_with_market_landscape(result_df)
+    assert enriched_online.iloc[0]["Market_Landscape_Retail_Search_Status"] == "Not configured", (
+        "with no SEARCH_API_KEY set, the honest status must say so, never claim more"
+    )
+
+
+def test_market_landscape_enrichment_handles_empty_result_df():
+    engine = make_engine([], similar_groups={})
+    enriched = engine.enrich_candidates_with_market_landscape(pd.DataFrame())
+    assert enriched.empty
+
+
+# ---------------------------------------------------------------------
 # 48) ChEMBL connector rejects molecule records with no structure data.
 # ---------------------------------------------------------------------
 def test_chembl_connector_rejects_molecule_records_with_no_structure_data():

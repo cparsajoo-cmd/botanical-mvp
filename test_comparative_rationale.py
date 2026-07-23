@@ -91,6 +91,46 @@ def test_a_component_where_the_loser_scored_higher_is_not_blamed_for_the_loss():
     assert "Novelty" not in explanation
 
 
+def test_global_rank_is_stated_alongside_local_comparison():
+    df = pd.DataFrame([
+        _row("Ref", "C", "AltHigh", 90, "Evidence quality: +24.0"),
+        _row("Ref", "C", "AltLow", 40, "Evidence quality: +7.0"),
+    ])
+    rationale = build_comparative_rationale(df)
+    assert "Global rank" in rationale.iloc[0]
+    assert "Global rank" in rationale.iloc[1]
+
+
+def test_local_top_pick_can_still_rank_low_globally():
+    # AltWinner is top-ranked WITHIN its own tiny reference group, but
+    # the global result set has several stronger candidates from a
+    # DIFFERENT reference — the report must say both things, not just
+    # the locally-flattering one.
+    df = pd.DataFrame([
+        _row("RefA", "CA", "AltWinner", 30, "Evidence quality: +7.0"),  # wins its own group...
+        _row("RefB", "CB", "Strong1", 95, "Evidence quality: +24.0"),
+        _row("RefB", "CB", "Strong2", 90, "Evidence quality: +22.0"),
+        _row("RefB", "CB", "Strong3", 85, "Evidence quality: +20.0"),
+    ])
+    rationale = build_comparative_rationale(df)
+    winner_text = rationale.iloc[0]
+    assert "Top-ranked candidate for this reference" in winner_text
+    # ...but globally ranks last (4th of 4) — both facts must be visible.
+    assert "Global rank: 4 of 4" in winner_text
+
+
+def test_global_rank_numbering_matches_actual_score_order():
+    df = pd.DataFrame([
+        _row("Ref", "C", "First", 100, "Evidence quality: +24.0"),
+        _row("Ref", "C", "Second", 50, "Evidence quality: +12.0"),
+        _row("Ref2", "C2", "Third", 10, "Evidence quality: +2.0"),
+    ])
+    rationale = build_comparative_rationale(df)
+    assert "Global rank: 1 of 3" in rationale.iloc[0]
+    assert "Global rank: 2 of 3" in rationale.iloc[1]
+    assert "Global rank: 3 of 3" in rationale.iloc[2]
+
+
 def test_empty_dataframe_does_not_crash():
     result = build_comparative_rationale(pd.DataFrame())
     assert len(result) == 0

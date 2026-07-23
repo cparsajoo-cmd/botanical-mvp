@@ -1295,7 +1295,7 @@ def test_chembl_connector_rejects_molecule_records_with_no_structure_data():
 
 
 # ---------------------------------------------------------------------
-# 49) Evidence_Coverage_Tier (architecture item 1) must be populated
+# 49) Candidate_Evidence_Strength_Tier (architecture item 1) must be populated
 #     end-to-end through run(), and must be correctly RECOMPUTED (not
 #     stale) after a multi-compound merge changes the underlying
 #     Occurrence_Corroboration/Evidence_Confidence it depends on.
@@ -1310,9 +1310,9 @@ def test_evidence_coverage_tier_populated_end_to_end_through_run():
     ]
     engine = make_engine(rows)
     result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
-    assert "Evidence_Coverage_Tier" in result.columns
+    assert "Candidate_Evidence_Strength_Tier" in result.columns
     valid_tiers = {"Preliminary", "Partial Evidence", "Broad Evidence", "Decision-grade Evidence"}
-    assert set(result["Evidence_Coverage_Tier"]).issubset(valid_tiers)
+    assert set(result["Candidate_Evidence_Strength_Tier"]).issubset(valid_tiers)
 
 
 def test_evidence_coverage_tier_upgrades_after_merge_combines_sources():
@@ -1328,7 +1328,7 @@ def test_evidence_coverage_tier_upgrades_after_merge_combines_sources():
         Evidence_Confidence=60.0, Confidence_Note="",
         Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
         Occurrence_Corroboration="Single-source claim — not independently corroborated",
-        Evidence_Coverage_Tier="Partial Evidence",
+        Candidate_Evidence_Strength_Tier="Partial Evidence",
         Evidence_Hierarchy_Detail="Observational human evidence",
     )
     row_a["R&D_Opportunity_Score"] = 60
@@ -1343,7 +1343,7 @@ def test_evidence_coverage_tier_upgrades_after_merge_combines_sources():
         Evidence_Confidence=55.0, Confidence_Note="",
         Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/2/",
         Occurrence_Corroboration="Single-source claim — not independently corroborated",
-        Evidence_Coverage_Tier="Partial Evidence",
+        Candidate_Evidence_Strength_Tier="Partial Evidence",
         Evidence_Hierarchy_Detail="Observational human evidence",
     )
     row_b["R&D_Opportunity_Score"] = 55
@@ -1352,9 +1352,72 @@ def test_evidence_coverage_tier_upgrades_after_merge_combines_sources():
     merged = engine._merge_multi_compound_matches(output)
 
     assert len(merged) == 1
-    assert merged.iloc[0]["Evidence_Coverage_Tier"] == "Broad Evidence", (
-        f"expected upgrade to Broad Evidence after merge, got: {merged.iloc[0]['Evidence_Coverage_Tier']!r}"
+    assert merged.iloc[0]["Candidate_Evidence_Strength_Tier"] == "Broad Evidence", (
+        f"expected upgrade to Broad Evidence after merge, got: {merged.iloc[0]['Candidate_Evidence_Strength_Tier']!r}"
     )
+
+
+# ---------------------------------------------------------------------
+# 51) External review #17: a 'Go' call must never rest on data that may
+#     not have actually loaded from Supabase. When data_source_reliable
+#     is False, Go_Investigate_Hold_NoGo must never say "Go" — capped to
+#     "Investigate" instead, with an explicit reason stated.
+# ---------------------------------------------------------------------
+def test_unreliable_data_source_caps_go_calls_to_investigate():
+    eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompound", "AltCompound"]}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="RefCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="AltCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    background = [
+        dict(scientific_name=f"Bg{i}", compound_name=f"BgCompound{i}",
+             indication="background", target="Antioxidant",
+             common_name="", plant_part="", extraction_method="")
+        for i in range(25)
+    ]
+    df = pd.DataFrame(rows + background)
+
+    unreliable_engine = eng.BotanicalRDCandidateEngine(
+        plant_compounds_df=df, compound_profiles_df=pd.DataFrame(),
+        scientific_evidence_df=pd.DataFrame(), use_live_search=False,
+        data_source_reliable=False,
+    )
+    result = unreliable_engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    disallowed = set(result["Go_Investigate_Hold_NoGo"].unique()) - {
+        "Investigate", "Investigate — verify before proceeding",
+        "Investigate — data source reliability could not be confirmed this run",
+        "Hold", "No-Go",
+    }
+    assert not disallowed, f"a 'Go' call survived despite data_source_reliable=False: {disallowed}"
+
+
+def test_reliable_data_source_does_not_cap_go_calls():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    assert engine.data_source_reliable is True, "default engine should be marked reliable when nothing failed"
+
+
+def test_data_source_reliable_reflects_a_failed_supabase_load():
+    # Simulate exactly the scenario review #19 flagged: a loader that
+    # raises. _load_supabase_df must report failure, not silently
+    # succeed with an empty DataFrame indistinguishable from "no data".
+    def _failing_loader():
+        raise ConnectionError("simulated Supabase outage")
+
+    df, ok = eng.BotanicalRDCandidateEngine._load_supabase_df(None, _failing_loader)
+    assert ok is False
+    assert df.empty
 
 
 # ---------------------------------------------------------------------

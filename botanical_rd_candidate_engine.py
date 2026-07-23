@@ -23,7 +23,7 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from industrial_feasibility import classify_industrial_feasibility
-from evidence_coverage import classify_evidence_coverage
+from evidence_coverage import classify_candidate_evidence_strength
 
 try:
     from evidence_database import load_evidence_database
@@ -85,7 +85,7 @@ OUTPUT_COLUMNS = [
     "Evidence_Source",
     "Source_Record_IDs",
     "Occurrence_Corroboration",
-    "Evidence_Coverage_Tier",
+    "Candidate_Evidence_Strength_Tier",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
     "Has_Negative_Evidence",
@@ -288,6 +288,7 @@ class BotanicalRDCandidateEngine:
         plant_compounds_df=None,
         compound_profiles_df=None,
         scientific_evidence_df=None,
+        data_source_reliable=True,
     ):
         self.evidence_df = self._to_dataframe(evidence_df)
         self.use_live_search = use_live_search
@@ -297,15 +298,28 @@ class BotanicalRDCandidateEngine:
         # in explicitly (e.g. for tests); otherwise they're fetched live.
         # If Supabase is unreachable, these come back empty and the engine
         # falls back to the small local seed dataset further below.
-        self.plant_compounds_df = self._load_supabase_df(
+        self.plant_compounds_df, pc_ok = self._load_supabase_df(
             plant_compounds_df, load_plant_compounds_df
         )
-        self.compound_profiles_df = self._load_supabase_df(
+        self.compound_profiles_df, cp_ok = self._load_supabase_df(
             compound_profiles_df, load_compound_profiles_df
         )
-        self.scientific_evidence_df = self._load_supabase_df(
+        self.scientific_evidence_df, se_ok = self._load_supabase_df(
             scientific_evidence_df, load_scientific_evidence_df
         )
+
+        # External review #17/#19: a "Go" recommendation must never
+        # rest on data that may not have actually loaded. data_source_reliable
+        # (constructor param) carries whatever the CALLER already knows
+        # (e.g. step_rd_candidates.py's _cached_engine, which tracks
+        # each Supabase load's real success/failure before this
+        # constructor ever runs) — ANDed here with whatever THIS
+        # constructor detects on its own, for any DataFrame it had to
+        # load itself (e.g. a caller that didn't pre-load, or a test
+        # that omits data_source_reliable entirely). See
+        # structured_rationale.go_investigate_hold_no_go's
+        # fallback_occurred parameter for where this is actually used.
+        self.data_source_reliable = bool(data_source_reliable) and pc_ok and cp_ok and se_ok
 
         if candidate_data is not None:
             self.candidate_data = candidate_data
@@ -811,7 +825,7 @@ class BotanicalRDCandidateEngine:
                         use_live_search=self.use_live_search,
                     )
                     occurrence_corroboration = self._occurrence_corroboration(evidence_source_ids)
-                    evidence_coverage_tier = classify_evidence_coverage(
+                    candidate_evidence_strength_tier = classify_candidate_evidence_strength(
                         occurrence_corroboration=occurrence_corroboration,
                         evidence_confidence=evidence_confidence,
                         evidence_hierarchy_detail=evidence_hierarchy_detail,
@@ -820,7 +834,10 @@ class BotanicalRDCandidateEngine:
                     # Gap 6 + Gap 8: structured rationale, built purely
                     # from signals already computed above — no new data
                     # collection, no LLM call. See structured_rationale.py.
-                    go_call = go_investigate_hold_no_go(decision_class_ah)
+                    go_call = go_investigate_hold_no_go(
+                        decision_class_ah,
+                        fallback_occurred=not self.data_source_reliable,
+                    )
                     sci_rationale = scientific_rationale(
                         match_quality=match_quality,
                         target_provenance=target_provenance,
@@ -875,7 +892,7 @@ class BotanicalRDCandidateEngine:
                             ),
                             "Source_Record_IDs": "; ".join(evidence_source_ids) if evidence_source_ids else "No specific source record identified",
                             "Occurrence_Corroboration": occurrence_corroboration,
-                            "Evidence_Coverage_Tier": evidence_coverage_tier,
+                            "Candidate_Evidence_Strength_Tier": candidate_evidence_strength_tier,
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Has_Negative_Evidence": negative_evidence.is_negative,
@@ -1193,13 +1210,13 @@ class BotanicalRDCandidateEngine:
                     evidence_confidence=best["Evidence_Confidence"],
                 ) or ""
 
-            if "Evidence_Coverage_Tier" in group.columns:
+            if "Candidate_Evidence_Strength_Tier" in group.columns:
                 # Depends on Occurrence_Corroboration and Evidence_Confidence,
                 # both just finalized above — recomputed here, not carried
                 # over from the pre-merge best sub-row, for the same
                 # staleness reasons as every other derived column in
                 # this function.
-                best["Evidence_Coverage_Tier"] = classify_evidence_coverage(
+                best["Candidate_Evidence_Strength_Tier"] = classify_candidate_evidence_strength(
                     occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
                     evidence_confidence=best["Evidence_Confidence"],
                     evidence_hierarchy_detail=str(best.get("Evidence_Hierarchy_Detail", "")),
@@ -1235,7 +1252,8 @@ class BotanicalRDCandidateEngine:
                 # GROUP-level merged result, not whichever single
                 # sub-row happened to score highest before merging.
                 best["Go_Investigate_Hold_NoGo"] = go_investigate_hold_no_go(
-                    str(best.get("Decision_Class_AH", ""))
+                    str(best.get("Decision_Class_AH", "")),
+                    fallback_occurred=not self.data_source_reliable,
                 )
                 best["Scientific_Rationale"] = scientific_rationale(
                     match_quality=str(best.get("_match_quality", "")),
@@ -1553,15 +1571,22 @@ class BotanicalRDCandidateEngine:
 
     @staticmethod
     def _load_supabase_df(explicit_df, loader):
+        """Returns (df, succeeded). An explicitly-provided DataFrame is
+        always treated as succeeded=True — the caller who provided it
+        is responsible for having already checked its own load (see
+        step_rd_candidates.py's _cached_engine, which does exactly
+        that and passes the combined result via data_source_reliable
+        instead). succeeded=False only ever reflects a failure THIS
+        method itself encountered while loading on its own."""
         if explicit_df is not None:
-            return BotanicalRDCandidateEngine._to_dataframe(explicit_df)
+            return BotanicalRDCandidateEngine._to_dataframe(explicit_df), True
 
         try:
             loaded = loader()
         except Exception:
-            return pd.DataFrame()
+            return pd.DataFrame(), False
 
-        return loaded if isinstance(loaded, pd.DataFrame) else pd.DataFrame()
+        return (loaded if isinstance(loaded, pd.DataFrame) else pd.DataFrame()), True
 
     def _candidates_from_plant_compounds(self):
         """Build the GLOBAL_PLANT_CANDIDATES-shaped list directly from the

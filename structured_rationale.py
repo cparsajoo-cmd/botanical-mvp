@@ -47,13 +47,22 @@ from __future__ import annotations
 from typing import Optional
 
 
-def go_investigate_hold_no_go(decision_class_ah: str) -> str:
+def go_investigate_hold_no_go(decision_class_ah: str, fallback_occurred: bool = False) -> str:
     """Explicit Go/Investigate/Hold/No-Go call, mapped from
     Decision_Class_AH (Phase 6) — the audit asked for this exact label
     set; Decision_Class_AH already carries the information, it was
-    just never rendered in these terms."""
+    just never rendered in these terms.
+
+    fallback_occurred (external review #17): True when one or more of
+    the engine's core Supabase loads (plant_compounds, compound_profiles,
+    scientific_evidence) actually FAILED this run — not merely returned
+    few rows — and the engine fell back to whatever local/seed data it
+    had. A "Go" call must never rest on data that may not have actually
+    loaded; when this is True, "Go" is capped down to "Investigate".
+    Hold and No-Go are already conservative enough not to need capping.
+    """
     letter = (decision_class_ah or "").strip()[:1].upper()
-    return {
+    call = {
         "A": "Go",
         "B": "Go",
         "C": "Investigate",
@@ -63,6 +72,11 @@ def go_investigate_hold_no_go(decision_class_ah: str) -> str:
         "G": "Hold",
         "H": "No-Go",
     }.get(letter, "Hold")
+
+    if fallback_occurred and call == "Go":
+        return "Investigate — data source reliability could not be confirmed this run"
+
+    return call
 
 
 def scientific_rationale(
@@ -134,7 +148,12 @@ def commercial_regulatory_rationale(
         result = base
 
     if regulatory_barriers:
-        result += f" Regulatory barrier(s) identified: {regulatory_barriers}."
+        result += (
+            f" Regulatory barrier(s) identified (screening signal from keyword "
+            f"matching, not a verified legal determination — confirm jurisdiction, "
+            f"date, and whether the restriction applies to the whole plant or a "
+            f"specific extract/preparation before relying on it): {regulatory_barriers}."
+        )
 
     return result
 

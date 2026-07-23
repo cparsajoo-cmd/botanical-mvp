@@ -94,16 +94,34 @@ def build_comparative_rationale(df: pd.DataFrame) -> pd.Series:
     """Returns a Series (same index as `df`) explaining, for every row,
     either why it's the top pick for its (Reference_Plant,
     Reference_Compound) group, or why it scored below whichever
-    candidate IS the top pick. Rows with a missing Reference_Plant/
-    Reference_Compound, or a DataFrame with no rows at all, get an
-    empty Series / a neutral placeholder — this never raises on
-    malformed input, since it always runs as the last step of an
-    otherwise-complete run().
+    candidate IS the top pick — PLUS (external review #14) where it
+    stands across the WHOLE project, not just its own reference group.
+    A candidate can be the top pick within its own small group while
+    still ranking low across the full portfolio, or vice versa — the
+    local comparison alone doesn't tell a reader which is true, and a
+    reader skimming for "what's actually worth funding" needs the
+    global answer, not just the local one.
+
+    Rows with a missing Reference_Plant/Reference_Compound, or a
+    DataFrame with no rows at all, get an empty Series / a neutral
+    placeholder — this never raises on malformed input, since it
+    always runs as the last step of an otherwise-complete run().
     """
     if df.empty or "Reference_Plant" not in df.columns or "Reference_Compound" not in df.columns:
         return pd.Series(["Not applicable"] * len(df), index=df.index, dtype=str)
 
     results = pd.Series(index=df.index, dtype=object)
+
+    has_score = "R&D_Opportunity_Score" in df.columns
+    total_n = len(df)
+    # Global rank (1 = highest score across the ENTIRE result, not just
+    # within a reference group) — computed once over the whole
+    # DataFrame, independent of the per-group loop below.
+    global_ranks = (
+        df["R&D_Opportunity_Score"].astype(float).rank(method="min", ascending=False).astype(int)
+        if has_score and total_n
+        else pd.Series(dtype=int)
+    )
 
     for _, group in df.groupby(["Reference_Plant", "Reference_Compound"], sort=False):
         if "R&D_Opportunity_Score" not in group.columns or group.empty:
@@ -116,11 +134,19 @@ def build_comparative_rationale(df: pd.DataFrame) -> pd.Series:
 
         for idx, row in group.iterrows():
             if idx == top_idx:
-                results[idx] = (
+                local_text = (
                     f"Top-ranked candidate for this reference "
                     f"(R&D_Opportunity_Score {row['R&D_Opportunity_Score']})."
                 )
             else:
-                results[idx] = _explain_gap(top_row, row)
+                local_text = _explain_gap(top_row, row)
+
+            if has_score and total_n:
+                global_rank = int(global_ranks.loc[idx])
+                global_text = f" Global rank: {global_rank} of {total_n} across the full result set."
+            else:
+                global_text = ""
+
+            results[idx] = local_text + global_text
 
     return results

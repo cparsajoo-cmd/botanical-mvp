@@ -40,29 +40,42 @@ def _get_evidence_df():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_plant_compounds_df():
+    """Returns (df, succeeded). succeeded=False means the load itself
+    failed (network/auth/schema error) — NOT that the query legitimately
+    returned zero rows. Previously this silently returned an empty
+    DataFrame on ANY failure, indistinguishable from "no data exists" —
+    flagged in external review as a fail-silent risk (no way to tell a
+    real outage from real absence of data) feeding directly into a
+    second risk: nothing downstream knew to be more cautious about a
+    recommendation built on data that may not have actually loaded.
+    See BotanicalRDCandidateEngine's data_source_reliable parameter and
+    structured_rationale.go_investigate_hold_no_go's fallback_occurred
+    parameter for what this now feeds into."""
     from supabase_data import load_plant_compounds_df
     try:
-        return load_plant_compounds_df()
+        return load_plant_compounds_df(), True
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), False
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_compound_profiles_df():
+    """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_compound_profiles_df
     try:
-        return load_compound_profiles_df()
+        return load_compound_profiles_df(), True
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), False
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_scientific_evidence_df():
+    """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_scientific_evidence_df
     try:
-        return load_scientific_evidence_df()
+        return load_scientific_evidence_df(), True
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), False
 
 
 # Building the engine itself is the expensive part now — with 50,000+
@@ -96,12 +109,21 @@ def _evidence_fingerprint(evidence_df):
 
 @st.cache_resource(ttl=120, show_spinner=False)
 def _cached_engine(use_live_search: bool, evidence_fingerprint, _evidence_df=None):
+    plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
+    compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
+    scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
+
     return BotanicalRDCandidateEngine(
         evidence_df=_evidence_df,
         use_live_search=use_live_search,
-        plant_compounds_df=_cached_plant_compounds_df(),
-        compound_profiles_df=_cached_compound_profiles_df(),
-        scientific_evidence_df=_cached_scientific_evidence_df(),
+        plant_compounds_df=plant_compounds_df,
+        compound_profiles_df=compound_profiles_df,
+        scientific_evidence_df=scientific_evidence_df,
+        # Review #17: if any core Supabase load actually FAILED (not
+        # just legitimately returned few/no rows), the engine caps
+        # every recommendation at "Investigate" — a Go call must never
+        # be issued on data that may not have actually loaded.
+        data_source_reliable=plant_compounds_ok and compound_profiles_ok and scientific_evidence_ok,
     )
 
 

@@ -44,6 +44,7 @@ than an LLM-generated narrative would be.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 
@@ -209,6 +210,169 @@ def evidence_weaknesses(
     if regulatory_barriers:
         weaknesses.append(f"Regulatory barrier(s): {regulatory_barriers}")
     return weaknesses
+
+
+def evidence_conflict_reasoning(
+    occurrence_corroboration: str,
+    has_negative_evidence: bool,
+    negative_evidence_types: str,
+    evidence_confidence: float,
+) -> str:
+    """A CSO doesn't want "Has_Negative_Evidence: True" as a bare flag —
+    they want to know whether the evidence base is CONSISTENT (every
+    source points the same direction) or CONFLICTING (support exists,
+    but so does a contradiction), and how much that should temper trust.
+    Built entirely from signals already computed elsewhere
+    (Occurrence_Corroboration's source count, Has_Negative_Evidence,
+    Negative_Evidence_Types) — no new evidence collection, this is a
+    reasoning layer over what already exists.
+
+    The reasoning distinguishes two very different situations that
+    "has a negative finding" collapses together: a contradiction seen
+    alongside 3+ independent supporting sources is a specific study
+    limitation worth reading, not necessarily a reason to distrust the
+    whole candidate — but the SAME contradiction alongside only 1
+    source (or none) means the evidence is genuinely unresolved.
+    """
+    source_count = 0
+    match = re.search(r"Corroborated by (\d+)", occurrence_corroboration or "")
+    if match:
+        source_count = int(match.group(1))
+    elif occurrence_corroboration and "Single-source" in occurrence_corroboration:
+        source_count = 1
+
+    if not has_negative_evidence:
+        if source_count >= 2:
+            return (
+                f"Evidence is CONSISTENT: {source_count} independent sources were "
+                f"found and none contradicts the finding."
+            )
+        return (
+            "Evidence is UNCONTESTED but thin: no contradictory finding, but also "
+            "no independent corroboration yet to rule one out."
+        )
+
+    if source_count >= 3:
+        return (
+            f"Evidence is MOSTLY CONSISTENT, WITH ONE CONTRADICTION: {source_count} "
+            f"independent sources support this candidate, but a negative/contradictory "
+            f"finding ({negative_evidence_types}) was also identified. With this many "
+            f"corroborating sources, the contradiction more likely reflects a specific "
+            f"study limitation than an invalid overall signal — but read it before "
+            f"treating this as settled."
+        )
+
+    return (
+        f"Evidence is GENUINELY CONFLICTING: only "
+        f"{source_count if source_count else 'a single'} source(s) support this "
+        f"candidate, and a negative/contradictory finding ({negative_evidence_types}) "
+        f"was also identified. With this little corroboration, the contradiction "
+        f"carries real weight — it must be resolved, not just noted, before this "
+        f"recommendation can be trusted."
+    )
+
+
+def recommendation_confidence_statement(
+    go_call: str,
+    candidate_evidence_strength_tier: str,
+    evidence_confidence: float,
+    has_negative_evidence: bool,
+) -> str:
+    """ALWAYS present — unlike Confidence_Note (which only fires for the
+    specific high-opportunity/low-confidence mismatch case), this
+    translates the Go/Investigate/Hold/No-Go call itself into an
+    explicit statement of how much to trust THAT CALL, not just the
+    underlying evidence. An R&D director reading a GO needs to know
+    immediately whether it's well-supported or borderline — the call
+    alone doesn't say that.
+    """
+    tier = candidate_evidence_strength_tier or "Preliminary"
+    contested_note = (
+        " A contradictory finding is on record for this candidate — see "
+        "Evidence_Conflict_Reasoning."
+        if has_negative_evidence else ""
+    )
+
+    letter = (go_call or "").strip()[:1].upper()
+
+    if go_call == "Go":
+        if tier in {"Broad Evidence", "High-priority evidence tier"} and not has_negative_evidence:
+            return f"This GO recommendation is well-supported: {tier}, no contradictory findings.{contested_note}"
+        return (
+            f"This GO recommendation rests on {tier} — review the underlying "
+            f"evidence directly before committing resources.{contested_note}"
+        )
+
+    if go_call and go_call.startswith("Investigate"):
+        return (
+            f"This INVESTIGATE recommendation reflects real uncertainty: {tier}."
+            f"{contested_note} Treat as a lead worth pursuing, not a validated conclusion."
+        )
+
+    if go_call == "Hold":
+        return (
+            f"This HOLD reflects insufficient evidence ({tier}) to recommend action "
+            f"either way — a request for more data, not a rejection."
+        )
+
+    if go_call == "No-Go":
+        return (
+            "This NO-GO reflects an identified safety concern — do not proceed "
+            "without expert toxicological/safety review, regardless of scientific "
+            "opportunity."
+        )
+
+    return f"Confidence in this recommendation: {tier}.{contested_note}"
+
+
+def competitive_positioning_statement(
+    market_status: str,
+    candidate_evidence_strength_tier: str,
+    regulatory_barriers: Optional[str],
+    white_space_type: str,
+) -> str:
+    """Synthesizes market maturity + scientific maturity + regulatory
+    maturity into ONE competitive-positioning statement. Market_Status,
+    Candidate_Evidence_Strength_Tier, and Regulatory_Barriers already
+    exist as separate columns — a CSO comparing candidates wants this
+    as a single read, not three columns to mentally combine themselves
+    every time.
+    """
+    scientific_maturity = {
+        "High-priority evidence tier": "scientifically mature (strong, corroborated evidence)",
+        "Broad Evidence": "scientifically developing (solid, multi-source evidence)",
+        "Partial Evidence": "scientifically early-stage (limited evidence)",
+        "Preliminary": "scientifically nascent (little to no evidence)",
+    }.get(candidate_evidence_strength_tier, "scientific maturity not established")
+
+    market_maturity = {
+        "Regulatory monograph exists": "regulatorily established (monograph recognition)",
+        "Traditional-use status": "regulatorily semi-established (traditional-use recognition only)",
+        "Commercial evidence reported, not independently verified": "commercially present but unverified",
+        "No verified product found": "commercially open (no verified competing product)",
+        "Conflicting market evidence": "commercially ambiguous (conflicting signals)",
+    }.get(market_status, "commercial/regulatory maturity not established")
+
+    barrier_note = (
+        f" Regulatory barrier(s) on record: {regulatory_barriers}."
+        if regulatory_barriers and regulatory_barriers != "None identified"
+        else ""
+    )
+
+    positioning = f"Competitive position: {scientific_maturity}; {market_maturity}.{barrier_note}"
+
+    if white_space_type == "Industrial R&D White Space":
+        positioning += (
+            " This combination — real science, open market — is the strongest "
+            "competitive position an alternative-source candidate can have."
+        )
+    elif white_space_type == "Data Gap":
+        positioning += (
+            " Competitive position cannot yet be assessed — neither the science "
+            "nor the market has actually been investigated."
+        )
+
+    return positioning
 
 
 def next_experiment_suggestion(

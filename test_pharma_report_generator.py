@@ -31,10 +31,21 @@ def _make_row(**overrides):
         Evidence_Strengths="High evidence confidence (70)",
         Evidence_Weaknesses="Single-source claim — not independently corroborated",
         Next_Experiment_Suggestion="Quantify compound concentration in AltPlant.",
+        Evidence_Conflict_Reasoning="Evidence is UNCONTESTED but thin: no contradictory finding, but also no independent corroboration yet to rule one out.",
+        Recommendation_Confidence_Statement="This INVESTIGATE recommendation reflects real uncertainty: Partial Evidence. Treat as a lead worth pursuing, not a validated conclusion.",
+        Competitive_Positioning="Competitive position: scientifically developing (solid, multi-source evidence); regulatorily established (monograph recognition).",
         Rationale="Full narrative rationale text.",
     )
     base.update(overrides)
     return base
+
+
+def test_cso_reasoning_statements_appear_in_the_writeup():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "This INVESTIGATE recommendation reflects real uncertainty" in report
+    assert "Competitive position: scientifically developing" in report
+    assert "Evidence is UNCONTESTED but thin" in report
 
 
 def test_standardized_project_section_appears_when_provided():

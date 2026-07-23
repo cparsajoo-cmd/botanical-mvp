@@ -19,6 +19,9 @@ from structured_rationale import (
     evidence_strengths,
     evidence_weaknesses,
     next_experiment_suggestion,
+    evidence_conflict_reasoning,
+    recommendation_confidence_statement,
+    competitive_positioning_statement,
 )
 from comparative_rationale import build_comparative_rationale
 from regulatory_barrier_classifier import classify_regulatory_barriers
@@ -108,6 +111,9 @@ OUTPUT_COLUMNS = [
     "Evidence_Strengths",
     "Evidence_Weaknesses",
     "Next_Experiment_Suggestion",
+    "Evidence_Conflict_Reasoning",
+    "Recommendation_Confidence_Statement",
+    "Competitive_Positioning",
     "Comparative_Rationale",
     "Rationale",
 ]
@@ -874,6 +880,24 @@ class BotanicalRDCandidateEngine:
                         evidence_weaknesses_list=weaknesses,
                         alt_plant=alt_plant,
                     )
+                    conflict_reasoning = evidence_conflict_reasoning(
+                        occurrence_corroboration=occurrence_corroboration,
+                        has_negative_evidence=negative_evidence.is_negative,
+                        negative_evidence_types="; ".join(negative_evidence.finding_types),
+                        evidence_confidence=evidence_confidence,
+                    )
+                    confidence_statement = recommendation_confidence_statement(
+                        go_call=go_call,
+                        candidate_evidence_strength_tier=candidate_evidence_strength_tier,
+                        evidence_confidence=evidence_confidence,
+                        has_negative_evidence=negative_evidence.is_negative,
+                    )
+                    competitive_positioning = competitive_positioning_statement(
+                        market_status=market_status,
+                        candidate_evidence_strength_tier=candidate_evidence_strength_tier,
+                        regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
+                        white_space_type=white_space_type or "",
+                    )
 
                     rows.append(
                         {
@@ -926,6 +950,9 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Strengths": "; ".join(strengths) if strengths else "None identified",
                             "Evidence_Weaknesses": "; ".join(weaknesses) if weaknesses else "None identified",
                             "Next_Experiment_Suggestion": next_experiment,
+                            "Evidence_Conflict_Reasoning": conflict_reasoning,
+                            "Recommendation_Confidence_Statement": confidence_statement,
+                            "Competitive_Positioning": competitive_positioning,
                             "Rationale": self._rationale(
                                 product_type=product_type,
                                 problem=problem,
@@ -1302,6 +1329,28 @@ class BotanicalRDCandidateEngine:
                     decision_class_ah=str(best.get("Decision_Class_AH", "")),
                     evidence_weaknesses_list=merged_weaknesses,
                     alt_plant=str(best.get("Alternative_Plant", "")),
+                )
+                best["Evidence_Conflict_Reasoning"] = evidence_conflict_reasoning(
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
+                    negative_evidence_types=str(best.get("Negative_Evidence_Types", "")),
+                    evidence_confidence=best["Evidence_Confidence"],
+                )
+                best["Recommendation_Confidence_Statement"] = recommendation_confidence_statement(
+                    go_call=str(best.get("Go_Investigate_Hold_NoGo", "")),
+                    candidate_evidence_strength_tier=str(best.get("Candidate_Evidence_Strength_Tier", "")),
+                    evidence_confidence=best["Evidence_Confidence"],
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
+                )
+                best["Competitive_Positioning"] = competitive_positioning_statement(
+                    market_status=str(best.get("Market_Status", "")),
+                    candidate_evidence_strength_tier=str(best.get("Candidate_Evidence_Strength_Tier", "")),
+                    regulatory_barriers=(
+                        str(best.get("Regulatory_Barriers", ""))
+                        if str(best.get("Regulatory_Barriers", "")) != "None identified"
+                        else None
+                    ),
+                    white_space_type=str(best.get("White_Space_Type", "")),
                 )
 
             # The pre-merge Rationale text (from _rationale(), on the

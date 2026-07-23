@@ -72,6 +72,14 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
         f"**Decision class:** {row.get('Decision_Class_AH', '')}",
     ]
 
+    recommendation_confidence = row.get("Recommendation_Confidence_Statement")
+    if recommendation_confidence:
+        lines.append(f"> **{recommendation_confidence}**")
+
+    competitive_positioning = row.get("Competitive_Positioning")
+    if competitive_positioning:
+        lines.append(f"\n**{competitive_positioning}**")
+
     white_space = str(row.get("White_Space_Type", "") or "").strip()
     if white_space:
         lines.append(f"**White space type:** {white_space}")
@@ -89,6 +97,8 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
     lines += [
         "",
         f"**Scientific rationale:** {row.get('Scientific_Rationale', '')}",
+        "",
+        f"**Evidence conflict reasoning:** {row.get('Evidence_Conflict_Reasoning', '')}",
         "",
         f"**Commercial & regulatory rationale:** {row.get('Commercial_Regulatory_Rationale', '')}",
         "",

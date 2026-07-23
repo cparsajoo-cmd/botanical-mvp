@@ -1541,6 +1541,90 @@ def test_data_source_reliable_reflects_a_failed_supabase_load():
 
 
 # ---------------------------------------------------------------------
+# CSO-style reasoning columns (this session): Evidence_Conflict_Reasoning,
+# Recommendation_Confidence_Statement, Competitive_Positioning must be
+# populated end-to-end through run() and correctly RECOMPUTED (not
+# stale) after a multi-compound merge.
+# ---------------------------------------------------------------------
+def test_cso_reasoning_columns_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    for col in ["Evidence_Conflict_Reasoning", "Recommendation_Confidence_Statement", "Competitive_Positioning"]:
+        assert col in result.columns
+        assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
+
+
+def test_cso_reasoning_columns_recomputed_after_merge_not_stale():
+    engine = make_engine([], similar_groups={})
+
+    row_a = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundA", Shared_or_Similar_Compound="RareCompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=10.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/1/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Candidate_Evidence_Strength_Tier="Preliminary",
+        Decision_Class_AH="G — Hold / insufficient evidence",
+        White_Space_Type="", Target_Provenance="Not applicable",
+        Evidence_Hierarchy_Detail="Unclassified", Market_Status="Search not performed",
+        Regulatory_Barriers="None identified",
+        Go_Investigate_Hold_NoGo="Hold",
+        Evidence_Conflict_Reasoning="stale", Recommendation_Confidence_Statement="stale",
+        Competitive_Positioning="stale",
+        _match_quality="class_only", _same_plant=False,
+    )
+    row_a["R&D_Opportunity_Score"] = 40
+
+    row_b = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="RareCompoundB", Shared_or_Similar_Compound="RareCompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Early-stage candidate; more evidence needed", Novelty_Status="Novel cross-region candidate",
+        Rationale="... Decision: Early-stage candidate; more evidence needed.",
+        Has_Negative_Evidence=False, Negative_Evidence_Types="",
+        Evidence_Confidence=12.0, Confidence_Note="",
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/2/",
+        Occurrence_Corroboration="Single-source claim — not independently corroborated",
+        Candidate_Evidence_Strength_Tier="Preliminary",
+        Decision_Class_AH="G — Hold / insufficient evidence",
+        White_Space_Type="", Target_Provenance="Not applicable",
+        Evidence_Hierarchy_Detail="Unclassified", Market_Status="Search not performed",
+        Regulatory_Barriers="None identified",
+        Go_Investigate_Hold_NoGo="Hold",
+        Evidence_Conflict_Reasoning="stale", Recommendation_Confidence_Statement="stale",
+        Competitive_Positioning="stale",
+        _match_quality="class_only", _same_plant=False,
+    )
+    row_b["R&D_Opportunity_Score"] = 40
+
+    output = pd.DataFrame([row_a, row_b])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    r = merged.iloc[0]
+    # Occurrence_Corroboration should go from single-source to 2-source
+    # after merge — every "stale" placeholder must have been overwritten.
+    assert "2 independent sources" in r["Occurrence_Corroboration"]
+    assert r["Evidence_Conflict_Reasoning"] != "stale"
+    assert r["Recommendation_Confidence_Statement"] != "stale"
+    assert r["Competitive_Positioning"] != "stale"
+    assert "2 independent sources" in r["Evidence_Conflict_Reasoning"], (
+        "Evidence_Conflict_Reasoning wasn't rebuilt from the merged Occurrence_Corroboration"
+    )
+
+
+# ---------------------------------------------------------------------
 # Direct-execution fallback: `python3 test_botanical_rd_candidate_engine.py`
 # still works with no pytest installed (useful with no local Python
 # environment to pip install into) by delegating to pytest.main() when

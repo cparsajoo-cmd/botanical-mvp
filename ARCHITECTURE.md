@@ -124,74 +124,86 @@ because nothing downstream ever read its output.
 archive/ directory does not exist yet in this repository.** An earlier
 version of this file claimed "67 legacy files were moved to archive/"
 — that was aspirational/future-tense written as if already done, and
-it wasn't. The 67 files below are still sitting in the repo root as of
+it wasn't. The 66 files below are still sitting in the repo root as of
 this writing.
 
-67 files were confirmed — by automated import-reachability analysis
-from `app.py` and every file under `pages/`, not by guessing — to be
-unreachable from the app in any way. Each was a superseded/duplicate
-engine, an old Step from before the Step 0-6 consolidation, or a
-connector that was never wired in. The full list is in
-`.github/legacy-files.txt`.
+**⚠️ CRITICAL BUG FOUND AND FIXED (this revision) — read before ever
+running the archive workflow.** `.github/legacy-files.txt` listed
+`question_understanding_engine.py` as safe to archive, but a later
+session (after the original 67-file list was generated) wired it into
+production — `step_inputs.py` actively imports
+`standardize_project_definition` from it. The static list was never
+re-validated after that change. Had the archive workflow been run in
+that state, it would have moved a live production dependency into
+`archive/` and broken the app. `question_understanding_engine.py` has
+been removed from the list (66 files remain, all individually
+re-confirmed safe — see below), and the underlying process gap is now
+closed structurally, not just patched once:
+- `repo_dependency_audit.py` — a real, reusable tool (not an ad-hoc
+  snippet) that recomputes the production/test/legacy classification
+  fresh, every time it's run.
+- `test_production_dependency_integrity.py` — runs that same check as
+  a normal pytest test, so `pytest -q` (which every PR/CI run already
+  executes) catches this class of drift automatically, not only when
+  someone remembers to re-run a manual script.
+- `archive-legacy.yml` now calls `repo_dependency_audit.py validate`
+  as its FIRST step, before touching any file, and fails the whole job
+  if anything listed is actually reachable from production.
+
+66 files were confirmed — by `repo_dependency_audit.py`, run fresh
+against the current codebase (not by trusting the original Phase 1/7
+snapshot) — to be unreachable from `app.py` and every file under
+`pages/`. Each was a superseded/duplicate engine, an old Step from
+before the Step 0-6 consolidation, or a connector that was never wired
+in. The full list is in `.github/legacy-files.txt`.
 
 **To actually move them:** go to the repo's Actions tab, select
 "Archive legacy files (Phase 7)", and click "Run workflow" (see
 `.github/workflows/archive-legacy.yml` — it already exists and is
-ready to run, it just hasn't been triggered yet). After it runs,
-verify:
-- `archive/` exists and contains the 67 files
+ready to run, it just hasn't been triggered yet). It now validates the
+list itself before moving anything (see above), and runs both the
+production smoke test and the full suite after moving, before
+committing. After it runs, still verify by hand:
+- `archive/` exists and contains the 66 files
 - `archive/ARCHIVED_FILES.md` was generated
-- `pytest -q` still passes (the workflow itself checks this before
-  committing, but re-verify)
+- `pytest -q` still passes
 - Update this section of ARCHITECTURE.md to say "moved" only once
   that's actually confirmed true — do not restate it as done from
-  intent alone again.
+  intent alone again (this is the exact mistake that caused the
+  "moved to archive/" claim to go stale the first time).
 
-Two files that the same reachability script flags as "unreachable"
-should NOT be included when the workflow runs, because unreachable-
-from-app.py isn't the same as legacy — both are recent, intentionally
-standalone additions not yet wired into the main pipeline by design:
-- `data_contracts.py` (Phase 3) — pydantic-free dataclass schemas,
-  meant to be adopted into the engine incrementally, not all at once.
+Files that `repo_dependency_audit.py` also flags as "not reachable
+from production" but that should NOT be included in the archive list,
+because unreachable-from-app.py isn't the same as legacy — both are
+intentionally standalone dev tools, run manually, never imported by
+the app itself:
 - `scoring_sensitivity_report.py` (Phase 6) — a standalone analysis
   tool, meant to be imported and run manually against a `run()`
   result, not called by the app itself.
+- `repo_dependency_audit.py` (this session) — the repository-integrity
+  tool described above; deliberately not imported by the running app,
+  only by its own test file and by `archive-legacy.yml`.
+
+(`data_contracts.py`, previously listed here as a third standalone
+exception, is no longer one — a later session wired it into production
+via `candidate_output_adapter.py`, which `step_rd_candidates.py`
+imports. `repo_dependency_audit.py` now correctly reports it as
+production-active; this note is left here specifically so the same
+"once true, assumed still true" mistake doesn't get made about it
+either.)
 
 ## How to re-verify any of the above
 
-From the repo root, with no dependencies beyond the Python standard
-library:
+Run the real tool, not an inline snippet — copying a snippet out of
+this file is exactly how the original snapshot went stale (it was
+never re-run after being pasted here once):
 
-```python
-import os, re
-
-root = "."
-py_files = [f for f in os.listdir(root) if f.endswith(".py")]
-
-def local_imports(path):
-    text = open(path, encoding="utf-8", errors="ignore").read()
-    mods = set()
-    for m in re.finditer(r"^\s*from\s+([\w\.]+)\s+import", text, re.M):
-        mods.add(m.group(1).split(".")[0])
-    for m in re.finditer(r"^\s*import\s+([\w\.]+)", text, re.M):
-        mods.add(m.group(1).split(".")[0])
-    return mods
-
-modules = {f[:-3] for f in py_files}
-graph = {f[:-3]: local_imports(f) & modules for f in py_files}
-
-visited, queue = set(), ["app"]
-while queue:
-    m = queue.pop()
-    if m in visited:
-        continue
-    visited.add(m)
-    queue.extend(dep for dep in graph.get(m, []) if dep not in visited)
-
-print("Reachable from app.py:", sorted(visited))
-print("NOT reachable:", sorted(modules - visited))
+```
+python3 repo_dependency_audit.py summary
+python3 repo_dependency_audit.py validate . .github/legacy-files.txt
 ```
 
-This is exactly the method used to produce the Phase 1 audit's active/
-legacy split and this file's legacy list — re-run it after any future
-change to `app.py`'s import chain to catch drift.
+Or as a normal test: `pytest -q test_production_dependency_integrity.py`.
+This is the same method used to produce this file's legacy list —
+re-run it after any future change to `app.py`'s or any Step file's
+import chain to catch drift, rather than trusting this document.

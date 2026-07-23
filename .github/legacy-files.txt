@@ -36,7 +36,6 @@ mechanism_discovery_engine.py
 multi_source_evidence_collector.py
 plant_compound_ranking_engine.py
 question_parser.py
-question_understanding_engine.py
 rd_discovery_engine.py
 report_generator.py
 scientific_decision_engine.py

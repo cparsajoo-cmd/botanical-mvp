@@ -1,8 +1,8 @@
-"""Regression tests for pharma_report_generator.py (Gap 9)."""
+"""Regression tests for pharma_report_generator.py (Gap 9 + Sprint 1)."""
 
 import pandas as pd
 
-from pharma_report_generator import generate_pharma_report
+from pharma_report_generator import generate_pharma_report, build_recommendation_card
 
 
 def _make_row(**overrides):
@@ -21,6 +21,7 @@ def _make_row(**overrides):
         Has_Negative_Evidence=False, Negative_Evidence_Types="",
         Market_Status="Regulatory monograph exists", Novelty_Status="Alternative cross-region candidate",
         **{"R&D_Opportunity_Score": 75.0},
+        Score_Breakdown="Evidence quality: +24.0; Chemical/mechanistic link: +15.0; Market signal: +2.0; Safety/interaction/self-row penalty: -14.0",
         Evidence_Confidence=70.0,
         Decision_Class="Promising candidate; verify safety and standardization",
         Decision_Class_AH="C — Alternative-source R&D candidate",
@@ -28,10 +29,14 @@ def _make_row(**overrides):
         Go_Investigate_Hold_NoGo="Investigate",
         Scientific_Rationale="Shares a validated biological target.",
         Commercial_Regulatory_Rationale="Market status: Regulatory monograph exists.",
+        Regulatory_Rationale="A regulatory monograph exists for this application. No regulatory barrier was identified in the available evidence text.",
+        Commercial_Rationale="Market status: Regulatory monograph exists.",
+        Safety_Rationale="No explicit safety flag or drug-interaction concern was identified in the available evidence text.",
+        Clinical_Rationale="Clinical-grade evidence exists: Clinical trial (Evidence_Confidence 70.0).",
         Evidence_Strengths="High evidence confidence (70)",
         Evidence_Weaknesses="Single-source claim — not independently corroborated",
         Next_Experiment_Suggestion="Quantify compound concentration in AltPlant.",
-        Evidence_Conflict_Reasoning="Evidence is UNCONTESTED but thin: no contradictory finding, but also no independent corroboration yet to rule one out.",
+        Evidence_Conflict_Reasoning="POSITIVE BUT INSUFFICIENT: 1 source found, no contradiction on record, but too little independent corroboration to be conclusive on its own.",
         Recommendation_Confidence_Statement="This INVESTIGATE recommendation reflects real uncertainty: Partial Evidence. Treat as a lead worth pursuing, not a validated conclusion.",
         Competitive_Positioning="Competitive position: scientifically developing (solid, multi-source evidence); regulatorily established (monograph recognition).",
         Rationale="Full narrative rationale text.",
@@ -45,7 +50,7 @@ def test_cso_reasoning_statements_appear_in_the_writeup():
     report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
     assert "This INVESTIGATE recommendation reflects real uncertainty" in report
     assert "Competitive position: scientifically developing" in report
-    assert "Evidence is UNCONTESTED but thin" in report
+    assert "POSITIVE BUT INSUFFICIENT" in report
 
 
 def test_standardized_project_section_appears_when_provided():
@@ -74,6 +79,74 @@ def test_no_project_definition_section_when_not_provided():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
     assert "## Project Definition" not in report
+
+
+def test_recommendation_card_answers_why_selected():
+    card = build_recommendation_card(_make_row())
+    assert card["scientific_rationale"] == "Shares a validated biological target."
+
+
+def test_recommendation_card_identifies_top_scientific_contributor():
+    card = build_recommendation_card(_make_row())
+    # Chemical/mechanistic link (+15.0) is the only Scientific-mapped
+    # component present in the fixture's Score_Breakdown.
+    assert "Chemical/mechanistic link" in card["top_scientific_contributor"]
+    assert "+15.0" in card["top_scientific_contributor"]
+
+
+def test_recommendation_card_identifies_top_clinical_contributor():
+    card = build_recommendation_card(_make_row())
+    assert "Evidence quality" in card["top_clinical_contributor"]
+    assert "+24.0" in card["top_clinical_contributor"]
+
+
+def test_recommendation_card_reports_no_regulatory_factor_honestly_when_absent():
+    # The fixture's Score_Breakdown has no component mapped purely to
+    # Regulatory on its own (Market signal covers both Commercial and
+    # Regulatory) — but since Market signal IS present, it should show up.
+    card = build_recommendation_card(_make_row())
+    assert "Market signal" in card["top_regulatory_contributor"]
+
+
+def test_recommendation_card_reports_no_factor_honestly_when_dimension_truly_absent():
+    row = _make_row(Score_Breakdown="Chemical/mechanistic link: +15.0")
+    card = build_recommendation_card(row)
+    assert "No safety factor identified" in card["top_safety_factor"]
+
+
+def test_recommendation_card_identifies_score_reducing_factors():
+    card = build_recommendation_card(_make_row())
+    assert "Safety/interaction/self-row penalty" in card["score_reducing_factors"]
+    assert card["score_reducing_factors"]["Safety/interaction/self-row penalty"] == -14.0
+
+
+def test_recommendation_card_reports_none_reducing_when_no_negative_component():
+    row = _make_row(Score_Breakdown="Chemical/mechanistic link: +15.0; Evidence quality: +24.0")
+    card = build_recommendation_card(row)
+    assert card["score_reducing_factors"] == "None — no component reduced the score."
+
+
+def test_recommendation_card_includes_all_five_decision_dimensions():
+    card = build_recommendation_card(_make_row())
+    assert card["scientific_rationale"]
+    assert card["clinical_rationale"]
+    assert card["regulatory_rationale"]
+    assert card["commercial_rationale"]
+    assert card["safety_profile"]
+    assert card["mechanism_of_action"] == "Hepatoprotective"
+    assert card["final_recommendation"] == "Investigate"
+    assert card["confidence_level"] == 70.0
+
+
+def test_recommendation_card_uses_only_existing_row_data_no_new_computation_needed():
+    # Sanity check on the "do not invent new data" requirement — every
+    # value on the card must trace to a key already present on the row
+    # (or be derived purely from Score_Breakdown, which is also already
+    # on the row).
+    row = _make_row()
+    card = build_recommendation_card(row)
+    assert card["botanical"] == row["Alternative_Plant"]
+    assert card["evidence_conflict_reasoning"] == row["Evidence_Conflict_Reasoning"]
 
 
 def test_report_has_title_and_question():

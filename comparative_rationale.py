@@ -53,6 +53,15 @@ def _parse_score_breakdown(breakdown: str) -> dict:
     return components
 
 
+# Public alias — same function, exposed under a non-underscore name so
+# other modules (pharma_report_generator.py's build_recommendation_card,
+# Sprint 1) can reuse this exact parsing logic instead of duplicating
+# it. The private name and every existing call site above are
+# untouched, so nothing that already depends on _parse_score_breakdown
+# is affected by this.
+parse_score_breakdown = _parse_score_breakdown
+
+
 def _explain_gap(top_row: pd.Series, this_row: pd.Series) -> str:
     gap = round(float(top_row["R&D_Opportunity_Score"]) - float(this_row["R&D_Opportunity_Score"]), 1)
     top_plant = top_row.get("Alternative_Plant", "the top candidate")

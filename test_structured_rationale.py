@@ -10,6 +10,10 @@ from structured_rationale import (
     evidence_conflict_reasoning,
     recommendation_confidence_statement,
     competitive_positioning_statement,
+    regulatory_rationale,
+    commercial_rationale,
+    safety_rationale,
+    clinical_rationale,
 )
 
 
@@ -21,26 +25,47 @@ def test_evidence_conflict_reasoning_multi_source_no_conflict_is_consistent():
         occurrence_corroboration="Corroborated by 5 independent sources",
         has_negative_evidence=False, negative_evidence_types="", evidence_confidence=80,
     )
-    assert "CONSISTENT" in result
+    assert "POSITIVE, CONSISTENT" in result
     assert "5 independent sources" in result
 
 
-def test_evidence_conflict_reasoning_single_source_no_conflict_is_thin_not_consistent():
+def test_evidence_conflict_reasoning_single_source_no_conflict_is_insufficient_not_consistent():
     result = evidence_conflict_reasoning(
         occurrence_corroboration="Single-source claim — not independently corroborated",
         has_negative_evidence=False, negative_evidence_types="", evidence_confidence=40,
     )
-    assert "UNCONTESTED but thin" in result
+    assert "POSITIVE BUT INSUFFICIENT" in result
 
 
-def test_evidence_conflict_reasoning_many_sources_plus_contradiction_is_mostly_consistent():
+def test_evidence_conflict_reasoning_zero_evidence_is_a_distinct_conclusion_from_thin_evidence():
+    # Audit Task 5's exact requirement: "no evidence exists" and
+    # "evidence exists but is insufficient" must never read as the same
+    # conclusion — this is the real bug this session fixed (an earlier
+    # version produced the identical "thin" message for both).
+    zero_evidence = evidence_conflict_reasoning(
+        occurrence_corroboration="No independent source identified — not corroborated",
+        has_negative_evidence=False, negative_evidence_types="", evidence_confidence=0,
+    )
+    thin_evidence = evidence_conflict_reasoning(
+        occurrence_corroboration="Single-source claim — not independently corroborated",
+        has_negative_evidence=False, negative_evidence_types="", evidence_confidence=20,
+    )
+    assert "NO EVIDENCE FOUND" in zero_evidence
+    assert "data gap" in zero_evidence.lower()
+    assert "POSITIVE BUT INSUFFICIENT" in thin_evidence
+    assert zero_evidence != thin_evidence
+    assert "NO EVIDENCE FOUND" not in thin_evidence
+    assert "POSITIVE BUT INSUFFICIENT" not in zero_evidence
+
+
+def test_evidence_conflict_reasoning_many_sources_plus_contradiction_is_mixed_mostly_positive():
     # A contradiction alongside 3+ corroborating sources should read as
     # a specific limitation, not full-blown conflict.
     result = evidence_conflict_reasoning(
         occurrence_corroboration="Corroborated by 4 independent sources",
         has_negative_evidence=True, negative_evidence_types="Null result", evidence_confidence=60,
     )
-    assert "MOSTLY CONSISTENT" in result
+    assert "MIXED (mostly positive" in result
     assert "Null result" in result
 
 
@@ -49,8 +74,38 @@ def test_evidence_conflict_reasoning_single_source_plus_contradiction_is_genuine
         occurrence_corroboration="Single-source claim — not independently corroborated",
         has_negative_evidence=True, negative_evidence_types="Failed trial", evidence_confidence=20,
     )
-    assert "GENUINELY CONFLICTING" in result
+    assert "NEGATIVE, GENUINELY CONFLICTING" in result
     assert "must be resolved" in result
+
+
+def test_evidence_conflict_reasoning_negative_evidence_with_zero_corroboration_is_negative_only():
+    result = evidence_conflict_reasoning(
+        occurrence_corroboration="No independent source identified — not corroborated",
+        has_negative_evidence=True, negative_evidence_types="Toxicity finding", evidence_confidence=5,
+    )
+    assert "NEGATIVE ONLY" in result
+    assert "should not be recommended without further investigation" in result
+
+
+def test_evidence_conflict_reasoning_gives_an_honest_why_hint_when_the_text_supports_it():
+    result = evidence_conflict_reasoning(
+        occurrence_corroboration="Corroborated by 4 independent sources",
+        has_negative_evidence=True, negative_evidence_types="Null result", evidence_confidence=60,
+        raw_evidence_text="The null result was observed in an elderly population using a different dose than the earlier trials.",
+    )
+    assert "Possible reason for the conflict" in result
+    assert "Population differences" in result
+    assert "Dose differences" in result
+
+
+def test_evidence_conflict_reasoning_never_fabricates_a_why_hint_when_text_doesnt_support_one():
+    result = evidence_conflict_reasoning(
+        occurrence_corroboration="Corroborated by 4 independent sources",
+        has_negative_evidence=True, negative_evidence_types="Null result", evidence_confidence=60,
+        raw_evidence_text="A study reported a null result with no further detail provided.",
+    )
+    assert "not determinable from the available evidence text" in result
+    assert "Possible reason for the conflict:" not in result
 
 
 # ---------------------------------------------------------------------
@@ -133,6 +188,59 @@ def test_competitive_positioning_includes_regulatory_barrier_when_present():
         regulatory_barriers="Prescription-only", white_space_type="",
     )
     assert "Prescription-only" in result
+
+
+# ---------------------------------------------------------------------
+# Decision card dimensions (Task 1): regulatory_rationale,
+# commercial_rationale, safety_rationale, clinical_rationale — split
+# out as distinct dimensions, not the pre-existing combined
+# commercial_regulatory_rationale().
+# ---------------------------------------------------------------------
+def test_regulatory_rationale_states_barrier_with_honesty_caveat():
+    result = regulatory_rationale("Regulatory monograph exists", "Prescription-only")
+    assert "monograph exists" in result
+    assert "screening signal, not a verified legal determination" in result
+    assert "Prescription-only" in result
+
+
+def test_regulatory_rationale_no_barrier_says_so_explicitly():
+    result = regulatory_rationale("Regulatory monograph exists", None)
+    assert "No regulatory barrier was identified" in result
+
+
+def test_commercial_rationale_is_distinct_from_regulatory_rationale():
+    commercial = commercial_rationale("No verified product found", "Commercial White Space")
+    regulatory = regulatory_rationale("No verified product found", None)
+    assert "market gap" in commercial
+    assert commercial != regulatory
+
+
+def test_commercial_rationale_data_gap_says_not_assessed():
+    result = commercial_rationale("Search not performed", "Data Gap")
+    assert "cannot yet be assessed" in result
+
+
+def test_safety_rationale_no_flags_says_so_explicitly():
+    result = safety_rationale("No explicit flag found", "No explicit flag found")
+    assert "No explicit safety flag or drug-interaction concern was identified" in result
+
+
+def test_safety_rationale_lists_real_flags_with_screening_caveat():
+    result = safety_rationale("lithogenic", "No explicit flag found")
+    assert "lithogenic" in result
+    assert "not a completed toxicological review" in result
+
+
+def test_clinical_rationale_distinguishes_clinical_grade_from_preclinical():
+    clinical = clinical_rationale("Clinical trial", 85, False)
+    preclinical = clinical_rationale("In vitro / mechanistic", 30, False)
+    assert "Clinical-grade evidence exists" in clinical
+    assert "No clinical-grade evidence was found" in preclinical
+
+
+def test_clinical_rationale_notes_negative_finding_when_present():
+    result = clinical_rationale("Clinical trial", 85, True)
+    assert "negative/contradictory clinical finding is also on record" in result
 
 
 # ---------------------------------------------------------------------

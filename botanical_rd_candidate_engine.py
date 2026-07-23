@@ -22,6 +22,10 @@ from structured_rationale import (
     evidence_conflict_reasoning,
     recommendation_confidence_statement,
     competitive_positioning_statement,
+    regulatory_rationale,
+    commercial_rationale,
+    safety_rationale,
+    clinical_rationale,
 )
 from comparative_rationale import build_comparative_rationale
 from regulatory_barrier_classifier import classify_regulatory_barriers
@@ -114,6 +118,10 @@ OUTPUT_COLUMNS = [
     "Evidence_Conflict_Reasoning",
     "Recommendation_Confidence_Statement",
     "Competitive_Positioning",
+    "Regulatory_Rationale",
+    "Commercial_Rationale",
+    "Safety_Rationale",
+    "Clinical_Rationale",
     "Comparative_Rationale",
     "Rationale",
 ]
@@ -885,6 +893,7 @@ class BotanicalRDCandidateEngine:
                         has_negative_evidence=negative_evidence.is_negative,
                         negative_evidence_types="; ".join(negative_evidence.finding_types),
                         evidence_confidence=evidence_confidence,
+                        raw_evidence_text=raw_evidence,
                     )
                     confidence_statement = recommendation_confidence_statement(
                         go_call=go_call,
@@ -897,6 +906,23 @@ class BotanicalRDCandidateEngine:
                         candidate_evidence_strength_tier=candidate_evidence_strength_tier,
                         regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
                         white_space_type=white_space_type or "",
+                    )
+                    regulatory_rationale_text = regulatory_rationale(
+                        market_status=market_status,
+                        regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
+                    )
+                    commercial_rationale_text = commercial_rationale(
+                        market_status=market_status,
+                        white_space_type=white_space_type or "",
+                    )
+                    safety_rationale_text = safety_rationale(
+                        safety_flags=safety_flags or "No explicit flag found",
+                        interaction_flags=interaction_flags or "No explicit flag found",
+                    )
+                    clinical_rationale_text = clinical_rationale(
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                        evidence_confidence=evidence_confidence,
+                        has_negative_evidence=negative_evidence.is_negative,
                     )
 
                     rows.append(
@@ -953,6 +979,10 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Conflict_Reasoning": conflict_reasoning,
                             "Recommendation_Confidence_Statement": confidence_statement,
                             "Competitive_Positioning": competitive_positioning,
+                            "Regulatory_Rationale": regulatory_rationale_text,
+                            "Commercial_Rationale": commercial_rationale_text,
+                            "Safety_Rationale": safety_rationale_text,
+                            "Clinical_Rationale": clinical_rationale_text,
                             "Rationale": self._rationale(
                                 product_type=product_type,
                                 problem=problem,
@@ -1351,6 +1381,27 @@ class BotanicalRDCandidateEngine:
                         else None
                     ),
                     white_space_type=str(best.get("White_Space_Type", "")),
+                )
+                best["Regulatory_Rationale"] = regulatory_rationale(
+                    market_status=str(best.get("Market_Status", "")),
+                    regulatory_barriers=(
+                        str(best.get("Regulatory_Barriers", ""))
+                        if str(best.get("Regulatory_Barriers", "")) != "None identified"
+                        else None
+                    ),
+                )
+                best["Commercial_Rationale"] = commercial_rationale(
+                    market_status=str(best.get("Market_Status", "")),
+                    white_space_type=str(best.get("White_Space_Type", "")),
+                )
+                best["Safety_Rationale"] = safety_rationale(
+                    safety_flags=str(best.get("Safety_Flags", "No explicit flag found")),
+                    interaction_flags=str(best.get("Interaction_Flags", "No explicit flag found")),
+                )
+                best["Clinical_Rationale"] = clinical_rationale(
+                    evidence_hierarchy_detail=str(best.get("Evidence_Hierarchy_Detail", "")),
+                    evidence_confidence=best["Evidence_Confidence"],
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
                 )
 
             # The pre-merge Rationale text (from _rationale(), on the

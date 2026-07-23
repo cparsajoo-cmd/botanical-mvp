@@ -1561,6 +1561,21 @@ def test_cso_reasoning_columns_populated_end_to_end_through_run():
         assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
 
 
+def test_decision_card_dimensions_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    for col in ["Regulatory_Rationale", "Commercial_Rationale", "Safety_Rationale", "Clinical_Rationale"]:
+        assert col in result.columns
+        assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
+
+
 def test_cso_reasoning_columns_recomputed_after_merge_not_stale():
     engine = make_engine([], similar_groups={})
 

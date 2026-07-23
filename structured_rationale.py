@@ -159,6 +159,100 @@ def commercial_regulatory_rationale(
     return result
 
 
+def regulatory_rationale(market_status: str, regulatory_barriers: Optional[str] = None) -> str:
+    """The REGULATORY dimension alone (audit Task 1's decision card asks
+    for Scientific/Clinical/Regulatory/Commercial/Safety as five DISTINCT
+    rationales, not one combined market sentence). Split out rather than
+    changing commercial_regulatory_rationale() itself, since that
+    function's combined behavior is already depended on elsewhere."""
+    regulatory_state = {
+        "Regulatory monograph exists": "A regulatory monograph exists for this application.",
+        "Traditional-use status": "Only traditional-use recognition exists — no formal regulatory monograph.",
+        "Search not performed": "No regulatory search has been performed for this candidate.",
+        "Search incomplete": "A regulatory search was attempted but did not resolve a clear status.",
+        "Conflicting market evidence": "Regulatory signals conflict and require manual review.",
+    }.get(market_status, f"Regulatory status: {market_status}.")
+
+    if regulatory_barriers and regulatory_barriers != "None identified":
+        regulatory_state += (
+            f" Regulatory barrier(s) identified (screening signal, not a verified "
+            f"legal determination — confirm jurisdiction, effective date, and "
+            f"whether the restriction applies to the whole plant or a specific "
+            f"extract/preparation before relying on it): {regulatory_barriers}."
+        )
+    else:
+        regulatory_state += " No regulatory barrier was identified in the available evidence text."
+
+    return regulatory_state
+
+
+def commercial_rationale(market_status: str, white_space_type: str) -> str:
+    """The COMMERCIAL dimension alone (audit Task 1)."""
+    base = f"Market status: {market_status}."
+    if white_space_type == "Industrial R&D White Space":
+        return base + (
+            " Real scientific signal exists alongside an open commercial space — "
+            "the strongest commercial argument for R&D investment this platform "
+            "can make."
+        )
+    if white_space_type == "Commercial White Space":
+        return base + (
+            " A completed commercial search found no verified competing product — "
+            "a genuine market gap, if the underlying science holds up."
+        )
+    if white_space_type == "Data Gap":
+        return base + " Commercial opportunity cannot yet be assessed — no market search has actually been performed."
+    return base
+
+
+def safety_rationale(safety_flags: str, interaction_flags: str) -> str:
+    """The SAFETY dimension alone (audit Task 1)."""
+    flags = safety_flags if safety_flags and safety_flags != "No explicit flag found" else None
+    interactions = interaction_flags if interaction_flags and interaction_flags != "No explicit flag found" else None
+
+    if not flags and not interactions:
+        return "No explicit safety flag or drug-interaction concern was identified in the available evidence text."
+
+    parts = []
+    if flags:
+        parts.append(f"Safety flag(s) identified: {flags}")
+    if interactions:
+        parts.append(f"Interaction flag(s) identified: {interactions}")
+
+    return (
+        "; ".join(parts) + ". These are screening signals extracted from evidence "
+        "text, not a completed toxicological review."
+    )
+
+
+def clinical_rationale(
+    evidence_hierarchy_detail: Optional[str],
+    evidence_confidence: float,
+    has_negative_evidence: bool,
+) -> str:
+    """The CLINICAL dimension alone (audit Task 1) — distinct from
+    scientific_rationale(), which covers the chemical/mechanistic link;
+    this covers whether clinical-grade evidence (as opposed to
+    in-vitro/mechanistic/traditional-use evidence) actually exists."""
+    tier = evidence_hierarchy_detail or "Unclassified"
+    clinical_tiers = {
+        "Systematic review / meta-analysis", "Clinical trial", "Observational human evidence",
+    }
+
+    if tier in clinical_tiers:
+        note = f"Clinical-grade evidence exists: {tier} (Evidence_Confidence {evidence_confidence})."
+    else:
+        note = (
+            f"No clinical-grade evidence was found — the strongest evidence tier "
+            f"identified is {tier}, which is preclinical/mechanistic or weaker."
+        )
+
+    if has_negative_evidence:
+        note += " A negative/contradictory clinical finding is also on record — see Evidence_Conflict_Reasoning."
+
+    return note
+
+
 def evidence_strengths(
     match_quality: str,
     evidence_confidence: float,
@@ -212,27 +306,68 @@ def evidence_weaknesses(
     return weaknesses
 
 
+CONFLICT_REASON_HINTS = {
+    "Population differences": [
+        "different population", "elderly population", "pediatric population",
+        "healthy volunteers", "patient population", "different age group",
+    ],
+    "Dose differences": [
+        "different dose", "higher dose", "lower dose", "dose-dependent",
+        "dose-response",
+    ],
+    "Extraction/preparation differences": [
+        "different extract", "different preparation", "standardized extract",
+        "crude extract", "different formulation",
+    ],
+    "Study design differences": [
+        "open-label", "uncontrolled study", "randomized controlled",
+        "observational design", "retrospective design", "prospective design",
+    ],
+    "Endpoint differences": [
+        "different endpoint", "primary endpoint", "surrogate endpoint",
+        "different outcome measure",
+    ],
+}
+
+
+def _hypothesize_conflict_reason(raw_evidence_text: Optional[str]) -> Optional[str]:
+    """Honest, keyword-based hint at WHY two findings might conflict —
+    population/dose/extraction/study-design/endpoint differences, per
+    audit Task 4. Returns None (never a guess) when the evidence text
+    doesn't actually mention any of these — a missing reason is
+    reported as missing, not filled in with a plausible-sounding
+    fabrication."""
+    if not raw_evidence_text:
+        return None
+    lowered = raw_evidence_text.lower()
+    hits = [label for label, terms in CONFLICT_REASON_HINTS.items() if any(t in lowered for t in terms)]
+    return "; ".join(hits) if hits else None
+
+
 def evidence_conflict_reasoning(
     occurrence_corroboration: str,
     has_negative_evidence: bool,
     negative_evidence_types: str,
     evidence_confidence: float,
+    raw_evidence_text: Optional[str] = None,
 ) -> str:
     """A CSO doesn't want "Has_Negative_Evidence: True" as a bare flag —
-    they want to know whether the evidence base is CONSISTENT (every
-    source points the same direction) or CONFLICTING (support exists,
-    but so does a contradiction), and how much that should temper trust.
-    Built entirely from signals already computed elsewhere
-    (Occurrence_Corroboration's source count, Has_Negative_Evidence,
-    Negative_Evidence_Types) — no new evidence collection, this is a
-    reasoning layer over what already exists.
+    they want to know whether the evidence base is POSITIVE, MIXED, or
+    NEGATIVE (audit Task 4), and how much that should temper trust.
+    Built from signals already computed elsewhere (Occurrence_Corroboration's
+    source count, Has_Negative_Evidence, Negative_Evidence_Types) plus,
+    optionally, the raw evidence text for the WHY-hint — no new evidence
+    collection, this is a reasoning layer over what already exists.
 
-    The reasoning distinguishes two very different situations that
-    "has a negative finding" collapses together: a contradiction seen
-    alongside 3+ independent supporting sources is a specific study
-    limitation worth reading, not necessarily a reason to distrust the
-    whole candidate — but the SAME contradiction alongside only 1
-    source (or none) means the evidence is genuinely unresolved.
+    Audit Task 5's exact requirement — never confuse these three
+    situations — is enforced explicitly here, since an earlier version
+    of this function collapsed the first two into one identical message:
+      "No evidence exists"              -> source_count == 0, no negative finding
+      "Evidence exists but insufficient" -> source_count == 1, no negative finding
+      "Evidence exists and is negative"  -> has_negative_evidence == True
+    These are different scientific conclusions and must read as
+    different sentences, not the same templated line with a number
+    swapped in.
     """
     source_count = 0
     match = re.search(r"Corroborated by (\d+)", occurrence_corroboration or "")
@@ -241,34 +376,55 @@ def evidence_conflict_reasoning(
     elif occurrence_corroboration and "Single-source" in occurrence_corroboration:
         source_count = 1
 
+    if source_count == 0 and not has_negative_evidence:
+        return (
+            "NO EVIDENCE FOUND: no supporting or contradicting evidence was "
+            "identified for this candidate. This is a data gap, not a scientific "
+            "finding — it says nothing about whether the candidate is good or bad."
+        )
+
     if not has_negative_evidence:
         if source_count >= 2:
             return (
-                f"Evidence is CONSISTENT: {source_count} independent sources were "
+                f"POSITIVE, CONSISTENT: {source_count} independent sources were "
                 f"found and none contradicts the finding."
             )
         return (
-            "Evidence is UNCONTESTED but thin: no contradictory finding, but also "
-            "no independent corroboration yet to rule one out."
+            f"POSITIVE BUT INSUFFICIENT: {source_count} source found, no "
+            f"contradiction on record, but too little independent corroboration "
+            f"to be conclusive on its own."
         )
+
+    reason = _hypothesize_conflict_reason(raw_evidence_text)
+    reason_text = (
+        f" Possible reason for the conflict: {reason}."
+        if reason else
+        " Reason for the conflict is not determinable from the available evidence text."
+    )
 
     if source_count >= 3:
         return (
-            f"Evidence is MOSTLY CONSISTENT, WITH ONE CONTRADICTION: {source_count} "
+            f"MIXED (mostly positive, one contradiction): {source_count} "
             f"independent sources support this candidate, but a negative/contradictory "
-            f"finding ({negative_evidence_types}) was also identified. With this many "
-            f"corroborating sources, the contradiction more likely reflects a specific "
-            f"study limitation than an invalid overall signal — but read it before "
-            f"treating this as settled."
+            f"finding ({negative_evidence_types}) was also identified.{reason_text} "
+            f"With this many corroborating sources, the contradiction more likely "
+            f"reflects a specific study limitation than an invalid overall signal — "
+            f"but read it before treating this as settled."
+        )
+
+    if source_count >= 1:
+        return (
+            f"NEGATIVE, GENUINELY CONFLICTING: only {source_count} source(s) support "
+            f"this candidate, and a negative/contradictory finding "
+            f"({negative_evidence_types}) was also identified.{reason_text} With this "
+            f"little corroboration, the contradiction carries real weight — it must "
+            f"be resolved, not just noted, before this recommendation can be trusted."
         )
 
     return (
-        f"Evidence is GENUINELY CONFLICTING: only "
-        f"{source_count if source_count else 'a single'} source(s) support this "
-        f"candidate, and a negative/contradictory finding ({negative_evidence_types}) "
-        f"was also identified. With this little corroboration, the contradiction "
-        f"carries real weight — it must be resolved, not just noted, before this "
-        f"recommendation can be trusted."
+        f"NEGATIVE ONLY: no supporting source was found, but a negative/contradictory "
+        f"finding ({negative_evidence_types}) was identified.{reason_text} This "
+        f"candidate should not be recommended without further investigation."
     )
 
 

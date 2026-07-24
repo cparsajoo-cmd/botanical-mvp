@@ -388,3 +388,44 @@ None of these substitute for `R&D_Opportunity_Score`/`Decision_Class_AH`
 tracking, version history, or a health assessment this repository
 cannot honestly support (see the Sprint 6 and Sprint 6A audits) — the
 name itself needs to communicate the real, narrow scope.
+
+## Sprint 6A.2 — Persistent Connector Telemetry (telemetry_persistence.py)
+
+**Persistence unit** (approved in the Sprint 6A.2 design review): one
+row = one connector outcome, within one collection session. Not per
+plant, not per connector execution. This is a direct, verbatim
+persistence of each entry already in Sprint 6A.1's `connectors` list —
+no new aggregation logic exists in this module.
+
+**`recorded_at` is persistence time, not execution time.** No
+trustworthy connector-execution timestamp exists anywhere in this
+repository's collection path (confirmed across the Sprint 6/6A
+audits). `recorded_at` only ever answers "when did this module write
+the row" — it is not, and must never be read as, "when did the
+connector run." Any future work that wants a real execution timestamp
+needs a separate, explicitly-approved change to
+`multi_source_collector.py`'s dispatch call site — this module does
+not attempt that.
+
+**Telemetry and evidence are separate concerns, by construction.**
+`telemetry_persistence.py` writes only to its own `connector_telemetry`
+table — never `evidence_records`/`sources` (confirmed, `database.py`'s
+schema was exhaustively inspected in the Sprint 6A.2 audit and
+contains zero connector-execution-shaped fields). Telemetry describes
+HOW collection ran; evidence is WHAT collection found. Mixing them
+would make neither cleanly queryable.
+
+**Failure policy: best-effort, never fatal.** `persist_connector_telemetry()`
+never raises — any failure (including the `connector_telemetry` table
+not existing yet, since no migration/SQL file exists anywhere in this
+repository for any table; they are all created outside version
+control) is caught and returned as `{"status": "unavailable", ...}`.
+Step 2's scientific evidence collection and all recommendation logic
+are completely unaffected by telemetry failing to persist — verified
+by `test_persistence_failure_returns_gracefully_never_raises`.
+
+**Deliberately never persisted**: execution start/finish time,
+duration, uptime, availability, rolling statistics, health score,
+freshness score, trend, success rate, attempt count, connector
+version — none of these exist in Sprint 6A.1's output, and none are
+computed or invented here.

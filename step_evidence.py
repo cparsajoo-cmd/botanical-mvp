@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from research_engine import run_research_engine
 from connector_session_observability import build_connector_session_observability
+from telemetry_persistence import persist_connector_telemetry
 
 
 def render_evidence_step(inputs):
@@ -101,4 +102,14 @@ def render_evidence_step(inputs):
 
             for lim in observability["limitations"]:
                 st.caption(f"⚠️ {lim}")
+
+            # Sprint 6A.2 — best-effort persistence of the observability
+            # object above. Never blocks or interrupts this page; only a
+            # minimal status message is shown, per this Sprint's explicit
+            # UI constraint (no database/SQL details exposed here).
+            telemetry_summary = persist_connector_telemetry(observability)
+            if telemetry_summary["status"] == "persisted":
+                st.caption("✅ Telemetry persisted successfully")
+            else:
+                st.caption("ℹ️ Telemetry persistence unavailable")
 

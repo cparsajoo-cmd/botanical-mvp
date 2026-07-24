@@ -344,6 +344,23 @@ def _hypothesize_conflict_reason(raw_evidence_text: Optional[str]) -> Optional[s
     return "; ".join(hits) if hits else None
 
 
+def _extract_source_count(occurrence_corroboration: Optional[str]) -> int:
+    """Parses Occurrence_Corroboration's "Corroborated by N independent
+    sources" / "Single-source claim" format into an integer. Extracted
+    from evidence_conflict_reasoning() (Sprint 4) so Sprint 4's new
+    consistency/pattern/gap functions reuse the SAME parsing instead of
+    a second copy — this is a pure refactor, evidence_conflict_reasoning()'s
+    own behavior is unchanged."""
+    if not occurrence_corroboration:
+        return 0
+    match = re.search(r"Corroborated by (\d+)", occurrence_corroboration)
+    if match:
+        return int(match.group(1))
+    if "Single-source" in occurrence_corroboration:
+        return 1
+    return 0
+
+
 def evidence_conflict_reasoning(
     occurrence_corroboration: str,
     has_negative_evidence: bool,
@@ -567,6 +584,284 @@ def next_experiment_suggestion(
         return f"Confirm the commercial gap for {alt_plant} with a dedicated retail/patent search before investing further."
 
     return f"Review available evidence for {alt_plant} manually before deciding on next steps."
+
+
+# =====================================================================
+# Sprint 4 — Evidence Conflict & Consistency Intelligence.
+#
+# Extends evidence_conflict_reasoning() and CONFLICT_REASON_HINTS above
+# — deliberately NOT a new module (conflict_engine.py/consistency_engine.py
+# were explicitly rejected). Every function below is a pure
+# post-processing interpretation layer: none of them read or write
+# R&D_Opportunity_Score, Decision_Class_AH, Evidence_Confidence, or any
+# robustness/comparative output, and none of them are called from
+# anywhere near _score_candidate().
+#
+# WHY THIS LIVES IN THE ENGINE'S ROW LOOP, NOT ONLY IN THE REPORT
+# possible_explanations (below) needs the SAME raw evidence text
+# evidence_conflict_reasoning()'s own WHY-hint already uses — and that
+# text is never stored as its own column on a run() result (only
+# derived fields like Evidence_Conflict_Reasoning survive). Computing
+# this structured object once, in the engine's row-building loop
+# (exactly where Scientific_Rationale/Clinical_Rationale/
+# Evidence_Conflict_Reasoning are already computed, using the same
+# raw_evidence variable already in scope there), and storing the
+# result as one additive column is the same established pattern as
+# every other explainability field in this codebase — not a new
+# architecture, not a second engine. The report then only FORMATS that
+# stored column; it does not recompute or duplicate the interpretation
+# logic, satisfying the Sprint 4 report-integration requirement.
+# =====================================================================
+
+# The 7 explanation categories the Sprint 4 audit found genuinely
+# supportable by existing repository data. Species, target, mechanism,
+# and publication-specific disagreement are explicitly NOT included —
+# no comparable structured field exists for any of them (audit
+# section 7) — and must never appear in possible_explanations' output.
+SUPPORTED_EXPLANATION_CATEGORIES = {
+    "Population differences", "Dose differences", "Extraction/preparation differences",
+    "Study design differences", "Endpoint differences", "Study quality differences",
+    "Evidence level differences",
+}
+REJECTED_EXPLANATION_CATEGORIES = {
+    "Species differences", "Target differences", "Mechanism differences",
+    "Publication-specific disagreements",
+}
+
+# Reuses negative_evidence_classifier.py's own canonical "Poor-quality
+# study" phrase list rather than re-typing it — same terms, single
+# source of truth, imported read-only (that module is not modified).
+from negative_evidence_classifier import _NEGATIVE_FINDING_TYPES as _NEG_FINDING_TYPES  # noqa: E402
+_POOR_QUALITY_TERMS = next(terms for name, terms in _NEG_FINDING_TYPES if name == "Poor-quality study")
+CONFLICT_REASON_HINTS["Study quality differences"] = _POOR_QUALITY_TERMS
+
+# Reuses evidence_hierarchy_classifier.py's own canonical tier
+# definitions (read-only import, that module is not modified) rather
+# than inventing a fake "conflicting evidence levels" keyword phrase
+# real text is unlikely to literally contain.
+from evidence_hierarchy_classifier import _TIERS as _HIERARCHY_TIERS  # noqa: E402
+
+_CLINICAL_TIERS = {"Systematic review / meta-analysis", "Clinical trial"}
+_HUMAN_HIERARCHY_TIERS = {
+    "Systematic review / meta-analysis", "Clinical trial", "Observational human evidence",
+}
+
+EVIDENCE_CONFLICT_LIMITATIONS = [
+    "Evidence interpretation is based on candidate-level aggregated evidence.",
+    "Study-level attribution is not available.",
+    "Conflicts represent detected positive and negative evidence patterns within "
+    "the aggregated evidence, not confirmed source-level disagreement.",
+]
+
+
+def _extract_source_count(occurrence_corroboration: Optional[str]) -> int:
+    """Shared helper for the Sprint 4 functions below — NOT used by
+    evidence_conflict_reasoning() above, which keeps its own existing,
+    already-tested inline copy of this same small parsing step
+    untouched rather than risk altering Sprint 1's frozen behavior by
+    refactoring it to share this helper."""
+    match = re.search(r"Corroborated by (\d+)", occurrence_corroboration or "")
+    if match:
+        return int(match.group(1))
+    if occurrence_corroboration and "Single-source" in occurrence_corroboration:
+        return 1
+    return 0
+
+
+def _detect_evidence_level_span(raw_evidence_text: Optional[str]) -> bool:
+    """True when the combined evidence text matches keyword sets for
+    2+ DISTINCT hierarchy tiers — a structurally-grounded signal that
+    the aggregated evidence spans multiple study-type levels (e.g. both
+    a "systematic review" mention and an "in vitro" mention appear
+    somewhere in the combined text), not a fabricated keyword phrase."""
+    if not raw_evidence_text:
+        return False
+    lowered = raw_evidence_text.lower()
+    matched_tiers = sum(
+        1 for _, terms in _HIERARCHY_TIERS if any(term in lowered for term in terms)
+    )
+    return matched_tiers >= 2
+
+
+def classify_evidence_consistency(occurrence_corroboration: str, has_negative_evidence: bool) -> str:
+    """Exactly 5 categories, per Sprint 4's spec — qualitative labels
+    only. NOT statistical confidence, NOT evidence quality (that's
+    Candidate_Evidence_Strength_Tier), NOT recommendation strength
+    (that's Recommendation_Confidence_Statement). Built from the same
+    two signals evidence_conflict_reasoning() already reasons over."""
+    source_count = _extract_source_count(occurrence_corroboration)
+
+    if source_count == 0 and not has_negative_evidence:
+        return "Insufficient information"
+
+    if not has_negative_evidence:
+        return "Consistent" if source_count >= 2 else "Mostly consistent"
+
+    return "Mixed" if source_count >= 3 else "Conflicting"
+
+
+def classify_dominant_evidence_pattern(
+    evidence_hierarchy_detail: Optional[str],
+    has_negative_evidence: bool,
+    occurrence_corroboration: str,
+) -> str:
+    """Conservative categories only — chosen to reflect what the
+    repository's own Evidence_Hierarchy_Detail tiers and corroboration
+    count actually support, not inferred beyond them."""
+    source_count = _extract_source_count(occurrence_corroboration)
+    tier = evidence_hierarchy_detail or ""
+
+    if source_count <= 1:
+        return "Sparse evidence"
+
+    if has_negative_evidence and source_count < 3:
+        return "Negative dominated"
+
+    if tier in _CLINICAL_TIERS:
+        return "Mixed clinical" if has_negative_evidence else "Clinical-supported"
+
+    if tier == "Validated ex vivo / in vivo":
+        return "Mostly preclinical"
+
+    if tier == "In vitro / mechanistic":
+        return "Mostly mechanistic"
+
+    return "Mostly positive"
+
+
+def build_possible_explanations(raw_evidence_text: Optional[str], has_negative_evidence: bool) -> list:
+    """Returns possible explanations SUGGESTED BY DETECTED EVIDENCE
+    PATTERNS — deliberately not called "likely explanations" (Sprint 4's
+    explicit wording requirement), since no causal inference is being
+    made, only pattern detection. Only ever returns categories from
+    SUPPORTED_EXPLANATION_CATEGORIES. Empty when there's no conflict to
+    explain — an explanation for a disagreement that doesn't exist
+    would itself be a fabrication.
+    """
+    if not has_negative_evidence:
+        return []
+
+    explanations = []
+    hint = _hypothesize_conflict_reason(raw_evidence_text)
+    if hint:
+        explanations.extend(hint.split("; "))
+    if _detect_evidence_level_span(raw_evidence_text):
+        explanations.append("Evidence level differences")
+
+    seen = set()
+    deduped = []
+    for item in explanations:
+        if item not in seen and item in SUPPORTED_EXPLANATION_CATEGORIES:
+            seen.add(item)
+            deduped.append(item)
+    return deduped
+
+
+def detect_research_gaps(
+    evidence_hierarchy_detail: Optional[str],
+    occurrence_corroboration: str,
+    evidence_level: Optional[str],
+    safety_flags: Optional[str],
+    market_status: Optional[str],
+) -> list:
+    """Only the 7 gap types the Sprint 4 audit found genuinely
+    supportable. "No long-term evidence" and "No formulation
+    consistency" are deliberately never included — no duration or
+    per-study formulation field exists anywhere in this repository to
+    support them."""
+    tier = evidence_hierarchy_detail or ""
+    source_count = _extract_source_count(occurrence_corroboration)
+    gaps = []
+
+    if tier not in _HUMAN_HIERARCHY_TIERS:
+        gaps.append("Few human studies")
+
+    if tier == "In vitro / mechanistic":
+        gaps.append("Mostly in vitro evidence")
+        gaps.append("Only mechanistic evidence")
+
+    if tier not in _CLINICAL_TIERS:
+        gaps.append("No clinical confirmation")
+
+    if evidence_level == "No direct evidence" and (not safety_flags or safety_flags == "No explicit flag found"):
+        gaps.append("No safety studies")
+
+    if source_count == 1:
+        gaps.append("Only single publication")
+
+    if tier == "Validated ex vivo / in vivo":
+        gaps.append("Only preclinical evidence")
+
+    if evidence_level == "No direct evidence" and market_status not in (
+        None, "", "Search not performed", "Unknown", "Source unavailable",
+    ):
+        gaps.append("Only market evidence")
+
+    seen = set()
+    return [g for g in gaps if not (g in seen or seen.add(g))]
+
+
+def build_evidence_interpretation(consistency_level: str, conflict_present: bool) -> str:
+    """Evidence Interpretation (renamed from the earlier "Recommendation
+    Impact" concept, per Sprint 4's explicit correction). This NEVER
+    evaluates recommendation strength — no "the recommendation remains
+    strong" / "should be downgraded" language, ever. That evaluation
+    belongs to Recommendation_Confidence_Statement, a separate,
+    unrelated concept this function does not read or influence.
+    """
+    if consistency_level == "Insufficient information":
+        return "Insufficient evidence is available to characterize consistency for this candidate."
+    if not conflict_present:
+        return "The available evidence is consistent across the sources identified."
+    return (
+        "The available evidence contains both supporting and conflicting findings. "
+        "The evidence should be interpreted together with the identified limitations."
+    )
+
+
+def build_evidence_conflict_structured(
+    occurrence_corroboration: str,
+    has_negative_evidence: bool,
+    negative_evidence_types: str,
+    evidence_hierarchy_detail: Optional[str],
+    evidence_level: Optional[str],
+    safety_flags: Optional[str],
+    market_status: Optional[str],
+    evidence_conflict_reasoning_text: str,
+    raw_evidence_text: Optional[str] = None,
+) -> dict:
+    """Sprint 4 — the Evidence Conflict & Consistency structured object.
+    A pure post-processing interpretation layer: never influences
+    R&D_Opportunity_Score, Decision_Class_AH, Evidence_Confidence, or
+    any robustness/comparative output. Every field is derived from
+    signals already computed elsewhere in this file or in the engine —
+    no new evidence is collected, no new scoring is introduced.
+    """
+    consistency = classify_evidence_consistency(occurrence_corroboration, has_negative_evidence)
+    dominant_pattern = classify_dominant_evidence_pattern(
+        evidence_hierarchy_detail, has_negative_evidence, occurrence_corroboration,
+    )
+    possible_explanations = build_possible_explanations(raw_evidence_text, has_negative_evidence)
+    research_gaps = detect_research_gaps(
+        evidence_hierarchy_detail, occurrence_corroboration, evidence_level, safety_flags, market_status,
+    )
+    interpretation = build_evidence_interpretation(consistency, has_negative_evidence)
+
+    return {
+        "overall_consistency": consistency,
+        "dominant_evidence_pattern": dominant_pattern,
+        "conflict_present": has_negative_evidence,
+        "agreement_summary": evidence_conflict_reasoning_text,
+        "conflict_summary": negative_evidence_types if has_negative_evidence else "",
+        "possible_explanations": possible_explanations,
+        "research_gaps": research_gaps,
+        "evidence_interpretation": interpretation,
+        "limitations": list(EVIDENCE_CONFLICT_LIMITATIONS),
+        "traceability": [
+            "Occurrence_Corroboration", "Has_Negative_Evidence", "Negative_Evidence_Types",
+            "Evidence_Hierarchy_Detail", "Evidence_Level", "Evidence_Conflict_Reasoning",
+        ],
+    }
 
 
 # =====================================================================

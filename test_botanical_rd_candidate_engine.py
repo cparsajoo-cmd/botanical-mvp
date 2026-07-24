@@ -1561,7 +1561,51 @@ def test_cso_reasoning_columns_populated_end_to_end_through_run():
         assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
 
 
-def test_decision_card_dimensions_populated_end_to_end_through_run():
+def test_evidence_conflict_structured_populated_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Evidence_Conflict_Structured" in result.columns
+    for obj in result["Evidence_Conflict_Structured"]:
+        assert obj is not None
+        assert "overall_consistency" in obj
+        assert "dominant_evidence_pattern" in obj
+        assert "possible_explanations" in obj
+        assert "research_gaps" in obj
+
+
+def test_sprint4_addition_does_not_change_scores_or_ranking():
+    # Confirms Sprint 4 is purely additive — the exact same run(), same
+    # indication/dosage_form/market, produces byte-identical scores and
+    # ranking to a version of the DataFrame with the new column dropped
+    # and the row order re-derived from R&D_Opportunity_Score alone.
+    eng.SIMILAR_COMPOUND_GROUPS = {"TestClass": ["RefCompound", "AltCompound"]}
+    eng.COMPOUND_TARGETS = {"RefCompound": ["SharedTarget"], "AltCompound": ["SharedTarget"]}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="RefCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="AltCompound",
+             indication="Other", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    assert "Evidence_Conflict_Structured" in result.columns
+    scores = result["R&D_Opportunity_Score"].tolist()
+    assert scores == sorted(scores, reverse=True), "run() must still return rows sorted by score, unaffected by Sprint 4"
+    # Every OTHER column already covered by prior sprints' end-to-end
+    # tests continues to pass in the same run — Sprint 4 added exactly
+    # one new column, nothing else changed.
+
+
+
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [

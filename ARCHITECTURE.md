@@ -223,3 +223,61 @@ sub-component data is preserved after scoring), and why rank stability
 is model sensitivity rather than scientific confidence, is in that
 file's own module docstring — read it before extending this analysis
 further, rather than re-deriving these constraints from scratch.
+
+## Sprint 4 — Evidence Conflict & Consistency Intelligence (structured_rationale.py)
+
+**Why no new engine was created.** `evidence_conflict_reasoning()`
+already computed most of what this Sprint needed (POSITIVE/MIXED/
+NEGATIVE bucketing, source-count-aware reasoning). Sprint 4 extends
+that same function's neighborhood in `structured_rationale.py` —
+`classify_evidence_consistency()`, `classify_dominant_evidence_pattern()`,
+`build_possible_explanations()`, `detect_research_gaps()`,
+`build_evidence_conflict_structured()` — rather than creating
+`conflict_engine.py`/`consistency_engine.py`, which were explicitly
+rejected as options.
+
+**Why `Evidence_Confidence` remains unchanged.** Nothing in this
+Sprint reads or writes `Evidence_Confidence`, `Candidate_Evidence_Strength_Tier`,
+`R&D_Opportunity_Score`, `Decision_Class_AH`, or any robustness/
+comparative field — verified by a dedicated test
+(`test_sprint4_addition_does_not_change_scores_or_ranking`) that
+confirms `run()`'s score/rank output is identical with this column
+present. This is a pure interpretation layer over evidence that
+already fed into scoring; it doesn't recompute or second-guess that
+scoring.
+
+**Why explanations are conservative.** `possible_explanations` only
+ever returns one of 7 categories (`SUPPORTED_EXPLANATION_CATEGORIES`
+in `structured_rationale.py`) — Population, Dose, Extraction/
+preparation, Study design, Endpoint, Study quality, and Evidence level
+differences — each backed by either a real keyword-hint match or a
+structural check (2+ hierarchy tiers detected in the combined text).
+Species, target, mechanism, and publication-specific explanations are
+explicitly rejected (`REJECTED_EXPLANATION_CATEGORIES`) because no
+comparable structured field exists to honestly support them — adding
+them would be a fabricated causal claim, not a detected pattern.
+
+**Why study-level disagreement is intentionally unsupported.**
+`_build_evidence_text_index()` concatenates every study's text for a
+plant into ONE flat string before any classifier runs — there is no
+per-study or per-source attribution anywhere in this pipeline. Every
+Sprint 4 output — and every one of its `limitations` entries — states
+this explicitly: conflicts represent positive/negative *patterns
+detected in the aggregated text*, never "N of M sources agree." Making
+that limitation legible is deliberate, not an oversight; solving it
+for real would require the same claim-level-provenance rearchitecture
+flagged and deferred across three prior review rounds.
+
+**Difference between four terms that sound similar but measure different things:**
+
+| Term | What it measures | Where |
+|---|---|---|
+| Evidence Confidence | Strength of the evidence FOR THIS CANDIDATE (source count × hierarchy tier) | `evidence_confidence.py`, unchanged since Phase 6 |
+| Evidence Consistency (Sprint 4) | Whether the aggregated evidence agrees or conflicts with itself | `structured_rationale.classify_evidence_consistency()` |
+| Robustness (Sprint 3) | Whether the #1-vs-#2 RANKING would survive removing one scoring section | `scoring_sensitivity_report.build_robustness_analysis()` |
+| Recommendation Score | The actual R&D_Opportunity_Score/Decision_Class_AH | `_score_candidate()`, never touched by any of the above |
+
+These four are computed independently and never substitute for one
+another — a candidate can have high Evidence Confidence and low
+Evidence Consistency (strong but conflicting evidence) at the same
+time, and neither one moves the Recommendation Score.

@@ -26,6 +26,7 @@ from structured_rationale import (
     commercial_rationale,
     safety_rationale,
     clinical_rationale,
+    build_evidence_conflict_structured,
 )
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
@@ -116,6 +117,7 @@ OUTPUT_COLUMNS = [
     "Evidence_Weaknesses",
     "Next_Experiment_Suggestion",
     "Evidence_Conflict_Reasoning",
+    "Evidence_Conflict_Structured",
     "Recommendation_Confidence_Statement",
     "Competitive_Positioning",
     "Regulatory_Rationale",
@@ -896,6 +898,17 @@ class BotanicalRDCandidateEngine:
                         evidence_confidence=evidence_confidence,
                         raw_evidence_text=raw_evidence,
                     )
+                    evidence_conflict_structured = build_evidence_conflict_structured(
+                        occurrence_corroboration=occurrence_corroboration,
+                        has_negative_evidence=negative_evidence.is_negative,
+                        negative_evidence_types="; ".join(negative_evidence.finding_types),
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                        evidence_level=evidence_level,
+                        safety_flags=safety_flags,
+                        market_status=market_status,
+                        evidence_conflict_reasoning_text=conflict_reasoning,
+                        raw_evidence_text=raw_evidence,
+                    )
                     confidence_statement = recommendation_confidence_statement(
                         go_call=go_call,
                         candidate_evidence_strength_tier=candidate_evidence_strength_tier,
@@ -978,6 +991,7 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Weaknesses": "; ".join(weaknesses) if weaknesses else "None identified",
                             "Next_Experiment_Suggestion": next_experiment,
                             "Evidence_Conflict_Reasoning": conflict_reasoning,
+                            "Evidence_Conflict_Structured": evidence_conflict_structured,
                             "Recommendation_Confidence_Statement": confidence_statement,
                             "Competitive_Positioning": competitive_positioning,
                             "Regulatory_Rationale": regulatory_rationale_text,
@@ -1369,6 +1383,21 @@ class BotanicalRDCandidateEngine:
                     has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
                     negative_evidence_types=str(best.get("Negative_Evidence_Types", "")),
                     evidence_confidence=best["Evidence_Confidence"],
+                )
+                best["Evidence_Conflict_Structured"] = build_evidence_conflict_structured(
+                    occurrence_corroboration=str(best.get("Occurrence_Corroboration", "")),
+                    has_negative_evidence=bool(best.get("Has_Negative_Evidence", False)),
+                    negative_evidence_types=str(best.get("Negative_Evidence_Types", "")),
+                    evidence_hierarchy_detail=str(best.get("Evidence_Hierarchy_Detail", "")),
+                    evidence_level=str(best.get("Evidence_Level", "")),
+                    safety_flags=str(best.get("Safety_Flags", "")),
+                    market_status=str(best.get("Market_Status", "")),
+                    evidence_conflict_reasoning_text=best["Evidence_Conflict_Reasoning"],
+                    # raw_evidence_text intentionally omitted — not carried as a
+                    # stored column post-merge (same limitation already
+                    # documented for Evidence_Conflict_Reasoning's own WHY-hint
+                    # above); possible_explanations honestly comes back empty
+                    # here rather than guessing from stale pre-merge text.
                 )
                 best["Recommendation_Confidence_Statement"] = recommendation_confidence_statement(
                     go_call=str(best.get("Go_Investigate_Hold_NoGo", "")),

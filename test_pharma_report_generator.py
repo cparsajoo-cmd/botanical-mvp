@@ -220,6 +220,37 @@ def test_report_handles_missing_robustness_object_gracefully():
     assert "AltPlant" in section  # renders the rest of the section fine
 
 
+def test_report_renders_evidence_conflict_section_without_recomputing_it():
+    evidence_conflict_obj = {
+        "overall_consistency": "Mixed",
+        "dominant_evidence_pattern": "Mixed clinical",
+        "conflict_present": True,
+        "agreement_summary": "MIXED (mostly positive, one contradiction): ...",
+        "conflict_summary": "Null result",
+        "possible_explanations": ["Population differences", "Dose differences"],
+        "research_gaps": ["Only single publication"],
+        "evidence_interpretation": "The available evidence contains both supporting and conflicting findings. The evidence should be interpreted together with the identified limitations.",
+        "limitations": ["Evidence interpretation is based on candidate-level aggregated evidence."],
+        "traceability": ["Occurrence_Corroboration", "Has_Negative_Evidence"],
+    }
+    result = pd.DataFrame([_make_row(Evidence_Conflict_Structured=evidence_conflict_obj)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Overall consistency: Mixed" in report
+    assert "Dominant evidence pattern: Mixed clinical" in report
+    assert "Population differences; Dose differences" in report
+    assert "Research gaps: Only single publication" in report
+    assert "supporting and conflicting findings" in report
+    # Must never claim recommendation strength from this section.
+    assert "recommendation remains strong" not in report.lower()
+    assert "recommendation should be downgraded" not in report.lower()
+
+
+def test_report_handles_missing_evidence_conflict_object_gracefully():
+    result = pd.DataFrame([_make_row(Evidence_Conflict_Structured=None)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "AltPlant" in report  # still renders the rest of the section fine
+
+
 def test_report_has_title_and_question():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="Liver support", dosage_form="Infusion", market="EU")

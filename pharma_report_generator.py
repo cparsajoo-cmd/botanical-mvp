@@ -159,6 +159,35 @@ def _format_robustness_section(robustness) -> list:
     return lines
 
 
+def _format_evidence_conflict_section(evidence_conflict) -> list:
+    """Sprint 4 — formats structured_rationale.build_evidence_conflict_structured()'s
+    object concisely. Formatting only: every value already exists on
+    the object; nothing is recomputed or reinterpreted here — the
+    report does not duplicate the interpretation logic, it only
+    presents it.
+    """
+    if not evidence_conflict:
+        return []
+
+    lines = [
+        "**Evidence conflict & consistency:**",
+        f"- Overall consistency: {evidence_conflict['overall_consistency']}",
+        f"- Dominant evidence pattern: {evidence_conflict['dominant_evidence_pattern']}",
+        f"- {evidence_conflict['evidence_interpretation']}",
+    ]
+
+    if evidence_conflict["possible_explanations"]:
+        lines.append(
+            "- Possible explanations suggested by detected evidence patterns: "
+            + "; ".join(evidence_conflict["possible_explanations"])
+        )
+
+    if evidence_conflict["research_gaps"]:
+        lines.append(f"- Research gaps: {', '.join(evidence_conflict['research_gaps'])}")
+
+    return lines
+
+
 def _candidate_section(row: pd.Series, rank: int, robustness=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
@@ -267,6 +296,7 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None) -> str:
 
     lines += _format_comparison_section(row.get("Comparative_Rationale_Structured"))
     lines += _format_robustness_section(robustness)
+    lines += _format_evidence_conflict_section(row.get("Evidence_Conflict_Structured"))
 
     lines += [
         "",

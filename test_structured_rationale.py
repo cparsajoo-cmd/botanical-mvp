@@ -19,6 +19,14 @@ from structured_rationale import (
     build_missing_information,
     build_not_searched,
     NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE,
+    classify_evidence_consistency,
+    classify_dominant_evidence_pattern,
+    build_possible_explanations,
+    detect_research_gaps,
+    build_evidence_interpretation,
+    build_evidence_conflict_structured,
+    SUPPORTED_EXPLANATION_CATEGORIES,
+    REJECTED_EXPLANATION_CATEGORIES,
 )
 
 
@@ -658,6 +666,297 @@ def test_fallback_not_detected_on_normal_go_call():
     row = _full_row(Go_Investigate_Hold_NoGo="Go")
     basis = build_confidence_basis(row)
     assert basis["fallback_or_default_values_used"].startswith("Not detected")
+
+
+# =====================================================================
+# Sprint 4 — Evidence Conflict & Consistency Intelligence
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# Five consistency categories
+# ---------------------------------------------------------------------
+def test_consistency_insufficient_information_when_nothing_found():
+    result = classify_evidence_consistency("No independent source identified — not corroborated", False)
+    assert result == "Insufficient information"
+
+
+def test_consistency_mostly_consistent_single_source_no_conflict():
+    result = classify_evidence_consistency("Single-source claim — not independently corroborated", False)
+    assert result == "Mostly consistent"
+
+
+def test_consistency_consistent_multi_source_no_conflict():
+    result = classify_evidence_consistency("Corroborated by 3 independent sources", False)
+    assert result == "Consistent"
+
+
+def test_consistency_mixed_when_mostly_positive_with_contradiction():
+    result = classify_evidence_consistency("Corroborated by 4 independent sources", True)
+    assert result == "Mixed"
+
+
+def test_consistency_conflicting_when_thin_with_contradiction():
+    result = classify_evidence_consistency("Single-source claim — not independently corroborated", True)
+    assert result == "Conflicting"
+
+
+def test_consistency_returns_only_the_five_allowed_categories():
+    allowed = {"Consistent", "Mostly consistent", "Mixed", "Conflicting", "Insufficient information"}
+    cases = [
+        ("No independent source identified — not corroborated", False),
+        ("Single-source claim — not independently corroborated", False),
+        ("Corroborated by 2 independent sources", False),
+        ("Corroborated by 5 independent sources", True),
+        ("Single-source claim — not independently corroborated", True),
+    ]
+    for corroboration, has_negative in cases:
+        result = classify_evidence_consistency(corroboration, has_negative)
+        assert result in allowed
+
+
+# ---------------------------------------------------------------------
+# dominant_evidence_pattern
+# ---------------------------------------------------------------------
+def test_dominant_pattern_sparse_evidence_for_thin_corroboration():
+    result = classify_dominant_evidence_pattern("Clinical trial", False, "Single-source claim — not independently corroborated")
+    assert result == "Sparse evidence"
+
+
+def test_dominant_pattern_negative_dominated():
+    result = classify_dominant_evidence_pattern("Clinical trial", True, "Corroborated by 2 independent sources")
+    assert result == "Negative dominated"
+
+
+def test_dominant_pattern_clinical_supported():
+    result = classify_dominant_evidence_pattern("Clinical trial", False, "Corroborated by 3 independent sources")
+    assert result == "Clinical-supported"
+
+
+def test_dominant_pattern_mixed_clinical():
+    result = classify_dominant_evidence_pattern("Clinical trial", True, "Corroborated by 4 independent sources")
+    assert result == "Mixed clinical"
+
+
+def test_dominant_pattern_mostly_preclinical():
+    result = classify_dominant_evidence_pattern("Validated ex vivo / in vivo", False, "Corroborated by 3 independent sources")
+    assert result == "Mostly preclinical"
+
+
+def test_dominant_pattern_mostly_mechanistic():
+    result = classify_dominant_evidence_pattern("In vitro / mechanistic", False, "Corroborated by 3 independent sources")
+    assert result == "Mostly mechanistic"
+
+
+def test_dominant_pattern_mostly_positive_fallback():
+    result = classify_dominant_evidence_pattern("Traditional-use / regulatory monograph", False, "Corroborated by 2 independent sources")
+    assert result == "Mostly positive"
+
+
+# ---------------------------------------------------------------------
+# possible_explanations — supported vs rejected categories
+# ---------------------------------------------------------------------
+def test_possible_explanations_empty_when_no_conflict():
+    result = build_possible_explanations("A study reported a null result in an elderly population.", has_negative_evidence=False)
+    assert result == []
+
+
+def test_possible_explanations_detects_supported_categories():
+    text = "The null result was observed in an elderly population using a different dose than earlier trials."
+    result = build_possible_explanations(text, has_negative_evidence=True)
+    assert "Population differences" in result
+    assert "Dose differences" in result
+
+
+def test_possible_explanations_never_includes_rejected_categories():
+    # Even with text that might superficially suggest species/target/
+    # mechanism differences, only SUPPORTED categories may ever appear.
+    text = "Different species were used and a different molecular target was implicated, with conflicting mechanism data."
+    result = build_possible_explanations(text, has_negative_evidence=True)
+    for rejected in REJECTED_EXPLANATION_CATEGORIES:
+        assert rejected not in result
+    for item in result:
+        assert item in SUPPORTED_EXPLANATION_CATEGORIES
+
+
+def test_possible_explanations_detects_study_quality_differences():
+    text = "One study had a high risk of bias while another was well-controlled."
+    result = build_possible_explanations(text, has_negative_evidence=True)
+    assert "Study quality differences" in result
+
+
+def test_possible_explanations_detects_evidence_level_span():
+    text = "A systematic review found positive effects, while in vitro mechanism of action studies were inconclusive."
+    result = build_possible_explanations(text, has_negative_evidence=True)
+    assert "Evidence level differences" in result
+
+
+def test_possible_explanations_honestly_empty_when_text_does_not_support_any():
+    text = "A study reported a null result with no further detail provided."
+    result = build_possible_explanations(text, has_negative_evidence=True)
+    assert result == []  # no fabricated explanation when the text doesn't support one
+
+
+def test_possible_explanations_empty_when_no_text_available():
+    result = build_possible_explanations(None, has_negative_evidence=True)
+    assert result == []
+
+
+# ---------------------------------------------------------------------
+# Research gap detection — only the 7 supported gap types
+# ---------------------------------------------------------------------
+_UNSUPPORTED_GAPS = {"No long-term evidence", "No formulation consistency"}
+_SUPPORTED_GAPS = {
+    "Few human studies", "Mostly in vitro evidence", "No clinical confirmation",
+    "No safety studies", "Only single publication", "Only preclinical evidence",
+    "Only mechanistic evidence", "Only market evidence",
+}
+
+
+def test_research_gaps_never_includes_unsupported_gap_types():
+    result = detect_research_gaps(
+        evidence_hierarchy_detail="In vitro / mechanistic",
+        occurrence_corroboration="Single-source claim — not independently corroborated",
+        evidence_level="No direct evidence", safety_flags=None, market_status=None,
+    )
+    for gap in result:
+        assert gap not in _UNSUPPORTED_GAPS
+        assert gap in _SUPPORTED_GAPS
+
+
+def test_research_gaps_detects_in_vitro_only():
+    result = detect_research_gaps(
+        evidence_hierarchy_detail="In vitro / mechanistic",
+        occurrence_corroboration="Corroborated by 3 independent sources",
+        evidence_level="Preclinical / mechanistic evidence", safety_flags="No explicit flag found",
+        market_status="Search not performed",
+    )
+    assert "Mostly in vitro evidence" in result
+    assert "Only mechanistic evidence" in result
+    assert "No clinical confirmation" in result
+
+
+def test_research_gaps_detects_no_safety_studies_only_when_no_evidence_text_existed():
+    with_text = detect_research_gaps(
+        evidence_hierarchy_detail="Clinical trial", occurrence_corroboration="Corroborated by 2 independent sources",
+        evidence_level="Clinical / human evidence", safety_flags="No explicit flag found", market_status=None,
+    )
+    without_text = detect_research_gaps(
+        evidence_hierarchy_detail=None, occurrence_corroboration="No independent source identified — not corroborated",
+        evidence_level="No direct evidence", safety_flags="No explicit flag found", market_status=None,
+    )
+    assert "No safety studies" not in with_text  # evidence text existed, safety extraction ran
+    assert "No safety studies" in without_text
+
+
+def test_research_gaps_detects_only_single_publication():
+    result = detect_research_gaps(
+        evidence_hierarchy_detail="Clinical trial", occurrence_corroboration="Single-source claim — not independently corroborated",
+        evidence_level="Clinical / human evidence", safety_flags=None, market_status=None,
+    )
+    assert "Only single publication" in result
+
+
+def test_research_gaps_detects_only_market_evidence():
+    result = detect_research_gaps(
+        evidence_hierarchy_detail=None, occurrence_corroboration="No independent source identified — not corroborated",
+        evidence_level="No direct evidence", safety_flags=None,
+        market_status="Regulatory monograph exists",
+    )
+    assert "Only market evidence" in result
+
+
+def test_research_gaps_no_market_evidence_gap_when_market_also_not_searched():
+    result = detect_research_gaps(
+        evidence_hierarchy_detail=None, occurrence_corroboration="No independent source identified — not corroborated",
+        evidence_level="No direct evidence", safety_flags=None, market_status="Search not performed",
+    )
+    assert "Only market evidence" not in result
+
+
+# ---------------------------------------------------------------------
+# Evidence Interpretation — never evaluates recommendation strength
+# ---------------------------------------------------------------------
+def test_evidence_interpretation_insufficient():
+    result = build_evidence_interpretation("Insufficient information", False)
+    assert "Insufficient evidence" in result
+
+
+def test_evidence_interpretation_consistent_no_conflict():
+    result = build_evidence_interpretation("Consistent", False)
+    assert "consistent" in result.lower()
+
+
+def test_evidence_interpretation_conflict_present():
+    result = build_evidence_interpretation("Mixed", True)
+    assert "supporting and conflicting findings" in result
+    assert "identified limitations" in result
+
+
+def test_evidence_interpretation_never_evaluates_recommendation_strength():
+    forbidden = ["recommendation remains strong", "recommendation should be downgraded", "recommendation is strong", "recommendation is weak"]
+    for consistency, conflict in [
+        ("Insufficient information", False), ("Consistent", False), ("Mixed", True), ("Conflicting", True),
+    ]:
+        result = build_evidence_interpretation(consistency, conflict).lower()
+        for phrase in forbidden:
+            assert phrase not in result
+
+
+# ---------------------------------------------------------------------
+# Full structured object
+# ---------------------------------------------------------------------
+def test_evidence_conflict_structured_includes_all_required_fields():
+    obj = build_evidence_conflict_structured(
+        occurrence_corroboration="Corroborated by 3 independent sources",
+        has_negative_evidence=True, negative_evidence_types="Null result",
+        evidence_hierarchy_detail="Clinical trial", evidence_level="Clinical / human evidence",
+        safety_flags="No explicit flag found", market_status="Regulatory monograph exists",
+        evidence_conflict_reasoning_text="MIXED (mostly positive, one contradiction): ...",
+        raw_evidence_text="The null result was observed in an elderly population.",
+    )
+    for field in [
+        "overall_consistency", "dominant_evidence_pattern", "conflict_present",
+        "agreement_summary", "conflict_summary", "possible_explanations",
+        "research_gaps", "evidence_interpretation", "limitations", "traceability",
+    ]:
+        assert field in obj, f"required field {field!r} missing"
+
+
+def test_evidence_conflict_structured_always_includes_the_limitation_disclaimer():
+    obj = build_evidence_conflict_structured(
+        occurrence_corroboration="Corroborated by 2 independent sources", has_negative_evidence=False,
+        negative_evidence_types="", evidence_hierarchy_detail="Clinical trial",
+        evidence_level="Clinical / human evidence", safety_flags="No explicit flag found",
+        market_status="Regulatory monograph exists", evidence_conflict_reasoning_text="POSITIVE, CONSISTENT: ...",
+    )
+    assert any("candidate-level aggregated evidence" in lim for lim in obj["limitations"])
+    assert any("Study-level attribution is not available" in lim for lim in obj["limitations"])
+
+
+def test_evidence_conflict_structured_deterministic():
+    kwargs = dict(
+        occurrence_corroboration="Corroborated by 4 independent sources", has_negative_evidence=True,
+        negative_evidence_types="Null result", evidence_hierarchy_detail="Clinical trial",
+        evidence_level="Clinical / human evidence", safety_flags="No explicit flag found",
+        market_status="Regulatory monograph exists", evidence_conflict_reasoning_text="MIXED: ...",
+        raw_evidence_text="Different populations and different doses were used across studies.",
+    )
+    result1 = build_evidence_conflict_structured(**kwargs)
+    result2 = build_evidence_conflict_structured(**kwargs)
+    assert result1 == result2
+
+
+def test_evidence_conflict_structured_never_touches_scoring_fields():
+    # Confirms the structured object contains no key resembling a
+    # score, rank, or confidence value that could be mistaken for one.
+    obj = build_evidence_conflict_structured(
+        occurrence_corroboration="Corroborated by 2 independent sources", has_negative_evidence=False,
+        negative_evidence_types="", evidence_hierarchy_detail="Clinical trial",
+        evidence_level="Clinical / human evidence", safety_flags="No explicit flag found",
+        market_status="Regulatory monograph exists", evidence_conflict_reasoning_text="POSITIVE, CONSISTENT: ...",
+    )
+    forbidden_keys = {"score", "rank", "r&d_opportunity_score", "evidence_confidence", "decision_class"}
+    assert not (set(k.lower() for k in obj.keys()) & forbidden_keys)
 
 
 if __name__ == "__main__":

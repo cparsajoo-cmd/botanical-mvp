@@ -27,6 +27,10 @@ from structured_rationale import (
     build_evidence_conflict_structured,
     SUPPORTED_EXPLANATION_CATEGORIES,
     REJECTED_EXPLANATION_CATEGORIES,
+    build_regulatory_intelligence,
+    build_development_considerations,
+    SUPPORTED_REGULATORY_AUTHORITIES,
+    UNAVAILABLE_REGULATORY_AUTHORITIES,
 )
 
 
@@ -957,6 +961,176 @@ def test_evidence_conflict_structured_never_touches_scoring_fields():
     )
     forbidden_keys = {"score", "rank", "r&d_opportunity_score", "evidence_confidence", "decision_class"}
     assert not (set(k.lower() for k in obj.keys()) & forbidden_keys)
+
+
+# =====================================================================
+# Sprint 5, Phase B — Regulatory Intelligence
+# =====================================================================
+
+def test_regulatory_intelligence_includes_all_required_fields():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'Melissae folium' — see source PDF for monograph status",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status="Regulatory monograph exists", market="European Union",
+    )
+    for field in [
+        "overall_regulatory_landscape", "regulatory_maturity", "regulatory_data_quality",
+        "authority_coverage", "ema_status", "traditional_use_status",
+        "major_regulatory_flags", "development_considerations", "limitations", "traceability",
+    ]:
+        assert field in obj, f"required field {field!r} missing"
+
+
+def test_only_ema_hmpc_is_ever_a_populated_authority():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    for authority in SUPPORTED_REGULATORY_AUTHORITIES:
+        assert authority in obj["authority_coverage"]
+        assert "Not available" not in obj["authority_coverage"][authority]
+    for authority in UNAVAILABLE_REGULATORY_AUTHORITIES:
+        assert authority in obj["authority_coverage"]
+        assert "not " in obj["authority_coverage"][authority].lower()
+
+
+def test_unavailable_authorities_never_report_a_fabricated_status():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market=None,
+    )
+    for authority_key in ["WHO", "ESCOP", "FDA (botanical regulatory status)", "Health Canada", "Novel Food"]:
+        status = obj["authority_coverage"][authority_key]
+        assert status not in {"Yes", "No", "Approved", "Recognized"}
+
+
+def test_ema_status_present_in_inventory():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'Valerianae radix' — see source PDF for monograph status",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert "Present in EMA HMPC inventory" in obj["ema_status"]
+    assert "not a confirmed monograph" in obj["ema_status"]
+
+
+def test_ema_status_not_found():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Not in HMPC inventory (as of 2021 snapshot)",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert obj["ema_status"] == "Not found in EMA HMPC inventory"
+
+
+def test_ema_status_not_available_when_enrichment_never_ran():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert obj["ema_status"] == "Not available"
+    assert obj["regulatory_maturity"] == "Insufficient information"
+    assert "Unavailable" in obj["regulatory_data_quality"]
+
+
+def test_regulatory_data_quality_distinguishes_verified_connector_from_static_reference():
+    connector_result = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    curated_result = build_regulatory_intelligence(
+        market_landscape_ema_status="Yes",
+        market_landscape_regulatory_source="Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert "Verified connector" in connector_result["regulatory_data_quality"]
+    assert "Static regulatory reference" in curated_result["regulatory_data_quality"]
+    assert connector_result["regulatory_data_quality"] != curated_result["regulatory_data_quality"]
+
+
+def test_regulatory_maturity_is_not_defined_as_ema_status_itself():
+    # Both a "listed" and a "not listed" EMA answer are equally RESOLVED
+    # (Verified) — maturity is about how resolved the LOOKUP is, not
+    # whether the plant happens to be in the inventory.
+    listed = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    not_listed = build_regulatory_intelligence(
+        market_landscape_ema_status="Not in HMPC inventory (as of 2021 snapshot)",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert listed["regulatory_maturity"] == "Verified"
+    assert not_listed["regulatory_maturity"] == "Verified"
+
+
+def test_traditional_use_status_detected_from_market_status():
+    detected = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status="Traditional-use status", market=None,
+    )
+    not_detected = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status="Search not performed", market=None,
+    )
+    assert "Detected" in detected["traditional_use_status"]
+    assert "not independently verified" in detected["traditional_use_status"]
+    assert "Not detected" in not_detected["traditional_use_status"]
+
+
+def test_major_regulatory_flags_reuses_existing_regulatory_barriers():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers="Prohibited / banned", market_status=None, market=None,
+    )
+    assert obj["major_regulatory_flags"] == "Prohibited / banned"
+
+
+def test_development_considerations_reuses_regulatory_frameworks_and_is_labeled_market_level():
+    considerations = build_development_considerations("European Union")
+    assert len(considerations) > 0
+    for item in considerations:
+        assert "market-level pathway" in item
+        assert "not a claim this botanical qualifies" in item
+
+
+def test_development_considerations_honest_when_market_unknown():
+    considerations = build_development_considerations("Nonexistent Market")
+    assert considerations == ["Regulatory pathway information not available for this market."]
+
+
+def test_regulatory_intelligence_limitations_always_present():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert any("NOT that a monograph has been" in lim for lim in obj["limitations"])
+    assert any("not supported by the current repository" in lim for lim in obj["limitations"])
+
+
+def test_regulatory_intelligence_deterministic():
+    kwargs = dict(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers="None identified", market_status="Regulatory monograph exists", market="European Union",
+    )
+    assert build_regulatory_intelligence(**kwargs) == build_regulatory_intelligence(**kwargs)
+
+
+def test_regulatory_intelligence_never_touches_scoring_fields():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    forbidden = {"score", "rank", "r&d_opportunity_score", "evidence_confidence", "regulatory_score", "regulatory_risk_score"}
+    assert not (set(k.lower() for k in obj.keys()) & forbidden)
 
 
 if __name__ == "__main__":

@@ -251,6 +251,23 @@ def test_report_handles_missing_evidence_conflict_object_gracefully():
     assert "AltPlant" in report  # still renders the rest of the section fine
 
 
+def test_report_renders_regulatory_intelligence_honestly():
+    result = pd.DataFrame([_make_row(
+        Market_Landscape_EMA_HMPC_Status="Listed in HMPC inventory as 'Melissae folium' — see source PDF for monograph status",
+        Market_Landscape_Regulatory_Source="EMA HMPC — Inventory of herbal substances for assessment",
+    )])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="European Union")
+    assert "Present in EMA HMPC inventory" in report
+    assert "not a confirmed monograph" in report
+    assert "not available from the current repository" in report
+
+
+def test_report_regulatory_intelligence_honest_when_enrichment_never_ran():
+    result = pd.DataFrame([_make_row()])  # no Market_Landscape_* fields set
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="European Union")
+    assert "EMA/HMPC status: Not available" in report
+
+
 def test_report_has_title_and_question():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="Liver support", dosage_form="Infusion", market="EU")

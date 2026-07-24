@@ -1,3 +1,22 @@
+"""
+SPRINT 5, PHASE A, ISSUE 2 — this module's REGULATORY_DB (below) was
+identified in the Sprint 5 audit as a source of FABRICATED regulatory
+data still reachable in production (via multi_source_collector.py's
+Step 2 bulk evidence collection). Its "EMA_Status": "Yes" /
+"WHO_Status": "Yes"/"No" / "ESCOP_Status": "Yes" values for these 4
+plants were never independently verified against a real source, yet
+appeared identical in shape to genuine connector output.
+
+REGULATORY_DB is kept (not deleted) as historical reference. It is
+disabled from production via the flag below — search_regulatory_sources()
+now always calls the real ema_regulatory_connector, for every plant,
+including these 4. Do not silently flip this flag back on; if there is
+ever a specific, reviewed reason to trust this dict again, that
+decision (and who verified it, and when) belongs in a comment right
+here, not a silent revert.
+"""
+_LEGACY_STUB_ENABLED = False
+
 REGULATORY_DB = {
     "Valeriana officinalis": {
         "EMA_Status": "Yes",
@@ -32,71 +51,84 @@ def search_regulatory_sources(
     dosage_form="",
     market="European Union",
 ):
-    """Regulatory lookup. Two layers:
+    """Regulatory lookup — see ema_regulatory_connector.py's module
+    docstring for exactly what the real connector can and can't tell you.
 
-    1. The tiny hand-curated REGULATORY_DB above — kept only for the 4
-       original sleep-tea plants, where someone actually manually read
-       the EMA/WHO/ESCOP monographs and wrote a precise, human-verified
-       summary. This is richer than what automated text-extraction can
-       safely produce, so it wins when available.
-    2. For every other plant (the other ~99.8% of the database),
-       ema_regulatory_connector does a REAL live/cached lookup against
-       EMA's official HMPC inventory PDF, instead of silently returning
-       nothing the way this function used to for anything outside the
-       4-plant dict. See ema_regulatory_connector.py's module docstring
-       for exactly what this connector can and can't tell you.
+    SPRINT 5 PHASE A, ISSUE 2 (production bug fix): this function
+    previously checked REGULATORY_DB (the hand-typed dict above) FIRST,
+    for exactly 4 plants — returning FABRICATED "EMA_Status": "Yes" /
+    "WHO_Status": "Yes"/"No" / "ESCOP_Status": "Yes" values that were
+    never independently verified against any real source, while
+    APPEARING in "Sources checked" output identically to genuine API
+    results. Combined with Phase A Issue 1's separate bug (a string-
+    format mismatch that meant the REAL connector's output could never
+    satisfy _market_status()'s old comparison), this stub was, in
+    practice, the ONLY thing that could ever make "Regulatory monograph
+    exists" appear anywhere in this pipeline — and only for these 4
+    plants, with data nobody actually verified.
+
+    RESOLUTION: REGULATORY_DB is NOT deleted (kept below as historical
+    reference — it documents what a human once believed, even though
+    it should not have been presented as verified). It is disabled from
+    production via _LEGACY_STUB_ENABLED (default False) — every call
+    now goes straight to the real ema_regulatory_connector, for EVERY
+    plant, including the original 4. If there is ever a specific,
+    reviewed reason to re-enable the legacy dict for those 4 plants
+    (e.g. someone has since independently verified it against the real
+    EMA/WHO/ESCOP sources), flip that one flag with a comment explaining
+    why and when — do not silently restore this branch.
     """
-    data = REGULATORY_DB.get(scientific_name)
+    if _LEGACY_STUB_ENABLED:
+        data = REGULATORY_DB.get(scientific_name)
+        if data:
+            return [{
+                "Scientific_Name": scientific_name,
+                "Common_Name": "",
+                "Product_Type": "Herbal product",
+                "Dosage_Form": dosage_form,
+                "Target_Indication": indication,
+                "Target_Market": market,
 
-    if data:
-        return [{
-            "Scientific_Name": scientific_name,
-            "Common_Name": "",
-            "Product_Type": "Herbal product",
-            "Dosage_Form": dosage_form,
-            "Target_Indication": indication,
-            "Target_Market": market,
+                "Source_Type": "Regulatory",
+                "Source_Organization": "EMA/WHO/ESCOP seed database",
+                "Source_Title": f"Regulatory evidence summary for {scientific_name}",
+                "Source_URL": "",
+                "Source_Year": "",
 
-            "Source_Type": "Regulatory",
-            "Source_Organization": "EMA/WHO/ESCOP seed database",
-            "Source_Title": f"Regulatory evidence summary for {scientific_name}",
-            "Source_URL": "",
-            "Source_Year": "",
+                "Notes": data["Regulatory_Status"],
 
-            "Notes": data["Regulatory_Status"],
+                "Publication_Type": "Traditional/Regulatory",
+                "Evidence_Type": "Traditional/Regulatory",
+                "Study_Type": "Traditional/Regulatory",
+                "Study_Model": "Traditional use",
+                "Evidence_Level": "Traditional",
 
-            "Publication_Type": "Traditional/Regulatory",
-            "Evidence_Type": "Traditional/Regulatory",
-            "Study_Type": "Traditional/Regulatory",
-            "Study_Model": "Traditional use",
-            "Evidence_Level": "Traditional",
+                "EMA_Status": data["EMA_Status"],
+                "WHO_Status": data["WHO_Status"],
+                "ESCOP_Status": data["ESCOP_Status"],
 
-            "EMA_Status": data["EMA_Status"],
-            "WHO_Status": data["WHO_Status"],
-            "ESCOP_Status": data["ESCOP_Status"],
+                "Clinical_Level": "Not found",
+                "Clinical_RCT_Count": 0,
+                "Meta_Level": "Not found",
+                "Meta_Count": 0,
 
-            "Clinical_Level": "Not found",
-            "Clinical_RCT_Count": 0,
-            "Meta_Level": "Not found",
-            "Meta_Count": 0,
+                "Detected_Dosage_Forms": dosage_form,
+                "Detected_Indications": indication,
+                "Dosage_Form_Relevance": "Direct",
 
-            "Detected_Dosage_Forms": dosage_form,
-            "Detected_Indications": indication,
-            "Dosage_Form_Relevance": "Direct",
+                "Safety_Level": "To verify",
+                "Safety_Signal": "",
+                "Drug_Interaction_Level": "To verify",
+                "Commercial_Level": "Unknown",
+                "Regulatory_Status": data["Regulatory_Status"],
+                "Novel_Food_Status": "To verify",
 
-            "Safety_Level": "To verify",
-            "Safety_Signal": "",
-            "Drug_Interaction_Level": "To verify",
-            "Commercial_Level": "Unknown",
-            "Regulatory_Status": data["Regulatory_Status"],
-            "Novel_Food_Status": "To verify",
-
-            "Population": "Traditional adult use",
-            "Sample_Size": "",
-            "Comparator": "",
-            "Primary_Outcome": "Traditional regulatory support",
-            "Result_Direction": "Positive",
-        }]
+                "Population": "Traditional adult use",
+                "Sample_Size": "",
+                "Comparator": "",
+                "Primary_Outcome": "Traditional regulatory support",
+                "Result_Direction": "Positive",
+            }]
 
     try:
         from ema_regulatory_connector import search_regulatory_sources_real

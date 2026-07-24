@@ -2616,6 +2616,20 @@ class BotanicalRDCandidateEngine:
 
         return min(score, 26)
 
+    @staticmethod
+    def _ema_listed(ema_status) -> bool:
+        """Phase A / Sprint 5 bug fix — the ONE place that decides
+        whether an EMA_Status value means 'genuinely listed in the HMPC
+        inventory'. Recognizes ema_regulatory_connector.py's real
+        output prefix ("Listed in HMPC inventory as ...") and, only for
+        backward compatibility with any already-stored historical data,
+        the legacy stub's literal "Yes" — new data should never produce
+        "Yes" again now that the fabricated stub is excluded from
+        production (see Phase A Issue 2, regulatory_connector.py)."""
+        if not ema_status:
+            return False
+        return ema_status == "Yes" or ema_status.startswith("Listed in HMPC inventory")
+
     def _market_status(self, alt, evidence, market):
         """Market status, using the same controlled vocabulary as
         data_contracts.MarketVerificationStatus (audit 4.6/4.7), plus
@@ -2658,6 +2672,21 @@ class BotanicalRDCandidateEngine:
         ema = self._pick(alt, ["EMA_Status"])
         text = self._norm(evidence)
 
+        # Phase A / Sprint 5 bug fix: the real ema_regulatory_connector.py
+        # never returns the literal string "Yes" — its actual output is
+        # descriptive, e.g. "Listed in HMPC inventory as 'X' — see source
+        # PDF for monograph status" (see that module's
+        # search_regulatory_sources_real()). The previous "ema == 'Yes'"
+        # check could therefore only ever be satisfied by the legacy
+        # fabricated 4-plant stub's hardcoded value (regulatory_connector.py's
+        # REGULATORY_DB, now excluded from production — see Phase A Issue 2
+        # below) — never by a real EMA inventory match on any other plant.
+        # _ema_listed() recognizes both the real connector's actual prefix
+        # and the legacy literal value (kept only so any already-stored
+        # historical evidence data with that old value still degrades
+        # gracefully, not because new data should ever produce it again).
+        ema_listed = self._ema_listed(ema)
+
         # Narrow, multi-word phrase patterns — not bare words like
         # "product" or "market", which show up constantly in text that
         # has nothing to do with a real commercial product ("the
@@ -2683,10 +2712,10 @@ class BotanicalRDCandidateEngine:
         # something else in the SAME evidence asserts the product is
         # gone/unavailable. Checked first — this is more informative to
         # surface than picking one side and silently discarding the other.
-        if (ema == "Yes" or commercial_signal) and discontinued_signal:
+        if (ema_listed or commercial_signal) and discontinued_signal:
             return "Conflicting market evidence"
 
-        if ema == "Yes":
+        if ema_listed:
             return "Regulatory monograph exists"
 
         if commercial_signal:

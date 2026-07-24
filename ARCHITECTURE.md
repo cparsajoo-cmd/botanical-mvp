@@ -281,3 +281,57 @@ These four are computed independently and never substitute for one
 another — a candidate can have high Evidence Confidence and low
 Evidence Consistency (strong but conflicting evidence) at the same
 time, and neither one moves the Recommendation Score.
+
+## Sprint 5 — Regulatory Intelligence (Phase A fix + Phase B, structured_rationale.py)
+
+**Phase A, Issue 1 — why the bug correction was necessary.**
+`_market_status()` compared `EMA_Status == "Yes"` — but
+`ema_regulatory_connector.py`'s real connector never returns the
+literal string `"Yes"`; its actual output is descriptive
+(`"Listed in HMPC inventory as 'X' — see source PDF for monograph
+status"`). Only the legacy fabricated stub (Phase A Issue 2) ever
+produced `"Yes"`. This meant a genuine EMA inventory match on any
+plant OTHER than the 4 legacy-stub plants could never produce
+`"Regulatory monograph exists"` — silently, with no error. Fixed via
+one new static method, `BotanicalRDCandidateEngine._ema_listed()`,
+which recognizes the real connector's actual prefix (and the legacy
+literal, for backward compatibility with any already-stored data —
+new data should never produce it again). See
+`test_ema_listed_recognizes_the_real_connectors_actual_output_format`
+and `test_market_status_regulatory_monograph_reachable_via_real_connector_format`.
+
+**Phase A, Issue 2 — why the fabricated stub is no longer part of
+production interpretation.** `regulatory_connector.py`'s
+`REGULATORY_DB` held hand-typed, never-independently-verified
+`"EMA_Status"/"WHO_Status"/"ESCOP_Status": "Yes"/"No"` values for 4
+plants, reachable via `multi_source_collector.py`'s Step 2 bulk
+collection, indistinguishable in shape from genuine connector output.
+Per the explicit instruction not to simply delete files, it is
+disabled via `_LEGACY_STUB_ENABLED = False` (in `regulatory_connector.py`)
+rather than removed — `REGULATORY_DB` remains as historical reference,
+but `search_regulatory_sources()` now always calls the real EMA
+connector, for every plant. Re-enabling it requires a deliberate,
+commented flag change, not a silent revert.
+
+**Phase B — Regulatory Intelligence.** Reuses
+`enrich_candidates_with_market_landscape()`'s already-correct,
+already-cached `Market_Landscape_EMA_HMPC_Status` output (opt-in,
+called once per unique plant) — this module never calls a connector
+directly, and inherits Phase A's fix for free since that enrichment
+path was never affected by either Phase A bug. Only `EMA/HMPC` is ever
+reported as a populated authority; WHO, ESCOP, FDA botanical status,
+Health Canada, and Novel Food explicitly report "not available" —
+`test_unavailable_authorities_never_report_a_fabricated_status` locks
+this in.
+
+**Difference between four terms that sound similar:**
+
+| Term | What it measures |
+|---|---|
+| Regulatory Status (`ema_status`) | Whether this specific plant is present in EMA's HMPC inventory — a fact about the plant |
+| Regulatory Data Quality | Where that fact came from (live connector / static curated reference / unavailable) — a fact about the SOURCE |
+| Regulatory Maturity | How resolved the lookup is (verified either way vs. never searched) — NOT a proxy for "is this plant well-regulated" |
+| Evidence Confidence | Strength of scientific evidence for this candidate — an entirely separate axis, computed in `evidence_confidence.py`, untouched by any of the above |
+
+None of these substitute for `R&D_Opportunity_Score`/`Decision_Class_AH`
+— Regulatory Intelligence never influences scoring or ranking.

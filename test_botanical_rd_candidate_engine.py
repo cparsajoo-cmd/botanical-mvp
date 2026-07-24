@@ -1561,7 +1561,52 @@ def test_cso_reasoning_columns_populated_end_to_end_through_run():
         assert (result[col].astype(str).str.strip() != "").all(), f"{col} was left empty for some row"
 
 
-def test_evidence_conflict_structured_populated_end_to_end_through_run():
+# ---------------------------------------------------------------------
+# Sprint 5, Phase A: EMA status string-mismatch bug fix. The real
+# ema_regulatory_connector.py never returns the literal "Yes" — its
+# actual output is "Listed in HMPC inventory as 'X' — see source PDF
+# for monograph status". Before this fix, _market_status()'s
+# "ema == 'Yes'" check could only ever be satisfied by the legacy
+# fabricated stub's hardcoded value, meaning a real EMA inventory match
+# on any other plant silently never produced "Regulatory monograph
+# exists". These tests lock in the fix.
+# ---------------------------------------------------------------------
+def test_ema_listed_recognizes_the_real_connectors_actual_output_format():
+    real_connector_output = "Listed in HMPC inventory as 'Valerianae radix' — see source PDF for monograph status"
+    assert eng.BotanicalRDCandidateEngine._ema_listed(real_connector_output) is True
+
+
+def test_ema_listed_still_recognizes_the_legacy_literal_for_backward_compatibility():
+    assert eng.BotanicalRDCandidateEngine._ema_listed("Yes") is True
+
+
+def test_ema_listed_rejects_not_found_and_not_verified_states():
+    assert eng.BotanicalRDCandidateEngine._ema_listed("Not in HMPC inventory (as of 2021 snapshot)") is False
+    assert eng.BotanicalRDCandidateEngine._ema_listed("Not yet verified") is False
+    assert eng.BotanicalRDCandidateEngine._ema_listed("") is False
+    assert eng.BotanicalRDCandidateEngine._ema_listed(None) is False
+
+
+def test_market_status_regulatory_monograph_reachable_via_real_connector_format():
+    # THE bug this fix addresses: before the fix, this exact scenario
+    # (a real EMA connector match, not the legacy stub) could NEVER
+    # produce "Regulatory monograph exists" — only the literal "Yes"
+    # from the fabricated stub could.
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "Listed in HMPC inventory as 'Melissae folium' — see source PDF for monograph status"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result == "Regulatory monograph exists"
+
+
+def test_market_status_not_in_inventory_stays_honestly_unestablished():
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "Not in HMPC inventory (as of 2021 snapshot)"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result != "Regulatory monograph exists"
+    assert result in {"Search not performed", "Search incomplete"}
+
+
+
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [

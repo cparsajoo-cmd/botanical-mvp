@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from structured_rationale import build_recommendation_card
+from structured_rationale import build_recommendation_card, build_regulatory_intelligence
 from scoring_sensitivity_report import build_robustness_analysis
 
 GO_CALL_ORDER = [
@@ -188,7 +188,42 @@ def _format_evidence_conflict_section(evidence_conflict) -> list:
     return lines
 
 
-def _candidate_section(row: pd.Series, rank: int, robustness=None) -> str:
+def _format_regulatory_intelligence_section(row: pd.Series, market) -> list:
+    """Sprint 5, Phase B — formats structured_rationale.build_regulatory_intelligence()'s
+    object concisely. Never calls a connector itself — every input is
+    read directly from the row (Market_Landscape_EMA_HMPC_Status is
+    only present when the opt-in market-landscape enrichment has
+    actually been run for this result; absent otherwise, in which case
+    this honestly reports "Not available" rather than guessing).
+    """
+    regulatory_intelligence = build_regulatory_intelligence(
+        market_landscape_ema_status=row.get("Market_Landscape_EMA_HMPC_Status"),
+        market_landscape_regulatory_source=row.get("Market_Landscape_Regulatory_Source"),
+        regulatory_barriers=row.get("Regulatory_Barriers"),
+        market_status=row.get("Market_Status"),
+        market=market,
+    )
+
+    lines = [
+        "**Regulatory intelligence:**",
+        f"- EMA/HMPC status: {regulatory_intelligence['ema_status']}",
+        f"- Traditional use: {regulatory_intelligence['traditional_use_status']}",
+        f"- Regulatory maturity: {regulatory_intelligence['regulatory_maturity']} "
+        f"(data quality: {regulatory_intelligence['regulatory_data_quality']})",
+    ]
+
+    if regulatory_intelligence["major_regulatory_flags"] != "None identified":
+        lines.append(f"- Regulatory flags: {regulatory_intelligence['major_regulatory_flags']}")
+
+    lines.append(
+        "- Other authorities (WHO, ESCOP, FDA botanical status, Health Canada, "
+        "Novel Food): not available from the current repository."
+    )
+
+    return lines
+
+
+def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
     function does not compute, re-derive, or duplicate any of the
@@ -297,6 +332,7 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None) -> str:
     lines += _format_comparison_section(row.get("Comparative_Rationale_Structured"))
     lines += _format_robustness_section(robustness)
     lines += _format_evidence_conflict_section(row.get("Evidence_Conflict_Structured"))
+    lines += _format_regulatory_intelligence_section(row, market)
 
     lines += [
         "",
@@ -403,7 +439,7 @@ def generate_pharma_report(
     lines.append(f"## Top Candidates (top {len(top)} of {total}, ranked by R&D Opportunity Score)")
     lines.append("")
     for i, (idx, row) in enumerate(top.iterrows(), start=1):
-        lines.append(_candidate_section(row, i, robustness_series.get(idx)))
+        lines.append(_candidate_section(row, i, robustness_series.get(idx), market=market))
 
     # Compact summary table for everything else.
     remainder = sortable.iloc[len(top):]

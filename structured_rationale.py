@@ -1192,3 +1192,158 @@ def build_recommendation_card(row) -> dict:
         # Retained from the pre-correction version, still valid:
         "evidence_conflict_reasoning": row.get("Evidence_Conflict_Reasoning", ""),
     }
+
+
+# =====================================================================
+# Sprint 5, Phase B — Regulatory Intelligence.
+#
+# WHY THIS REUSES market_landscape() RATHER THAN CALLING THE ENGINE ITSELF
+# The real ema_regulatory_connector.py does a genuine network fetch
+# (cached via lru_cache) — botanical_rd_candidate_engine.py's own
+# enrich_candidates_with_market_landscape() (opt-in, called once per
+# UNIQUE plant, not per row) already exists specifically to bound that
+# cost, and Sprint 5's own audit flagged the risk of a Regulatory
+# Intelligence layer triggering its own fresh fetch per candidate row.
+# This module NEVER calls a connector directly — it only reads
+# Market_Landscape_EMA_HMPC_Status/Market_Landscape_Regulatory_Source,
+# which are None/absent unless that opt-in enrichment has actually run
+# for this result — same honest "connector unavailable" pattern
+# Sprint 1's build_recommendation_card already established for patent/
+# retail status.
+#
+# WHY REGULATORY_DB / THE LEGACY STUB IS NEVER READ HERE
+# Phase A disabled regulatory_connector.py's fabricated stub in
+# production. This module inherits that fix for free by only ever
+# reading Market_Landscape_EMA_HMPC_Status, which is built from
+# _eu_regulatory_status() — a path that was ALREADY correctly wired to
+# the real connector before Phase A (Phase A's fix was in
+# _market_status()/regulatory_connector.py, a different code path).
+# =====================================================================
+
+SUPPORTED_REGULATORY_AUTHORITIES = {"EMA/HMPC"}
+UNAVAILABLE_REGULATORY_AUTHORITIES = {
+    "WHO": "Not available — the real EMA connector's WHO column cannot be reliably extracted from the source PDF's visual layout (see ema_regulatory_connector.py).",
+    "ESCOP": "Not available — same PDF-column-extraction limitation as WHO.",
+    "FDA (botanical regulatory status)": "Not supported by current repository — the FDA connectors wired into this platform (fda_connector.py/openfda_connector.py) query drug labels and adverse-event reports, a different question than herb regulatory status.",
+    "Health Canada": "Not supported by current repository — no connector exists.",
+    "Novel Food": "Not supported by current repository — no verified data source exists.",
+}
+
+REGULATORY_INTELLIGENCE_LIMITATIONS = [
+    "EMA/HMPC status reflects presence in the official inventory of herbal "
+    "substances proposed for assessment — this confirms the substance has "
+    "been formally proposed/prioritized, NOT that a monograph has been "
+    "adopted, and not the specific traditional-use vs. well-established-use "
+    "distinction.",
+    "WHO, ESCOP, FDA botanical regulatory status, Health Canada, and Novel "
+    "Food status are not supported by the current repository and are never "
+    "reported as available.",
+    "Traditional-use status is detected from evidence text, not verified "
+    "against an official register.",
+    "Development considerations reflect the regulatory pathways a MARKET "
+    "recognizes in general, not a verified claim that this specific "
+    "botanical qualifies for any of them.",
+]
+
+
+def _regulatory_data_quality(market_landscape_ema_status: Optional[str], market_landscape_regulatory_source: Optional[str]) -> str:
+    """Provenance of whatever regulatory status is being shown — never
+    fabricated, always traceable to a real category."""
+    if not market_landscape_ema_status:
+        return "Unavailable — market/patent landscape enrichment was not run for this result."
+    source = market_landscape_regulatory_source or ""
+    if "Curated" in source and "manually verified" in source:
+        return "Static regulatory reference (curated, manually verified for a small known set of plants)"
+    if market_landscape_ema_status.startswith("Listed in HMPC inventory") or market_landscape_ema_status.startswith("Not in HMPC inventory"):
+        return "Verified connector (live EMA HMPC inventory lookup)"
+    return "Unavailable — lookup did not resolve"
+
+
+def _regulatory_maturity(market_landscape_ema_status: Optional[str]) -> str:
+    """Maturity of the AVAILABLE regulatory evidence — never defined as
+    "EMA status" itself (Sprint 5's explicit correction: this is about
+    how resolved the lookup is, not a proxy score for the plant)."""
+    if not market_landscape_ema_status or market_landscape_ema_status in {"Not yet verified", ""}:
+        return "Insufficient information"
+    if (
+        market_landscape_ema_status.startswith("Listed in HMPC inventory")
+        or market_landscape_ema_status.startswith("Not in HMPC inventory")
+        or market_landscape_ema_status == "Yes"  # legacy value, still a resolved answer if ever encountered in stored data
+    ):
+        return "Verified"
+    return "Partially verified"
+
+
+def _regulatory_ema_status_label(market_landscape_ema_status: Optional[str]) -> str:
+    if not market_landscape_ema_status or market_landscape_ema_status == "Not yet verified":
+        return "Not available"
+    if market_landscape_ema_status.startswith("Listed in HMPC inventory"):
+        return "Present in EMA HMPC inventory (proposed/prioritized for assessment — not a confirmed monograph)"
+    if market_landscape_ema_status.startswith("Not in HMPC inventory"):
+        return "Not found in EMA HMPC inventory"
+    return market_landscape_ema_status  # honest passthrough for any other real value
+
+
+def build_development_considerations(market: Optional[str]) -> list:
+    """Reuses regulatory_frameworks.py's existing, static, market-level
+    pathway data — explicitly market-level, never presented as a claim
+    that a specific botanical qualifies for any pathway listed."""
+    from regulatory_frameworks import get_market_framework
+
+    framework = get_market_framework(market) if market else None
+    if not framework:
+        return ["Regulatory pathway information not available for this market."]
+
+    return [f"{pathway} (market-level pathway — not a claim this botanical qualifies)" for pathway in framework.get("key_pathways", [])]
+
+
+def build_regulatory_intelligence(
+    market_landscape_ema_status: Optional[str],
+    market_landscape_regulatory_source: Optional[str],
+    regulatory_barriers: Optional[str],
+    market_status: Optional[str],
+    market: Optional[str],
+) -> dict:
+    """Sprint 5, Phase B — the Regulatory Intelligence structured
+    object. A pure post-processing interpretation layer: never
+    influences R&D_Opportunity_Score, Decision_Class_AH,
+    Evidence_Confidence, or Evidence_Consistency. Never fabricates a
+    status for an authority this repository cannot actually verify.
+    """
+    ema_status = _regulatory_ema_status_label(market_landscape_ema_status)
+    data_quality = _regulatory_data_quality(market_landscape_ema_status, market_landscape_regulatory_source)
+    maturity = _regulatory_maturity(market_landscape_ema_status)
+
+    traditional_use_status = (
+        "Detected in evidence text (not independently verified)"
+        if market_status == "Traditional-use status"
+        else "Not detected in evidence text"
+    )
+
+    authority_coverage = {"EMA/HMPC": ema_status}
+    authority_coverage.update(UNAVAILABLE_REGULATORY_AUTHORITIES)
+
+    if ema_status == "Not available" and traditional_use_status == "Not detected in evidence text":
+        overall_landscape = "Regulatory landscape not established for this candidate."
+    elif "Present in EMA HMPC inventory" in ema_status:
+        overall_landscape = "Formally proposed for EU herbal monograph assessment (EMA HMPC inventory); other authorities not independently verified."
+    else:
+        overall_landscape = "No EMA HMPC inventory match found; other authorities not independently verified."
+
+    major_flags = regulatory_barriers if regulatory_barriers and regulatory_barriers != "None identified" else "None identified"
+
+    return {
+        "overall_regulatory_landscape": overall_landscape,
+        "regulatory_maturity": maturity,
+        "regulatory_data_quality": data_quality,
+        "authority_coverage": authority_coverage,
+        "ema_status": ema_status,
+        "traditional_use_status": traditional_use_status,
+        "major_regulatory_flags": major_flags,
+        "development_considerations": build_development_considerations(market),
+        "limitations": list(REGULATORY_INTELLIGENCE_LIMITATIONS),
+        "traceability": [
+            "Market_Landscape_EMA_HMPC_Status", "Market_Landscape_Regulatory_Source",
+            "Regulatory_Barriers", "Market_Status",
+        ],
+    }

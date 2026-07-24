@@ -335,3 +335,56 @@ this in.
 
 None of these substitute for `R&D_Opportunity_Score`/`Decision_Class_AH`
 — Regulatory Intelligence never influences scoring or ranking.
+
+## Sprint 6A.1 — Session-scoped Connector Observability (connector_session_observability.py)
+
+1. **Session-scoped.** Every status in this feature describes ONE Step
+   2 collection attempt — the one currently held in Streamlit session
+   state — never anything about connector behavior generally or over
+   time.
+2. **Generated from the existing collection result.** `build_connector_session_observability()`
+   takes the exact dict `multi_source_collector.collect_multi_source_evidence()`
+   already returns (`sources_checked`/`errors`/`saved_records`) — it
+   triggers no connector, makes no network call, and recomputes nothing
+   that call already decided.
+3. **Nothing is persisted.** No database write, no file write — the
+   object exists only in memory for the current page render, exactly
+   like the data it's built from already did before this module
+   existed.
+4. **No connector is polled.** This module runs only after a
+   user-initiated Step 2 collection has already finished.
+5. **No network call is added** — verified directly: `connector_session_observability.py`
+   imports nothing from any `*_connector.py` file, and contains no
+   `requests`/`Entrez`/network call of any kind.
+6. **"Completed" does not mean data was found.** A source can complete
+   its search and legitimately find nothing — see point 7.
+7. **"Completed — no records" is a distinct, separate status from
+   "Failed"** — a source that ran cleanly and found zero matching
+   records is not the same claim as a source that errored.
+8. **Cache observability refers only to explicit repository-level
+   caching** — the only one that exists is `ema_regulatory_connector.py`'s
+   `lru_cache`. Every other connector's wording explicitly states this
+   says nothing about whether the upstream API/library/infrastructure
+   caches on its own.
+9. **Configuration status does not validate credentials.** "Not
+   configured" only means a required credential is absent; the
+   presence of a credential is never reported as "Valid" or
+   "Authenticated," since this repository cannot verify that.
+10. **Persistent telemetry belongs to a future Sprint 6A.2** — explicitly
+    out of scope here; this Sprint stops at session-scoped, in-memory
+    observability.
+11. **Known technical debt, documented but not fixed this Sprint:**
+    `pubmed_connector.py` hardcodes `Entrez.email` to a personal email
+    address in source code, rather than reading it from an environment
+    variable the way `semantic_scholar_connector.py`'s optional API key
+    already does. This is a real configuration-hygiene inconsistency —
+    recorded here, not silently left undocumented, but out of this
+    Sprint's scope to change. (Verified: this email value never
+    appears anywhere in `connector_session_observability.py`'s output —
+    see `test_pubmed_email_value_never_appears_anywhere_in_output`.)
+
+**Why "Connector_Session_Observability," not "Connector_Metadata" or
+"Connector_Health":** both of those names would imply persistent
+tracking, version history, or a health assessment this repository
+cannot honestly support (see the Sprint 6 and Sprint 6A audits) — the
+name itself needs to communicate the real, narrow scope.

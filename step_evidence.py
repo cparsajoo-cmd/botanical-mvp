@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from research_engine import run_research_engine
+from connector_session_observability import build_connector_session_observability
 
 
 def render_evidence_step(inputs):
@@ -59,3 +60,42 @@ def render_evidence_step(inputs):
         if errors:
             st.warning("Some searches produced errors.")
             st.dataframe(pd.DataFrame(errors), width="stretch")
+
+        with st.expander("🔌 Collection Session Status (Sprint 6A.1)"):
+            st.caption(
+                "This describes ONLY the collection attempt above, in this "
+                "session — it is not persistent monitoring, not data "
+                "freshness, and not a record of connector health over time. "
+                "Nothing here is saved once you leave this page."
+            )
+            observability = build_connector_session_observability(research_output)
+            st.write(f"**Overall session status:** {observability['overall_status']}")
+
+            totals = observability["session_totals"]
+            st.write(
+                f"Attempted: {totals['sources_attempted']} | "
+                f"Completed: {totals['sources_completed']} | "
+                f"Completed (no records): {totals['sources_completed_no_records']} | "
+                f"Failed: {totals['sources_failed']} | "
+                f"Timed out: {totals['sources_timed_out']} | "
+                f"Not configured: {totals['sources_not_configured']} | "
+                f"Records saved: {totals['records_saved']}"
+            )
+
+            connector_rows = [
+                {
+                    "Connector": c["connector_name"],
+                    "Type": c["connector_type"],
+                    "Status": c["execution_status"],
+                    "Configuration": c["configuration_status"],
+                    "Records saved": c["records_saved"],
+                    "Cache": c["cache_observability"].split(".")[0] + ".",
+                    "Error": c["error_message"] or "",
+                }
+                for c in observability["connectors"]
+            ]
+            st.dataframe(pd.DataFrame(connector_rows), width="stretch")
+
+            for lim in observability["limitations"]:
+                st.caption(f"⚠️ {lim}")
+

@@ -284,13 +284,35 @@ def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):
     """Returns (status, components). Never assumes Score_Breakdown
     exactly reconstructs R&D_Opportunity_Score — checks it explicitly
     and reports one of six honest statuses:
-      exact                 — sum matches the score to within rounding noise (<0.01)
-      rounding_consistent   — sum matches within RECONSTRUCTION_ROUNDING_TOLERANCE
-      clamp_affected        — score sits at the 0/100 boundary and doesn't match the sum
-      incomplete            — one or more of the always-expected sections is missing
       unparseable           — Score_Breakdown is missing, empty, or contains no
                                recognizable "Name: value" pairs
+      incomplete            — one or more of the always-expected canonical
+                               sections is missing (checked BEFORE any
+                               arithmetic comparison — see the ordering
+                               note below)
+      exact                 — a COMPLETE breakdown whose sum matches the
+                               score to within rounding noise (<0.01)
+      rounding_consistent   — a COMPLETE breakdown whose sum matches
+                               within RECONSTRUCTION_ROUNDING_TOLERANCE
+      clamp_affected        — score sits at the 0/100 boundary and doesn't match the sum
       unexplained_mismatch  — none of the above explains a real mismatch
+
+    ORDERING, CORRECTED: missing-section detection runs BEFORE the
+    exact/rounding_consistent arithmetic check. An earlier version
+    checked arithmetic first, which meant a PARTIAL breakdown whose
+    available components happened to sum to the stored score (by
+    coincidence, or because the missing section's true contribution
+    was exactly 0) was wrongly labeled "exact" — completeness and
+    arithmetic correctness are different claims, and a breakdown
+    missing data should never be reported as fully reconstructed no
+    matter what its partial sum equals.
+
+    Multi-compound match bonus (added only for merged multi-compound
+    rows — see botanical_rd_candidate_engine.py's
+    _merge_multi_compound_matches) is deliberately NOT one of the
+    canonical sections checked here — its absence never triggers
+    "incomplete", since it is legitimately optional and most rows never
+    have it.
     """
     components = _parse_score_breakdown(score_breakdown)
     if not components:
@@ -300,6 +322,10 @@ def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):
         score = float(rd_opportunity_score)
     except (TypeError, ValueError):
         return "unparseable", components
+
+    missing_sections = _CANONICAL_SECTIONS - set(components.keys())
+    if missing_sections:
+        return "incomplete", components
 
     raw_sum = round(sum(components.values()), 2)
     diff = round(score - raw_sum, 2)
@@ -312,10 +338,6 @@ def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):
     at_clamp_boundary = score <= _CLAMP_BOUNDARY_TOLERANCE or score >= (100 - _CLAMP_BOUNDARY_TOLERANCE)
     if at_clamp_boundary:
         return "clamp_affected", components
-
-    missing_sections = _CANONICAL_SECTIONS - set(components.keys())
-    if missing_sections:
-        return "incomplete", components
 
     return "unexplained_mismatch", components
 

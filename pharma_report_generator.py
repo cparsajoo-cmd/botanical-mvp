@@ -116,6 +116,11 @@ def _format_robustness_section(robustness) -> list:
     nothing is recomputed or reinterpreted here. Explicitly labeled as
     model sensitivity, not scientific uncertainty, per the Sprint 3
     requirement.
+
+    `robustness` is passed in from generate_pharma_report()'s single
+    build_robustness_analysis(result) call (see that call site's own
+    comment) — it is an in-memory dict for this report generation only,
+    not a value read from any stored DataFrame column.
     """
     if not robustness:
         return []
@@ -348,9 +353,21 @@ def generate_pharma_report(
         sortable = sortable.sort_values("R&D_Opportunity_Score", ascending=False)
     top = sortable.head(top_n)
 
-    # Sprint 3: computed once over the FULL result (not just `top`) so
-    # each reference group's winner/runner-up are found correctly even
-    # if one of them falls outside the top_n cutoff.
+    # Sprint 3: build_robustness_analysis() is called EXACTLY ONCE here,
+    # over the FULL result (not just `top`, so each reference group's
+    # winner/runner-up are found correctly even if one falls outside
+    # the top_n cutoff) — this is the ONLY call site in this codebase.
+    #
+    # IMPORTANT — this is NOT a production DataFrame column. Unlike
+    # Comparative_Rationale_Structured (Sprint 2) or the Sprint-1 card
+    # fields, the robustness object is never written into
+    # botanical_rd_candidate_engine.py's OUTPUT_COLUMNS or returned
+    # from run() — it exists only as this local, in-memory
+    # `robustness_series` variable, computed fresh every time a report
+    # is generated, and consumed immediately by _format_robustness_section()
+    # below. No engine change was needed or made for this Sprint;
+    # do not assume a "Robustness_Structured" (or similarly named)
+    # column exists anywhere on a run() result — it does not.
     robustness_series = build_robustness_analysis(result)
 
     lines.append(f"## Top Candidates (top {len(top)} of {total}, ranked by R&D Opportunity Score)")

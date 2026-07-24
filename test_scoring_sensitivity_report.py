@@ -118,8 +118,13 @@ def test_baseline_reconstruction_rounding_consistent():
 
 # 6. Clamp-affected reconstruction is detected.
 def test_baseline_reconstruction_clamp_affected():
-    # Raw sum well above 100, but the STORED score is clamped to 100.
-    over_breakdown = "Chemical/mechanistic link: +50.0; Evidence quality: +60.0"
+    # A COMPLETE breakdown (all 6 canonical sections present) whose raw
+    # sum is well above 100, but the STORED score is clamped to 100.
+    over_breakdown = (
+        "Chemical/mechanistic link: +50.0; Evidence quality: +60.0; "
+        "Product-development fit: +30.0; Novelty: +10.0; "
+        "Market signal: +5.0; Safety/interaction/self-row penalty: +0.0"
+    )
     status, _ = classify_baseline_reconstruction(over_breakdown, 100.0)
     assert status == "clamp_affected"
 
@@ -140,6 +145,34 @@ def test_baseline_reconstruction_incomplete_not_treated_as_zero():
     status, components = classify_baseline_reconstruction(partial, 76.0)
     assert status == "incomplete"
     assert "Product-development fit" not in components  # never defaulted to 0.0
+
+
+def test_incomplete_breakdown_that_coincidentally_sums_exactly_is_still_incomplete():
+    # Sprint 3 final correction #1 — the exact bug: a PARTIAL breakdown
+    # whose available components happen to sum to exactly the stored
+    # score must never be reported as "exact" or "rounding_consistent".
+    # Completeness and arithmetic correctness are different claims —
+    # missing data is missing data regardless of what the partial sum
+    # equals.
+    partial_but_coincidentally_exact = "Chemical/mechanistic link: +22.0; Evidence quality: +24.0"
+    status, components = classify_baseline_reconstruction(partial_but_coincidentally_exact, 46.0)
+    assert sum(components.values()) == 46.0  # confirms the coincidental exact match is real
+    assert status == "incomplete"  # must NOT be "exact" despite the sum matching perfectly
+    assert status != "exact"
+    assert status != "rounding_consistent"
+
+
+def test_multi_compound_match_bonus_absence_never_triggers_incomplete():
+    # The bonus is legitimately optional (only merged multi-compound
+    # rows have it) — its absence alone must not cause "incomplete"
+    # when all 6 canonical sections ARE present.
+    complete_without_bonus = (
+        "Chemical/mechanistic link: +22.0; Evidence quality: +24.0; "
+        "Product-development fit: +15.0; Novelty: +2.0; "
+        "Market signal: +2.0; Safety/interaction/self-row penalty: +0.0"
+    )
+    status, _ = classify_baseline_reconstruction(complete_without_bonus, 65.0)
+    assert status == "exact"
 
 
 def test_contribution_shift_threshold_never_defaults_missing_dimension_to_zero():
@@ -202,27 +235,28 @@ def test_leave_one_out_detects_winner_change():
 
 # 15. Multiple critical dimensions are exposed.
 def test_multiple_dimension_removals_can_each_flip_the_winner():
-    winner = {"A": 10.0, "B": 10.0}
-    runner_up = {"A": 5.0, "B": 5.0}
+    # Verified by direct computation before writing this fixture:
+    # winner total 19.0, runner-up total 16.0 (gap +3.0). Dimension A
+    # differs by 8.0 (winner 10.0 vs runner-up 2.0) — removing it alone
+    # flips the winner (new: 9.0 vs 14.0). Dimension B differs by 8.0
+    # (winner 9.0 vs runner-up 1.0) — removing it alone ALSO flips the
+    # winner (new: 10.0 vs 15.0), independently of A. Dimension C
+    # differs by -13.0 (winner 0.0 vs runner-up 13.0) — removing it
+    # does NOT flip the winner (new: 19.0 vs 3.0), included specifically
+    # to prove this test distinguishes flipping dimensions from
+    # non-flipping ones, not just counting results.
+    winner = {"A": 10.0, "B": 9.0, "C": 0.0}
+    runner_up = {"A": 2.0, "B": 1.0, "C": 13.0}
     results = _leave_one_dimension_out(winner, runner_up, "exact", "exact", "Winner", "RunnerUp")
-    # Removing either A or B alone still leaves Winner ahead (10+5 vs 5)
-    # — construct a case where each is independently decisive instead:
-    winner2 = {"A": 6.0, "B": 6.0}
-    runner_up2 = {"A": 5.0, "B": 5.0}
-    # gap is only 2, each dimension differs by 1 — neither alone flips it.
-    # Use a case where two SEPARATE single-dimension removals each flip:
-    winner3 = {"A": 20.0, "B": 1.0}
-    runner_up3 = {"A": 1.0, "B": 20.0}
-    # total: winner 21, runner_up 21 — tie, not useful for this test.
-    # Simplify: two dimensions where winner leads narrowly on each.
-    winner4 = {"A": 11.0, "B": 11.0}
-    runner_up4 = {"A": 10.0, "B": 10.0}
-    results4 = _leave_one_dimension_out(winner4, runner_up4, "exact", "exact", "Winner", "RunnerUp")
-    # Removing A: winner 11 vs runner_up 10 -> winner still ahead. Not flipping.
-    # This confirms multiple non-flipping results can coexist; a flip
-    # requires the removed dimension to hold the ENTIRE margin — tested
-    # directly in test_leave_one_out_detects_winner_change above.
-    assert len(results4) == 2
+
+    by_dimension = {r["dimension_removed"]: r for r in results}
+    assert by_dimension["A"]["winner_changed"] is True
+    assert by_dimension["B"]["winner_changed"] is True
+    assert by_dimension["C"]["winner_changed"] is False
+
+    flipping = [r["dimension_removed"] for r in results if r["winner_changed"]]
+    assert set(flipping) == {"A", "B"}
+    assert len(flipping) == 2, "expected exactly two independently-flipping dimensions, not one, not three"
 
 
 # 16. Clamp-affected rows do not produce unjustified leave-one-out claims.

@@ -3,6 +3,7 @@
 import pandas as pd
 
 from pharma_report_generator import generate_pharma_report
+import pharma_report_generator
 
 
 def _make_row(**overrides):
@@ -177,6 +178,46 @@ def test_report_introduces_no_business_objective_simulation_language():
     forbidden_terms = ["business objective", "alternative weighting", "if we prioritized", "under a different objective"]
     for term in forbidden_terms:
         assert term.lower() not in report.lower()
+
+
+def test_report_renders_robustness_section_without_recomputing_it():
+    robustness_obj = {
+        "status": "available", "scope": "reference_group_top_two",
+        "baseline": {
+            "winner": "Lavender", "winner_score": 91.0, "runner_up": "Passionflower",
+            "runner_up_score": 88.0, "score_gap": 3.0,
+            "winner_reconstruction_status": "exact", "runner_up_reconstruction_status": "exact",
+        },
+        "rank_stability": {"level": "Stable", "reason": "No single comparable dimension's removal changes the winner."},
+        "contribution_shift_thresholds": [{"dimension": "Evidence quality", "required_contribution_shift_to_tie": 3.0}],
+        "leave_one_dimension_out": [{"dimension_removed": "Novelty", "winner_changed": False}],
+        "critical_dimensions": [], "limitations": [], "traceability": [],
+    }
+    result = pd.DataFrame([_make_row(**{"Comparative_Rationale_Structured": None})])
+    report_lines = pharma_report_generator._candidate_section(result.iloc[0], 1, robustness_obj)
+    assert "Robustness of the ranking" in report_lines
+    assert "Stable" in report_lines
+    assert "model sensitivity, not scientific uncertainty" in report_lines
+    assert "3.0 points" in report_lines
+
+
+def test_report_robustness_section_shows_insufficient_status_honestly():
+    robustness_obj = {
+        "status": "insufficient", "scope": "reference_group_top_two", "baseline": None,
+        "rank_stability": {"level": "Insufficient", "reason": "Only one candidate in this reference group — no runner-up available for comparison."},
+        "contribution_shift_thresholds": [], "leave_one_dimension_out": [], "critical_dimensions": [],
+        "limitations": [], "traceability": [],
+    }
+    result = pd.DataFrame([_make_row()])
+    section = pharma_report_generator._candidate_section(result.iloc[0], 1, robustness_obj)
+    assert "Insufficient data" in section
+    assert "no runner-up available" in section
+
+
+def test_report_handles_missing_robustness_object_gracefully():
+    result = pd.DataFrame([_make_row()])
+    section = pharma_report_generator._candidate_section(result.iloc[0], 1, None)
+    assert "AltPlant" in section  # renders the rest of the section fine
 
 
 def test_report_has_title_and_question():

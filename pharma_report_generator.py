@@ -52,6 +52,7 @@ from __future__ import annotations
 import pandas as pd
 
 from structured_rationale import build_recommendation_card
+from scoring_sensitivity_report import build_robustness_analysis
 
 GO_CALL_ORDER = [
     "Go",
@@ -108,7 +109,52 @@ def _format_comparison_section(comparison) -> list:
     return lines
 
 
-def _candidate_section(row: pd.Series, rank: int) -> str:
+def _format_robustness_section(robustness) -> list:
+    """Sprint 3 — formats build_robustness_analysis()'s structured
+    object concisely. Formatting only: every value already exists on
+    the object built by scoring_sensitivity_report.build_robustness_analysis();
+    nothing is recomputed or reinterpreted here. Explicitly labeled as
+    model sensitivity, not scientific uncertainty, per the Sprint 3
+    requirement.
+    """
+    if not robustness:
+        return []
+
+    if robustness.get("status") == "insufficient":
+        reason = robustness["rank_stability"]["reason"]
+        return [f"**Robustness of the ranking:** Insufficient data — {reason}"]
+
+    baseline = robustness["baseline"]
+    stability = robustness["rank_stability"]
+
+    lines = [
+        "**Robustness of the ranking** (model sensitivity, not scientific uncertainty — "
+        "see Evidence_Confidence/Candidate_Evidence_Strength_Tier for the latter):",
+        f"- Baseline: {baseline['winner']} ({baseline['winner_score']}) vs. "
+        f"{baseline['runner_up']} ({baseline['runner_up_score']}) — "
+        f"score gap {baseline['score_gap']:+.1f}",
+        f"- Rank stability: {stability['level']} — {stability['reason']}",
+    ]
+
+    flipping = [r["dimension_removed"] for r in robustness["leave_one_dimension_out"] if r["winner_changed"]]
+    if flipping:
+        lines.append(f"- Dimensions whose removal changes the winner: {', '.join(flipping)}")
+
+    if robustness["contribution_shift_thresholds"]:
+        shift = robustness["contribution_shift_thresholds"][0]["required_contribution_shift_to_tie"]
+        lines.append(f"- Smallest contribution shift required to close the gap: {shift:.1f} points (any comparable dimension)")
+
+    if baseline["winner_reconstruction_status"] not in {"exact", "rounding_consistent"} or \
+       baseline["runner_up_reconstruction_status"] not in {"exact", "rounding_consistent"}:
+        lines.append(
+            f"- Reconstruction limitation: winner={baseline['winner_reconstruction_status']}, "
+            f"runner-up={baseline['runner_up_reconstruction_status']}"
+        )
+
+    return lines
+
+
+def _candidate_section(row: pd.Series, rank: int, robustness=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
     function does not compute, re-derive, or duplicate any of the
@@ -215,6 +261,7 @@ def _candidate_section(row: pd.Series, rank: int) -> str:
     ]
 
     lines += _format_comparison_section(row.get("Comparative_Rationale_Structured"))
+    lines += _format_robustness_section(robustness)
 
     lines += [
         "",
@@ -301,10 +348,15 @@ def generate_pharma_report(
         sortable = sortable.sort_values("R&D_Opportunity_Score", ascending=False)
     top = sortable.head(top_n)
 
+    # Sprint 3: computed once over the FULL result (not just `top`) so
+    # each reference group's winner/runner-up are found correctly even
+    # if one of them falls outside the top_n cutoff.
+    robustness_series = build_robustness_analysis(result)
+
     lines.append(f"## Top Candidates (top {len(top)} of {total}, ranked by R&D Opportunity Score)")
     lines.append("")
-    for i, (_, row) in enumerate(top.iterrows(), start=1):
-        lines.append(_candidate_section(row, i))
+    for i, (idx, row) in enumerate(top.iterrows(), start=1):
+        lines.append(_candidate_section(row, i, robustness_series.get(idx)))
 
     # Compact summary table for everything else.
     remainder = sortable.iloc[len(top):]

@@ -207,3 +207,19 @@ Or as a normal test: `pytest -q test_production_dependency_integrity.py`.
 This is the same method used to produce this file's legacy list —
 re-run it after any future change to `app.py`'s or any Step file's
 import chain to catch drift, rather than trusting this document.
+
+## Sprint 3 — robustness/contribution-shift analysis (scoring_sensitivity_report.py)
+
+Post-processing only — reads `R&D_Opportunity_Score`/`Score_Breakdown`
+from a completed `run()` result, never calls `_score_candidate()`,
+never mutates a score or rank. Two genuinely separate analyses live in
+this one file: `fragility_report()` (Phase 6 — distance to a
+Decision_Class boundary) and `build_robustness_analysis()` (Sprint 3 —
+whether the #1-vs-#2 rank within a reference group survives removing
+one scoring section). Full documentation, including why
+"contribution-shift threshold" is explicitly NOT a raw weight
+threshold, why leave-one-dimension-out is section-level only (no
+sub-component data is preserved after scoring), and why rank stability
+is model sensitivity rather than scientific confidence, is in that
+file's own module docstring — read it before extending this analysis
+further, rather than re-deriving these constraints from scratch.

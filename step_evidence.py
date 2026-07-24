@@ -66,7 +66,10 @@ def render_evidence_step(inputs):
                 "This describes ONLY the collection attempt above, in this "
                 "session — it is not persistent monitoring, not data "
                 "freshness, and not a record of connector health over time. "
-                "Nothing here is saved once you leave this page."
+                "This information is held only in the current application "
+                "session. It is not persisted to the database and may be "
+                "lost when the application session ends or the application "
+                "restarts."
             )
             observability = build_connector_session_observability(research_output)
             st.write(f"**Overall session status:** {observability['overall_status']}")
@@ -90,7 +93,7 @@ def render_evidence_step(inputs):
                     "Configuration": c["configuration_status"],
                     "Records saved": c["records_saved"],
                     "Cache": c["cache_observability"].split(".")[0] + ".",
-                    "Error": c["error_message"] or "",
+                    "Errors": f"{c['error_count']} — " + "; ".join(c["error_messages"]) if c["error_count"] else "",
                 }
                 for c in observability["connectors"]
             ]

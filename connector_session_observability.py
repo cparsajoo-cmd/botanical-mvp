@@ -110,8 +110,8 @@ def _cache_observability(source_name: str) -> str:
         return (
             "Repository-level cache detected — an in-process lru_cache on the "
             "fetched EMA HMPC inventory PDF text (see ema_regulatory_connector.py). "
-            "Unbounded duration (not time-based), cleared only on process/session "
-            "restart. Cache hit/miss and cache age are not observable."
+            "Unbounded duration (not time-based), cleared when the Python "
+            "process restarts. Cache hit/miss and cache age are not observable."
         )
     return (
         "No repository-level cache detected. This does not imply the upstream "
@@ -175,63 +175,112 @@ SESSION_LIMITATIONS = [
 def _derive_overall_status(totals: dict) -> str:
     """Deterministic derivation, documented here (not implicit):
       not_started           — nothing was attempted this session.
-      failed                — attempted, but zero sources completed
-                               (with or without records).
+      failed                — every attempted source failed, timed out,
+                               or was not configured (zero clean
+                               completions, zero completed-with-errors).
+      completed_with_errors — at least one source completed (with or
+                               without errors attached to it), AND at
+                               least one source is in some error state
+                               (failed/timed out/not configured/
+                               completed-with-errors itself). A single
+                               "Completed with errors" connector is
+                               enough on its own to produce this
+                               overall status.
       completed             — every attempted source completed cleanly
                                (with or without records) — zero
-                               failures/timeouts/not-configured.
-      completed_with_errors — some sources completed, but at least one
-                               failed/timed out/was not configured.
+                               failures/timeouts/not-configured/
+                               completed-with-errors.
+      unknown                — totals don't cleanly fit any rule above
+                               (should not normally occur; kept as an
+                               explicit, honest fallback rather than
+                               forcing one of the other four).
     Never "Overall connector health" or "System health" — this is a
     session-outcome label, not a health claim.
     """
-    if totals["sources_attempted"] == 0:
+    attempted = totals["sources_attempted"]
+    if attempted == 0:
         return "not_started"
 
-    clean_completions = totals["sources_completed"] + totals["sources_completed_no_records"]
-    problem_count = totals["sources_failed"] + totals["sources_timed_out"] + totals["sources_not_configured"]
+    completed_ok = totals["sources_completed"] + totals["sources_completed_no_records"]
+    completed_with_errors = totals["sources_completed_with_errors"]
+    pure_error_states = totals["sources_failed"] + totals["sources_timed_out"] + totals["sources_not_configured"]
 
-    if clean_completions == 0:
+    if pure_error_states == attempted:
         return "failed"
-    if problem_count == 0:
+
+    if completed_with_errors > 0 or (completed_ok > 0 and pure_error_states > 0):
+        return "completed_with_errors"
+
+    if completed_ok == attempted:
         return "completed"
-    return "completed_with_errors"
+
+    return "unknown"
 
 
-def _connector_entry(source_name: str, record_count: int, error_message) -> dict:
-    """Builds one connector's entry, applying the documented status
-    precedence:
-      1. configuration_missing (from the recorded error text)
-      2. timeout (from the recorded error text)
-      3. any other recorded error -> "Failed"
-      4. attempted with saved records -> "Completed"
-      5. attempted with zero saved records, no error -> "Completed — no records"
-    ("Not attempted" and "Unknown" are handled by the caller — a
-    connector reaching this function was, by definition, attempted.)
+def _aggregate_connector_errors(errors_for_source: list) -> tuple:
+    """Aggregates ALL of a connector's recorded errors for this session
+    — the correction this Sprint exists for. Returns
+    (error_count, error_types, error_messages):
+      error_count    — total number of recorded errors for this connector.
+      error_types    — deduplicated, deterministic (first-seen order)
+                        list of normalized categories.
+      error_messages — every original message, in recorded order,
+                        preserved verbatim (never reinterpreted).
     """
-    error_type = None
-    if error_message:
-        error_type = _classify_error(error_message)
-        if error_type == "configuration_missing":
-            execution_status = "Not configured"
-        elif error_type == "timeout":
-            execution_status = "Timed out"
-        else:
-            execution_status = "Failed"
+    error_types = []
+    seen_types = set()
+    error_messages = []
+    for err in errors_for_source:
+        message = err.get("error", "")
+        error_messages.append(message)
+        error_type = _classify_error(message)
+        if error_type not in seen_types:
+            seen_types.add(error_type)
+            error_types.append(error_type)
+    return len(errors_for_source), error_types, error_messages
+
+
+def _connector_entry(source_name: str, record_count: int, errors_for_source: list) -> tuple:
+    """Builds one connector's entry from its FULL set of this-session
+    outcomes (not just the first error) — the multi-attempt correction.
+    Status precedence, applied only when record_count == 0 and at least
+    one error was recorded (documented, matches the correction's
+    required precedence):
+      1. configuration_missing present -> "Not configured"
+      2. timeout present                -> "Timed out"
+      3. any other error present        -> "Failed"
+    When record_count > 0, errors no longer silently override the real,
+    successful outcome — they're surfaced alongside it as "Completed
+    with errors" instead of hiding the records that WERE saved.
+    """
+    error_count, error_types, error_messages = _aggregate_connector_errors(errors_for_source)
+    has_error = error_count > 0
+    has_config_missing = "configuration_missing" in error_types
+    has_timeout = "timeout" in error_types
+
+    if record_count > 0 and has_error:
+        execution_status = "Completed with errors"
     elif record_count > 0:
         execution_status = "Completed"
-    else:
+    elif not has_error:
         execution_status = "Completed — no records"
+    elif has_config_missing:
+        execution_status = "Not configured"
+    elif has_timeout:
+        execution_status = "Timed out"
+    else:
+        execution_status = "Failed"
 
     return {
         "connector_name": source_name,
         "connector_type": _connector_type(source_name),
         "execution_status": execution_status,
-        "configuration_status": _configuration_status(source_name, error_type),
+        "configuration_status": _configuration_status(source_name, "configuration_missing" if has_config_missing else None),
         "records_saved": record_count,
         "cache_observability": _cache_observability(source_name),
-        "error_type": error_type,
-        "error_message": error_message,
+        "error_count": error_count,
+        "error_types": error_types,
+        "error_messages": error_messages,
         "limitations": _connector_limitations(source_name),
     }, execution_status
 
@@ -243,6 +292,12 @@ def build_connector_session_observability(collection_result: dict) -> dict:
     returns — this function does not call it, does not re-trigger any
     connector, and does not recompute anything already decided by that
     call.
+
+    Does NOT compute or expose successful_attempt_count, attempt_count,
+    or success_rate — the underlying collection result does not
+    reliably expose per-attempt granularity (only aggregate
+    saved_records/errors across however many times a source ran this
+    session), so none of those are invented here.
     """
     collection_result = collection_result or {}
     saved_records = collection_result.get("saved_records") or []
@@ -254,35 +309,39 @@ def build_connector_session_observability(collection_result: dict) -> dict:
         source = rec.get("source", "Unknown")
         records_by_source[source] = records_by_source.get(source, 0) + 1
 
-    # First recorded error per source wins — deterministic, since
-    # sources_checked/errors ordering is itself already deterministic
-    # (sorted) by the time this function ever sees it.
-    error_by_source = {}
+    # Sprint 6A.1 correction: ALL errors per source are now kept (a
+    # list), not just the first one — a source that timed out for one
+    # plant but succeeded for others must show both facts, not have the
+    # single earliest error silently stand in for the whole session.
+    errors_by_source = {}
     for err in errors:
         source = err.get("source", "Unknown")
-        if source not in error_by_source:
-            error_by_source[source] = err.get("error", "")
+        errors_by_source.setdefault(source, []).append(err)
 
     connectors = []
     totals = {
         "sources_attempted": len(sources_checked),
         "sources_completed": 0,
         "sources_completed_no_records": 0,
+        "sources_completed_with_errors": 0,
         "sources_failed": 0,
         "sources_timed_out": 0,
         "sources_not_configured": 0,
+        "sources_not_attempted": 0,
         "records_saved": len(saved_records),
     }
 
     for source_name in sources_checked:
         entry, status = _connector_entry(
-            source_name, records_by_source.get(source_name, 0), error_by_source.get(source_name),
+            source_name, records_by_source.get(source_name, 0), errors_by_source.get(source_name, []),
         )
         connectors.append(entry)
         if status == "Completed":
             totals["sources_completed"] += 1
         elif status == "Completed — no records":
             totals["sources_completed_no_records"] += 1
+        elif status == "Completed with errors":
+            totals["sources_completed_with_errors"] += 1
         elif status == "Timed out":
             totals["sources_timed_out"] += 1
         elif status == "Not configured":
@@ -292,8 +351,8 @@ def build_connector_session_observability(collection_result: dict) -> dict:
 
     # Registered sources that this collection session never attempted
     # at all (e.g. disabled in source_registry.py) — reported as "Not
-    # attempted", explicitly separate from the totals above (which only
-    # count sources that were actually part of this session).
+    # attempted", explicitly separate from sources_attempted's totals
+    # above, but now counted in their own session_totals field too.
     all_registered_names = [s["name"] for s in SOURCE_REGISTRY]
     for source_name in all_registered_names:
         if source_name in sources_checked:
@@ -305,10 +364,12 @@ def build_connector_session_observability(collection_result: dict) -> dict:
             "configuration_status": _configuration_status(source_name, None),
             "records_saved": 0,
             "cache_observability": _cache_observability(source_name),
-            "error_type": None,
-            "error_message": None,
+            "error_count": 0,
+            "error_types": [],
+            "error_messages": [],
             "limitations": _connector_limitations(source_name),
         })
+        totals["sources_not_attempted"] += 1
 
     return {
         "scope": "current_collection_session",

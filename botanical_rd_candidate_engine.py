@@ -32,6 +32,7 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from data_contracts import GateStatus
+from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
 
@@ -399,6 +400,14 @@ class ScoringConfig:
 # the "1.0-default" version referenced anywhere scoring_config_version
 # appears in output (see CandidateAssessment.scoring_config_version).
 DEFAULT_SCORING_CONFIG = ScoringConfig()
+
+
+# Task 7 — precomputed once at import time, same reasoning as
+# _SLEEP_TEA_EVIDENCE_NORM_MAP just above: an O(1) dict lookup instead
+# of scanning seed_data.PLANT_COMPOUNDS per row. See occurrence_seed.py
+# for what this is derived from (entirely seed_data.py's own existing
+# data — no new botanical claims).
+_OCCURRENCE_LOOKUP = build_occurrence_lookup()
 
 
 class BotanicalRDCandidateEngine:
@@ -818,7 +827,9 @@ class BotanicalRDCandidateEngine:
                     evidence_hierarchy_detail = classify_evidence_hierarchy(raw_evidence)
                     negative_evidence = classify_negative_evidence(raw_evidence)
 
-                    extraction = self._best_extraction(alt, raw_evidence)
+                    extraction = self._best_extraction(
+                        alt, raw_evidence, alt_plant=alt_plant, matched_compound=matched_compound,
+                    )
                     concentration = self._extract_concentration(raw_evidence)
                     industrial_feasibility = classify_industrial_feasibility(
                         extraction_fit_score=self._extraction_fit_score(extraction, dosage_form),
@@ -2463,7 +2474,38 @@ class BotanicalRDCandidateEngine:
         )
         return count, is_generic
 
-    def _best_extraction(self, alt, evidence):
+    @staticmethod
+    def _structured_occurrence(alt_plant, matched_compound):
+        """Task 7 — O(1) lookup into the module-level _OCCURRENCE_LOOKUP
+        (see occurrence_seed.py). Returns None whenever there is no
+        populated structured record for this exact (plant, compound)
+        pair — which is the common case for anything outside
+        seed_data.py's curated set, and is exactly when callers must
+        fall back to their existing free-text/row-based logic
+        unchanged."""
+        if not alt_plant or not matched_compound:
+            return None
+        return _OCCURRENCE_LOOKUP.get((
+            BotanicalRDCandidateEngine._norm(alt_plant),
+            BotanicalRDCandidateEngine._norm(matched_compound),
+        ))
+
+    def _best_extraction(self, alt, evidence, alt_plant=None, matched_compound=None):
+        # Task 7 — prefer the structured occurrence's own
+        # extraction_solvent (specific to THIS matched compound) when
+        # one is populated; this is additive only — when no structured
+        # occurrence exists for this (plant, compound) pair (the
+        # common case today), the return value is byte-identical to
+        # the pre-Task-7 behavior below.
+        occurrence = self._structured_occurrence(alt_plant, matched_compound)
+        if occurrence is not None and occurrence.extraction_solvent:
+            parts = [occurrence.extraction_solvent]
+            if occurrence.plant_part:
+                parts.append(f"(from {occurrence.plant_part})")
+            if occurrence.dry_fresh_basis:
+                parts.append(f"[{occurrence.dry_fresh_basis}]")
+            return " ".join(parts)
+
         base = self._pick(alt, ["Extraction_Method"])
         found = self._extract_extraction(evidence)
 

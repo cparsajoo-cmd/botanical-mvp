@@ -84,7 +84,7 @@ def test_run_benchmark_produces_one_row_per_output_pair():
     assert len(results_df) == 5
     assert set(results_df.columns) == {
         "case_id", "reference_plant", "alternative_plant",
-        "decision_class", "gate_results", "run_error",
+        "decision_class", "decision_class_ah", "gate_results", "run_error",
     }
 
 
@@ -114,7 +114,7 @@ def test_run_benchmark_empty_case_list_returns_empty_dataframe():
     assert results_df.empty
     assert list(results_df.columns) == [
         "case_id", "reference_plant", "alternative_plant",
-        "decision_class", "gate_results", "run_error",
+        "decision_class", "decision_class_ah", "gate_results", "run_error",
     ]
 
 
@@ -137,6 +137,24 @@ def test_compare_to_expected_detects_a_decision_class_disagreement():
     # Corrupt one case's expected decision_class so the comparison must
     # report a disagreement, not silently pass.
     cases[1]["expected"]["pairs"][0]["decision_class"] = "Strong R&D candidate"
+    results_df = run_benchmark(cases)
+    report = compare_to_expected(results_df, cases)
+    assert len(report["disagreements"]) >= 1
+
+
+def test_compare_to_expected_all_agree_on_decision_class_ah():
+    cases = load_benchmark_cases(SMOKE_FIXTURE_PATH)
+    for case in cases:
+        for pair in case["expected"]["pairs"]:
+            assert "decision_class_ah" in pair
+    results_df = run_benchmark(cases)
+    report = compare_to_expected(results_df, cases)
+    assert report["disagreements"] == []
+
+
+def test_compare_to_expected_detects_a_decision_class_ah_disagreement():
+    cases = load_benchmark_cases(SMOKE_FIXTURE_PATH)
+    cases[1]["expected"]["pairs"][0]["decision_class_ah"] = "A — Verified commercial route"
     results_df = run_benchmark(cases)
     report = compare_to_expected(results_df, cases)
     assert len(report["disagreements"]) >= 1
@@ -167,7 +185,7 @@ def test_compare_to_expected_reports_a_missing_pair():
 def test_compare_to_expected_empty_results_and_cases_does_not_crash():
     report = compare_to_expected(pd.DataFrame(columns=[
         "case_id", "reference_plant", "alternative_plant",
-        "decision_class", "gate_results", "run_error",
+        "decision_class", "decision_class_ah", "gate_results", "run_error",
     ]), [])
     assert report["total_pairs_checked"] == 0
     assert report["agreement_rate"] is None

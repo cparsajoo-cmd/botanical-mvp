@@ -122,6 +122,37 @@ def test_every_candidate_gets_exactly_one_of_the_eight_classes():
         assert result in valid_classes, f"got an invalid class {result!r} for inputs {combo!r}"
 
 
+# ---------------------------------------------------------------------
+# Task 8 — documented, KNOWN, deliberately unresolved gap. This locks
+# in CURRENT behavior so any future change to it is a conscious,
+# reviewed decision — not an accidental side effect of an unrelated
+# change. It does NOT assert this behavior is correct; see
+# classify_decision_ah()'s D-rule docstring ("KNOWN, FLAGGED,
+# DELIBERATELY UNRESOLVED GAP") for the full reasoning on why this
+# wasn't silently "fixed" with an invented threshold value.
+# ---------------------------------------------------------------------
+
+def test_known_gap_near_zero_confidence_with_moderate_opportunity_currently_lands_in_d():
+    result = classify_decision_ah(
+        existing_decision_class="Early-stage candidate; more evidence needed",
+        evidence_confidence=2.0, rd_opportunity_score=50.0,
+        market_status="Search not performed", match_quality="exact", same_plant=False,
+    )
+    assert result == "D — Mechanism-based R&D candidate"
+
+
+def test_low_and_modest_confidence_thresholds_are_currently_equal():
+    # Locks in the fact this module's own docstring now documents
+    # explicitly — MODEST_CONFIDENCE_THRESHOLD and
+    # evidence_confidence.LOW_CONFIDENCE_THRESHOLD are currently the
+    # same value (30), which is WHY the gap above exists. If these are
+    # ever intentionally set to different, justified values, this test
+    # (and the known-gap test above it) should be revisited together.
+    from decision_class_ah import MODEST_CONFIDENCE_THRESHOLD
+    from evidence_confidence import LOW_CONFIDENCE_THRESHOLD
+    assert MODEST_CONFIDENCE_THRESHOLD == LOW_CONFIDENCE_THRESHOLD == 30
+
+
 if __name__ == "__main__":
     import sys
 

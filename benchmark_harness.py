@@ -12,7 +12,8 @@ not-imported-by-the-app pattern as repo_dependency_audit.py — that:
   2. runs each one through the UNMODIFIED BotanicalRDCandidateEngine
      (no scoring/gating logic is reimplemented here, and none of it is
      altered by running this tool),
-  3. compares the engine's real Decision_Class / Gate_Results output
+  3. compares the engine's real Decision_Class / Decision_Class_AH /
+     Gate_Results output
      against each case's recorded "expected" values,
   4. reports agreement/disagreement.
 
@@ -106,7 +107,8 @@ def run_benchmark(cases: list) -> pd.DataFrame:
     """Runs every case through the UNMODIFIED engine (engine.run(),
     untouched by this module) and returns one row per (case_id,
     reference_plant, alternative_plant) actually produced, carrying
-    the real Decision_Class and Gate_Results this run computed —
+    the real Decision_Class, Decision_Class_AH, and Gate_Results this
+    run computed —
     nothing here recomputes or reinterprets either."""
     all_rows = []
     for case in cases:
@@ -127,6 +129,7 @@ def run_benchmark(cases: list) -> pd.DataFrame:
                 "reference_plant": None,
                 "alternative_plant": None,
                 "decision_class": None,
+                "decision_class_ah": None,
                 "gate_results": None,
                 "run_error": f"{type(exc).__name__}: {exc}",
             })
@@ -138,13 +141,14 @@ def run_benchmark(cases: list) -> pd.DataFrame:
                 "reference_plant": row.get("Reference_Plant"),
                 "alternative_plant": row.get("Alternative_Plant"),
                 "decision_class": row.get("Decision_Class"),
+                "decision_class_ah": row.get("Decision_Class_AH"),
                 "gate_results": row.get("Gate_Results"),
                 "run_error": None,
             })
 
     return pd.DataFrame(all_rows, columns=[
         "case_id", "reference_plant", "alternative_plant",
-        "decision_class", "gate_results", "run_error",
+        "decision_class", "decision_class_ah", "gate_results", "run_error",
     ])
 
 
@@ -198,6 +202,13 @@ def compare_to_expected(results_df: pd.DataFrame, cases: list) -> dict:
                 actual_dc = actual_row["decision_class"]
                 detail["decision_class"] = {"expected": expected_dc, "actual": actual_dc}
                 if actual_dc != expected_dc:
+                    checks_ok = False
+
+            if "decision_class_ah" in expected_pair:
+                expected_dc_ah = expected_pair["decision_class_ah"]
+                actual_dc_ah = actual_row["decision_class_ah"]
+                detail["decision_class_ah"] = {"expected": expected_dc_ah, "actual": actual_dc_ah}
+                if actual_dc_ah != expected_dc_ah:
                     checks_ok = False
 
             if "gate_status" in expected_pair:

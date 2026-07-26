@@ -48,11 +48,15 @@ from typing import Optional
 # than re-declared, so the two modules can't silently drift apart.
 from evidence_confidence import LOW_CONFIDENCE_THRESHOLD, HIGH_OPPORTUNITY_THRESHOLD
 
-# A second, lower confidence line: above this (but below what
-# evidence_confidence.py calls "low"), evidence is real but modest —
-# e.g. a single observational study or in-vitro finding. Used to
-# separate "genuinely no evidence" (G) from "some real but limited
-# evidence" (D) below.
+# Task 8 — the confidence line separating "genuinely no evidence"
+# (F/G) from "some real but limited evidence" (D) below. Currently
+# equal to evidence_confidence.py's own LOW_CONFIDENCE_THRESHOLD (both
+# 30) — this makes the two thresholds indistinguishable in practice,
+# and D below has NO separate lower bound of its own (see
+# classify_decision_ah()'s D-rule docstring, "KNOWN, FLAGGED,
+# DELIBERATELY UNRESOLVED GAP", for why a fix was attempted, made D
+# entirely unreachable, and was reverted rather than papered over with
+# an unvalidated new threshold value).
 MODEST_CONFIDENCE_THRESHOLD = 30
 
 # Minimum R&D_Opportunity_Score for a candidate to be worth framing as
@@ -134,15 +138,40 @@ def classify_decision_ah(
     D. Mechanism-based R&D candidate
        Rule: NOT same_plant, match_quality in
        {"exact", "target_verified"}, evidence_confidence below
-       MODEST_CONFIDENCE_THRESHOLD (but at/above LOW_CONFIDENCE_THRESHOLD
-       — below that, F already claimed it) and rd_opportunity_score at
-       least MINIMUM_OPPORTUNITY_THRESHOLD.
+       MODEST_CONFIDENCE_THRESHOLD, and rd_opportunity_score at least
+       MINIMUM_OPPORTUNITY_THRESHOLD.
        Reasoning: class D is explicitly for "evidence مستقیم بیماری
        محدود است، اما target/mechanism مشترک ... قابل‌ردیابی" — a real
        chemical/target link exists, direct disease evidence doesn't
        yet, and the opportunity score is moderate rather than
        suspiciously high (a suspiciously high score with this little
        evidence is F's territory, not D's).
+
+       Task 8 — KNOWN, FLAGGED, DELIBERATELY UNRESOLVED GAP (not fixed
+       here): this rule has no explicit lower bound on
+       evidence_confidence, so a near-zero-confidence candidate (e.g.
+       2) with a moderate opportunity score (>= MINIMUM_OPPORTUNITY_
+       THRESHOLD but below HIGH_OPPORTUNITY_THRESHOLD, so F doesn't
+       claim it either) currently lands in D — described as "real but
+       limited evidence" — which arguably contradicts F's own stated
+       principle two rules above ("near-zero confidence means there
+       ISN'T real evidence yet"). Found by directly executing
+       classify_decision_ah() with evidence_confidence=2.0,
+       rd_opportunity_score=50.0.
+
+       An earlier attempt to close this by requiring
+       evidence_confidence >= LOW_CONFIDENCE_THRESHOLD was tried and
+       REVERTED: LOW_CONFIDENCE_THRESHOLD and MODEST_CONFIDENCE_THRESHOLD
+       are currently both 30, so "LOW <= confidence < MODEST" is an
+       EMPTY range — that change made class D entirely unreachable,
+       which is a strictly worse defect than the one it was meant to
+       fix. Properly closing this gap requires either a distinct,
+       justified value for one of these two thresholds, or a different
+       qualitative signal entirely — either way, a real calibration
+       decision this module's own HONESTY ABOUT THIS MAPPING section
+       says must wait for expert-reviewed cases, not be invented here.
+       Left as documented, first-draft behavior; do not silently
+       "fix" this without a validated threshold to fix it with.
 
     E. White-space opportunity
        Rule: market_status == "No verified product found" AND

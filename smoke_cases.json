@@ -54,7 +54,8 @@
             "identity": "passed",
             "minimum_evidence": "not_evaluable",
             "regulatory": "passed"
-          }
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
         },
         {
           "reference_plant": "PlantRef",
@@ -65,7 +66,8 @@
             "identity": "not_evaluable",
             "minimum_evidence": "not_evaluable",
             "regulatory": "not_evaluable"
-          }
+          },
+          "decision_class_ah": "H — No-go / safety concern"
         }
       ]
     }
@@ -109,7 +111,8 @@
             "identity": "passed",
             "minimum_evidence": "not_evaluable",
             "regulatory": "not_evaluable"
-          }
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
         },
         {
           "reference_plant": "RefPlant",
@@ -120,7 +123,8 @@
             "identity": "passed",
             "minimum_evidence": "not_evaluable",
             "regulatory": "not_evaluable"
-          }
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
         }
       ]
     }
@@ -162,7 +166,8 @@
             "identity": "passed",
             "minimum_evidence": "passed",
             "regulatory": "passed"
-          }
+          },
+          "decision_class_ah": "B — Established scientific candidate"
         }
       ]
     }

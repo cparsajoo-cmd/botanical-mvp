@@ -51,6 +51,21 @@ from typing import Optional
 # Shared controlled vocabularies
 # ======================================================================
 
+class GateStatus(str, Enum):
+    """Task 1 — Formal Gate Layer. A gate is independent of
+    R&D_Opportunity_Score and Decision_Class: it answers "does this
+    candidate clear a specific, named precondition" rather than
+    contributing points. PASS/FAIL are affirmative findings; NOT_EVALUABLE
+    means the signal needed to judge the gate wasn't available for this
+    row (never silently treated as PASS). NEEDS_REVIEW is for a gate that
+    found a real but non-hard-blocking concern (see
+    botanical_rd_candidate_engine._evaluate_gates for definitions)."""
+    PASS = "pass"
+    FAIL = "fail"
+    NEEDS_REVIEW = "needs_review"
+    NOT_EVALUABLE = "not_evaluable"
+
+
 class VerificationStatus(str, Enum):
     """Generic confidence-in-the-record-itself status, usable on any
     entity below (a Plant name, a Compound identity, an Occurrence
@@ -415,6 +430,14 @@ class CandidateAssessment:
     evidence_weaknesses: list = field(default_factory=list)
     next_experiment_suggestion: Optional[str] = None
     comparative_rationale: Optional[str] = None
+
+    # Task 1 — Formal Gate Layer. Additive only: a dict of
+    # {gate_name: {"status": GateStatus, "reason": str, "evidence": str}}
+    # for the safety / identity / minimum_evidence / regulatory gates
+    # (see botanical_rd_candidate_engine._evaluate_gates). None on any
+    # row produced before this field existed — never backfilled or
+    # inferred. Does not replace or alter decision_class in any way.
+    gate_results: Optional[dict] = None
 
 
 # ======================================================================

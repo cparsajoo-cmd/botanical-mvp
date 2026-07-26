@@ -30,6 +30,7 @@ from structured_rationale import (
 )
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
+from data_contracts import GateStatus
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
 
@@ -127,6 +128,13 @@ OUTPUT_COLUMNS = [
     "Comparative_Rationale",
     "Comparative_Rationale_Structured",
     "Rationale",
+    # Task 1 — Formal Gate Layer. Additive only: see _evaluate_gates()
+    # and CandidateAssessment.gate_results. Never read by _decision_class()
+    # or _score_candidate() — carrying no influence on Decision_Class,
+    # R&D_Opportunity_Score, or ranking, except that its "safety" entry
+    # reports (rather than changes) the pre-existing HARD_SAFETY_TERMS
+    # auto-exclusion _decision_class() already enforced before this task.
+    "Gate_Results",
 ]
 
 
@@ -823,6 +831,27 @@ class BotanicalRDCandidateEngine:
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                     )
 
+                    # Task 1 — Formal Gate Layer. Purely additive: built
+                    # from signals already computed above for this same
+                    # row (safety_flags, match_quality, has_real_evidence,
+                    # evidence_level, regulatory_barrier_result), never
+                    # read by anything upstream of this line. See
+                    # _evaluate_gates()'s own docstring for what each
+                    # gate means and why only "safety" is behaviorally
+                    # tied to Decision_Class today.
+                    gate_results = self._evaluate_gates(
+                        safety_flags=safety_flags,
+                        match_quality=match_quality,
+                        has_evidence=has_real_evidence,
+                        evidence_level=evidence_level,
+                        regulatory_barrier_types=(
+                            regulatory_barrier_result.barrier_types
+                            if raw_evidence and raw_evidence.strip()
+                            else None
+                        ),
+                        same_plant=self._norm(ref_plant) == self._norm(alt_plant),
+                    )
+
                     evidence_confidence = compute_evidence_confidence(
                         evidence_hierarchy_detail=evidence_hierarchy_detail,
                         evidence_level=evidence_level,
@@ -975,6 +1004,7 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Confidence": evidence_confidence,
                             "Decision_Class": decision,
                             "Decision_Class_AH": decision_class_ah,
+                            "Gate_Results": gate_results,
                             "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
                             # Internal-only — used by _merge_multi_compound_matches
@@ -1315,6 +1345,38 @@ class BotanicalRDCandidateEngine:
                     rd_opportunity_score=new_score,
                     market_status=str(best.get("Market_Status", "")),
                     match_quality=str(best.get("_match_quality", "")),
+                    same_plant=bool(best.get("_same_plant", False)),
+                )
+
+            if "Gate_Results" in group.columns:
+                # Task 1 — a merged row can combine multiple sub-rows'
+                # safety/regulatory signal (see the Safety_Flags/
+                # Regulatory_Barriers merges above), so gates must be
+                # recomputed from those already-merged fields — same
+                # staleness reasoning as every other derived column in
+                # this function — rather than carrying over whichever
+                # single sub-row happened to be "best" pre-merge.
+                # has_evidence is approximated from Evidence_Level here
+                # (the per-row has_real_evidence boolean isn't itself a
+                # merged column) — acceptable because minimum_evidence
+                # is informational-only in this task, same as identity
+                # and regulatory; only "safety" (driven by the already
+                # correctly-merged Safety_Flags) is behaviorally tied to
+                # Decision_Class.
+                merged_evidence_level = str(best.get("Evidence_Level", "No direct evidence"))
+                regulatory_barriers_str = str(best.get("Regulatory_Barriers", "") or "")
+                if regulatory_barriers_str and regulatory_barriers_str != "None identified":
+                    merged_barrier_types = [
+                        b.strip() for b in regulatory_barriers_str.split("; ") if b.strip()
+                    ]
+                else:
+                    merged_barrier_types = []
+                best["Gate_Results"] = self._evaluate_gates(
+                    safety_flags=str(best.get("Safety_Flags", "") or ""),
+                    match_quality=str(best.get("_match_quality", "")),
+                    has_evidence=merged_evidence_level != "No direct evidence",
+                    evidence_level=merged_evidence_level,
+                    regulatory_barrier_types=merged_barrier_types,
                     same_plant=bool(best.get("_same_plant", False)),
                 )
 
@@ -2773,6 +2835,164 @@ class BotanicalRDCandidateEngine:
 
         return "Alternative source with similar compound"
 
+    @staticmethod
+    def _hard_safety_gate(safety_flags, same_plant):
+        """Single source of truth for the hard safety auto-exclusion —
+        Task 1. Both _decision_class()'s early-return and
+        _evaluate_gates()'s "safety" entry call this one method, so the
+        two can never silently drift apart. Behavior is byte-identical
+        to the pre-Task-1 inline check in _decision_class(): a
+        HARD_SAFETY_TERMS hit forces FAIL unless same_plant, in which
+        case the exclusion is intentionally skipped (see the long
+        comment that used to live inline here, now in _decision_class()
+        immediately below) and the gate reports NOT_EVALUABLE rather
+        than silently passing.
+
+        Returns (GateStatus, hit_terms: set, flagged_terms: set).
+        """
+        flagged_terms = {
+            term.strip() for term in safety_flags.split("; ") if term.strip()
+        } if safety_flags else set()
+        hit_terms = flagged_terms & HARD_SAFETY_TERMS
+        if same_plant:
+            return GateStatus.NOT_EVALUABLE, hit_terms, flagged_terms
+        if hit_terms:
+            return GateStatus.FAIL, hit_terms, flagged_terms
+        return GateStatus.PASS, hit_terms, flagged_terms
+
+    @staticmethod
+    def _evaluate_gates(
+        safety_flags,
+        match_quality,
+        has_evidence,
+        evidence_level,
+        regulatory_barrier_types,
+        same_plant=False,
+    ):
+        """Task 1 — Formal Gate Layer. Additive, non-blocking output:
+        a gate reports whether a candidate clears a specific,
+        independently-named precondition, separate from
+        R&D_Opportunity_Score and Decision_Class. Nothing in this
+        method influences scoring or ranking. The ONE exception is
+        "safety", which reports (via _hard_safety_gate) exactly the
+        pre-existing HARD_SAFETY_TERMS auto-exclusion that
+        _decision_class() already enforced before this task — that
+        behavior is unchanged, only exposed here in structured form as
+        well as the original string return value.
+
+        The other three gates (identity / minimum_evidence /
+        regulatory) are informational only in this task: computed and
+        reported on every row, but never read by _decision_class() or
+        _score_candidate(), and therefore never able to change
+        Decision_Class, R&D_Opportunity_Score, or rank. Making any of
+        them hard-blocking is a deliberate later step, gated on
+        validating them against the Task 5 benchmark set first.
+
+        Returns a dict of
+        {gate_name: {"status": GateStatus, "reason": str, "evidence": str}}
+        for exactly four gates: safety, identity, minimum_evidence,
+        regulatory.
+        """
+        gates = {}
+
+        # --- Safety gate: delegates to the single shared check so this
+        # can never disagree with _decision_class()'s own hard-exclusion. ---
+        safety_status, hit_terms, flagged_terms = (
+            BotanicalRDCandidateEngine._hard_safety_gate(safety_flags, same_plant)
+        )
+        if safety_status == GateStatus.NOT_EVALUABLE:
+            safety_reason = (
+                "Reference plant matched to itself; the hard safety "
+                "auto-exclusion is intentionally skipped for this "
+                "self-row (see _decision_class same_plant handling)."
+            )
+        elif safety_status == GateStatus.FAIL:
+            safety_reason = (
+                f"Documented hard safety term(s) present: "
+                f"{', '.join(sorted(hit_terms))}."
+            )
+        else:
+            safety_reason = "No documented hard safety term present."
+        gates["safety"] = {
+            "status": safety_status,
+            "reason": safety_reason,
+            "evidence": "; ".join(sorted(flagged_terms)) if flagged_terms else "No explicit flag found",
+        }
+
+        # --- Identity gate: uses the same match_quality vocabulary
+        # ("exact" / "target_verified" / "class_only") _decision_class()
+        # already reads elsewhere (e.g. its own weak_target_match/
+        # needs_cap logic) — no new identity states are introduced here. ---
+        if not match_quality:
+            gates["identity"] = {
+                "status": GateStatus.NOT_EVALUABLE,
+                "reason": "No match-quality signal was available for this row.",
+                "evidence": "",
+            }
+        elif match_quality in {"exact", "target_verified"}:
+            gates["identity"] = {
+                "status": GateStatus.PASS,
+                "reason": f"Compound identity resolved via a '{match_quality}' match.",
+                "evidence": match_quality,
+            }
+        else:
+            gates["identity"] = {
+                "status": GateStatus.NEEDS_REVIEW,
+                "reason": (
+                    "Match rests on a class-only (broad chemical-class) "
+                    "similarity, not a confirmed shared compound or target."
+                ),
+                "evidence": match_quality,
+            }
+
+        # --- Minimum-evidence gate: same has_evidence/evidence_level
+        # signals _decision_class() already uses for its own ceiling logic. ---
+        if evidence_level == "No direct evidence" and not has_evidence:
+            gates["minimum_evidence"] = {
+                "status": GateStatus.FAIL,
+                "reason": "No direct scientific evidence located for this candidate.",
+                "evidence": evidence_level,
+            }
+        else:
+            gates["minimum_evidence"] = {
+                "status": GateStatus.PASS,
+                "reason": f"Evidence located at level: {evidence_level}.",
+                "evidence": evidence_level,
+            }
+
+        # --- Regulatory-prohibition gate: only an EXPLICIT prohibition
+        # (regulatory_barrier_classifier's "Prohibited / banned" category)
+        # fails this gate — "not available"/"unknown" market status is a
+        # data gap, not a prohibition, and must never be conflated with one.
+        # regulatory_barrier_types is None when no evidence text was ever
+        # collected for this row (never checked), vs. an empty list when
+        # evidence was reviewed and no barrier was found (checked, clear) —
+        # same "never searched" vs. "searched, found nothing" distinction
+        # _market_status() already makes for its own vocabulary. ---
+        if regulatory_barrier_types is None:
+            gates["regulatory"] = {
+                "status": GateStatus.NOT_EVALUABLE,
+                "reason": "No evidence text was available to check for a regulatory prohibition.",
+                "evidence": "",
+            }
+        elif "Prohibited / banned" in regulatory_barrier_types:
+            gates["regulatory"] = {
+                "status": GateStatus.FAIL,
+                "reason": (
+                    "Reviewed evidence text indicates this candidate is "
+                    "prohibited/banned in at least one jurisdiction."
+                ),
+                "evidence": "; ".join(regulatory_barrier_types),
+            }
+        else:
+            gates["regulatory"] = {
+                "status": GateStatus.PASS,
+                "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+                "evidence": "; ".join(regulatory_barrier_types) if regulatory_barrier_types else "None identified",
+            }
+
+        return gates
+
     def _decision_class(
         self,
         score,
@@ -2812,10 +3032,18 @@ class BotanicalRDCandidateEngine:
         # shown either way (Safety_Flags column, Rationale) — only the
         # hard auto-exclusion is skipped for the self-row, for any
         # plant, not a special case for any one species.
-        flagged_terms = {
-            term.strip() for term in safety_flags.split("; ") if term.strip()
-        }
-        if (flagged_terms & HARD_SAFETY_TERMS) and not same_plant:
+        # Task 1 — delegates to _hard_safety_gate() so this check and
+        # _evaluate_gates()'s "safety" entry can never disagree; the
+        # condition below (FAIL exactly when there's a hard-term hit
+        # and not same_plant) is identical to the inline check this
+        # replaced.
+        # Called on the class, not `self` — some existing tests invoke
+        # _decision_class() unbound (BotanicalRDCandidateEngine._decision_class(None, ...)),
+        # which would make `self._hard_safety_gate` fail with self=None.
+        safety_gate_status, _hit_terms, _flagged_terms = (
+            BotanicalRDCandidateEngine._hard_safety_gate(safety_flags, same_plant)
+        )
+        if safety_gate_status == GateStatus.FAIL:
             return "Safety concern — not suitable without expert review"
 
         # Controversial-only flags (carcinogenic/mutagenic/genotoxic with

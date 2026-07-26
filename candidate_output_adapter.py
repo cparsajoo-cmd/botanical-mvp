@@ -187,6 +187,13 @@ def validate_row(row, indication: str, project_id: str = "unspecified-run"):
         errors.append(f"Could not parse Has_Negative_Evidence={row.get('Has_Negative_Evidence')!r} as a boolean")
     kwargs["has_negative_evidence"] = has_negative
 
+    # Task 1 — Gate_Results is already a dict (produced by
+    # _evaluate_gates(), never CSV-joined like the _LIST_COLUMNS
+    # above), so it's passed through as-is rather than parsed. Absent
+    # entirely on rows produced before this field existed.
+    gate_results = row.get("Gate_Results")
+    kwargs["gate_results"] = gate_results if isinstance(gate_results, dict) else None
+
     try:
         record = CandidateAssessment(**kwargs)
     except TypeError as exc:

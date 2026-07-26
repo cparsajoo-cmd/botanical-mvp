@@ -194,6 +194,13 @@ def validate_row(row, indication: str, project_id: str = "unspecified-run"):
     gate_results = row.get("Gate_Results")
     kwargs["gate_results"] = gate_results if isinstance(gate_results, dict) else None
 
+    # Task 3 — plain string pass-through, same reasoning as Gate_Results
+    # above: nothing to parse, absent entirely on pre-Task-3 rows.
+    scoring_config_version = row.get("Scoring_Config_Version")
+    kwargs["scoring_config_version"] = (
+        str(scoring_config_version) if scoring_config_version not in (None, "") else None
+    )
+
     try:
         record = CandidateAssessment(**kwargs)
     except TypeError as exc:

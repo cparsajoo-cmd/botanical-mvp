@@ -3,6 +3,7 @@ import re
 import base64
 import requests
 from collections import defaultdict
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -135,6 +136,12 @@ OUTPUT_COLUMNS = [
     # reports (rather than changes) the pre-existing HARD_SAFETY_TERMS
     # auto-exclusion _decision_class() already enforced before this task.
     "Gate_Results",
+    # Task 3 — externalized, versioned scoring weights. Records WHICH
+    # ScoringConfig this row's R&D_Opportunity_Score was computed with
+    # (see ScoringConfig/DEFAULT_SCORING_CONFIG above and
+    # self.scoring_config in __init__). Purely descriptive metadata —
+    # never read back into scoring itself.
+    "Scoring_Config_Version",
 ]
 
 
@@ -294,6 +301,106 @@ _SLEEP_TEA_EVIDENCE_NORM_MAP = {
 }
 
 
+# =====================================================================
+# Task 3 — Externalized, versioned scoring weights.
+#
+# WHAT THIS IS
+# _score_candidate()'s section-level weights (the ones already named
+# and documented in that method's own "COMPLETE WEIGHTS TABLE"
+# docstring) are collected here as a single, named, versioned object
+# instead of being bare inline literals. DEFAULT_SCORING_CONFIG's
+# values are IDENTICAL to what _score_candidate() computed before this
+# task existed — verified by a byte-identical regression test
+# (test_default_scoring_config_reproduces_identical_scores_to_pre_task_hardcoded_values
+# in test_scoring_config.py). This is a governance/visibility change,
+# not a scoring change.
+#
+# WHAT THIS IS NOT
+# This does not externalize every numeric literal in the engine.
+# _extraction_fit_score()'s internal keyword-matching weights (its own
+# separate, smaller "up to 26, capped at 18 when folded into Product-
+# development fit" sub-scores) are deliberately left as an internal
+# implementation detail of that one helper, not promoted into
+# ScoringConfig — they already feed into Product-development fit as a
+# single already-capped number, and pulling them out too would balloon
+# this change far past "the smallest possible extension" without a
+# proportionate governance benefit. If per-keyword extraction weights
+# ever need to be independently configurable, that is a deliberately
+# separate, later, smaller change — not part of Task 3.
+#
+# HOW THIS IS USED
+# BotanicalRDCandidateEngine.__init__ accepts an optional
+# scoring_config: ScoringConfig, defaulting to DEFAULT_SCORING_CONFIG,
+# stored as self.scoring_config. _score_candidate() reads
+# self.scoring_config.<field> in place of each of these values' former
+# bare literals — nothing else about _score_candidate()'s control flow,
+# rounding, clamping, or section structure changes.
+# =====================================================================
+
+@dataclass(frozen=True)
+class ScoringConfig:
+    """Named, versioned scoring weights for _score_candidate(). See the
+    Task 3 block comment above this class for what is and is not
+    covered. Every default below is copied verbatim from
+    _score_candidate()'s pre-Task-3 inline literals — see that
+    method's own "COMPLETE WEIGHTS TABLE" docstring, which this
+    dataclass's field values must always match."""
+
+    version: str = "1.0-default"
+
+    # 1) Chemical/mechanistic link (base points, before the
+    # target-specificity and commonality modifiers, which stay as
+    # multiplicative logic in _score_candidate() rather than becoming
+    # separate config fields — they're formulas, not weights).
+    chem_link_exact: float = 22
+    chem_link_target_verified: float = 15
+    chem_link_class_only: float = 5
+
+    # 2) Evidence quality, by Evidence_Level.
+    evidence_clinical: float = 24
+    evidence_regulatory: float = 20
+    evidence_preclinical: float = 12
+    evidence_general_literature: float = 7
+    evidence_none: float = 0
+
+    # 3) Product-development fit.
+    product_fit_concentration_reported: float = 10
+    product_fit_concentration_missing: float = 2
+    product_fit_extraction_cap: float = 18
+    product_fit_co_compound_per_item: float = 2
+    product_fit_co_compound_cap: float = 8
+    product_fit_target_identified: float = 8
+    product_fit_target_missing: float = 1
+
+    # 4) Novelty (only awarded when evidence_level != "No direct evidence").
+    novelty_common: float = 0
+    novelty_alternative: float = 10
+    novelty_other: float = 2
+
+    # 5) Market signal.
+    market_verified_marketed_product: float = 1
+    market_regulatory_monograph_or_traditional_use: float = 2
+    market_commercial_evidence_reported: float = 2
+    market_no_verified_product_found: float = 6
+    market_conflicting_evidence: float = -2
+    market_search_incomplete: float = 3
+    # "Search not performed" / "Source unavailable" / "Unknown" — the
+    # neutral default when no real search signal exists either way.
+    market_neutral_default: float = 3
+
+    # 6) Safety/interaction/self-row penalties.
+    safety_flag_penalty: float = -14
+    interaction_flag_penalty: float = -10
+    same_plant_penalty: float = -15
+
+
+# The single default instance every engine uses unless a caller
+# explicitly overrides it — this is what makes DEFAULT_SCORING_CONFIG
+# the "1.0-default" version referenced anywhere scoring_config_version
+# appears in output (see CandidateAssessment.scoring_config_version).
+DEFAULT_SCORING_CONFIG = ScoringConfig()
+
+
 class BotanicalRDCandidateEngine:
     """
     Central engine for botanical R&D candidate discovery.
@@ -316,7 +423,13 @@ class BotanicalRDCandidateEngine:
         compound_profiles_df=None,
         scientific_evidence_df=None,
         data_source_reliable=True,
+        scoring_config=None,
     ):
+        # Task 3 — externalized, versioned scoring weights. Defaults to
+        # DEFAULT_SCORING_CONFIG (byte-identical to the pre-Task-3
+        # hardcoded values) unless a caller explicitly overrides it.
+        self.scoring_config = scoring_config if scoring_config is not None else DEFAULT_SCORING_CONFIG
+
         self.evidence_df = self._to_dataframe(evidence_df)
         self.use_live_search = use_live_search
 
@@ -1005,6 +1118,7 @@ class BotanicalRDCandidateEngine:
                             "Decision_Class": decision,
                             "Decision_Class_AH": decision_class_ah,
                             "Gate_Results": gate_results,
+                            "Scoring_Config_Version": self.scoring_config.version,
                             "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
                             # Internal-only — used by _merge_multi_compound_matches
@@ -2483,11 +2597,11 @@ class BotanicalRDCandidateEngine:
         # is weak. The target-verified bonus below is further scaled by
         # HOW specific the confirming shared target actually is.
         if match_quality == "exact":
-            chem_bonus = 22
+            chem_bonus = self.scoring_config.chem_link_exact
         elif match_quality == "target_verified":
-            chem_bonus = 15
+            chem_bonus = self.scoring_config.chem_link_target_verified
         else:
-            chem_bonus = 5
+            chem_bonus = self.scoring_config.chem_link_class_only
 
         # A "target_verified" match is only as informative as the target
         # itself is specific. Two compounds sharing a pathway that only
@@ -2532,11 +2646,11 @@ class BotanicalRDCandidateEngine:
         # 2) Evidence quality. The previous engine rewarded any text too much.
         # Here weak/no evidence cannot produce a high-confidence candidate.
         evidence_points = {
-            "Clinical / human evidence": 24,
-            "Regulatory / monograph evidence": 20,
-            "Preclinical / mechanistic evidence": 12,
-            "General literature signal": 7,
-            "No direct evidence": 0,
+            "Clinical / human evidence": self.scoring_config.evidence_clinical,
+            "Regulatory / monograph evidence": self.scoring_config.evidence_regulatory,
+            "Preclinical / mechanistic evidence": self.scoring_config.evidence_preclinical,
+            "General literature signal": self.scoring_config.evidence_general_literature,
+            "No direct evidence": self.scoring_config.evidence_none,
         }
         evidence_component = evidence_points.get(evidence_level, 0)
         score += evidence_component
@@ -2545,10 +2659,22 @@ class BotanicalRDCandidateEngine:
         # 3) Product-development fit. These matter, but they must not
         # overpower poor evidence.
         product_fit_component = 0
-        product_fit_component += 10 if concentration else 2
-        product_fit_component += min(18, self._extraction_fit_score(extraction, dosage_form))
-        product_fit_component += min(8, len(self._split_compound_terms(co_compounds)) * 2)
-        product_fit_component += 8 if target else 1
+        product_fit_component += (
+            self.scoring_config.product_fit_concentration_reported if concentration
+            else self.scoring_config.product_fit_concentration_missing
+        )
+        product_fit_component += min(
+            self.scoring_config.product_fit_extraction_cap,
+            self._extraction_fit_score(extraction, dosage_form),
+        )
+        product_fit_component += min(
+            self.scoring_config.product_fit_co_compound_cap,
+            len(self._split_compound_terms(co_compounds)) * self.scoring_config.product_fit_co_compound_per_item,
+        )
+        product_fit_component += (
+            self.scoring_config.product_fit_target_identified if target
+            else self.scoring_config.product_fit_target_missing
+        )
         score += product_fit_component
         components["Product-development fit"] = product_fit_component
 
@@ -2559,11 +2685,11 @@ class BotanicalRDCandidateEngine:
         novelty_component = 0
         if evidence_level != "No direct evidence":
             if "Common" in novelty_status or "non-specific" in novelty_status:
-                novelty_component = 0
+                novelty_component = self.scoring_config.novelty_common
             elif "Alternative" in novelty_status or "Cross-region" in novelty_status:
-                novelty_component = 10
+                novelty_component = self.scoring_config.novelty_alternative
             else:
-                novelty_component = 2
+                novelty_component = self.scoring_config.novelty_other
         score += novelty_component
         components["Novelty"] = novelty_component
 
@@ -2580,28 +2706,28 @@ class BotanicalRDCandidateEngine:
         # reflects an actual completed search.
         market_lower = market_status.lower()
         if "verified marketed product" in market_lower:
-            market_component = 1
+            market_component = self.scoring_config.market_verified_marketed_product
         elif "regulatory monograph" in market_lower or "traditional-use" in market_lower:
-            market_component = 2
+            market_component = self.scoring_config.market_regulatory_monograph_or_traditional_use
         elif "commercial evidence reported" in market_lower:
-            market_component = 2
+            market_component = self.scoring_config.market_commercial_evidence_reported
         elif "no verified product found" in market_lower:
-            market_component = 6
+            market_component = self.scoring_config.market_no_verified_product_found
         elif "conflicting market evidence" in market_lower:
             # A real, detected disagreement between two signals (e.g.
             # regulatory recognition vs. a discontinuation mention) is
             # worth flagging with a small penalty, not treated as
             # neutral — it means the market picture for this candidate
             # genuinely needs a human to resolve before acting on it.
-            market_component = -2
+            market_component = self.scoring_config.market_conflicting_evidence
         elif "search incomplete" in market_lower:
             # Slightly more informative than "not performed" (a live
             # search did run this session), but still no market signal
             # was actually found — same neutral treatment as "not
             # performed", not a bonus.
-            market_component = 3
+            market_component = self.scoring_config.market_search_incomplete
         else:  # "Search not performed", "Source unavailable", "Unknown"
-            market_component = 3
+            market_component = self.scoring_config.market_neutral_default
         score += market_component
         components["Market signal"] = market_component
 
@@ -2610,13 +2736,13 @@ class BotanicalRDCandidateEngine:
         # qualification.
         safety_component = 0
         if safety_flags:
-            safety_component -= 14
+            safety_component += self.scoring_config.safety_flag_penalty
 
         if interaction_flags:
-            safety_component -= 10
+            safety_component += self.scoring_config.interaction_flag_penalty
 
         if same_plant:
-            safety_component -= 15
+            safety_component += self.scoring_config.same_plant_penalty
 
         score += safety_component
         components["Safety/interaction/self-row penalty"] = safety_component

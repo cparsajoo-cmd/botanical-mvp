@@ -463,7 +463,12 @@ def test_deterministic_output_contract_locked_engineering_regression():
 
     # Row count and column count locked exactly.
     assert len(result) == 2
-    assert len(result.columns) == 50
+    # Column count updated from 50 to 51 by Task 3's additive
+    # Scoring_Config_Version column (externalized, versioned scoring
+    # weights) — a legitimate, expected change to this lock, not a
+    # regression. Row count, scores, and Decision_Class below are
+    # UNCHANGED, which is what this test actually guards.
+    assert len(result.columns) == 51
     assert "Gate_Results" in result.columns
 
     # A representative set of pre-existing output fields must still be

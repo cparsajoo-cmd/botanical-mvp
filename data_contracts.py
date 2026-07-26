@@ -440,6 +440,13 @@ class CandidateAssessment:
     # inferred. Does not replace or alter decision_class in any way.
     gate_results: Optional[dict] = None
 
+    # Task 3 — records which ScoringConfig (see
+    # botanical_rd_candidate_engine.ScoringConfig) this row's
+    # rd_opportunity_score was computed with. Purely descriptive
+    # metadata — never read back into scoring. None on any row
+    # produced before this field existed.
+    scoring_config_version: Optional[str] = None
+
 
 # ======================================================================
 # Shared helpers

@@ -6,6 +6,7 @@ from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
 from sensitivity_display_adapter import prepare_sensitivity_payload
+from decision_record_persistence import persist_decision_record
 
 
 def _unique_nonempty(values):
@@ -517,6 +518,25 @@ def render_rd_candidates_step(inputs):
                         f"validated cleanly."
                     )
                     st.dataframe(errors_df, width="stretch")
+
+                # Task 4 — best-effort persistence of the just-validated
+                # records as ONE locked, versioned decision record. Never
+                # blocks or interrupts this page; only a minimal status
+                # message is shown, per the same UI constraint already
+                # used for Sprint 6A.2's telemetry persistence (no
+                # database/SQL details exposed here). Append-only — see
+                # decision_record_persistence.py's LOCK SEMANTICS.
+                if records:
+                    decision_record_summary = persist_decision_record(
+                        records, indication=indication, project_id=f"{indication}-{market}",
+                    )
+                    if decision_record_summary["status"] == "persisted":
+                        st.caption(
+                            f"✅ Decision record persisted "
+                            f"(analysis_id: {decision_record_summary['analysis_id']})"
+                        )
+                    else:
+                        st.caption("ℹ️ Decision-record persistence unavailable")
 
         # Task 2 — Scoring sensitivity / ranking robustness. Purely
         # additive: prepare_sensitivity_payload() only calls the

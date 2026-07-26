@@ -5,6 +5,7 @@ from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
+from sensitivity_display_adapter import prepare_sensitivity_payload
 
 
 def _unique_nonempty(values):
@@ -516,6 +517,36 @@ def render_rd_candidates_step(inputs):
                         f"validated cleanly."
                     )
                     st.dataframe(errors_df, width="stretch")
+
+        # Task 2 — Scoring sensitivity / ranking robustness. Purely
+        # additive: prepare_sensitivity_payload() only calls the
+        # existing fragility_report()/build_robustness_analysis()
+        # entry points in scoring_sensitivity_report.py on the SAME
+        # result_df already produced above — no re-run of engine.run(),
+        # no new scoring logic, no change to result_df itself.
+        with st.expander("Scoring sensitivity and ranking robustness", expanded=False):
+            payload = prepare_sensitivity_payload(result_df)
+
+            if payload["status"] == "insufficient_data":
+                st.info(payload["message"])
+            else:
+                fragility = payload["fragility"]
+                if fragility:
+                    st.caption(fragility["summary"])
+
+                counts = payload["rank_stability_counts"] or {}
+                if counts:
+                    ordered_levels = [
+                        lvl for lvl in ("Stable", "Moderately stable", "Fragile", "Tied", "Insufficient")
+                        if lvl in counts
+                    ]
+                    cols = st.columns(len(ordered_levels)) if ordered_levels else []
+                    for col, level in zip(cols, ordered_levels):
+                        col.metric(level, counts[level])
+
+            st.divider()
+            st.markdown(f"**{payload['boundary_statement']}**")
+            st.caption(payload["boundary_explanation"])
 
         st.download_button(
             "Download decision table (CSV)",

@@ -463,6 +463,55 @@ def test_evidence_hierarchy_detail_is_populated_end_to_end_through_run():
     assert self_row.iloc[0]["Evidence_Hierarchy_Detail"] != ""
 
 
+def test_task_10_1_methodological_modifiers_apply_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="TestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    plain_evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A randomized controlled trial found significant hepatoprotective effects.",
+    }])
+    methodologically_detailed_evidence_df = pd.DataFrame([{
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": (
+            "A randomized controlled trial, double-blind and "
+            "placebo-controlled, with n = 250 patients, found significant "
+            "hepatoprotective effects."
+        ),
+    }])
+
+    plain_engine = make_engine(rows)
+    plain_engine.evidence_df = plain_evidence_df
+    plain_result = plain_engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    plain_row = plain_result[
+        (plain_result["Reference_Plant"] == "TestPlant") & (plain_result["Alternative_Plant"] == "TestPlant")
+    ].iloc[0]
+
+    detailed_engine = make_engine(rows)
+    detailed_engine.evidence_df = methodologically_detailed_evidence_df
+    detailed_result = detailed_engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    detailed_row = detailed_result[
+        (detailed_result["Reference_Plant"] == "TestPlant") & (detailed_result["Alternative_Plant"] == "TestPlant")
+    ].iloc[0]
+
+    # Same study type/hierarchy tier both times ("Clinical trial") — the
+    # only difference is the methodological detail in the text, which
+    # must show up as a HIGHER Evidence_Confidence, never a new column,
+    # never a change to Decision_Class's existing meaning.
+    assert plain_row["Evidence_Hierarchy_Detail"] == detailed_row["Evidence_Hierarchy_Detail"]
+    assert detailed_row["Evidence_Confidence"] > plain_row["Evidence_Confidence"]
+    assert "Evidence_Confidence" in detailed_result.columns
+    assert list(plain_result.columns) == list(detailed_result.columns), (
+        "Task 10.1 must not add, remove, or reorder any output column"
+    )
+
+
 # ---------------------------------------------------------------------
 # 17) Negative evidence (Phase 4, audit 4.15) hiding in a non-best
 #     sub-row must survive the multi-compound merge — the same

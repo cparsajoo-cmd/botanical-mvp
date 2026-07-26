@@ -980,6 +980,7 @@ class BotanicalRDCandidateEngine:
                         evidence_hierarchy_detail=evidence_hierarchy_detail,
                         evidence_level=evidence_level,
                         has_negative_evidence=negative_evidence.is_negative,
+                        evidence_text=raw_evidence,
                     )
                     confidence_note = confidence_adjusted_framing_note(
                         rd_opportunity_score=score,

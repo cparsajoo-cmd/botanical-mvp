@@ -56,19 +56,78 @@ documented, named constant (NEGATIVE_EVIDENCE_CONFIDENCE_MULTIPLIER)
 so it can be revisited/calibrated later rather than being a magic
 number buried in a formula.
 
+TASK 10.1 — METHODOLOGICAL-QUALITY MODIFIERS (additive, optional,
+backward-compatible)
+Three small, named, capped point additions on top of the base
+hierarchy-tier score, detected from the same free-text evidence
+string the engine already classifies for Evidence_Hierarchy_Detail —
+no new data source, no new column, no second confidence score. These
+answer a question the tier lookup above does NOT: two clinical trials
+both classified as "Clinical trial" can differ hugely in methodological
+strength (blinded/placebo-controlled/large N vs. none of those) — the
+tier alone can't see that difference, these modifiers can.
+
+Applied to `base` BEFORE the negative-evidence multiplier — a study's
+methodological quality doesn't depend on whether its outcome was
+positive or negative, so a well-blinded, placebo-controlled, large-N
+trial that FAILED still earns these modifiers, and is then downweighted
+overall for being a negative finding, exactly as before this task.
+
+Only applied when base > 0 (i.e. only refines confidence for evidence
+that already earned a real tier) — never used to manufacture
+confidence out of a text with no classified evidence tier at all.
+
+Sample-size modifier (SAMPLE_SIZE_CONFIDENCE_MODIFIERS): detected via
+a plain-text pattern ("n = 200", "200 patients", "200 participants",
+"sample size of 200") — same negation-agnostic phrase-matching style
+already used by evidence_hierarchy_classifier.py/negative_evidence_classifier.py.
+    >= 200 participants     +6
+    >= 100 participants     +4
+    >= 30 participants      +2
+    (no size detected, or below 30)  +0
+
+Blinding modifier (BLINDING_CONFIDENCE_MODIFIERS): detects the
+strongest blinding level mentioned.
+    Double-blind / triple-blind      +5
+    Single-blind                     +3
+    (no blinding mentioned)          +0
+
+Placebo-control modifier (PLACEBO_CONTROL_CONFIDENCE_MODIFIER):
+    Placebo-controlled mentioned     +4
+    (not mentioned)                  +0
+
+The three modifiers are summed and capped at
+MAX_METHODOLOGICAL_MODIFIER_TOTAL (15) before being added to `base` —
+a text that happens to match many keywords cannot let these modifiers
+dominate the tier-based score they're meant to only refine. The final
+result is still clamped to [0, 100], exactly as before this task.
+
+THESE THREE MODIFIERS' POINT VALUES ARE A FIRST DRAFT, NOT VALIDATED
+— same status as every other weight in this module (see WHAT THIS
+MODULE DOES NOT DO below). They are reasoned, documented, and
+reversible, not calibrated against expert-reviewed cases.
+
 WHAT THIS MODULE DOES NOT DO (yet)
 - Not calibrated against expert-reviewed use cases (audit 4.16's
   "score را با expert-reviewed use cases calibrate شود" and "sensitivity
-  analysis انجام شود") — the numbers above are a first, documented,
+  analysis انجام شود") — the numbers above, including the Task 10.1
+  methodological-quality modifiers, are a first, documented,
   reversible starting point, not a validated model.
 - Does not change Decision_Class. See
   confidence_adjusted_framing_note() for the one place this DOES
   surface in decision framing — as an additive note, not a change to
   the existing Decision_Class value.
+- The sample-size/blinding/placebo detectors are plain-text pattern
+  matches on the same evidence text already classified elsewhere in
+  this pipeline — not a structured extraction of an actual reported
+  N, and not a true GRADE-style risk-of-bias assessment (randomization
+  adequacy, allocation concealment, selective reporting are NOT
+  assessed here — see the Task 10 audit for that gap).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 CONFIDENCE_BY_HIERARCHY_TIER: dict[Optional[str], float] = {
@@ -99,16 +158,138 @@ LOW_CONFIDENCE_THRESHOLD = 30
 HIGH_OPPORTUNITY_THRESHOLD = 62
 
 
+# =====================================================================
+# Task 10.1 — methodological-quality modifiers. See the module
+# docstring's "TASK 10.1" section for the full reasoning; this is the
+# implementation of exactly the three modifiers documented there.
+# =====================================================================
+
+# Ordered largest to smallest, so the FIRST pattern that matches wins —
+# same "strongest tier present wins" principle
+# evidence_hierarchy_classifier.py already uses, applied here to
+# sample-size bands instead of study-type tiers.
+SAMPLE_SIZE_CONFIDENCE_MODIFIERS: list[tuple[int, float]] = [
+    (200, 6),
+    (100, 4),
+    (30, 2),
+]
+
+# Matches "n = 200", "n=200", "200 patients", "200 participants",
+# "200 subjects", "sample size of 200" — deliberately simple patterns
+# (plain-text, not a structured Sample_Size field extraction) mirroring
+# the phrase-matching style already used elsewhere in this pipeline
+# (evidence_hierarchy_classifier.py, negative_evidence_classifier.py).
+_SAMPLE_SIZE_PATTERNS = [
+    re.compile(r"\bn\s*=\s*(\d+)\b", re.IGNORECASE),
+    re.compile(r"\bsample size of (\d+)\b", re.IGNORECASE),
+    re.compile(r"\b(\d+)\s*(?:patients|participants|subjects|volunteers)\b", re.IGNORECASE),
+]
+
+BLINDING_CONFIDENCE_MODIFIERS: dict[str, float] = {
+    "double_or_triple_blind": 5,
+    "single_blind": 3,
+}
+
+_DOUBLE_TRIPLE_BLIND_PATTERN = re.compile(
+    r"\b(double|triple)[\s-]blind(?:ed)?\b", re.IGNORECASE,
+)
+_SINGLE_BLIND_PATTERN = re.compile(r"\bsingle[\s-]blind(?:ed)?\b", re.IGNORECASE)
+
+PLACEBO_CONTROL_CONFIDENCE_MODIFIER = 4
+
+_PLACEBO_CONTROL_PATTERN = re.compile(
+    r"\bplacebo[\s-]controlled\b|\bvs\.?\s+placebo\b|\bplacebo[\s-]controlled\s+trial\b",
+    re.IGNORECASE,
+)
+
+# All three modifiers together cannot outweigh the tier-based hierarchy
+# score they're meant to only refine — see module docstring.
+MAX_METHODOLOGICAL_MODIFIER_TOTAL = 15
+
+
+def _detect_sample_size_modifier(evidence_text: Optional[str]) -> float:
+    """Returns the largest sample-size band modifier a plain-text
+    number match supports, or 0 if no pattern matches or the matched
+    number is below the smallest band. Never raises on malformed text."""
+    if not evidence_text:
+        return 0
+
+    largest_n = 0
+    for pattern in _SAMPLE_SIZE_PATTERNS:
+        for match in pattern.finditer(evidence_text):
+            try:
+                value = int(match.group(1))
+            except (ValueError, IndexError):
+                continue
+            largest_n = max(largest_n, value)
+
+    for threshold, modifier in SAMPLE_SIZE_CONFIDENCE_MODIFIERS:
+        if largest_n >= threshold:
+            return modifier
+    return 0
+
+
+def _detect_blinding_modifier(evidence_text: Optional[str]) -> float:
+    """Returns the strongest blinding-level modifier mentioned in the
+    text — double/triple-blind beats single-blind if both happen to
+    appear (e.g. text describing more than one study)."""
+    if not evidence_text:
+        return 0
+    if _DOUBLE_TRIPLE_BLIND_PATTERN.search(evidence_text):
+        return BLINDING_CONFIDENCE_MODIFIERS["double_or_triple_blind"]
+    if _SINGLE_BLIND_PATTERN.search(evidence_text):
+        return BLINDING_CONFIDENCE_MODIFIERS["single_blind"]
+    return 0
+
+
+def _detect_placebo_control_modifier(evidence_text: Optional[str]) -> float:
+    if not evidence_text:
+        return 0
+    if _PLACEBO_CONTROL_PATTERN.search(evidence_text):
+        return PLACEBO_CONTROL_CONFIDENCE_MODIFIER
+    return 0
+
+
+def _methodological_quality_modifier(evidence_text: Optional[str]) -> float:
+    """Sums the three Task 10.1 modifiers, capped at
+    MAX_METHODOLOGICAL_MODIFIER_TOTAL. This is the ONLY entry point
+    compute_evidence_confidence() calls — the three detector functions
+    above are each independently testable, but this is what callers of
+    this module beyond compute_evidence_confidence() itself should use
+    if they ever need the combined modifier value."""
+    total = (
+        _detect_sample_size_modifier(evidence_text)
+        + _detect_blinding_modifier(evidence_text)
+        + _detect_placebo_control_modifier(evidence_text)
+    )
+    return min(total, MAX_METHODOLOGICAL_MODIFIER_TOTAL)
+
+
 def compute_evidence_confidence(
     evidence_hierarchy_detail: Optional[str],
     evidence_level: str,
     has_negative_evidence: bool,
+    evidence_text: Optional[str] = None,
 ) -> float:
     """Returns a 0-100 confidence score. See module docstring for the
-    documented weight tables this is built from."""
+    documented weight tables this is built from.
+
+    evidence_text (Task 10.1, optional, default None — no change to
+    any existing caller's behavior): the same free-text evidence
+    string already classified for Evidence_Hierarchy_Detail. When
+    provided AND a real hierarchy/level tier was found (base > 0), the
+    sample-size/blinding/placebo-control modifiers documented in the
+    module docstring's "TASK 10.1" section are added before the
+    negative-evidence multiplier. When omitted, or when no real tier
+    was classified, this function's return value is unchanged from
+    its pre-Task-10.1 behavior.
+    """
     base = CONFIDENCE_BY_HIERARCHY_TIER.get(evidence_hierarchy_detail)
     if base is None:
         base = CONFIDENCE_BY_EVIDENCE_LEVEL_FALLBACK.get(evidence_level, 0)
+
+    if base > 0 and evidence_text:
+        base += _methodological_quality_modifier(evidence_text)
 
     if has_negative_evidence:
         base = base * NEGATIVE_EVIDENCE_CONFIDENCE_MULTIPLIER

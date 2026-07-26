@@ -146,3 +146,18 @@ def get_source_config(name):
         if source["name"] == name:
             return source
     return None
+
+
+# Task 6 — pilot-scope evidence coverage. A single elevated ceiling,
+# used only for explicitly pilot-scoped collection sessions (see
+# multi_source_collector.collect_multi_source_evidence's
+# max_results_override parameter and research_engine.py's pilot_mode
+# parameter) — 3x the per-source default of 5 above. Chosen as a
+# documented multiplier of the existing default, not an independently
+# invented number: materially fuller coverage than the default
+# exploratory-session cap, while still bounded (not "unlimited"), so a
+# pilot session's connector calls stay within the kind of volume this
+# repository's connectors have actually been exercised at. If a real
+# pilot's rate-limit behavior at this volume needs adjusting, that is
+# a deliberately separate, later change — not invented here.
+PILOT_MAX_RESULTS = 15

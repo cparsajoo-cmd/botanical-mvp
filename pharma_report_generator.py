@@ -223,6 +223,31 @@ def _format_regulatory_intelligence_section(row: pd.Series, market) -> list:
     return lines
 
 
+def _format_gate_results_section(gate_results) -> list:
+    """Task 6 — formats Task 1's Gate_Results concisely. Formatting
+    only: every value already exists on the dict
+    BotanicalRDCandidateEngine._evaluate_gates() built for this row;
+    nothing is recomputed, reinterpreted, or reclassified here. Gates
+    are informational in this report exactly as they are in the
+    underlying data — this section never states or implies that a
+    gate blocked or changed the Decision_Class above it (only the
+    "safety" gate's FAILED status is, in fact, tied to Decision_Class,
+    and even that relationship is reported here, not re-derived)."""
+    if not isinstance(gate_results, dict) or not gate_results:
+        return []
+
+    lines = ["**Decision gates** (see Decision_Class above for the overall call):"]
+    for gate_name in ("safety", "identity", "minimum_evidence", "regulatory"):
+        gate = gate_results.get(gate_name)
+        if not gate:
+            continue
+        status = gate.get("status")
+        status_text = status.value if hasattr(status, "value") else status
+        lines.append(f"- {gate_name}: {status_text} — {gate.get('reason', '')}")
+
+    return lines
+
+
 def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
@@ -333,6 +358,7 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) 
     lines += _format_robustness_section(robustness)
     lines += _format_evidence_conflict_section(row.get("Evidence_Conflict_Structured"))
     lines += _format_regulatory_intelligence_section(row, market)
+    lines += _format_gate_results_section(row.get("Gate_Results"))
 
     lines += [
         "",
@@ -349,6 +375,7 @@ def generate_pharma_report(
     market: str,
     top_n: int = 20,
     standardized_project: dict = None,
+    decision_record_id: str = None,
 ) -> str:
     """Builds the full Markdown report. Returns a short, explicit
     "no candidates" report (not an empty string, not an exception) if
@@ -359,6 +386,14 @@ def generate_pharma_report(
     standardize_project_definition() already builds in step_inputs.py —
     passed straight through, not recomputed here, so this stays a
     formatting layer, not a second source of the same information.
+
+    decision_record_id (Task 6, optional): the analysis_id
+    decision_record_persistence.persist_decision_record() returned for
+    THIS exact result, if the caller already ran contract validation
+    and persistence before generating this report. Passed straight
+    through — never generated, looked up, or persisted here. When
+    None (e.g. this report was generated before validation ran), the
+    report says so plainly rather than fabricating an ID.
     """
     lines = [
         "# Botanical R&D Decision Intelligence Report",
@@ -396,6 +431,23 @@ def generate_pharma_report(
 
     total = len(result)
     lines.append(f"**Candidates evaluated:** {total}")
+
+    # Task 6 — report-level governance metadata, additive only. Both
+    # values are read as-is, never recomputed: Scoring_Config_Version
+    # comes straight from the run() column (Task 3); decision_record_id
+    # is only ever what the caller explicitly passed in (Task 4) — this
+    # function never generates, looks up, or persists one itself.
+    if "Scoring_Config_Version" in result.columns and not result["Scoring_Config_Version"].empty:
+        scoring_versions = sorted(set(result["Scoring_Config_Version"].dropna().astype(str)))
+        if scoring_versions:
+            lines.append(f"**Scoring configuration version:** {', '.join(scoring_versions)}")
+    if decision_record_id:
+        lines.append(f"**Decision record:** persisted (analysis_id: {decision_record_id})")
+    else:
+        lines.append(
+            "**Decision record:** not yet persisted for this exact result — "
+            "run contract validation to create one."
+        )
     lines.append("")
 
     # Executive summary: counts by Go/Investigate/Hold/No-Go.
@@ -419,10 +471,19 @@ def generate_pharma_report(
         sortable = sortable.sort_values("R&D_Opportunity_Score", ascending=False)
     top = sortable.head(top_n)
 
-    # Sprint 3: build_robustness_analysis() is called EXACTLY ONCE here,
-    # over the FULL result (not just `top`, so each reference group's
-    # winner/runner-up are found correctly even if one falls outside
-    # the top_n cutoff) — this is the ONLY call site in this codebase.
+    # Sprint 3: build_robustness_analysis() is called EXACTLY ONCE HERE
+    # IN THIS FILE, over the FULL result (not just `top`, so each
+    # reference group's winner/runner-up are found correctly even if
+    # one falls outside the top_n cutoff).
+    #
+    # UPDATED (Task 2): sensitivity_display_adapter.py's
+    # prepare_sensitivity_payload() is a SEPARATE, later call site for
+    # the same function — a different presentation layer (the
+    # Streamlit "Scoring sensitivity and ranking robustness" expander
+    # in step_rd_candidates.py) consuming the same underlying,
+    # unmodified scoring_sensitivity_report.build_robustness_analysis().
+    # Neither call site recomputes or reinterprets what that function
+    # returns; both are read-only consumers.
     #
     # IMPORTANT — this is NOT a production DataFrame column. Unlike
     # Comparative_Rationale_Structured (Sprint 2) or the Sprint-1 card

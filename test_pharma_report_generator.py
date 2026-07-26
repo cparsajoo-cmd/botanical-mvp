@@ -36,6 +36,15 @@ def _make_row(**overrides):
         Recommendation_Confidence_Statement="This INVESTIGATE recommendation reflects real uncertainty: Partial Evidence. Treat as a lead worth pursuing, not a validated conclusion.",
         Competitive_Positioning="Competitive position: scientifically developing (solid, multi-source evidence); regulatorily established (monograph recognition).",
         Rationale="Full narrative rationale text.",
+        # Task 6 — additive defaults; existing tests that don't care
+        # about these fields are unaffected.
+        Gate_Results={
+            "safety": {"gate_name": "safety", "status": "passed", "reason": "No documented hard safety term present.", "evidence": "No explicit flag found"},
+            "identity": {"gate_name": "identity", "status": "passed", "reason": "Compound identity resolved via a 'exact' match.", "evidence": "exact"},
+            "minimum_evidence": {"gate_name": "minimum_evidence", "status": "passed", "reason": "Evidence located.", "evidence": "Clinical / human evidence"},
+            "regulatory": {"gate_name": "regulatory", "status": "not_evaluable", "reason": "No evidence text was available.", "evidence": ""},
+        },
+        Scoring_Config_Version="1.0-default",
     )
     base.update(overrides)
     return base
@@ -338,6 +347,112 @@ def test_sources_are_included_for_traceability():
     result = pd.DataFrame([_make_row(Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/99999/")])
     report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
     assert "https://pubmed.ncbi.nlm.nih.gov/99999/" in report
+
+
+# ---------------------------------------------------------------------
+# Task 6 — gate results, scoring config version, and decision record ID
+# report sections. All additive/formatting-only: nothing here recomputes
+# or reinterprets Gate_Results, Scoring_Config_Version, or the
+# analysis_id decision_record_persistence.py already produced.
+# ---------------------------------------------------------------------
+
+def test_gate_results_section_appears_with_all_four_gates():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Decision gates**" in report
+    assert "- safety: passed" in report
+    assert "- identity: passed" in report
+    assert "- minimum_evidence: passed" in report
+    assert "- regulatory: not_evaluable" in report
+
+
+def test_gate_results_section_shows_reason_text():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Compound identity resolved via a 'exact' match." in report
+
+
+def test_gate_results_section_absent_when_gate_results_missing():
+    result = pd.DataFrame([_make_row(Gate_Results=None)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Decision gates**" not in report
+
+
+def test_gate_results_section_handles_enum_status_objects_not_just_strings():
+    # Gate_Results in a real run() result carries GateStatus enum
+    # members, not plain strings — the section must format either.
+    from data_contracts import GateStatus
+    gate_results = {
+        "safety": {"gate_name": "safety", "status": GateStatus.FAILED, "reason": "Documented hard safety term(s) present: lithogenic.", "evidence": "lithogenic"},
+        "identity": {"gate_name": "identity", "status": GateStatus.PASSED, "reason": "r", "evidence": "exact"},
+        "minimum_evidence": {"gate_name": "minimum_evidence", "status": GateStatus.NOT_EVALUABLE, "reason": "r", "evidence": ""},
+        "regulatory": {"gate_name": "regulatory", "status": GateStatus.PASSED, "reason": "r", "evidence": ""},
+    }
+    result = pd.DataFrame([_make_row(Gate_Results=gate_results)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "- safety: failed" in report
+    assert "lithogenic" in report
+
+
+def test_scoring_config_version_appears_in_report():
+    result = pd.DataFrame([_make_row(**{"Scoring_Config_Version": "1.0-default"})])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Scoring configuration version:** 1.0-default" in report
+
+
+def test_scoring_config_version_absent_column_does_not_crash():
+    row = _make_row()
+    del row["Scoring_Config_Version"]
+    result = pd.DataFrame([row])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Scoring configuration version:**" not in report
+
+
+def test_decision_record_id_present_when_passed():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        decision_record_id="fixed-analysis-id-123",
+    )
+    assert "**Decision record:** persisted (analysis_id: fixed-analysis-id-123)" in report
+
+
+def test_decision_record_id_honest_message_when_not_provided():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Decision record:** not yet persisted" in report
+    assert "fixed-analysis-id" not in report
+
+
+def test_decision_record_id_never_fabricated_or_generated_by_this_module():
+    import ast
+    with open("pharma_report_generator.py", encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename="pharma_report_generator.py")
+
+    assert "uuid" not in [
+        alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
+    ]
+    call_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                call_names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                call_names.add(node.func.attr)
+    assert "_new_analysis_id" not in call_names
+    assert "persist_decision_record" not in call_names
+
+
+def test_task6_sections_do_not_change_existing_report_structure_for_default_row():
+    # Regression: existing sections (rationale, comparison, robustness,
+    # evidence conflict, regulatory intelligence) must still all be
+    # present alongside the new Task 6 sections, in the same relative
+    # order they were before.
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    regulatory_idx = report.index("**Regulatory intelligence:**")
+    gates_idx = report.index("**Decision gates**")
+    assert regulatory_idx < gates_idx, "Decision gates must come after Regulatory intelligence, matching _candidate_section's call order"
 
 
 if __name__ == "__main__":

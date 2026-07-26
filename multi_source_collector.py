@@ -191,9 +191,18 @@ def _run_one_source(
     market,
     max_pubmed_results,
     save,
+    max_results_override=None,
 ):
     source_name = source_config["name"]
-    max_results = source_config.get("max_results", 5)
+    # Task 6 — pilot-scope coverage. When provided, max_results_override
+    # takes TOP precedence over both this source's own SOURCE_REGISTRY
+    # default AND (for PubMed specifically) max_pubmed_results — the
+    # default (max_results_override=None) leaves every existing caller's
+    # behavior completely unchanged.
+    max_results = (
+        max_results_override if max_results_override is not None
+        else source_config.get("max_results", 5)
+    )
 
     try:
         if source_name == "PubMed":
@@ -204,12 +213,16 @@ def _run_one_source(
                     "error": "PubMed connector not available.",
                 }]
 
+            pubmed_max_results = (
+                max_results_override if max_results_override is not None
+                else (max_pubmed_results or max_results)
+            )
             records = collect_pubmed_evidence(
                 scientific_name=scientific_name,
                 indication=indication,
                 dosage_form=dosage_form,
                 market=market,
-                max_results=max_pubmed_results or max_results,
+                max_results=pubmed_max_results,
                 save=save,
             )
 
@@ -291,7 +304,21 @@ def collect_multi_source_evidence(
     max_pubmed_results=3,
     max_clinicaltrials_results=5,
     save=True,
+    max_results_override=None,
 ):
+    """Runs every enabled source (source_registry.py) concurrently for
+    one plant/indication pair.
+
+    max_results_override (Task 6, default None — no change to any
+    existing caller's behavior): when provided, overrides the
+    per-source max_results ceiling from SOURCE_REGISTRY, uniformly,
+    for every source in this call — including PubMed, taking
+    precedence over max_pubmed_results too. Intended for a small
+    number of explicitly pilot-scoped calls (see
+    source_registry.PILOT_MAX_RESULTS and research_engine.py's
+    pilot_mode parameter) — not a general-purpose knob every call site
+    should start passing.
+    """
     saved_records = []
     errors = []
 
@@ -324,6 +351,7 @@ def collect_multi_source_evidence(
                 market,
                 max_pubmed_results,
                 save,
+                max_results_override,
             )
             future_map[future] = source_config["name"]
 

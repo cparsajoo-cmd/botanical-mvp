@@ -535,6 +535,7 @@ def render_rd_candidates_step(inputs):
                         records, indication=indication, project_id=f"{indication}-{market}",
                     )
                     if decision_record_summary["status"] == "persisted":
+                        st.session_state["rd_last_decision_record_id"] = decision_record_summary["analysis_id"]
                         st.caption(
                             f"✅ Decision record persisted "
                             f"(analysis_id: {decision_record_summary['analysis_id']})"
@@ -587,6 +588,7 @@ def render_rd_candidates_step(inputs):
         report_markdown = generate_pharma_report(
             result_df, indication=indication, dosage_form=dosage_form, market=market,
             standardized_project=inputs.get("standardized_project"),
+            decision_record_id=st.session_state.get("rd_last_decision_record_id"),
         )
         st.download_button(
             "Download R&D report (Markdown)",

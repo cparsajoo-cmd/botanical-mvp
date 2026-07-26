@@ -1,6 +1,7 @@
 from multi_source_collector import collect_multi_source_evidence
 from global_candidate_ranking_engine import rank_global_candidates
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
+from source_registry import PILOT_MAX_RESULTS
 
 
 def _richer_candidate_plants(indication, dosage_form, target_market, target_count):
@@ -52,10 +53,20 @@ def run_research_engine(
     max_results_per_plant=3,
     save=True,
     global_candidate_count=8,
+    pilot_mode=False,
 ):
     """Collects and saves live evidence for the plants relevant to this
     indication/dosage_form/market. Returns what was actually searched
     and saved — nothing more.
+
+    pilot_mode (Task 6, default False — no change to any existing
+    caller's behavior): when True, every source's per-plant result
+    ceiling is raised to source_registry.PILOT_MAX_RESULTS instead of
+    the default per-source SOURCE_REGISTRY ceiling (and instead of
+    max_results_per_plant for PubMed specifically) — see
+    multi_source_collector.collect_multi_source_evidence's
+    max_results_override parameter. Intended for a small number of
+    explicitly scoped pilot deliverables, not routine use.
 
     This used to also run a second, parallel scoring/decision pass
     (decision_engine.analyze_evidence(), merged with
@@ -116,6 +127,7 @@ def run_research_engine(
             max_pubmed_results=max_results_per_plant,
             max_clinicaltrials_results=3,
             save=save,
+            max_results_override=PILOT_MAX_RESULTS if pilot_mode else None,
         )
         all_saved_records.extend(result.get("saved_records", []))
         all_errors.extend(result.get("errors", []))

@@ -25,6 +25,19 @@ def render_evidence_step(inputs):
              "of the database in the background, so this can stay small.",
     )
 
+    # Task 6 — pilot-scope evidence coverage. Off by default (no change
+    # to the default session's behavior/coverage/cost). When checked,
+    # every source's per-plant result ceiling is raised to
+    # source_registry.PILOT_MAX_RESULTS for this collection run — see
+    # research_engine.run_research_engine's pilot_mode parameter.
+    pilot_mode = st.checkbox(
+        "Pilot-scope coverage (fuller evidence collection for a paid deliverable)",
+        value=False,
+        help="Raises the per-source result ceiling for this collection "
+             "run only — intended for a scoped pilot deliverable, not "
+             "routine exploratory sessions.",
+    )
+
     if st.button("Step 2: Collect online evidence"):
         with st.spinner("Searching sources and saving evidence to Supabase..."):
             research_output = run_research_engine(
@@ -36,6 +49,7 @@ def render_evidence_step(inputs):
                 max_results_per_plant=inputs["max_pubmed_results"],
                 save=True,
                 global_candidate_count=quick_count,
+                pilot_mode=pilot_mode,
             )
 
         st.session_state["research_output"] = research_output

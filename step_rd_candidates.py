@@ -520,13 +520,17 @@ def render_rd_candidates_step(inputs):
                     st.dataframe(errors_df, width="stretch")
 
                 # Task 4 — best-effort persistence of the just-validated
-                # records as ONE locked, versioned decision record. Never
-                # blocks or interrupts this page; only a minimal status
-                # message is shown, per the same UI constraint already
-                # used for Sprint 6A.2's telemetry persistence (no
-                # database/SQL details exposed here). Append-only — see
+                # records as ONE locked, versioned decision record. A
+                # decision record must represent a FULLY validated
+                # analysis, never a partial one — so this only runs when
+                # errors_df is empty (every row validated cleanly), not
+                # merely when records is non-empty. Never blocks or
+                # interrupts this page; only a minimal status message is
+                # shown, per the same UI constraint already used for
+                # Sprint 6A.2's telemetry persistence (no database/SQL
+                # details exposed here). Append-only — see
                 # decision_record_persistence.py's LOCK SEMANTICS.
-                if records:
+                if errors_df.empty and records:
                     decision_record_summary = persist_decision_record(
                         records, indication=indication, project_id=f"{indication}-{market}",
                     )
@@ -537,6 +541,11 @@ def render_rd_candidates_step(inputs):
                         )
                     else:
                         st.caption("ℹ️ Decision-record persistence unavailable")
+                elif records:
+                    st.caption(
+                        "ℹ️ Decision record not persisted — contract validation "
+                        "found issues, so this analysis is not yet complete."
+                    )
 
         # Task 2 — Scoring sensitivity / ranking robustness. Purely
         # additive: prepare_sensitivity_payload() only calls the

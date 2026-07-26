@@ -319,6 +319,64 @@ def test_step_rd_candidates_imports_persist_decision_record():
     assert "from decision_record_persistence import persist_decision_record" in source
 
 
+def test_step_rd_candidates_only_persists_when_errors_df_is_empty():
+    # Blocking-issue fix: a decision record must represent a FULLY
+    # validated analysis, never a partial one. The persist_decision_record
+    # call site must be gated on `errors_df.empty` (in addition to
+    # `records` being non-empty) — not merely on `records` being
+    # truthy, which would persist a partial/incomplete analysis
+    # whenever contract validation found issues.
+    #
+    # Uses a parent map to find the INNERMOST enclosing if-statement for
+    # the persist_decision_record(...) call — outer if-statements (e.g.
+    # the surrounding `if st.button(...)`) are not the guard being
+    # tested here and must not be inspected instead.
+    import ast
+
+    with open("step_rd_candidates.py", encoding="utf-8") as f:
+        source = f.read()
+        tree = ast.parse(source, filename="step_rd_candidates.py")
+
+    parent_of = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parent_of[child] = parent
+
+    call_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "persist_decision_record":
+            call_node = node
+            break
+    assert call_node is not None, "no call to persist_decision_record() was found"
+
+    node = parent_of.get(call_node)
+    innermost_if = None
+    while node is not None:
+        if isinstance(node, ast.If):
+            innermost_if = node
+            break
+        node = parent_of.get(node)
+
+    assert innermost_if is not None, "persist_decision_record() must be called inside an if-statement"
+    condition_source = ast.dump(innermost_if.test)
+    assert "errors_df" in condition_source, (
+        "the if-statement guarding persist_decision_record() must "
+        "reference errors_df in its condition"
+    )
+    assert "empty" in condition_source, (
+        "the if-statement guarding persist_decision_record() must "
+        "check errors_df.empty"
+    )
+
+
+def test_step_rd_candidates_shows_a_not_persisted_message_when_validation_has_errors():
+    # The partial-analysis case must not be silent — the person running
+    # the analysis should know a decision record was NOT created.
+    with open("step_rd_candidates.py", encoding="utf-8") as f:
+        source = f.read()
+    assert "not persisted" in source.lower()
+
+
 def test_step_rd_candidates_ui_never_exposes_database_internals():
     with open("step_rd_candidates.py", encoding="utf-8") as f:
         source = f.read()

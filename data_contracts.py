@@ -55,14 +55,14 @@ class GateStatus(str, Enum):
     """Task 1 — Formal Gate Layer. A gate is independent of
     R&D_Opportunity_Score and Decision_Class: it answers "does this
     candidate clear a specific, named precondition" rather than
-    contributing points. PASS/FAIL are affirmative findings; NOT_EVALUABLE
-    means the signal needed to judge the gate wasn't available for this
-    row (never silently treated as PASS). NEEDS_REVIEW is for a gate that
-    found a real but non-hard-blocking concern (see
-    botanical_rd_candidate_engine._evaluate_gates for definitions)."""
-    PASS = "pass"
-    FAIL = "fail"
-    NEEDS_REVIEW = "needs_review"
+    contributing points. PASSED/FAILED are affirmative findings;
+    NOT_EVALUABLE means the signal needed to judge the gate wasn't
+    available, or wasn't specific enough to support an affirmative
+    finding, for this row (never silently treated as PASSED — see
+    botanical_rd_candidate_engine._evaluate_gates for the exact
+    per-gate rules)."""
+    PASSED = "passed"
+    FAILED = "failed"
     NOT_EVALUABLE = "not_evaluable"
 
 
@@ -431,11 +431,12 @@ class CandidateAssessment:
     next_experiment_suggestion: Optional[str] = None
     comparative_rationale: Optional[str] = None
 
-    # Task 1 — Formal Gate Layer. Additive only: a dict of
-    # {gate_name: {"status": GateStatus, "reason": str, "evidence": str}}
-    # for the safety / identity / minimum_evidence / regulatory gates
-    # (see botanical_rd_candidate_engine._evaluate_gates). None on any
-    # row produced before this field existed — never backfilled or
+    # Task 1 — Formal Gate Layer. Additive only: a dict of exactly four
+    # keys (safety / identity / minimum_evidence / regulatory), each
+    # mapping to {"gate_name": <same key>, "status": GateStatus,
+    # "reason": str, "evidence": str} (see
+    # botanical_rd_candidate_engine._evaluate_gates). None on any row
+    # produced before this field existed — never backfilled or
     # inferred. Does not replace or alter decision_class in any way.
     gate_results: Optional[dict] = None
 

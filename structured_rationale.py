@@ -1220,7 +1220,7 @@ def build_recommendation_card(row) -> dict:
 # _market_status()/regulatory_connector.py, a different code path).
 # =====================================================================
 
-SUPPORTED_REGULATORY_AUTHORITIES = {"EMA/HMPC"}
+SUPPORTED_REGULATORY_AUTHORITIES = {"EMA/HMPC", "US (dietary supplement market history)"}
 UNAVAILABLE_REGULATORY_AUTHORITIES = {
     "WHO": "Not available — the real EMA connector's WHO column cannot be reliably extracted from the source PDF's visual layout (see ema_regulatory_connector.py).",
     "ESCOP": "Not available — same PDF-column-extraction limitation as WHO.",
@@ -1235,6 +1235,14 @@ REGULATORY_INTELLIGENCE_LIMITATIONS = [
     "been formally proposed/prioritized, NOT that a monograph has been "
     "adopted, and not the specific traditional-use vs. well-established-use "
     "distinction.",
+    "US market-history status (Task 9) comes from a small, manually curated "
+    "reference for well-established botanicals (regulatory_frameworks."
+    "US_UK_PLANT_REGULATORY_STATUS) — it is a general dietary-supplement "
+    "market-history category, explicitly NOT a legal opinion, NOT an FDA "
+    "determination, and NOT verified against a live FDA registration or "
+    "notification database. Absent for any plant outside that small "
+    "curated set, in which case it is honestly reported as not catalogued, "
+    "never guessed.",
     "WHO, ESCOP, FDA botanical regulatory status, Health Canada, and Novel "
     "Food status are not supported by the current repository and are never "
     "reported as available.",
@@ -1284,6 +1292,21 @@ def _regulatory_ema_status_label(market_landscape_ema_status: Optional[str]) -> 
     return market_landscape_ema_status  # honest passthrough for any other real value
 
 
+def _regulatory_us_status_label(us_status: Optional[str]) -> str:
+    """Task 9 — second jurisdiction. us_status is whatever
+    regulatory_frameworks.get_us_uk_status(plant)'s "us_status" field
+    already says for a plant in the small curated
+    US_UK_PLANT_REGULATORY_STATUS set — never guessed or fabricated
+    for a plant outside that set. Mirrors
+    _regulatory_ema_status_label()'s honest passthrough pattern
+    exactly: label the two cases this module actually knows about
+    (present in the curated set / not), pass through anything else
+    verbatim rather than reinterpreting it."""
+    if not us_status:
+        return "Not catalogued for this plant"
+    return us_status
+
+
 def build_development_considerations(market: Optional[str]) -> list:
     """Reuses regulatory_frameworks.py's existing, static, market-level
     pathway data — explicitly market-level, never presented as a claim
@@ -1303,14 +1326,25 @@ def build_regulatory_intelligence(
     regulatory_barriers: Optional[str],
     market_status: Optional[str],
     market: Optional[str],
+    us_status: Optional[str] = None,
 ) -> dict:
     """Sprint 5, Phase B — the Regulatory Intelligence structured
     object. A pure post-processing interpretation layer: never
     influences R&D_Opportunity_Score, Decision_Class_AH,
     Evidence_Confidence, or Evidence_Consistency. Never fabricates a
     status for an authority this repository cannot actually verify.
+
+    us_status (Task 9, optional, default None — no change to any
+    existing caller's behavior): the "us_status" field from
+    regulatory_frameworks.get_us_uk_status(plant), if the caller
+    already looked it up — a second jurisdiction, alongside EMA/HMPC,
+    both included in authority_coverage. Passed straight through, not
+    looked up here (this stays a pure formatting/interpretation
+    function, not a second place regulatory_frameworks.py is read
+    from).
     """
     ema_status = _regulatory_ema_status_label(market_landscape_ema_status)
+    us_status_label = _regulatory_us_status_label(us_status)
     data_quality = _regulatory_data_quality(market_landscape_ema_status, market_landscape_regulatory_source)
     maturity = _regulatory_maturity(market_landscape_ema_status)
 
@@ -1320,7 +1354,10 @@ def build_regulatory_intelligence(
         else "Not detected in evidence text"
     )
 
-    authority_coverage = {"EMA/HMPC": ema_status}
+    authority_coverage = {
+        "EMA/HMPC": ema_status,
+        "US (dietary supplement market history)": us_status_label,
+    }
     authority_coverage.update(UNAVAILABLE_REGULATORY_AUTHORITIES)
 
     if ema_status == "Not available" and traditional_use_status == "Not detected in evidence text":
@@ -1338,6 +1375,7 @@ def build_regulatory_intelligence(
         "regulatory_data_quality": data_quality,
         "authority_coverage": authority_coverage,
         "ema_status": ema_status,
+        "us_status": us_status_label,
         "traditional_use_status": traditional_use_status,
         "major_regulatory_flags": major_flags,
         "development_considerations": build_development_considerations(market),
@@ -1345,5 +1383,6 @@ def build_regulatory_intelligence(
         "traceability": [
             "Market_Landscape_EMA_HMPC_Status", "Market_Landscape_Regulatory_Source",
             "Regulatory_Barriers", "Market_Status",
+            "regulatory_frameworks.US_UK_PLANT_REGULATORY_STATUS (Task 9)",
         ],
     }

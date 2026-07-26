@@ -455,6 +455,30 @@ def test_task6_sections_do_not_change_existing_report_structure_for_default_row(
     assert regulatory_idx < gates_idx, "Decision gates must come after Regulatory intelligence, matching _candidate_section's call order"
 
 
+# ---------------------------------------------------------------------
+# Task 9 — second jurisdiction: US (dietary supplement market history),
+# sourced from regulatory_frameworks.US_UK_PLANT_REGULATORY_STATUS.
+# ---------------------------------------------------------------------
+
+def test_us_status_line_appears_for_a_curated_plant():
+    result = pd.DataFrame([_make_row(Alternative_Plant="Valeriana officinalis")])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="United States")
+    assert "US (dietary supplement market history): Likely grandfathered" in report
+
+
+def test_us_status_honestly_not_catalogued_for_an_uncurated_plant():
+    result = pd.DataFrame([_make_row(Alternative_Plant="Some Uncurated Plant")])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="United States")
+    assert "US (dietary supplement market history): Not catalogued for this plant" in report
+
+
+def test_us_status_never_calls_a_network_connector():
+    with open("pharma_report_generator.py", encoding="utf-8") as f:
+        source = f.read()
+    assert "from regulatory_frameworks import get_us_uk_status" in source
+    assert "requests" not in source
+
+
 if __name__ == "__main__":
     import sys
 

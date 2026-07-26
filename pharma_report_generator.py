@@ -52,6 +52,7 @@ from __future__ import annotations
 import pandas as pd
 
 from structured_rationale import build_recommendation_card, build_regulatory_intelligence
+from regulatory_frameworks import get_us_uk_status
 from scoring_sensitivity_report import build_robustness_analysis
 
 GO_CALL_ORDER = [
@@ -195,18 +196,29 @@ def _format_regulatory_intelligence_section(row: pd.Series, market) -> list:
     only present when the opt-in market-landscape enrichment has
     actually been run for this result; absent otherwise, in which case
     this honestly reports "Not available" rather than guessing).
+
+    Task 9 — second jurisdiction: regulatory_frameworks.get_us_uk_status()
+    is a pure, static, already-existing lookup (no network call) —
+    calling it here is the one new line this section needed; the
+    formatting/labeling logic itself lives in
+    build_regulatory_intelligence(), same as EMA/HMPC's.
     """
+    alt_plant = row.get("Alternative_Plant")
+    us_uk_status = get_us_uk_status(alt_plant) or {}
+
     regulatory_intelligence = build_regulatory_intelligence(
         market_landscape_ema_status=row.get("Market_Landscape_EMA_HMPC_Status"),
         market_landscape_regulatory_source=row.get("Market_Landscape_Regulatory_Source"),
         regulatory_barriers=row.get("Regulatory_Barriers"),
         market_status=row.get("Market_Status"),
         market=market,
+        us_status=us_uk_status.get("us_status"),
     )
 
     lines = [
         "**Regulatory intelligence:**",
         f"- EMA/HMPC status: {regulatory_intelligence['ema_status']}",
+        f"- US (dietary supplement market history): {regulatory_intelligence['us_status']}",
         f"- Traditional use: {regulatory_intelligence['traditional_use_status']}",
         f"- Regulatory maturity: {regulatory_intelligence['regulatory_maturity']} "
         f"(data quality: {regulatory_intelligence['regulatory_data_quality']})",

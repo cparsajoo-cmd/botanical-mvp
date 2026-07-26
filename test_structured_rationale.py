@@ -1035,6 +1035,69 @@ def test_ema_status_not_available_when_enrichment_never_ran():
     assert "Unavailable" in obj["regulatory_data_quality"]
 
 
+# ---------------------------------------------------------------------
+# Task 9 — second jurisdiction: US (dietary supplement market history),
+# sourced from regulatory_frameworks.US_UK_PLANT_REGULATORY_STATUS
+# (already-existing, already-curated data — no new network connector).
+# ---------------------------------------------------------------------
+
+def test_us_status_present_when_provided():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status=None, market="United States",
+        us_status="Likely grandfathered (long pre-1994 US market history)",
+    )
+    assert obj["us_status"] == "Likely grandfathered (long pre-1994 US market history)"
+
+
+def test_us_status_honestly_not_catalogued_when_absent():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status=None, market="United States",
+    )
+    assert obj["us_status"] == "Not catalogued for this plant"
+
+
+def test_us_authority_appears_in_supported_authorities():
+    assert "US (dietary supplement market history)" in SUPPORTED_REGULATORY_AUTHORITIES
+
+
+def test_us_authority_present_in_coverage_and_never_fabricated_when_absent():
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status=None, market="United States",
+    )
+    assert "US (dietary supplement market history)" in obj["authority_coverage"]
+    assert obj["authority_coverage"]["US (dietary supplement market history)"] == "Not catalogued for this plant"
+    assert obj["authority_coverage"]["US (dietary supplement market history)"] not in {"Yes", "No", "Approved", "Recognized"}
+
+
+def test_us_status_never_claimed_as_an_fda_determination():
+    # US market-history status must stay clearly distinct from "FDA
+    # (botanical regulatory status)", which remains genuinely
+    # unsupported — the two must never be conflated.
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status=None, market_landscape_regulatory_source=None,
+        regulatory_barriers=None, market_status=None, market="United States",
+        us_status="Likely grandfathered (long pre-1994 US market history)",
+    )
+    assert "FDA (botanical regulatory status)" in obj["authority_coverage"]
+    assert obj["authority_coverage"]["FDA (botanical regulatory status)"] != obj["us_status"]
+    assert "Not supported by current repository" in obj["authority_coverage"]["FDA (botanical regulatory status)"]
+
+
+def test_us_status_backward_compatible_default_none():
+    # Every existing caller that doesn't pass us_status at all must
+    # behave exactly as it did before Task 9.
+    obj = build_regulatory_intelligence(
+        market_landscape_ema_status="Listed in HMPC inventory as 'X'",
+        market_landscape_regulatory_source="EMA HMPC — Inventory of herbal substances for assessment",
+        regulatory_barriers=None, market_status=None, market="European Union",
+    )
+    assert obj["us_status"] == "Not catalogued for this plant"
+    assert "Present in EMA HMPC inventory" in obj["ema_status"]  # EMA path fully unaffected
+
+
 def test_regulatory_data_quality_distinguishes_verified_connector_from_static_reference():
     connector_result = build_regulatory_intelligence(
         market_landscape_ema_status="Listed in HMPC inventory as 'X'",

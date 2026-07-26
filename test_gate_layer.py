@@ -4,22 +4,55 @@ Task 1 — Formal Gate Layer regression tests.
 WHAT THIS COVERS
 _evaluate_gates() / _hard_safety_gate() in botanical_rd_candidate_engine.py,
 and the additive Gate_Results column produced through run() and the
-multi-compound merge path. Per-gate PASS/FAIL/NEEDS_REVIEW/NOT_EVALUABLE
-cases, plus the two non-negotiable backward-compatibility guarantees:
-Decision_Class and R&D_Opportunity_Score must be byte-identical to
-pre-Task-1 behavior, since gates are additive-only (except that "safety"
-reports, rather than changes, the pre-existing hard exclusion).
+multi-compound merge path. Public status vocabulary is exactly
+GateStatus.PASSED / GateStatus.FAILED / GateStatus.NOT_EVALUABLE — there
+is no "needs review" state. Per-gate PASSED/FAILED/NOT_EVALUABLE cases
+are covered, plus the non-negotiable backward-compatibility guarantees:
+Decision_Class, R&D_Opportunity_Score, and candidate ordering must be
+byte-identical to pre-Task-1 behavior, since gates are additive-only
+(except that "safety" reports, rather than changes, the pre-existing
+hard exclusion).
+
+CALL-SITE SMOKE TESTS
+research_engine.py and step_rd_candidates.py are checked via AST
+inspection of their source only — this repo does not require streamlit
+or supabase to be installed to run its test suite, and these two tests
+must not either. AST inspection confirms the actual wiring (the
+BotanicalRDCandidateEngine import, construction call, and — for
+step_rd_candidates.py — the .run() invocation) without importing either
+module or its optional dependencies.
 
 HOW TO RUN
     pytest -q test_gate_layer.py
     (or `pytest -q` from the repo root — auto-discovered)
 """
 
+import ast
+
 import pandas as pd
 
 import botanical_rd_candidate_engine as eng
 from data_contracts import GateStatus
 from test_botanical_rd_candidate_engine import make_engine
+
+
+REQUIRED_GATE_NAMES = {"safety", "identity", "minimum_evidence", "regulatory"}
+REQUIRED_NESTED_KEYS = {"gate_name", "status", "reason", "evidence"}
+
+
+# ---------------------------------------------------------------------
+# GateStatus public vocabulary
+# ---------------------------------------------------------------------
+
+def test_gate_status_values_are_exactly_passed_failed_not_evaluable():
+    values = {member.value for member in GateStatus}
+    assert values == {"passed", "failed", "not_evaluable"}
+
+
+def test_gate_status_has_no_needs_review_member():
+    names = {member.name for member in GateStatus}
+    assert "NEEDS_REVIEW" not in names
+    assert not hasattr(GateStatus, "NEEDS_REVIEW")
 
 
 # ---------------------------------------------------------------------
@@ -31,7 +64,7 @@ def test_hard_safety_gate_fails_on_a_hard_term():
     status, hit_terms, flagged = eng.BotanicalRDCandidateEngine._hard_safety_gate(
         "lithogenic", same_plant=False
     )
-    assert status == GateStatus.FAIL
+    assert status == GateStatus.FAILED
     assert hit_terms == {"lithogenic"}
 
 
@@ -39,7 +72,7 @@ def test_hard_safety_gate_passes_with_no_flags():
     status, hit_terms, flagged = eng.BotanicalRDCandidateEngine._hard_safety_gate(
         "", same_plant=False
     )
-    assert status == GateStatus.PASS
+    assert status == GateStatus.PASSED
     assert hit_terms == set()
 
 
@@ -50,7 +83,7 @@ def test_hard_safety_gate_passes_on_controversial_only_terms():
     status, hit_terms, flagged = eng.BotanicalRDCandidateEngine._hard_safety_gate(
         "hepatotoxic", same_plant=False
     )
-    assert status == GateStatus.PASS
+    assert status == GateStatus.PASSED
     assert hit_terms == set()
 
 
@@ -63,10 +96,47 @@ def test_hard_safety_gate_not_evaluable_for_same_plant_even_with_hard_term():
 
 
 # ---------------------------------------------------------------------
+# _evaluate_gates — overall shape: exactly 4 gates, exactly 4 keys each,
+# gate_name matches the containing dictionary key.
+# ---------------------------------------------------------------------
+
+def test_evaluate_gates_returns_exactly_four_top_level_gates():
+    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+        safety_flags="", match_quality="exact", has_evidence=True,
+        evidence_level="Clinical / human evidence",
+        regulatory_barrier_types=[], same_plant=False,
+    )
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+
+
+def test_evaluate_gates_each_nested_result_has_exactly_required_keys():
+    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+        safety_flags="lithogenic", match_quality="", has_evidence=False,
+        evidence_level="No direct evidence",
+        regulatory_barrier_types=None, same_plant=False,
+    )
+    for gate_name, gate in gates.items():
+        assert set(gate.keys()) == REQUIRED_NESTED_KEYS, gate_name
+        assert isinstance(gate["status"], GateStatus)
+        assert isinstance(gate["reason"], str) and gate["reason"]
+        assert isinstance(gate["evidence"], str)
+
+
+def test_evaluate_gates_gate_name_matches_its_dictionary_key():
+    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+        safety_flags="", match_quality="exact", has_evidence=True,
+        evidence_level="Clinical / human evidence",
+        regulatory_barrier_types=[], same_plant=False,
+    )
+    for key, gate in gates.items():
+        assert gate["gate_name"] == key
+
+
+# ---------------------------------------------------------------------
 # _evaluate_gates — safety
 # ---------------------------------------------------------------------
 
-def test_evaluate_gates_safety_fail_matches_hard_safety_gate():
+def test_evaluate_gates_safety_failed_matches_hard_safety_gate():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="lithogenic",
         match_quality="exact",
@@ -75,12 +145,12 @@ def test_evaluate_gates_safety_fail_matches_hard_safety_gate():
         regulatory_barrier_types=[],
         same_plant=False,
     )
-    assert gates["safety"]["status"] == GateStatus.FAIL
+    assert gates["safety"]["status"] == GateStatus.FAILED
     assert "lithogenic" in gates["safety"]["reason"]
     assert gates["safety"]["evidence"] == "lithogenic"
 
 
-def test_evaluate_gates_safety_pass_when_no_flags():
+def test_evaluate_gates_safety_passed_when_no_flags():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="",
         match_quality="exact",
@@ -89,7 +159,7 @@ def test_evaluate_gates_safety_pass_when_no_flags():
         regulatory_barrier_types=[],
         same_plant=False,
     )
-    assert gates["safety"]["status"] == GateStatus.PASS
+    assert gates["safety"]["status"] == GateStatus.PASSED
 
 
 def test_evaluate_gates_safety_not_evaluable_for_same_plant():
@@ -108,31 +178,32 @@ def test_evaluate_gates_safety_not_evaluable_for_same_plant():
 # _evaluate_gates — identity
 # ---------------------------------------------------------------------
 
-def test_evaluate_gates_identity_pass_on_exact_match():
+def test_evaluate_gates_identity_passed_on_exact_match():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="exact", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert gates["identity"]["status"] == GateStatus.PASS
+    assert gates["identity"]["status"] == GateStatus.PASSED
 
 
-def test_evaluate_gates_identity_pass_on_target_verified_match():
+def test_evaluate_gates_identity_passed_on_target_verified_match():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="target_verified", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert gates["identity"]["status"] == GateStatus.PASS
+    assert gates["identity"]["status"] == GateStatus.PASSED
 
 
-def test_evaluate_gates_identity_needs_review_on_class_only_match():
+def test_evaluate_gates_identity_class_only_is_not_evaluable():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="class_only", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert gates["identity"]["status"] == GateStatus.NEEDS_REVIEW
+    assert gates["identity"]["status"] == GateStatus.NOT_EVALUABLE
+    assert "class-only" in gates["identity"]["reason"] or "class_only" in gates["identity"]["reason"]
 
 
 def test_evaluate_gates_identity_not_evaluable_when_match_quality_missing():
@@ -144,61 +215,99 @@ def test_evaluate_gates_identity_not_evaluable_when_match_quality_missing():
     assert gates["identity"]["status"] == GateStatus.NOT_EVALUABLE
 
 
+def test_evaluate_gates_identity_never_returns_failed():
+    # No validated affirmative identity-failure signal exists in the
+    # repository — identity must only ever be PASSED or NOT_EVALUABLE.
+    for match_quality in ["", "exact", "target_verified", "class_only", "anything_else"]:
+        gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+            safety_flags="", match_quality=match_quality, has_evidence=True,
+            evidence_level="Clinical / human evidence",
+            regulatory_barrier_types=[], same_plant=False,
+        )
+        assert gates["identity"]["status"] != GateStatus.FAILED
+
+
 # ---------------------------------------------------------------------
 # _evaluate_gates — minimum_evidence
 # ---------------------------------------------------------------------
 
-def test_evaluate_gates_minimum_evidence_fail_with_no_direct_evidence():
-    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
-        safety_flags="", match_quality="exact", has_evidence=False,
-        evidence_level="No direct evidence",
-        regulatory_barrier_types=[], same_plant=False,
-    )
-    assert gates["minimum_evidence"]["status"] == GateStatus.FAIL
-
-
-def test_evaluate_gates_minimum_evidence_pass_with_real_evidence():
+def test_evaluate_gates_minimum_evidence_passed_with_real_evidence():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="exact", has_evidence=True,
         evidence_level="Preclinical / mechanistic evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert gates["minimum_evidence"]["status"] == GateStatus.PASS
+    assert gates["minimum_evidence"]["status"] == GateStatus.PASSED
+
+
+def test_evaluate_gates_minimum_evidence_generic_missing_is_not_evaluable():
+    # No repository signal distinguishes "not searched" from "searched
+    # and none found" — the generic no-evidence case must be
+    # NOT_EVALUABLE, never a silent FAILED.
+    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+        safety_flags="", match_quality="exact", has_evidence=False,
+        evidence_level="No direct evidence",
+        regulatory_barrier_types=[], same_plant=False,
+    )
+    assert gates["minimum_evidence"]["status"] == GateStatus.NOT_EVALUABLE
+
+
+def test_evaluate_gates_minimum_evidence_never_returns_failed_today():
+    # Has_Negative_Evidence/negative_evidence.is_negative was inspected
+    # as a candidate signal for this gate and rejected: it measures
+    # finding DIRECTION (a study was found and failed/was null), not
+    # evidence VOLUME being insufficient — a different concept. No
+    # genuine affirmative-insufficiency signal exists today, so FAILED
+    # must not be reachable for any combination of has_evidence/
+    # evidence_level this gate actually receives.
+    for has_evidence in (True, False):
+        for evidence_level in (
+            "No direct evidence",
+            "Preclinical / mechanistic evidence",
+            "Clinical / human evidence",
+        ):
+            gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+                safety_flags="", match_quality="exact", has_evidence=has_evidence,
+                evidence_level=evidence_level,
+                regulatory_barrier_types=[], same_plant=False,
+            )
+            assert gates["minimum_evidence"]["status"] != GateStatus.FAILED
 
 
 # ---------------------------------------------------------------------
 # _evaluate_gates — regulatory
 # ---------------------------------------------------------------------
 
-def test_evaluate_gates_regulatory_fail_on_explicit_prohibition():
+def test_evaluate_gates_regulatory_failed_on_explicit_prohibition():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="exact", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=["Prohibited / banned"], same_plant=False,
     )
-    assert gates["regulatory"]["status"] == GateStatus.FAIL
+    assert gates["regulatory"]["status"] == GateStatus.FAILED
 
 
-def test_evaluate_gates_regulatory_pass_when_checked_and_clear():
+def test_evaluate_gates_regulatory_passed_when_checked_and_clear():
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="exact", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert gates["regulatory"]["status"] == GateStatus.PASS
+    assert gates["regulatory"]["status"] == GateStatus.PASSED
 
 
-def test_evaluate_gates_regulatory_pass_on_non_prohibition_barrier():
+def test_evaluate_gates_regulatory_non_ban_restrictions_do_not_fail():
     # A restriction (e.g. prescription-only) is a real finding but is
     # NOT a prohibition — must not fail this gate, only "Prohibited /
-    # banned" does.
+    # banned" does. Restriction stays visible in evidence/reason.
     gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
         safety_flags="", match_quality="exact", has_evidence=True,
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=["Restricted access (prescription/controlled)"],
         same_plant=False,
     )
-    assert gates["regulatory"]["status"] == GateStatus.PASS
+    assert gates["regulatory"]["status"] == GateStatus.PASSED
+    assert "Restricted access" in gates["regulatory"]["evidence"]
 
 
 def test_evaluate_gates_regulatory_not_evaluable_when_never_checked():
@@ -208,23 +317,6 @@ def test_evaluate_gates_regulatory_not_evaluable_when_never_checked():
         regulatory_barrier_types=None, same_plant=False,
     )
     assert gates["regulatory"]["status"] == GateStatus.NOT_EVALUABLE
-
-
-# ---------------------------------------------------------------------
-# Every gate returns exactly the required shape
-# ---------------------------------------------------------------------
-
-def test_evaluate_gates_returns_all_four_gates_with_required_keys():
-    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
-        safety_flags="", match_quality="exact", has_evidence=True,
-        evidence_level="Clinical / human evidence",
-        regulatory_barrier_types=[], same_plant=False,
-    )
-    assert set(gates.keys()) == {"safety", "identity", "minimum_evidence", "regulatory"}
-    for gate in gates.values():
-        assert set(gate.keys()) == {"status", "reason", "evidence"}
-        assert isinstance(gate["status"], GateStatus)
-        assert isinstance(gate["reason"], str) and gate["reason"]
 
 
 # ---------------------------------------------------------------------
@@ -264,7 +356,8 @@ def test_decision_class_strong_candidate_unchanged_after_refactor():
 
 # ---------------------------------------------------------------------
 # End-to-end through run(): Gate_Results populated, and Decision_Class /
-# R&D_Opportunity_Score are exactly what they were before this task.
+# R&D_Opportunity_Score / ordering are exactly what they were before
+# this task.
 # ---------------------------------------------------------------------
 
 def test_gate_results_populated_end_to_end_through_run():
@@ -293,17 +386,15 @@ def test_gate_results_populated_end_to_end_through_run():
     ].iloc[0]
     gates = self_row["Gate_Results"]
     assert isinstance(gates, dict)
-    assert set(gates.keys()) == {"safety", "identity", "minimum_evidence", "regulatory"}
-    # Same_plant row -> safety gate must be NOT_EVALUABLE, not silently PASS.
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+    for gate_name, gate in gates.items():
+        assert set(gate.keys()) == REQUIRED_NESTED_KEYS
+        assert gate["gate_name"] == gate_name
+    # Same_plant row -> safety gate must be NOT_EVALUABLE, not silently PASSED.
     assert gates["safety"]["status"] == GateStatus.NOT_EVALUABLE
 
 
-def test_run_score_and_decision_class_unaffected_by_gate_wiring():
-    # A candidate carrying a hard safety term, not the reference plant
-    # itself, must still be capped to the safety-concern string exactly
-    # as before Task 1 — this is the one place gates and Decision_Class
-    # are allowed to agree; the point of this test is that nothing else
-    # about scoring changed.
+def test_run_score_decision_class_and_ordering_unaffected_by_gate_wiring():
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -321,8 +412,7 @@ def test_run_score_and_decision_class_unaffected_by_gate_wiring():
     ]
     assert not alt_row.empty
     row = alt_row.iloc[0]
-    # Gate_Results present and additive, decision/score computed exactly
-    # by the same untouched _score_candidate/_decision_class logic.
+
     assert "Gate_Results" in result.columns
     assert row["Decision_Class"] in {
         "Strong R&D candidate",
@@ -332,6 +422,76 @@ def test_run_score_and_decision_class_unaffected_by_gate_wiring():
         "Safety concern — not suitable without expert review",
     }
     assert 0 <= row["R&D_Opportunity_Score"] <= 100
+
+    # Row count: this fixture (1 reference plant + 1 alternative plant,
+    # sharing one compound, no merge-worthy duplicates) must still
+    # produce exactly the same two rows (self-row + alternative) that
+    # it did before Gate_Results existed.
+    assert len(result) == 2
+
+    # Ordering: the result must still be sorted by score, descending —
+    # Gate_Results must not have introduced any secondary sort key.
+    scores = result["R&D_Opportunity_Score"].tolist()
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_deterministic_output_contract_locked_engineering_regression():
+    """Engineering regression lock, NOT scientific/domain validation.
+
+    This records the EXACT numeric/string output this deterministic
+    synthetic fixture already produced from the existing, untouched
+    _score_candidate/_decision_class logic, and asserts Gate_Results'
+    addition changed none of it. It says nothing about whether these
+    are scientifically "correct" values for a real plant/compound —
+    only that this specific engineering change (Task 1) is additive.
+    If a FUTURE task deliberately changes scoring/decision logic, this
+    test is expected to need updating too; that is the point of it
+    being a tight, exact lock rather than a range check.
+    """
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="RefPlant", compound_name="SharedCompound",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="SharedCompound",
+             indication="Other", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    # Row count and column count locked exactly.
+    assert len(result) == 2
+    assert len(result.columns) == 50
+    assert "Gate_Results" in result.columns
+
+    # A representative set of pre-existing output fields must still be
+    # present and untouched by this task's column addition.
+    for pre_existing_column in (
+        "Reference_Plant", "Alternative_Plant", "R&D_Opportunity_Score",
+        "Decision_Class", "Decision_Class_AH", "Safety_Flags",
+        "Score_Breakdown", "Rationale",
+    ):
+        assert pre_existing_column in result.columns
+
+    result_sorted = result.sort_values(
+        ["Reference_Plant", "Alternative_Plant"]
+    ).reset_index(drop=True)
+
+    alt_row = result_sorted[result_sorted["Alternative_Plant"] == "AltPlant"].iloc[0]
+    self_row = result_sorted[result_sorted["Alternative_Plant"] == "RefPlant"].iloc[0]
+
+    # Exact recorded values for this fixed, deterministic fixture.
+    assert alt_row["R&D_Opportunity_Score"] == 38.0
+    assert alt_row["Decision_Class"] == "Low priority / insufficient data"
+    assert self_row["R&D_Opportunity_Score"] == 23.0
+    assert self_row["Decision_Class"] == "Low priority / insufficient data"
+
+    # Row order (by score, descending) is exactly: alternative row
+    # first (38.0), self-row second (23.0) — unchanged by Gate_Results.
+    ordered_scores = result["R&D_Opportunity_Score"].tolist()
+    assert ordered_scores == [38.0, 23.0]
 
 
 # ---------------------------------------------------------------------
@@ -364,20 +524,145 @@ def test_gate_results_recomputed_after_multi_compound_merge():
     assert not alt_row.empty
     gates = alt_row.iloc[0]["Gate_Results"]
     assert isinstance(gates, dict)
-    assert set(gates.keys()) == {"safety", "identity", "minimum_evidence", "regulatory"}
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+    for gate_name, gate in gates.items():
+        assert set(gate.keys()) == REQUIRED_NESTED_KEYS
+        assert gate["gate_name"] == gate_name
+
+
+def test_merged_row_safety_gate_reflects_merged_safety_flags():
+    # A hard-safety term on only ONE of several merged sub-rows must
+    # still surface as FAILED on the merged row's safety gate — same
+    # union-of-flags behavior Safety_Flags/Decision_Class already had
+    # before Task 1 (see test_merged_rows_keep_safety_flags_decision_class_and_rationale_in_sync
+    # in test_botanical_rd_candidate_engine.py).
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="RefPlant", compound_name="CompoundA",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="RefPlant", compound_name="CompoundB",
+             indication="TestIndication", target="Diuretic",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="CompoundA",
+             indication="Other", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="CompoundB",
+             indication="Other", target="Diuretic",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    alt_row = result[
+        (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
+    ].iloc[0]
+    if alt_row["Decision_Class"] == "Safety concern — not suitable without expert review":
+        assert alt_row["Gate_Results"]["safety"]["status"] == GateStatus.FAILED
+    else:
+        assert alt_row["Gate_Results"]["safety"]["status"] != GateStatus.FAILED
 
 
 # ---------------------------------------------------------------------
 # Both engine call sites (Step 2's research_engine.py and Step 5's
-# step_rd_candidates.py) continue to work unmodified.
+# step_rd_candidates.py) continue to wire BotanicalRDCandidateEngine —
+# verified via AST/source inspection only (wiring checks only, not
+# behavioral validation), so this test suite does not require
+# streamlit or supabase to be installed. Behavior itself (gate
+# semantics, run() output) is covered by the executable engine tests
+# above, not here.
 # ---------------------------------------------------------------------
 
-def test_research_engine_call_site_still_instantiates_and_imports():
-    import research_engine  # noqa: F401 — import-only smoke check
-    from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
-    engine = BotanicalRDCandidateEngine(use_live_search=False)
-    assert engine is not None
+# A handful of columns that are unambiguously part of run()'s existing
+# OUTPUT_COLUMNS contract — used below only to recognize a literal
+# column-allowlist subscript (df[[...]]) as being "the output columns",
+# so a narrowing that quietly excludes Gate_Results can be detected.
+_KNOWN_OUTPUT_COLUMN_SAMPLE = {
+    "Reference_Plant", "Alternative_Plant", "R&D_Opportunity_Score",
+    "Decision_Class", "Decision_Class_AH", "Safety_Flags", "Rationale",
+}
 
 
-def test_step_rd_candidates_call_site_still_imports():
-    import step_rd_candidates  # noqa: F401 — import-only smoke check
+def _source_calls_and_imports(path):
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+        tree = ast.parse(source, filename=path)
+
+    imports_engine = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "botanical_rd_candidate_engine":
+            if any(alias.name == "BotanicalRDCandidateEngine" for alias in node.names):
+                imports_engine = True
+
+    call_func_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                call_func_names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                call_func_names.add(node.func.attr)
+
+    return imports_engine, call_func_names, tree
+
+
+def _string_constant(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _gate_results_not_stripped(tree):
+    """Wiring-only check: neither an explicit .drop(...) targeting
+    "Gate_Results", nor a literal output-columns allowlist subscript
+    (df[[...]]) that includes several known OUTPUT_COLUMNS entries but
+    omits "Gate_Results", appears in this module. This does not (and
+    cannot, via AST alone) prove behavior — it proves the wiring
+    doesn't statically remove or overwrite the column by name."""
+    for node in ast.walk(tree):
+        # .drop(columns=["Gate_Results", ...]) or .drop(["Gate_Results"], axis=1)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "drop":
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                targets = []
+                if isinstance(arg, ast.List):
+                    targets = [_string_constant(elt) for elt in arg.elts]
+                else:
+                    targets = [_string_constant(arg)]
+                if "Gate_Results" in targets:
+                    return False
+
+        # df[[...]] / df.loc[:, [...]] literal column allowlist that
+        # looks like the run() output columns but excludes Gate_Results.
+        if isinstance(node, ast.Subscript):
+            slice_node = node.slice
+            if isinstance(slice_node, ast.List):
+                names = {_string_constant(elt) for elt in slice_node.elts}
+                names.discard(None)
+                if len(names & _KNOWN_OUTPUT_COLUMN_SAMPLE) >= 3 and "Gate_Results" not in names:
+                    return False
+
+    return True
+
+
+def test_research_engine_call_site_still_wires_botanical_rd_candidate_engine():
+    imports_engine, call_func_names, tree = _source_calls_and_imports("research_engine.py")
+    assert imports_engine, "research_engine.py must import BotanicalRDCandidateEngine"
+    assert "BotanicalRDCandidateEngine" in call_func_names, (
+        "research_engine.py must still construct BotanicalRDCandidateEngine"
+    )
+    assert _gate_results_not_stripped(tree), (
+        "research_engine.py must not drop or allowlist-exclude the Gate_Results column"
+    )
+
+
+def test_step_rd_candidates_call_site_still_wires_botanical_rd_candidate_engine():
+    imports_engine, call_func_names, tree = _source_calls_and_imports("step_rd_candidates.py")
+    assert imports_engine, "step_rd_candidates.py must import BotanicalRDCandidateEngine"
+    assert "BotanicalRDCandidateEngine" in call_func_names, (
+        "step_rd_candidates.py must still construct BotanicalRDCandidateEngine"
+    )
+    assert "run" in call_func_names, (
+        "step_rd_candidates.py must still invoke .run() on the engine"
+    )
+    assert _gate_results_not_stripped(tree), (
+        "step_rd_candidates.py must not drop or allowlist-exclude the Gate_Results column"
+    )

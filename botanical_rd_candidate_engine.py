@@ -2842,7 +2842,7 @@ class BotanicalRDCandidateEngine:
         _evaluate_gates()'s "safety" entry call this one method, so the
         two can never silently drift apart. Behavior is byte-identical
         to the pre-Task-1 inline check in _decision_class(): a
-        HARD_SAFETY_TERMS hit forces FAIL unless same_plant, in which
+        HARD_SAFETY_TERMS hit forces FAILED unless same_plant, in which
         case the exclusion is intentionally skipped (see the long
         comment that used to live inline here, now in _decision_class()
         immediately below) and the gate reports NOT_EVALUABLE rather
@@ -2857,8 +2857,8 @@ class BotanicalRDCandidateEngine:
         if same_plant:
             return GateStatus.NOT_EVALUABLE, hit_terms, flagged_terms
         if hit_terms:
-            return GateStatus.FAIL, hit_terms, flagged_terms
-        return GateStatus.PASS, hit_terms, flagged_terms
+            return GateStatus.FAILED, hit_terms, flagged_terms
+        return GateStatus.PASSED, hit_terms, flagged_terms
 
     @staticmethod
     def _evaluate_gates(
@@ -2888,10 +2888,18 @@ class BotanicalRDCandidateEngine:
         them hard-blocking is a deliberate later step, gated on
         validating them against the Task 5 benchmark set first.
 
-        Returns a dict of
-        {gate_name: {"status": GateStatus, "reason": str, "evidence": str}}
-        for exactly four gates: safety, identity, minimum_evidence,
-        regulatory.
+        Public status vocabulary is exactly GateStatus.PASSED /
+        GateStatus.FAILED / GateStatus.NOT_EVALUABLE — there is no
+        "needs review" state. A gate that finds a real-but-not-hard
+        concern (e.g. identity resting on a class-only match) reports
+        NOT_EVALUABLE with a specific reason, rather than a fourth
+        status, because "class_only" is a weak signal, not an
+        affirmative pass or fail of identity.
+
+        Returns a dict of exactly four keys — safety, identity,
+        minimum_evidence, regulatory — each mapping to
+        {"gate_name": <same key>, "status": GateStatus, "reason": str,
+        "evidence": str}.
         """
         gates = {}
 
@@ -2906,7 +2914,7 @@ class BotanicalRDCandidateEngine:
                 "auto-exclusion is intentionally skipped for this "
                 "self-row (see _decision_class same_plant handling)."
             )
-        elif safety_status == GateStatus.FAIL:
+        elif safety_status == GateStatus.FAILED:
             safety_reason = (
                 f"Documented hard safety term(s) present: "
                 f"{', '.join(sorted(hit_terms))}."
@@ -2914,6 +2922,7 @@ class BotanicalRDCandidateEngine:
         else:
             safety_reason = "No documented hard safety term present."
         gates["safety"] = {
+            "gate_name": "safety",
             "status": safety_status,
             "reason": safety_reason,
             "evidence": "; ".join(sorted(flagged_terms)) if flagged_terms else "No explicit flag found",
@@ -2922,41 +2931,75 @@ class BotanicalRDCandidateEngine:
         # --- Identity gate: uses the same match_quality vocabulary
         # ("exact" / "target_verified" / "class_only") _decision_class()
         # already reads elsewhere (e.g. its own weak_target_match/
-        # needs_cap logic) — no new identity states are introduced here. ---
+        # needs_cap logic) — no new identity states are introduced here.
+        # A "class_only" match is NOT_EVALUABLE, not FAILED: the repo
+        # has no signal that affirmatively proves an identity match is
+        # WRONG, only signals of how strong a confirmed match is — so
+        # the only two states an evidence-backed conclusion can support
+        # here are PASSED (identity is resolved) and NOT_EVALUABLE
+        # (identity is not resolved, for any reason, including a weak
+        # class-only match or a missing signal). ---
         if not match_quality:
             gates["identity"] = {
+                "gate_name": "identity",
                 "status": GateStatus.NOT_EVALUABLE,
                 "reason": "No match-quality signal was available for this row.",
                 "evidence": "",
             }
         elif match_quality in {"exact", "target_verified"}:
             gates["identity"] = {
-                "status": GateStatus.PASS,
+                "gate_name": "identity",
+                "status": GateStatus.PASSED,
                 "reason": f"Compound identity resolved via a '{match_quality}' match.",
                 "evidence": match_quality,
             }
         else:
             gates["identity"] = {
-                "status": GateStatus.NEEDS_REVIEW,
+                "gate_name": "identity",
+                "status": GateStatus.NOT_EVALUABLE,
                 "reason": (
                     "Match rests on a class-only (broad chemical-class) "
-                    "similarity, not a confirmed shared compound or target."
+                    "similarity, not a confirmed shared compound or "
+                    "target — not strong enough to affirmatively resolve "
+                    "identity, and not an affirmative identity failure either."
                 ),
                 "evidence": match_quality,
             }
 
-        # --- Minimum-evidence gate: same has_evidence/evidence_level
-        # signals _decision_class() already uses for its own ceiling logic. ---
-        if evidence_level == "No direct evidence" and not has_evidence:
+        # --- Minimum-evidence gate: PASSED requires a real, located
+        # evidence record (has_evidence and evidence_level isn't the
+        # generic placeholder). FAILED would require an existing
+        # repository signal that affirmatively proves evidence
+        # collection/evaluation occurred AND the defined minimum was
+        # not met. The repository was inspected for such a signal:
+        # Has_Negative_Evidence / negative_evidence.is_negative exists,
+        # but it measures FINDING DIRECTION (a study was found and its
+        # result was negative/failed/null) — that is a different
+        # concept from evidence VOLUME being insufficient, and using it
+        # here would conflate "we found evidence and it didn't work"
+        # with "we didn't find enough evidence to judge." No existing
+        # signal distinguishes "not searched" from "searched, found
+        # nothing" for this candidate, so FAILED is not reachable here
+        # — the generic no-evidence case is NOT_EVALUABLE, per Task 1's
+        # explicit instruction not to invent a threshold or a new
+        # evidence-state framework. ---
+        if has_evidence and evidence_level != "No direct evidence":
             gates["minimum_evidence"] = {
-                "status": GateStatus.FAIL,
-                "reason": "No direct scientific evidence located for this candidate.",
+                "gate_name": "minimum_evidence",
+                "status": GateStatus.PASSED,
+                "reason": f"Evidence located at level: {evidence_level}.",
                 "evidence": evidence_level,
             }
         else:
             gates["minimum_evidence"] = {
-                "status": GateStatus.PASS,
-                "reason": f"Evidence located at level: {evidence_level}.",
+                "gate_name": "minimum_evidence",
+                "status": GateStatus.NOT_EVALUABLE,
+                "reason": (
+                    "No direct evidence is recorded for this candidate, "
+                    "and the repository has no signal distinguishing "
+                    "'not searched' from 'searched and none found' — "
+                    "this cannot be reported as an affirmative failure."
+                ),
                 "evidence": evidence_level,
             }
 
@@ -2968,16 +3011,21 @@ class BotanicalRDCandidateEngine:
         # collected for this row (never checked), vs. an empty list when
         # evidence was reviewed and no barrier was found (checked, clear) —
         # same "never searched" vs. "searched, found nothing" distinction
-        # _market_status() already makes for its own vocabulary. ---
+        # _market_status() already makes for its own vocabulary. Any
+        # non-ban restriction (prescription-only, controlled, restricted
+        # access, claim-limited, etc.) stays visible in evidence/reason
+        # but never fails this gate. ---
         if regulatory_barrier_types is None:
             gates["regulatory"] = {
+                "gate_name": "regulatory",
                 "status": GateStatus.NOT_EVALUABLE,
                 "reason": "No evidence text was available to check for a regulatory prohibition.",
                 "evidence": "",
             }
         elif "Prohibited / banned" in regulatory_barrier_types:
             gates["regulatory"] = {
-                "status": GateStatus.FAIL,
+                "gate_name": "regulatory",
+                "status": GateStatus.FAILED,
                 "reason": (
                     "Reviewed evidence text indicates this candidate is "
                     "prohibited/banned in at least one jurisdiction."
@@ -2986,7 +3034,8 @@ class BotanicalRDCandidateEngine:
             }
         else:
             gates["regulatory"] = {
-                "status": GateStatus.PASS,
+                "gate_name": "regulatory",
+                "status": GateStatus.PASSED,
                 "reason": "No explicit prohibition/ban found in reviewed evidence text.",
                 "evidence": "; ".join(regulatory_barrier_types) if regulatory_barrier_types else "None identified",
             }
@@ -3043,7 +3092,7 @@ class BotanicalRDCandidateEngine:
         safety_gate_status, _hit_terms, _flagged_terms = (
             BotanicalRDCandidateEngine._hard_safety_gate(safety_flags, same_plant)
         )
-        if safety_gate_status == GateStatus.FAIL:
+        if safety_gate_status == GateStatus.FAILED:
             return "Safety concern — not suitable without expert review"
 
         # Controversial-only flags (carcinogenic/mutagenic/genotoxic with

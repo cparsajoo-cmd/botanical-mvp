@@ -517,3 +517,101 @@ def test_no_legacy_preparation_or_dosage_module_becomes_production_reachable():
     assert "database" in sets.production_active
     assert "data_contracts" in sets.production_active
     assert "candidate_output_adapter" in sets.production_active
+
+
+# ======================================================================
+# 6) Correction — a persisted evidence record shared across two
+#    matched-compound sub-row summaries must be counted exactly once
+#    when merged, not once per sub-row.
+# ======================================================================
+
+def test_shared_evidence_record_counted_exactly_once_when_merging_summaries():
+    """Simulates the exact scenario the correction targets: the same
+    PERSISTED evidence record (stable evidence_record_id "ev-shared")
+    was matched under two DIFFERENT compounds (e.g. it mentions both
+    reference compounds, or was reached via the plant-level fallback
+    from two different compound-scoped lookups) and therefore appears
+    in both sub-rows' own Applicability_Summary before any merge.
+    """
+    summary_for_compound_a = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {
+            "evidence_record_id": "ev-shared",
+            "classification": EvidenceApplicability.PARTIALLY_APPLICABLE.value,
+            "rationale": "shared record, seen via compound A",
+            "evaluated_dimensions": ["indication", "dosage_form"],
+            "missing_dimensions": ["plant_part", "extraction_or_solvent"],
+            "detected_mismatches": [],
+        },
+        {
+            "evidence_record_id": "ev-only-a",
+            "classification": EvidenceApplicability.NOT_APPLICABLE.value,
+            "rationale": "only seen via compound A",
+            "evaluated_dimensions": ["indication"],
+            "missing_dimensions": ["dosage_form"],
+            "detected_mismatches": ["indication (detected 'acne' vs selected 'sleep support')"],
+        },
+    ])
+    summary_for_compound_b = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {
+            # Same evidence_record_id as above — the same persisted row,
+            # reached this time via compound B's own lookup.
+            "evidence_record_id": "ev-shared",
+            "classification": EvidenceApplicability.PARTIALLY_APPLICABLE.value,
+            "rationale": "shared record, seen via compound B",
+            "evaluated_dimensions": ["indication", "dosage_form"],
+            "missing_dimensions": ["plant_part", "extraction_or_solvent"],
+            "detected_mismatches": [],
+        },
+    ])
+
+    merged = eng.BotanicalRDCandidateEngine._merge_applicability_summaries(
+        [summary_for_compound_a, summary_for_compound_b]
+    )
+
+    # evidence_record_ids contains the shared id exactly once.
+    assert merged["evidence_record_ids"].count("ev-shared") == 1
+    assert set(merged["evidence_record_ids"]) == {"ev-shared", "ev-only-a"}
+
+    # total_evidence_items counts it once: 2 distinct records total
+    # (ev-shared + ev-only-a), NOT 3 (which the pre-correction summing
+    # behavior would have produced: 2 items in summary A + 1 item in
+    # summary B).
+    assert merged["total_evidence_items"] == 2
+
+    # Its classification count (PARTIALLY_APPLICABLE) increases only
+    # once for the shared record, not once per sub-row it appeared in.
+    assert merged["counts"][EvidenceApplicability.PARTIALLY_APPLICABLE.value] == 1
+    assert merged["counts"][EvidenceApplicability.NOT_APPLICABLE.value] == 1
+
+
+def test_merge_fallback_dedup_for_items_without_an_evidence_record_id():
+    """Two in-memory-only items (no evidence_record_id at all) with an
+    IDENTICAL classification/mismatch/missing-dimension signature are
+    treated as the same item by the documented fallback — but two such
+    items with a DIFFERENT signature are correctly kept distinct, even
+    though neither has an id to key on."""
+    identical_a = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {"evidence_record_id": None, "classification": EvidenceApplicability.NOT_ASSESSABLE.value,
+         "detected_mismatches": [], "missing_dimensions": ["indication", "dosage_form"]},
+    ])
+    identical_b = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {"evidence_record_id": None, "classification": EvidenceApplicability.NOT_ASSESSABLE.value,
+         "detected_mismatches": [], "missing_dimensions": ["indication", "dosage_form"]},
+    ])
+    merged_identical = eng.BotanicalRDCandidateEngine._merge_applicability_summaries(
+        [identical_a, identical_b]
+    )
+    assert merged_identical["total_evidence_items"] == 1
+
+    distinct_a = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {"evidence_record_id": None, "classification": EvidenceApplicability.NOT_ASSESSABLE.value,
+         "detected_mismatches": [], "missing_dimensions": ["indication"]},
+    ])
+    distinct_b = eng.BotanicalRDCandidateEngine._summarize_applicability([
+        {"evidence_record_id": None, "classification": EvidenceApplicability.NOT_ASSESSABLE.value,
+         "detected_mismatches": [], "missing_dimensions": ["dosage_form"]},
+    ])
+    merged_distinct = eng.BotanicalRDCandidateEngine._merge_applicability_summaries(
+        [distinct_a, distinct_b]
+    )
+    assert merged_distinct["total_evidence_items"] == 2

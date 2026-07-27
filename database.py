@@ -20,16 +20,37 @@ from supabase_client import get_supabase_client
 #                                          primary key — only newly READ
 #                                          here, not newly written)
 #
-# Until an operator adds the five new columns by hand in Supabase:
-#   - save_evidence_record()'s insert will raise a PostgREST
-#     "column ... does not exist" error for the whole row (see the
-#     inline comment at the insert call site for which callers catch
-#     this and which don't) — existing columns are unaffected.
-#   - load_evidence_records() degrades gracefully: item.get(<new key>, "")
-#     simply returns "" for a column that doesn't exist in the response,
-#     so existing callers and existing rows are unaffected either way.
-# This module does not attempt to create the columns itself, matching
-# every other persistence module in this repository.
+# DEPLOYMENT STATUS — read this before deploying, stated explicitly,
+# not just implied:
+#
+#   1. READS degrade safely when the new columns are absent or the
+#      values are null. load_evidence_records()'s item.get(<new key>, "")
+#      returns "" for a column PostgREST's response doesn't contain at
+#      all (unmigrated table) and for a column that exists but is NULL
+#      on an old row (migrated table, pre-Task-10.2 row) — both cases
+#      behave identically to every caller. No existing caller needs to
+#      change to tolerate either case.
+#
+#   2. WRITES require the five columns to already exist on the real
+#      Supabase table. This is not optional or best-effort.
+#      save_evidence_record()'s single insert() call either succeeds
+#      with every field in the dict (including the five new ones) or
+#      fails as one unit — there is no partial-column insert in
+#      PostgREST, so a missing column raises for the WHOLE row, not
+#      just the new fields.
+#
+#   3. save_evidence_record() IS NOT BACKWARD-COMPATIBLE WITH AN
+#      UNMIGRATED PRODUCTION TABLE. Deploying this code against a
+#      evidence_records table that does not yet have the five new
+#      columns will make every new evidence save fail (raising, or
+#      surfacing as a per-record error — see the inline comment at the
+#      insert call site for exactly which callers catch it and which
+#      propagate it). The five columns MUST be added to the real
+#      Supabase table before or atomically with this code deploying —
+#      there is no safe order that avoids this, because this module
+#      does not create the columns itself, matching every other
+#      persistence module in this repository (no migration file exists
+#      anywhere in this codebase for any table).
 # ======================================================================
 
 

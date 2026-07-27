@@ -202,6 +202,38 @@ EVIDENCE_TEXT_INDEX_ALLOWLIST = (
     "Source_Organization", "Source_Year", "Source_URL",
 )
 
+# TECHNICAL DEBT NOTE (post-Task-10.2 correction — scope explicitly NOT
+# widened here; recorded for the future ScientificEvidence/source-
+# assertion separation task).
+#
+# This allowlist was built by excluding only the fields Task 10.2 itself
+# identified as platform-generated interpretation (the 5 new
+# Applicability_* fields, plus Direct_For_Selected_Product/
+# Directness_Reason). It was NOT audited for whether OTHER pre-existing
+# columns above are themselves already partially interpreted rather
+# than raw source text — several are plausible candidates for that
+# same concern and deserve review under that future task, not this
+# correction:
+#   - Evidence_Type / Evidence_Level: can be set either from a
+#     connector's own reported value OR from the optional LLM
+#     extractor (llm_extractor.py) — an LLM-classified value re-entering
+#     the same text index that other classifiers read is the same
+#     shape of concern this task corrected for Applicability_*, just
+#     pre-existing and out of THIS correction's scope.
+#   - Dosage_Form_Relevance / Detected_Dosage_Forms / Detected_Indications:
+#     also LLM-derived when the optional LLM path runs, not always raw
+#     source text.
+#   - EMA_Status / WHO_Status / ESCOP_Status: can carry either a real
+#     connector's descriptive output or (historically) the disabled
+#     legacy stub's literal "Yes" (see ARCHITECTURE.md Sprint 5) —
+#     interpretation-shaped either way.
+# None of these are touched by this correction — narrowing this
+# allowlist further is a decision for the ScientificEvidence activation/
+# source-assertion separation task, where the distinction between "raw
+# source assertion" and "platform-derived interpretation" is the task's
+# actual subject, not a side effect of a merge-counting bugfix.
+
+
 
 SIMILAR_COMPOUND_GROUPS = {
     "flavonoid": [
@@ -1557,23 +1589,20 @@ class BotanicalRDCandidateEngine:
                 # highest" reasoning as every other field in this
                 # function.
                 #
-                # This merges by UNIONING each sub-row's own
-                # Applicability_Summary, deduplicating
-                # evidence_record_ids (an evidence item's classification
-                # is fixed at collection time — build_standard_evidence()
-                # computes it once, independent of which candidate row
-                # later matches to it — so the same id can never carry
-                # two different classifications). Known limitation,
-                # documented rather than silently accepted: counts/
-                # total_evidence_items are SUMMED across sub-row
-                # summaries, not re-derived from the deduplicated id set
-                # — an item with no evidence_record_id (an in-memory-only
-                # record, never persisted) that happens to appear under
-                # both the compound- and plant-level fallback bucket in
-                # two different sub-rows could be counted twice. This
-                # does not affect evidence_record_ids itself (which IS
-                # deduplicated) or Decision_Class/score/gates (this
-                # column influences none of them).
+                # Correction (post-acceptance): each PERSISTED evidence
+                # record is now counted EXACTLY ONCE by its stable
+                # evidence_record_id, even if it contributed to more
+                # than one matched compound's sub-row — see
+                # _merge_applicability_summaries()'s own docstring for
+                # how (it deduplicates each sub-row's evidence_items
+                # list, then re-derives counts/strongest_category/
+                # mismatches from that single deduplicated set via
+                # _summarize_applicability(), rather than summing
+                # pre-aggregated counts across sub-rows). Only items
+                # with no evidence_record_id at all (never persisted)
+                # still rely on a documented, disclosed fallback
+                # signature — see that docstring for the exact,
+                # narrow limitation this leaves.
                 summaries = [s for s in group["Applicability_Summary"] if isinstance(s, dict)]
                 best["Applicability_Summary"] = self._merge_applicability_summaries(summaries)
 
@@ -2443,7 +2472,10 @@ class BotanicalRDCandidateEngine:
     def _summarize_applicability(items):
         """Task 10.2 — candidate-level Applicability_Summary, built by
         counting/aggregating the evidence-ITEM-level classifications in
-        `items` (as returned by _collect_applicability_items()).
+        `items` (as returned by _collect_applicability_items(), or by
+        _merge_applicability_summaries()'s own deduplicated item list —
+        both shapes carry the same evidence_record_id/classification/
+        detected_mismatches/missing_dimensions keys this method reads).
 
         Deliberately does NOT collapse the items into one derived
         applicability verdict for the candidate (explicitly out of
@@ -2454,6 +2486,14 @@ class BotanicalRDCandidateEngine:
         in evidence_record_ids, so the individual evidence items behind
         this summary remain independently traceable back to specific
         evidence_records rows — not merely to a plant or compound name.
+
+        evidence_items (Task 10.2 correction): the same per-item
+        breakdown this method just counted, kept on the returned dict
+        so _merge_applicability_summaries() can later deduplicate and
+        exactly recompute a merged candidate's counts by
+        evidence_record_id, instead of summing pre-aggregated counts
+        across sub-rows (which could double-count a persisted record
+        that contributed to more than one matched compound).
 
         Never reads or writes R&D_Opportunity_Score, Decision_Class,
         Decision_Class_AH, gate_results, or any scoring input — this is
@@ -2470,22 +2510,33 @@ class BotanicalRDCandidateEngine:
         critical_mismatches = []
         missing_dimensions = set()
         evidence_record_ids = []
+        evidence_items = []
 
         for item in items:
             classification = item.get("classification")
+            detected_mismatches = list(item.get("detected_mismatches", []))
+            item_missing_dimensions = list(item.get("missing_dimensions", []))
+
             if classification in counts:
                 counts[classification] += 1
 
-            for mismatch in item.get("detected_mismatches", []):
+            for mismatch in detected_mismatches:
                 label = f"{classification}: {mismatch}" if classification else mismatch
                 if label not in critical_mismatches:
                     critical_mismatches.append(label)
 
-            missing_dimensions.update(item.get("missing_dimensions", []))
+            missing_dimensions.update(item_missing_dimensions)
 
             record_id = item.get("evidence_record_id")
             if record_id is not None and record_id not in evidence_record_ids:
                 evidence_record_ids.append(record_id)
+
+            evidence_items.append({
+                "evidence_record_id": record_id,
+                "classification": classification,
+                "detected_mismatches": detected_mismatches,
+                "missing_dimensions": item_missing_dimensions,
+            })
 
         total_evidence_items = len(items)
         not_assessable_items = counts[EvidenceApplicability.NOT_ASSESSABLE.value]
@@ -2523,84 +2574,67 @@ class BotanicalRDCandidateEngine:
             "critical_mismatches": critical_mismatches,
             "missing_dimensions": sorted(missing_dimensions),
             "evidence_record_ids": evidence_record_ids,
+            "evidence_items": evidence_items,
             "summary_rationale": summary_rationale,
         }
 
     @staticmethod
     def _merge_applicability_summaries(summaries):
-        """Task 10.2 — combines multiple sub-rows' Applicability_Summary
-        dicts (one per matched compound) into one for a merged
-        candidate row. See the call site's comment
-        (_merge_multi_compound_matches) for the counts-summing
-        limitation this method documents rather than silently hides.
+        """Task 10.2 correction — combines multiple sub-rows'
+        Applicability_Summary dicts (one per matched compound) into one
+        for a merged candidate row, counting each PERSISTED evidence
+        record EXACTLY ONCE by its stable evidence_record_id, even when
+        it contributed to more than one matched compound's sub-row.
+
+        HOW THIS IS EXACT, NOT AN APPROXIMATION
+        Rather than summing each sub-row summary's pre-aggregated
+        `counts` (the pre-correction behavior, which could double-count
+        a record present under two compounds), this deduplicates each
+        sub-row's own `evidence_items` list first, then calls
+        _summarize_applicability() ONCE on that deduplicated set — every
+        count, strongest_category, critical_mismatches, and
+        missing_dimensions value below is therefore derived from the
+        exact same deduplicated item set, reusing the single counting
+        implementation rather than a second, parallel one.
+
+        FALLBACK DEDUP FOR ITEMS WITH NO evidence_record_id
+        An in-memory-only record (never persisted, so no id exists at
+        all) is deduplicated by a documented signature — (classification,
+        sorted detected_mismatches, sorted missing_dimensions) — instead.
+        This is a real, disclosed limitation, not a formality: two
+        SCIENTIFICALLY DISTINCT evidence items that happen to produce an
+        identical classification and identical dimension text would be
+        indistinguishable to this fallback and would be merged into one.
+        This can only ever affect items with no evidence_record_id —
+        every item that has a real, persisted id is deduplicated by that
+        id alone, never by this signature.
         """
         if not summaries:
             return BotanicalRDCandidateEngine._summarize_applicability([])
 
-        merged_counts = {
-            EvidenceApplicability.DIRECTLY_APPLICABLE.value: 0,
-            EvidenceApplicability.PARTIALLY_APPLICABLE.value: 0,
-            EvidenceApplicability.INDIRECTLY_RELEVANT.value: 0,
-            EvidenceApplicability.NOT_ASSESSABLE.value: 0,
-            EvidenceApplicability.NOT_APPLICABLE.value: 0,
-        }
-        evidence_record_ids = []
-        missing_dimensions = set()
-        critical_mismatches = []
-        total_evidence_items = 0
+        deduped_items = []
+        seen_ids = set()
+        seen_signatures = set()
 
         for summary in summaries:
-            for key, value in (summary.get("counts") or {}).items():
-                if key in merged_counts:
-                    merged_counts[key] += int(value or 0)
-            total_evidence_items += int(summary.get("total_evidence_items") or 0)
-            missing_dimensions.update(summary.get("missing_dimensions") or [])
-            for mismatch in summary.get("critical_mismatches") or []:
-                if mismatch not in critical_mismatches:
-                    critical_mismatches.append(mismatch)
-            for record_id in summary.get("evidence_record_ids") or []:
-                if record_id not in evidence_record_ids:
-                    evidence_record_ids.append(record_id)
+            for item in summary.get("evidence_items") or []:
+                record_id = item.get("evidence_record_id")
+                if record_id is not None:
+                    if record_id in seen_ids:
+                        continue
+                    seen_ids.add(record_id)
+                else:
+                    signature = (
+                        item.get("classification"),
+                        tuple(sorted(item.get("detected_mismatches") or [])),
+                        tuple(sorted(item.get("missing_dimensions") or [])),
+                    )
+                    if signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                deduped_items.append(item)
 
-        not_assessable_items = merged_counts[EvidenceApplicability.NOT_ASSESSABLE.value]
-        assessable_items = total_evidence_items - not_assessable_items
-
-        strongest_category = None
-        for candidate in APPLICABILITY_STRENGTH_ORDER:
-            if merged_counts.get(candidate.value, 0) > 0:
-                strongest_category = candidate.value
-                break
-
-        if total_evidence_items == 0:
-            summary_rationale = (
-                "No evidence item with an Applicability_Classification was found "
-                "for this candidate."
-            )
-        else:
-            summary_rationale = (
-                f"{total_evidence_items} evidence item(s) assessed across "
-                f"{len(summaries)} matched compound(s) for preparation applicability: "
-                f"{merged_counts[EvidenceApplicability.DIRECTLY_APPLICABLE.value]} directly "
-                f"applicable, {merged_counts[EvidenceApplicability.PARTIALLY_APPLICABLE.value]} "
-                f"partially applicable, "
-                f"{merged_counts[EvidenceApplicability.INDIRECTLY_RELEVANT.value]} indirectly "
-                f"relevant, {not_assessable_items} not assessable, "
-                f"{merged_counts[EvidenceApplicability.NOT_APPLICABLE.value]} not applicable."
-            )
-            if critical_mismatches:
-                summary_rationale += f" Critical mismatch(es): {'; '.join(critical_mismatches)}."
-
-        return {
-            "counts": merged_counts,
-            "total_evidence_items": total_evidence_items,
-            "assessable_items": assessable_items,
-            "not_assessable_items": not_assessable_items,
-            "strongest_category": strongest_category,
-            "critical_mismatches": critical_mismatches,
-            "missing_dimensions": sorted(missing_dimensions),
-            "evidence_record_ids": evidence_record_ids,
-            "summary_rationale": summary_rationale,
-        }
+        return BotanicalRDCandidateEngine._summarize_applicability(deduped_items)
 
     def _match_compounds(
         self,

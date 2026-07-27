@@ -608,3 +608,128 @@ def get_scientific_evidence_by_ids(evidence_record_ids, evidence_df):
             continue
 
     return result
+
+
+# ======================================================================
+# Task 13.2B — build_scientific_evidence_presentation_payload()
+#
+# WHY THIS LIVES HERE, NOT IN pharma_report_generator.py
+# Same reasoning as get_scientific_evidence_by_ids() (Task 13.2A):
+# standard_evidence_builder.py is already the canonical owner of every
+# ScientificEvidence construction/adapter step (Task 11 audit §10), and
+# already has zero dependency on the report layer or the engine. This
+# keeps that ownership consistent rather than splitting "build the
+# object" and "make the object presentable" across two modules.
+#
+# WHY THIS EXISTS AT ALL, SEPARATELY FROM get_scientific_evidence_by_ids()
+# ScientificEvidence carries two str-Enum fields
+# (applicability_classification, evidence_hierarchy_level).
+# Empirically verified (see the Task 13.2 audit): naive string
+# interpolation of a (str, Enum) member — f"{x}", str(x), and even
+# dataclasses.asdict(x)'s own output — renders the Python repr
+# ("EvidenceApplicability.PARTIALLY_APPLICABLE"), NOT the human-facing
+# value ("Partially applicable"). This function is the one place that
+# conversion happens, exactly mirroring the precedent
+# pharma_report_generator._format_gate_results_section() already
+# established for GateStatus (`status.value if hasattr(status,
+# "value") else status`) — not a new pattern, the same one reused.
+# ======================================================================
+
+# The exact seven fields this function exposes — deliberately a
+# narrower set than ScientificEvidence's own ~25 fields. Every other
+# field (dose, duration, risk_of_bias, evidence_hierarchy_level, etc.)
+# is left off ON PURPOSE, per this task's "do not include additional
+# dataclass fields" constraint — most of them are already documented
+# (Task 11 audit) as having no current source and are always None
+# anyway; exposing them here would invite a report template to render
+# a wall of "None"s that adds no value.
+_PRESENTATION_FIELDS = (
+    "evidence_record_id",
+    "source_type",
+    "study_type",
+    "population",
+    "applicability_classification",
+    "applicability_rationale",
+    "doi_pmid_url",
+)
+
+
+def build_scientific_evidence_presentation_payload(scientific_evidence_by_id):
+    """Task 13.2B — converts a {evidence_record_id: ScientificEvidence}
+    mapping (as returned by get_scientific_evidence_by_ids()) into a
+    {evidence_record_id: dict} mapping safe for direct use in a
+    markdown/report template — plain strings only, no enum objects, no
+    additional fields beyond the seven this task approved.
+
+    PURE, READ-ONLY CONVERSION. Never recomputes applicability,
+    hierarchy, confidence, or any other scientific judgment — every
+    value in the output was already sitting on the ScientificEvidence
+    object, verbatim (after enum unwrapping and missing-value
+    normalization, which are presentation concerns, not scientific
+    ones). Never mutates `scientific_evidence_by_id` or any
+    ScientificEvidence object inside it — read-only attribute access
+    only.
+
+    Parameters
+    ----------
+    scientific_evidence_by_id : the mapping produced by
+        get_scientific_evidence_by_ids() — {id: ScientificEvidence}.
+        Any non-dict input (None, a list, a bare object, etc.) is
+        treated as "nothing to convert" and returns {}, never raises.
+
+    Returns
+    -------
+    dict[str, dict] — one entry per resolvable, well-formed input
+    entry. Each inner dict has exactly the seven keys in
+    _PRESENTATION_FIELDS above, no more, no fewer. A value with no
+    current source (None on the original ScientificEvidence, or
+    normalized to missing — NaN/pd.NA/""/"nan" all included) becomes
+    the real Python None, never a fabricated placeholder string.
+
+    An entry is skipped (not included in the output, the surrounding
+    dict is otherwise unaffected) when:
+      - its key is itself missing/NaN/empty (not a usable id to
+        preserve), or
+      - its value is not actually a ScientificEvidence instance, or
+      - converting it raises for any unforeseen reason — the same
+        fail-one-entry-not-the-whole-call discipline
+        get_scientific_evidence_by_ids() already established.
+    """
+    result = {}
+
+    if not isinstance(scientific_evidence_by_id, dict):
+        return result
+
+    for record_id, evidence in scientific_evidence_by_id.items():
+        # Preserve the id UNCHANGED when usable — normalize_missing_value()
+        # here is only a validity check (is this id usable at all?), its
+        # result is discarded; the original record_id is what's kept,
+        # both as the outer key and inside the payload.
+        if normalize_missing_value(record_id) is None:
+            continue
+
+        if not isinstance(evidence, ScientificEvidence):
+            continue
+
+        try:
+            classification = evidence.applicability_classification
+            classification_value = (
+                classification.value if hasattr(classification, "value") else classification
+            )
+            classification_value = normalize_missing_value(classification_value)
+
+            result[record_id] = {
+                "evidence_record_id": record_id,
+                "source_type": normalize_missing_value(evidence.source_type),
+                "study_type": normalize_missing_value(evidence.study_type),
+                "population": normalize_missing_value(evidence.population),
+                "applicability_classification": classification_value,
+                "applicability_rationale": normalize_missing_value(evidence.applicability_rationale),
+                "doi_pmid_url": normalize_missing_value(evidence.doi_pmid_url),
+            }
+        except Exception:
+            # One malformed entry must not abort every other entry —
+            # same discipline as get_scientific_evidence_by_ids().
+            continue
+
+    return result

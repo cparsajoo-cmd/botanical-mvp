@@ -19,6 +19,7 @@ from decision_record_persistence import (
     DECISION_RECORD_TABLE_NAME,
     _PERSISTED_RECORD_FIELDS,
     _new_analysis_id,
+    _serialize_record,
     load_decision_record,
     persist_decision_record,
 )
@@ -387,3 +388,126 @@ def test_step_rd_candidates_ui_never_exposes_database_internals():
     assert "INSERT INTO" not in source
     assert f'"{DECISION_RECORD_TABLE_NAME}"' not in source
     assert f"'{DECISION_RECORD_TABLE_NAME}'" not in source
+
+
+# ---------------------------------------------------------------------
+# Task 12.1 — applicability_summary persistence (candidate-level
+# evidence traceability). See test_task12_1_decision_record_evidence_
+# traceability.py for the full dedicated suite; these are the same
+# five required proofs kept here too, in this module's own canonical
+# test file, using the fixtures already defined above.
+# ---------------------------------------------------------------------
+
+def _sample_applicability_summary(**overrides):
+    defaults = dict(
+        counts={
+            "Directly applicable": 0,
+            "Partially applicable": 1,
+            "Indirectly relevant": 0,
+            "Not assessable": 1,
+            "Not applicable": 0,
+        },
+        total_evidence_items=2,
+        assessable_items=1,
+        not_assessable_items=1,
+        strongest_category="Partially applicable",
+        critical_mismatches=[],
+        missing_dimensions=["plant_part", "extraction_or_solvent"],
+        evidence_record_ids=["ev-101", "ev-102"],
+        summary_rationale="2 evidence item(s) assessed for preparation applicability.",
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_applicability_summary_is_serialized():
+    summary = _sample_applicability_summary()
+    record = _sample_candidate_assessment(applicability_summary=summary)
+
+    serialized = _serialize_record(record)
+    assert serialized["applicability_summary"] == summary
+
+    client = _FakeSupabaseClient()
+    persist_decision_record([record], indication="Liver support", supabase_client=client)
+    persisted_row = client.store[DECISION_RECORD_TABLE_NAME][0]
+    persisted_records = json.loads(persisted_row["records"])
+    assert persisted_records[0]["applicability_summary"] == summary
+
+
+def test_evidence_record_ids_are_preserved_exactly():
+    exact_ids = ["ev-7", "ev-19", "ev-not-sequential-💊"]
+    summary = _sample_applicability_summary(evidence_record_ids=exact_ids)
+    record = _sample_candidate_assessment(applicability_summary=summary)
+
+    # Preserved exactly through direct serialization...
+    assert _serialize_record(record)["applicability_summary"]["evidence_record_ids"] == exact_ids
+
+    # ...and through the full persist round trip, including JSON
+    # encode/decode (json.dumps(..., default=str) in
+    # persist_decision_record()).
+    client = _FakeSupabaseClient()
+    persist_decision_record([record], indication="Liver support", supabase_client=client)
+    persisted_row = client.store[DECISION_RECORD_TABLE_NAME][0]
+    persisted_records = json.loads(persisted_row["records"])
+    assert persisted_records[0]["applicability_summary"]["evidence_record_ids"] == exact_ids
+
+
+def test_existing_persisted_fields_remain_unchanged_after_applicability_summary_addition():
+    pre_task_12_1_fields = {
+        "reference_plant", "reference_compound", "alternative_plant",
+        "alternative_compound", "indication", "dosage_form", "target_market",
+        "rd_opportunity_score", "decision_class", "evidence_confidence",
+        "gate_results", "scoring_config_version",
+    }
+    # Every pre-existing field is still there, and exactly one field
+    # was added — nothing removed, nothing else silently changed.
+    assert pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
+    assert set(_PERSISTED_RECORD_FIELDS) - pre_task_12_1_fields == {"applicability_summary"}
+
+    gate_results = {"safety": {"gate_name": "safety", "status": "passed", "reason": "x", "evidence": "y"}}
+    record = _sample_candidate_assessment(
+        applicability_summary=_sample_applicability_summary(),
+        gate_results=gate_results,
+        rd_opportunity_score=63.5,
+        decision_class="Early-stage candidate",
+    )
+    serialized = _serialize_record(record)
+    assert serialized["gate_results"] == gate_results
+    assert serialized["rd_opportunity_score"] == 63.5
+    assert serialized["decision_class"] == "Early-stage candidate"
+    assert serialized["scoring_config_version"] == "1.0-default"
+
+
+def test_record_without_applicability_summary_serializes_as_none():
+    # CandidateAssessment's own dataclass default.
+    record = _sample_candidate_assessment()
+    assert record.applicability_summary is None
+    assert _serialize_record(record)["applicability_summary"] is None
+
+    # A plain dict (e.g. a pre-Task-10.2/12.1-shaped record) missing
+    # the key entirely — must degrade to None, not raise.
+    old_style_dict_record = {
+        "reference_plant": "Silybum marianum",
+        "alternative_plant": "Allium cepa",
+        "rd_opportunity_score": 40.0,
+        "decision_class": "Hold / insufficient evidence",
+    }
+    assert _serialize_record(old_style_dict_record)["applicability_summary"] is None
+
+
+def test_no_unintended_candidate_assessment_fields_are_persisted():
+    record = _sample_candidate_assessment(
+        applicability_summary=_sample_applicability_summary(),
+        source_record_ids=["https://pubmed.ncbi.nlm.nih.gov/1/"],
+        evidence_gaps=["no dose data"],
+        rationale="Free-text rationale that must not leak into persistence.",
+        scientific_rationale="Must not leak either.",
+        white_space_type="E. White-space opportunity",
+    )
+    serialized = _serialize_record(record)
+    assert set(serialized.keys()) == set(_PERSISTED_RECORD_FIELDS)
+    for unexpected_field in (
+        "source_record_ids", "evidence_gaps", "rationale",
+        "scientific_rationale", "white_space_type",
+    ):
+        assert unexpected_field not in serialized

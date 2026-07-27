@@ -57,6 +57,32 @@ fields — see _PERSISTED_RECORD_FIELDS). Until that table exists,
 persist_decision_record() degrades to {"status": "unavailable", ...}
 and load_decision_record() returns None — the calling page continues
 normally either way.
+
+TASK 12.1 — CANDIDATE-LEVEL EVIDENCE TRACEABILITY (applicability_summary)
+`applicability_summary` (Task 10.2's dict — counts by
+EvidenceApplicability category, strongest_category, critical_mismatches,
+missing_dimensions, and, critically, evidence_record_ids: the exact
+evidence_records primary keys that backed this candidate) is now
+included in _PERSISTED_RECORD_FIELDS. This requires NO new Supabase
+column and NO migration — `records` is already a JSON-serialized blob
+column, so a new key inside each serialized record's dict is simply
+new content in an already-flexible column, not a schema change.
+
+This is an ADDITIVE AUDIT SNAPSHOT, not a new source of truth.
+`evidence_records` remains the one place evidence content actually
+lives; a persisted decision record's `applicability_summary` is a
+frozen copy of what CandidateAssessment.applicability_summary held at
+persistence time, useful for tracing "which evidence_records rows fed
+this decision" without re-running the analysis, not for re-deriving or
+re-validating scientific content later. Never re-appraised, never
+recomputed here — read from the already-validated CandidateAssessment
+exactly like every other field in this allowlist.
+
+Deliberately still does NOT persist: full ScientificEvidence objects
+(would duplicate evidence_records' own content — out of scope, see the
+Task 12 audit §9), or any evidence-to-gate causal attribution (which
+gate outcome was driven by which specific evidence item) — this task
+provides candidate-level traceability only, not that link.
 """
 
 from __future__ import annotations
@@ -78,6 +104,13 @@ _PERSISTED_RECORD_FIELDS = [
     "alternative_compound", "indication", "dosage_form", "target_market",
     "rd_opportunity_score", "decision_class", "evidence_confidence",
     "gate_results", "scoring_config_version",
+    # Task 12.1 — candidate-level evidence traceability. Additive only;
+    # already computed by _summarize_applicability()/
+    # _merge_applicability_summaries() (botanical_rd_candidate_engine.py)
+    # and already validated onto CandidateAssessment by
+    # candidate_output_adapter.py — this allowlist entry is the only
+    # change Task 12.1 makes anywhere in the pipeline.
+    "applicability_summary",
 ]
 
 

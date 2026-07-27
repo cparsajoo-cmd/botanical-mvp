@@ -483,3 +483,128 @@ def build_scientific_evidence(record):
         # confidence_score, is_negative_or_contradictory,
         # negative_finding_type.
     )
+
+
+# ======================================================================
+# Task 13.2A — get_scientific_evidence_by_ids()
+#
+# WHY THIS LIVES HERE, NOT IN THE ENGINE
+# This is a report-time need: given the evidence_record_ids a candidate
+# row's Applicability_Summary already carries (Task 10.2), and the
+# evidence_df already available via st.session_state (app.py), resolve
+# each id to its ScientificEvidence object — WITHOUT the report layer
+# ever importing botanical_rd_candidate_engine.py or touching
+# BotanicalRDCandidateEngine.scientific_evidence_index (Task 11.1),
+# which is engine-instance-scoped and, per the Task 13 audit, not
+# reliably alive at report-generation time. standard_evidence_builder.py
+# already has zero dependency on the engine and is already the
+# canonical owner of build_scientific_evidence() — this function is the
+# same adapter, called from a different, stateless entry point.
+#
+# WHY IT DOES NOT DUPLICATE _build_scientific_evidence_index()
+# Both ultimately call the same build_scientific_evidence() for the
+# actual object construction — nothing about *how* a ScientificEvidence
+# gets built is repeated here. The only new logic in this function is
+# the id-membership filter itself (which rows to bother building at
+# all), which _build_scientific_evidence_index() has no equivalent of
+# because it always builds every row in self.evidence_df.
+# ======================================================================
+
+def get_scientific_evidence_by_ids(evidence_record_ids, evidence_df):
+    """Task 13.2A — filtered evidence_record_id -> ScientificEvidence
+    lookup, for report-time use.
+
+    Parameters
+    ----------
+    evidence_record_ids : any iterable of requested ids (list, set,
+        tuple, generator, pandas Series/Index — anything list()-able).
+        Duplicate, None, NaN, pandas-NA, and empty-string entries are
+        all safely ignored, not errors.
+    evidence_df : the already-loaded evidence DataFrame (the exact
+        object at st.session_state["evidence_df"] in the real app, or
+        any DataFrame shaped like database.load_evidence_records()'s
+        output — same shape build_scientific_evidence() already reads
+        elsewhere in this module).
+
+    Returns
+    -------
+    dict[str, ScientificEvidence] — ONLY the requested ids that were
+    actually resolvable. A requested id with no matching row is simply
+    absent from the result — never an error, never a placeholder
+    value, never a partially-built object standing in for "not found".
+
+    GUARANTEES
+    - Never raises, for any input shape covered by the constraints
+      below — always degrades to {} or to a partial result, never an
+      exception escaping this function.
+    - Never mutates evidence_df — read-only throughout (.iterrows()
+      and .get() only; no .loc[]= / .at[]= / in-place operation of any
+      kind).
+    - Every value in the result is a real ScientificEvidence instance
+      built via build_scientific_evidence() — identical construction
+      logic to every other caller of that function; nothing here
+      constructs one differently, and nothing here recomputes
+      applicability, hierarchy, confidence, or any other scientific
+      judgment — those are read verbatim from the row, exactly as
+      build_scientific_evidence() already does.
+    - IDs are normalized via normalize_missing_value() (the same
+      helper Task 11.1's correction already established) then
+      stringified — the SAME normalization applied to both the
+      requested-id list and each row's own id, so "7" (str) and 7
+      (int) requested/stored inconsistently still match correctly.
+    - Duplicate rows in evidence_df sharing the same id: last-row-wins,
+      identical convention to _build_scientific_evidence_index() and
+      occurrence_seed.build_occurrence_lookup().
+    - A row that fails to build (any exception inside
+      build_scientific_evidence(), for any reason) is skipped for that
+      one id only — it does not abort the lookup for every other
+      requested id.
+    """
+    result = {}
+
+    if evidence_df is None or not isinstance(evidence_df, pd.DataFrame) or evidence_df.empty:
+        return result
+
+    if evidence_record_ids is None:
+        return result
+
+    try:
+        requested_iterable = list(evidence_record_ids)
+    except TypeError:
+        # Not actually iterable (e.g. a bare int/float passed by
+        # mistake) — treat as "nothing requested" rather than raise.
+        return result
+
+    wanted_ids = set()
+    for raw_id in requested_iterable:
+        normalized = normalize_missing_value(raw_id)
+        if normalized is None:
+            continue
+        wanted_ids.add(str(normalized))
+
+    if not wanted_ids:
+        return result
+
+    for _, row in evidence_df.iterrows():
+        record_id = normalize_missing_value(row.get("Evidence_Record_ID"))
+        if record_id is None:
+            record_id = normalize_missing_value(row.get("evidence_record_id"))
+        if record_id is None:
+            continue
+
+        key = str(record_id)
+        if key not in wanted_ids:
+            continue
+
+        try:
+            result[key] = build_scientific_evidence(row.to_dict())
+        except Exception:
+            # A malformed/partial row must not crash the whole lookup —
+            # skip only this one id, same fail-safe discipline every
+            # persistence/adapter module in this repository already
+            # follows. row.to_dict() itself cannot raise for a real
+            # pandas row; this guards build_scientific_evidence()'s own
+            # construction against any unforeseen malformed value.
+            continue
+
+    return result

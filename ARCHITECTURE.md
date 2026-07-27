@@ -429,3 +429,55 @@ duration, uptime, availability, rolling statistics, health score,
 freshness score, trend, success rate, attempt count, connector
 version — none of these exist in Sprint 6A.1's output, and none are
 computed or invented here.
+
+## Tasks 10–13 — Evidence & Explainability Pipeline (ScientificEvidence, Applicability_Summary, report-time evidence detail)
+
+The flow, one stage per line:
+
+```
+evidence_records (Supabase, per-item, authoritative)
+  → standard_evidence_builder.build_standard_evidence()   (applicability classification, Task 10.2)
+  → standard_evidence_builder.build_scientific_evidence()  (typed ScientificEvidence contract, Task 11.1)
+  → BotanicalRDCandidateEngine._summarize_applicability()  (candidate-level Applicability_Summary, Task 10.2)
+  → decision_record_persistence.persist_decision_record()  (historical snapshot in decision_records, Task 12.1)
+  → standard_evidence_builder.get_scientific_evidence_by_ids()          (report-time filtered lookup, Task 13.2A)
+  → standard_evidence_builder.build_scientific_evidence_presentation_payload()  (plain-dict, enum-free, Task 13.2B)
+  → pharma_report_generator.generate_pharma_report()        (Markdown report, Task 13.2C)
+```
+
+**`evidence_records` remains the one authoritative evidence source
+throughout.** Every stage above either reads from it directly or reads
+something derived from it earlier in the same request — nothing in
+this flow is a second, independent store of evidence content.
+
+**`ScientificEvidence` objects are never persisted whole.** Only
+specific already-existing evidence_records columns (Source_Type,
+Evidence_Type, Population, etc.) and Task 10.2's five
+`Applicability_*` columns are read/written by name; `decision_records`
+persists `applicability_summary` (a plain dict of strings/lists) via
+`CandidateAssessment`, never a `ScientificEvidence` instance.
+
+**`decision_records` is a historical, candidate-level traceability
+snapshot, not a live evidence store.** It answers "what did this
+candidate's evidence situation look like at persistence time"
+(`gate_results` + `applicability_summary.evidence_record_ids`), not
+"what is the current state of this evidence" — re-querying
+`evidence_records` is the only way to get that.
+
+**Report generation receives a presentation-safe dict and touches
+nothing else.** `pharma_report_generator.py` has zero import-level
+dependency on `botanical_rd_candidate_engine.py`, `database.py`, or
+`standard_evidence_builder.py` (verified by AST inspection of its own
+imports, not just convention) — it only ever consumes the plain
+`{evidence_record_id: dict}` payload `step_rd_candidates.py` builds
+upstream, once per report, before calling
+`generate_pharma_report(..., scientific_evidence_payload=...)`.
+
+**Explicit evidence-to-gate causal attribution (which specific
+evidence record drove a specific gate's PASSED/FAILED status) is
+currently deferred** — see the architecture note directly above
+`BotanicalRDCandidateEngine._evaluate_gates()` in
+`botanical_rd_candidate_engine.py` for the full reasoning. Candidate-
+level traceability (`gate_results` + `Applicability_Summary.
+evidence_record_ids`) is the current, intentional stopping point.
+

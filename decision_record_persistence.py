@@ -83,6 +83,25 @@ Deliberately still does NOT persist: full ScientificEvidence objects
 Task 12 audit §9), or any evidence-to-gate causal attribution (which
 gate outcome was driven by which specific evidence item) — this task
 provides candidate-level traceability only, not that link.
+
+STABILIZATION NOTE (post-Task-13.2C review) — `applicability_summary`
+is persisted here as the COMPLETE dict CandidateAssessment already
+carries, not a filtered subset. That dict includes an `evidence_items`
+key (a list of {evidence_record_id, classification,
+detected_mismatches, missing_dimensions} — added in the Task 10.2
+correction purely so _merge_applicability_summaries() could recompute
+exact per-record counts when a candidate matches multiple compounds).
+`evidence_items` therefore rides along into every persisted decision
+record too. This is ACCEPTED, not accidental: it is a strictly more
+granular restatement of data already summarized elsewhere in the same
+dict (`counts`, `critical_mismatches`, `missing_dimensions`,
+`evidence_record_ids`) — persisting it causes no duplication of
+authoritative data (evidence_records is still the only source of
+truth) and provides useful historical, record-level traceability for
+free. Do not strip it out without a deliberate, separately-reviewed
+decision — see test_evidence_items_preserved_unchanged_in_persisted_
+decision_record() in test_decision_record_persistence.py, which locks
+this as current, intended behavior.
 """
 
 from __future__ import annotations

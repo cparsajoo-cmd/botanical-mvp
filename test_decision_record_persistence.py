@@ -511,3 +511,78 @@ def test_no_unintended_candidate_assessment_fields_are_persisted():
         "scientific_rationale", "white_space_type",
     ):
         assert unexpected_field not in serialized
+
+
+# ---------------------------------------------------------------------
+# Stabilization review (Tasks 10-13) — evidence_items persistence.
+# Locks the ACCEPTED, documented behavior described in
+# decision_record_persistence.py's own "STABILIZATION NOTE": the
+# complete applicability_summary dict, including its evidence_items
+# key, is persisted as-is — not a filtered subset, and not something
+# this module invents or strips.
+# ---------------------------------------------------------------------
+
+def test_evidence_items_preserved_unchanged_in_persisted_decision_record():
+    evidence_items = [
+        {
+            "evidence_record_id": "ev-101",
+            "classification": "Partially applicable",
+            "detected_mismatches": [],
+            "missing_dimensions": ["plant_part", "extraction_or_solvent"],
+        },
+        {
+            "evidence_record_id": "ev-102",
+            "classification": "Not assessable",
+            "detected_mismatches": [],
+            "missing_dimensions": ["indication", "dosage_form"],
+        },
+    ]
+    summary = _sample_applicability_summary(evidence_items=evidence_items)
+    record = _sample_candidate_assessment(applicability_summary=summary)
+
+    # 1) evidence_items is preserved unchanged, via direct serialization...
+    serialized = _serialize_record(record)
+    assert serialized["applicability_summary"]["evidence_items"] == evidence_items
+
+    # ...and through the full persist round trip, including the actual
+    # JSON encode/decode persist_decision_record() performs.
+    client = _FakeSupabaseClient()
+    persist_decision_record([record], indication="Liver support", supabase_client=client)
+    persisted_row = client.store[DECISION_RECORD_TABLE_NAME][0]
+    persisted_records = json.loads(persisted_row["records"])
+    assert persisted_records[0]["applicability_summary"]["evidence_items"] == evidence_items
+
+    # 2) evidence_record_ids and the other applicability fields are
+    # ALSO preserved, unaffected by evidence_items being present too.
+    persisted_summary = persisted_records[0]["applicability_summary"]
+    assert persisted_summary["evidence_record_ids"] == summary["evidence_record_ids"]
+    assert persisted_summary["strongest_category"] == summary["strongest_category"]
+    assert persisted_summary["counts"] == summary["counts"]
+    assert persisted_summary["missing_dimensions"] == summary["missing_dimensions"]
+    assert persisted_summary["summary_rationale"] == summary["summary_rationale"]
+
+    # 3) No additional top-level CandidateAssessment fields became
+    # persisted merely because applicability_summary grew a new key —
+    # the allowlist itself is untouched by evidence_items' presence.
+    assert set(persisted_records[0].keys()) == set(_PERSISTED_RECORD_FIELDS)
+
+
+def test_records_without_evidence_items_remain_valid_and_backward_compatible():
+    """A summary shaped exactly like every pre-stabilization-review
+    fixture in this file (no evidence_items key at all) must persist
+    and reload without error — the presence of evidence_items on OTHER
+    records must never become an implicit requirement."""
+    summary_without_evidence_items = _sample_applicability_summary()
+    assert "evidence_items" not in summary_without_evidence_items
+
+    record = _sample_candidate_assessment(applicability_summary=summary_without_evidence_items)
+    client = _FakeSupabaseClient()
+    persist_decision_record([record], indication="Liver support", supabase_client=client)
+
+    persisted_row = client.store[DECISION_RECORD_TABLE_NAME][0]
+    persisted_records = json.loads(persisted_row["records"])
+    persisted_summary = persisted_records[0]["applicability_summary"]
+
+    assert "evidence_items" not in persisted_summary
+    assert persisted_summary["evidence_record_ids"] == summary_without_evidence_items["evidence_record_ids"]
+    assert set(persisted_records[0].keys()) == set(_PERSISTED_RECORD_FIELDS)

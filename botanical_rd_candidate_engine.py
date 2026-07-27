@@ -3569,6 +3569,46 @@ class BotanicalRDCandidateEngine:
         minimum_evidence, regulatory — each mapping to
         {"gate_name": <same key>, "status": GateStatus, "reason": str,
         "evidence": str}.
+
+        ARCHITECTURE NOTE — explicit evidence-to-gate attribution
+        (i.e. recording exactly which Evidence_Record_ID(s) caused a
+        specific gate's PASSED/FAILED/NOT_EVALUABLE status) is
+        intentionally NOT implemented here, for four concrete
+        architectural reasons:
+
+        1. Not every gate is evidence-derived. "identity" comes from
+           compound-database matching (_match_compounds(), against
+           plant_compounds/compound_profiles) — it has no relationship
+           to any evidence_records row at all, so "evidence-to-gate
+           attribution" is a category error for this gate specifically.
+        2. "safety" itself blends two sources with no per-source
+           marker: text-derived flags (from the flattened raw_evidence
+           blob) AND db_safety_flags (from matched_own_targets, a
+           compound-database lookup with no Evidence_Record_ID to
+           attribute to either).
+        3. True per-record attribution for the text-derived signals
+           (safety's text half, minimum_evidence, regulatory) would
+           require preserving each evidence record's own text
+           boundary through to keyword extraction — today,
+           _build_evidence_text_index()/_collect_raw_evidence()
+           concatenate multiple evidence_records rows into one
+           candidate-scoped string BEFORE any SAFETY_TERMS/
+           regulatory_barrier_classifier extraction runs, so the
+           record-of-origin for any single matched term is not
+           preserved past that concatenation step.
+        4. Candidate-level (not per-gate) traceability already exists
+           and is considered sufficient at the current evidence volume
+           and validation maturity: gate_results (this method's own
+           output) plus Applicability_Summary.evidence_record_ids
+           (_summarize_applicability(), Task 10.2) together let a
+           reviewer manually cross-check which evidence records could
+           have contributed to a candidate's gate outcomes, without
+           the engine claiming a precision of attribution it cannot
+           currently support.
+
+        Revisiting this is a real, separate, larger architecture task
+        (restructuring the text-concatenation step to preserve
+        per-record boundaries) — not a small addition to this method.
         """
         gates = {}
 

@@ -9,6 +9,69 @@ def _contains(text, keywords):
     return any(k in text for k in keywords)
 
 
+# Task 14.2 — confirmed defect fix. The generic _contains() substring
+# check above was matching "ema" inside unrelated words ("schema",
+# "enema", "cinema", "schematic", "hematoma" all contain the letters
+# "ema" consecutively). _contains() itself is NOT changed here — it is
+# still used, unmodified, for every other keyword list in this file
+# (WHO/ESCOP/safety/etc.) — this is a dedicated, narrowly-scoped
+# replacement for the EMA/HMPC check only, per the explicit instruction
+# not to broadly rewrite the shared helper.
+_EMA_HMPC_PATTERN = re.compile(
+    r"\bema\b|\bhmpc\b|european medicines agency",
+    re.IGNORECASE,
+)
+
+# String forms a missing/NaN-like value can stringify to (None -> "None",
+# float NaN -> "nan", pandas NA -> "<NA>", pandas NaT -> "NaT") — checked
+# case-insensitively so none of them can ever accidentally satisfy
+# _EMA_HMPC_PATTERN (they don't contain "ema"/"hmpc"/the full phrase
+# anyway, but this makes the "missing values normalize to False"
+# guarantee explicit and independently testable, not just incidental).
+_MISSING_TEXT_TOKENS = {"nan", "none", "null", "<na>", "nat"}
+
+
+def contains_ema_hmpc_reference(text):
+    """Task 14.2 — narrowly-scoped, word-boundary-aware EMA/HMPC
+    authority-mention detector, replacing evidence_extractor.py's
+    previous plain substring check for this ONE keyword group only.
+
+    Recognizes: standalone "EMA" (any case, including punctuation-
+    delimited forms like "(EMA)" or "EMA,", via \\b word boundaries —
+    "(" and ")"/"," are non-word characters, so a boundary exists on
+    both sides of "EMA" inside "(EMA)" without needing to enumerate
+    every possible surrounding punctuation mark); standalone "HMPC";
+    "EMA/HMPC" and "EMA HMPC" (matched via the standalone "EMA"
+    pattern, since "/" and " " are both non-word characters); the full
+    phrase "European Medicines Agency", including its possessive form
+    "European Medicines Agency's" (a plain substring check on the
+    phrase already covers the possessive, since "European Medicines
+    Agency's" contains "european medicines agency" as a prefix — no
+    separate case needed).
+
+    Deliberately rejects: "schema", "enema", "cinema", "schematic",
+    "hematoma" — none of these have a word boundary immediately before
+    the letters "ema", because in each case "ema" sits in the middle
+    of (or attached to) a longer word, not on its own.
+
+    Missing/NaN-like inputs (None, float NaN, pandas NA, empty or
+    whitespace-only strings) safely return False — never raise, never
+    require a caller to pre-check for missing values first.
+    """
+    if text is None:
+        return False
+    try:
+        text_str = str(text)
+    except Exception:
+        return False
+
+    text_str = text_str.strip()
+    if not text_str or text_str.lower() in _MISSING_TEXT_TOKENS:
+        return False
+
+    return bool(_EMA_HMPC_PATTERN.search(text_str))
+
+
 def extract_evidence_from_text(text):
     raw = text or ""
     lower = raw.lower()
@@ -178,7 +241,13 @@ def extract_evidence_from_text(text):
         record["Target_Indication"] = detected_indications[0]
 
     # Regulatory
-    if _contains(lower, ["ema", "hmpc", "european medicines agency"]):
+    # Task 14.2 — EMA/HMPC detection now uses the dedicated
+    # word-boundary-aware matcher (defined above), not the generic
+    # substring _contains() check other keyword groups below still
+    # use unmodified. Passed `raw` (not the pre-lowered `lower`)
+    # since contains_ema_hmpc_reference() does its own case-insensitive
+    # matching internally — same net effect, clearer call-site intent.
+    if contains_ema_hmpc_reference(raw):
         record["EMA_Status"] = "Yes"
         record["Regulatory_Status"] = "EMA/HMPC evidence detected"
 

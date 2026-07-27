@@ -1,0 +1,175 @@
+[
+  {
+    "case_id": "smoke_safety_exclusion",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the hard-safety auto-exclusion path end to end. 'expected' below was recorded by running this exact case through the engine and capturing its current output, so this is a mechanics/regression lock, not an independent scientific judgment.",
+    "rows": [
+      {
+        "scientific_name": "PlantRef",
+        "compound_name": "RefCompoundA",
+        "indication": "TestIndication",
+        "target": "Laxative",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      },
+      {
+        "scientific_name": "PlantRef",
+        "compound_name": "RefCompoundB",
+        "indication": "TestIndication",
+        "target": "Laxative",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      },
+      {
+        "scientific_name": "AltPlant",
+        "compound_name": "AltCompound",
+        "indication": "Other",
+        "target": "Lithogenic",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      }
+    ],
+    "similar_groups": {
+      "TestClass": [
+        "RefCompoundA",
+        "RefCompoundB",
+        "AltCompound"
+      ]
+    },
+    "run_params": {
+      "indication": "TestIndication",
+      "dosage_form": "Infusion",
+      "market": "EU"
+    },
+    "expected": {
+      "pairs": [
+        {
+          "reference_plant": "PlantRef",
+          "alternative_plant": "PlantRef",
+          "decision_class": "Low priority / insufficient data",
+          "gate_status": {
+            "safety": "not_evaluable",
+            "identity": "passed",
+            "minimum_evidence": "not_evaluable",
+            "regulatory": "passed"
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
+        },
+        {
+          "reference_plant": "PlantRef",
+          "alternative_plant": "AltPlant",
+          "decision_class": "Safety concern — not suitable without expert review",
+          "gate_status": {
+            "safety": "failed",
+            "identity": "not_evaluable",
+            "minimum_evidence": "not_evaluable",
+            "regulatory": "not_evaluable"
+          },
+          "decision_class_ah": "H — No-go / safety concern"
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "smoke_no_evidence_low_priority",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the generic no-evidence / NOT_EVALUABLE minimum_evidence gate path. 'expected' below was recorded by running this exact case through the engine, not independently derived.",
+    "rows": [
+      {
+        "scientific_name": "RefPlant",
+        "compound_name": "SharedCompound",
+        "indication": "TestIndication",
+        "target": "Laxative",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      },
+      {
+        "scientific_name": "AltPlant",
+        "compound_name": "SharedCompound",
+        "indication": "Other",
+        "target": "Laxative",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      }
+    ],
+    "run_params": {
+      "indication": "TestIndication",
+      "dosage_form": "Infusion",
+      "market": "EU"
+    },
+    "expected": {
+      "pairs": [
+        {
+          "reference_plant": "RefPlant",
+          "alternative_plant": "AltPlant",
+          "decision_class": "Low priority / insufficient data",
+          "gate_status": {
+            "safety": "passed",
+            "identity": "passed",
+            "minimum_evidence": "not_evaluable",
+            "regulatory": "not_evaluable"
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
+        },
+        {
+          "reference_plant": "RefPlant",
+          "alternative_plant": "RefPlant",
+          "decision_class": "Low priority / insufficient data",
+          "gate_status": {
+            "safety": "not_evaluable",
+            "identity": "passed",
+            "minimum_evidence": "not_evaluable",
+            "regulatory": "not_evaluable"
+          },
+          "decision_class_ah": "G — Hold / insufficient evidence"
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "smoke_direct_evidence_present",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the minimum_evidence PASSED path with real located evidence text. 'expected' below was recorded by running this exact case through the engine, not independently derived.",
+    "rows": [
+      {
+        "scientific_name": "TestPlant",
+        "compound_name": "ActiveCompound",
+        "indication": "TestIndication",
+        "target": "Hepatoprotective",
+        "common_name": "",
+        "plant_part": "",
+        "extraction_method": ""
+      }
+    ],
+    "evidence": [
+      {
+        "Scientific_Name": "TestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A randomized controlled trial, double-blind and placebo-controlled, found significant hepatoprotective effects."
+      }
+    ],
+    "run_params": {
+      "indication": "TestIndication",
+      "dosage_form": "Infusion",
+      "market": "EU"
+    },
+    "expected": {
+      "pairs": [
+        {
+          "reference_plant": "TestPlant",
+          "alternative_plant": "TestPlant",
+          "decision_class": "Early-stage candidate; more evidence needed",
+          "gate_status": {
+            "safety": "not_evaluable",
+            "identity": "passed",
+            "minimum_evidence": "passed",
+            "regulatory": "passed"
+          },
+          "decision_class_ah": "B — Established scientific candidate"
+        }
+      ]
+    }
+  }
+]

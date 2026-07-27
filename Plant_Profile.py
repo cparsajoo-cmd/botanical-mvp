@@ -1,6 +1,7 @@
 import streamlit as st
 from evidence_database import load_evidence_database
 from plant_profile_regulatory import get_regulatory_source_rows
+from plant_profile_freshness import summarize_evidence_freshness
 from standard_evidence_builder import normalize_missing_value
 
 st.set_page_config(
@@ -124,6 +125,33 @@ else:
                     "a regulatory source, not a confirmed approval, "
                     "authorisation, or monograph status."
                 )
+
+            # Task 17 — Evidence Freshness. Uses ALL evidence rows for
+            # the selected plant (via summarize_evidence_freshness()),
+            # never `row`/plant_data.iloc[0] — a date on one arbitrary
+            # record cannot represent this plant's whole evidence base
+            # any more than Task 16 found a single row's regulatory
+            # flags could. No freshness/staleness judgment, no score,
+            # no age threshold — see plant_profile_freshness.py's own
+            # docstring for the full date-schema audit this section is
+            # built on (Source_Year is the only structured, source-
+            # derived date-like field in the active schema today).
+            st.markdown("## Evidence freshness")
+
+            freshness = summarize_evidence_freshness(df, selected_plant)
+
+            if freshness["dated_records"] == 0:
+                st.info(
+                    "No evidence dates are available for this plant in the "
+                    "current evidence database."
+                )
+            else:
+                st.markdown(f"**Total evidence records:** {freshness['total_records']}")
+                st.markdown(f"**Records with a valid evidence date:** {freshness['dated_records']}")
+                st.markdown(f"**Records without a valid evidence date:** {freshness['undated_records']}")
+                st.markdown(f"**Oldest evidence date:** {freshness['oldest_date']}")
+                st.markdown(f"**Newest evidence date:** {freshness['newest_date']}")
+                st.markdown(f"**Date range covered:** {freshness['date_range']}")
 
             st.markdown("## Scientific evidence")
             st.markdown(f"**Clinical evidence:** {row.get('Clinical_Evidence', '')}")

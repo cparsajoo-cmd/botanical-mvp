@@ -131,6 +131,19 @@ class MarketVerificationStatus(str, Enum):
     SOURCE_UNAVAILABLE = "Source unavailable"
     UNKNOWN = "Unknown"
 
+    # Task 14.1 — deliberately narrower than REGULATORY_MONOGRAPH_EXISTS.
+    # Means ONLY: the botanical is listed in an official regulatory
+    # assessment inventory (e.g. EMA/HMPC's "Inventory of herbal
+    # substances for assessment"). Per the Task 14 audit, being listed
+    # in an assessment inventory means the substance has been formally
+    # proposed/prioritized for monograph assessment — it does NOT mean
+    # authorization, approval, an existing/published monograph,
+    # accepted traditional-use status, or market availability. Using
+    # REGULATORY_MONOGRAPH_EXISTS for inventory presence would overstate
+    # it; this value exists specifically so that overstatement is never
+    # necessary.
+    REGULATORY_ASSESSMENT_INVENTORY_LISTED = "Listed in official regulatory assessment inventory"
+
 
 class DecisionClass(str, Enum):
     """Per Phase 1 audit 4.7 (proposal A-H), replacing the current 4-tier

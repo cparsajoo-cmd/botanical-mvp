@@ -63,7 +63,14 @@ test_standard_evidence_builder.py (test 5 of Task 10.2's required
 tests) for the explicit regression lock on this.
 """
 
-from data_contracts import EvidenceApplicability, EvidenceHierarchyLevel, ScientificEvidence
+from data_contracts import (
+    EvidenceApplicability,
+    EvidenceHierarchyLevel,
+    MarketVerificationStatus,
+    RegulatoryRecord,
+    ScientificEvidence,
+)
+from typing import Any, Mapping, Optional
 
 import pandas as pd
 
@@ -733,3 +740,154 @@ def build_scientific_evidence_presentation_payload(scientific_evidence_by_id):
             continue
 
     return result
+
+
+# ======================================================================
+# Task 14.1 — build_regulatory_record()
+#
+# WHY THIS LIVES HERE, NOT A NEW MODULE
+# Same reasoning as every prior activation in this module
+# (classify_evidence_applicability(), build_scientific_evidence()):
+# standard_evidence_builder.py is already the canonical, stateless
+# adapter-owner for the active evidence_records pathway, with zero
+# dependency on the engine, Streamlit, persistence, scoring, or gates.
+#
+# WHY THIS IS NARROWER THAN "RegulatoryRecord activation" MIGHT SOUND
+# The Task 14 audit found THREE independent mechanisms that can set
+# EMA_Status/WHO_Status/ESCOP_Status on an evidence row, with wildly
+# different reliability — a naive text-keyword match in
+# evidence_extractor.py (confirmed false-positive-prone: "ema" matches
+# "schema"/"enema"), an LLM's own subjective "ema_relevance" judgment
+# in evidence_standardizer.py, and the real ema_regulatory_connector.py
+# (which fetches EMA's actual HMPC inventory PDF and sets a real
+# Source_URL/Source_Organization/Evidence_Level). Only the third
+# mechanism is safe to build a RegulatoryRecord from, and it is only
+# reliably distinguishable from the other two by Source_Type=="Regulatory"
+# (confirmed: only the EMA connector path sets this exact value) — so
+# THAT is the gate this function enforces, not any text/keyword
+# inspection of its own.
+#
+# Even the real connector's WHO_Status/ESCOP_Status fields are non-
+# answers by its own design (literally the string "See source PDF
+# (column not reliably text-extractable)" — ema_regulatory_connector.py)
+# — this function never reads them, and never constructs a WHO- or
+# ESCOP-labeled record from any row, for any reason.
+# ======================================================================
+
+# Evidence_Level -> MarketVerificationStatus, for rows that already
+# passed the Source_Type=="Regulatory" eligibility gate. Exact-string
+# matching only (case-insensitive) against the genuine, hand-verified
+# strings ema_regulatory_connector.py actually emits
+# (search_regulatory_sources_real(), the only production write path to
+# a Source_Type=="Regulatory" row) — never a keyword/substring match,
+# and never a guess for a string not in this table.
+_REGULATORY_EVIDENCE_LEVEL_TO_STATUS = {
+    "listed in official ema hmpc inventory": MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED,
+    "checked, not found": MarketVerificationStatus.NO_VERIFIED_PRODUCT_FOUND,
+    "not available": MarketVerificationStatus.SOURCE_UNAVAILABLE,
+}
+
+
+def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRecord]:
+    """Task 14.1 — adapts an active evidence_records row into a
+    data_contracts.RegulatoryRecord, ONLY for rows that are genuinely
+    regulatory-connector output, never for an ordinary scientific
+    article, an LLM's relevance guess, or a keyword mention.
+
+    ELIGIBILITY GATE (return None otherwise): the row's normalized
+    Source_Type must equal "regulatory" (case-insensitive) exactly.
+    This is a structural gate, not a content inspection — it does NOT
+    look at EMA_Status/WHO_Status/ESCOP_Status/Novel_Food_Status, does
+    NOT scan Notes/text for keywords, and does NOT consult any LLM
+    field. A PubMed article that mentions "EMA" (or "schema"/"enema" —
+    the confirmed evidence_extractor.py substring-match bug this
+    function deliberately does not inherit), that has
+    EMA_Status=="Yes", or whose LLM-derived ema_relevance says "yes",
+    still returns None here unless Source_Type is genuinely
+    "Regulatory".
+
+    IDENTITY REQUIREMENT: a normalized Evidence_Record_ID (or lowercase
+    evidence_record_id alias) must exist, via normalize_missing_value()
+    (the same helper every prior activation in this module already
+    uses — not reimplemented here). No stable ID -> None.
+
+    MAPPINGS (see module-level docstring above and the Task 14 audit
+    for the full reasoning):
+      - status: from Evidence_Level via _REGULATORY_EVIDENCE_LEVEL_TO_STATUS,
+        exact match only; anything unmapped (including "Unknown" or a
+        genuinely novel string this table doesn't contain) -> UNKNOWN.
+        NEVER REGULATORY_MONOGRAPH_EXISTS for inventory presence —
+        being listed in an assessment inventory is not the same claim
+        as having a published monograph.
+      - jurisdiction_or_market: from Target_Market, verbatim.
+      - monograph_source: the literal string "EMA/HMPC", but ONLY when
+        Source_Organization also identifies the EMA/HMPC connector
+        (contains "ema", case-insensitive, after normalization) —
+        otherwise None. This is deliberately a second, independent
+        check on top of the Source_Type gate, not redundant with it:
+        Source_Type=="Regulatory" alone does not guarantee this
+        particular row is EMA-sourced if some other regulatory
+        connector existed in the future.
+      - source_record_ids: exactly one entry, the normalized
+        Evidence_Record_ID.
+
+    ALWAYS LEFT NONE, NEVER POPULATED FROM ANYTHING:
+      - scope_whole_herb_or_extract, scope_traditional_indication,
+        scope_dosage_form — no source in the active schema carries a
+        regulatory DOCUMENT's own stated scope; populating these from
+        candidate-level indication/dosage-form/plant-part values would
+        fabricate a claim the source document never made.
+      - last_verified_date — Source_Year is a document/PDF snapshot
+        year (e.g. "2021"), not a verification date; converting it to
+        a fabricated full date would overstate currency.
+
+    NOT ON THIS CONTRACT AT ALL: no Source_URL/DOI field is added or
+    duplicated here — the evidence record referenced by
+    source_record_ids remains the one authoritative place that URL
+    lives (evidence_records.source_url, already reachable via
+    ScientificEvidence.doi_pmid_url for the same row).
+
+    Never mutates `record`. Never raises — any unexpected shape
+    produces None, the same fail-safe-not-fail-open discipline as the
+    other builders in this module.
+    """
+    try:
+        source_type = normalize_missing_value(record.get("Source_Type"))
+        if source_type is None or str(source_type).strip().lower() != "regulatory":
+            return None
+
+        evidence_record_id = normalize_missing_value(record.get("Evidence_Record_ID"))
+        if evidence_record_id is None:
+            evidence_record_id = normalize_missing_value(record.get("evidence_record_id"))
+        if evidence_record_id is None:
+            return None
+
+        evidence_level = normalize_missing_value(record.get("Evidence_Level"))
+        status = MarketVerificationStatus.UNKNOWN
+        if evidence_level is not None:
+            status = _REGULATORY_EVIDENCE_LEVEL_TO_STATUS.get(
+                str(evidence_level).strip().lower(), MarketVerificationStatus.UNKNOWN
+            )
+
+        jurisdiction_or_market = normalize_missing_value(record.get("Target_Market"))
+
+        source_organization = normalize_missing_value(record.get("Source_Organization"))
+        monograph_source = None
+        if source_organization is not None and "ema" in str(source_organization).strip().lower():
+            monograph_source = "EMA/HMPC"
+
+        return RegulatoryRecord(
+            status=status,
+            jurisdiction_or_market=jurisdiction_or_market,
+            monograph_source=monograph_source,
+            source_record_ids=[str(evidence_record_id)],
+            # Deliberately always None — see docstring above.
+            scope_whole_herb_or_extract=None,
+            scope_traditional_indication=None,
+            scope_dosage_form=None,
+            last_verified_date=None,
+        )
+    except Exception:
+        # Malformed input must degrade to "no record produced," never
+        # raise — same discipline as every other builder in this module.
+        return None

@@ -32,6 +32,7 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
+from standard_evidence_builder import build_scientific_evidence
 from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -531,6 +532,12 @@ class BotanicalRDCandidateEngine:
         self.evidence_df = self._to_dataframe(evidence_df)
         self.use_live_search = use_live_search
 
+        # Task 11.1 — default before run() has built the real index
+        # (see run()'s own call to _build_scientific_evidence_index()).
+        # Empty, never None, so a caller that reads this before calling
+        # run() gets a valid empty dict rather than an AttributeError.
+        self.scientific_evidence_index = {}
+
         # Real Supabase tables (806 / 310 / 47 records as of the last known
         # snapshot) are the primary data source. Any of them can be passed
         # in explicitly (e.g. for tests); otherwise they're fetched live.
@@ -772,6 +779,15 @@ class BotanicalRDCandidateEngine:
         evidence_index, evidence_source_index, evidence_applicability_index = (
             self._build_evidence_text_index()
         )
+
+        # Task 11.1 — built once per run(), exposed as an instance
+        # attribute (self.scientific_evidence_index), NOT as a new
+        # OUTPUT_COLUMNS/DataFrame column — rule 7 of this task is to
+        # preserve every existing public output unchanged. This index
+        # is a capability for callers that want structured, typed
+        # access to one exact evidence record (by id), not a value
+        # that appears in the result table.
+        self.scientific_evidence_index = self._build_scientific_evidence_index()
 
         # Precompute the alternative-candidate list ONCE, outside the
         # reference/compound loops below. Previously `all_candidates
@@ -2356,6 +2372,59 @@ class BotanicalRDCandidateEngine:
             source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
 
         return index, source_index, applicability_index
+
+    def _build_scientific_evidence_index(self):
+        """Task 11.1 — evidence_record_id -> ScientificEvidence.
+
+        Deliberately a SEPARATE pass over self.evidence_df, not folded
+        into _build_evidence_text_index()'s existing three-index build
+        above — that method's signature/return shape is already relied
+        on by Task 10.2's own call site and tests; adding a fourth
+        element there would be a needless second change to an
+        already-stable interface. This method only reads
+        self.evidence_df (never self.scientific_evidence_df, which has
+        no active write path at all — see the Task 10.2 correction's
+        allowlist technical-debt note) and builds data_contracts.
+        ScientificEvidence objects via standard_evidence_builder.
+        build_scientific_evidence(), the same adapter used wherever
+        else this contract needs activating.
+
+        NEVER READ BY SCORING/APPRAISAL. This index exists purely so a
+        caller can look up "what do we structurally know about THIS
+        exact evidence record" by id — nothing in _score_candidate(),
+        _decision_class(), classify_evidence_hierarchy(),
+        compute_evidence_confidence(), or classify_negative_evidence()
+        reads it, and none of those functions' inputs change because
+        of this method's existence. Object field VALUES are also never
+        concatenated into any free-text index — only structured,
+        typed field access, the same discipline
+        _build_evidence_text_index()'s applicability_index already
+        established.
+
+        Rows with no Evidence_Record_ID (never persisted, e.g. an
+        in-memory-only record from a test) are skipped — this index is
+        keyed by a stable id, so an item with no id has no key to
+        index it under; it remains fully visible in the free-text
+        index and applicability_index exactly as before, just absent
+        from THIS lookup.
+
+        Returns {evidence_record_id: ScientificEvidence}. A row whose
+        Evidence_Record_ID collides with an earlier row's (should not
+        happen — it's the table's own primary key) keeps the LAST row,
+        same "last one wins" convention as occurrence_seed.
+        build_occurrence_lookup().
+        """
+        index = {}
+        if self.evidence_df.empty:
+            return index
+
+        for _, row in self.evidence_df.iterrows():
+            record_id = self._pick(row, ["Evidence_Record_ID", "evidence_record_id"])
+            if not record_id:
+                continue
+            index[record_id] = build_scientific_evidence(row.to_dict())
+
+        return index
 
     def _collect_raw_evidence(
         self,

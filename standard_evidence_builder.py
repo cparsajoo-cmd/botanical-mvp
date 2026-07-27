@@ -63,7 +63,7 @@ test_standard_evidence_builder.py (test 5 of Task 10.2's required
 tests) for the explicit regression lock on this.
 """
 
-from data_contracts import EvidenceApplicability
+from data_contracts import EvidenceApplicability, EvidenceHierarchyLevel, ScientificEvidence
 
 # Every dimension considered "material" to preparation applicability.
 # route/population/dose/DER/standardization/chemotype are deliberately
@@ -294,3 +294,133 @@ def build_standard_evidence(record):
 
     record.update(standard)
     return record
+
+
+# ======================================================================
+# Task 11.1 — ScientificEvidence adapter.
+#
+# WHY THIS LIVES HERE, NOT A NEW MODULE
+# Same reasoning as classify_evidence_applicability() above: this is
+# the one module that already turns an active evidence_records row
+# into a named, typed shape (build_standard_evidence()'s own PascalCase
+# dict). build_scientific_evidence() is the next small step past that
+# — the SAME dict, reshaped into data_contracts.ScientificEvidence
+# instead of a bare dict — not a parallel construction path.
+#
+# WHAT THIS DOES NOT DO
+# - Does not add any new Supabase column. Every field it reads already
+#   exists under its current PascalCase name (Source_Type, Evidence_Type,
+#   Population, Comparator, Primary_Outcome, Evidence_Level,
+#   Evidence_Record_ID, Applicability_*) — this function only RESHAPES
+#   already-persisted/already-in-memory data; it never asks database.py
+#   to write or read a new field.
+# - Does not infer, parse, or guess any field this pipeline does not
+#   already carry explicitly. dose/duration/intervention/sample_size/
+#   statistical_result/risk_of_bias/plant_identity_verified/
+#   extract_characterized/relevance_to_dosage_form/
+#   relevance_to_indication/confidence_score/is_negative_or_contradictory/
+#   negative_finding_type stay at their dataclass defaults (None/False/[])
+#   — the Task 11 audit's field-by-field mapping table documents why
+#   each of these has "no current source" or is a "semantically unsafe
+#   mapping" this function deliberately does not attempt.
+# ======================================================================
+
+# Conservative Evidence_Level -> EvidenceHierarchyLevel normalization.
+# Evidence_Level is a loosely-controlled free string with several real
+# provenances (LLM output: "Very High"/"High"/"Moderate"/"Low"/
+# "Very Low"/"Traditional"/"Unknown"; per-connector labels: "Supporting"/
+# "Not available"/"Checked, not found"/"Listed in official EMA HMPC
+# inventory" — confirmed by grepping every "Evidence_Level": assignment
+# in the repo) — an ordinal EVIDENCE-QUALITY scale, not the STUDY-TYPE
+# categories EvidenceHierarchyLevel actually encodes. There is no safe,
+# deterministic correspondence between a quality judgment like "High"
+# and any specific study type (a "High"-quality case series and a
+# "High"-quality systematic review are not the same hierarchy tier), so
+# only the two values below — which are genuinely, unambiguously about
+# traditional/regulatory-monograph use rather than a quality judgment —
+# are mapped. Every other value, including every quality-ordinal value
+# and "Unknown", normalizes to None rather than guess.
+_EVIDENCE_LEVEL_TO_HIERARCHY = {
+    "traditional": EvidenceHierarchyLevel.TRADITIONAL_USE_MONOGRAPH,
+    "listed in official ema hmpc inventory": EvidenceHierarchyLevel.TRADITIONAL_USE_MONOGRAPH,
+}
+
+
+def normalize_evidence_level(evidence_level):
+    """Conservative Evidence_Level (free string) -> EvidenceHierarchyLevel
+    (enum) normalization. Returns None for any value not in the
+    explicit, documented map above — including "Unknown", "", missing
+    values, and every evidence-quality-ordinal value this function does
+    not attempt to guess a study type for.
+    """
+    if not evidence_level:
+        return None
+    key = str(evidence_level).strip().lower()
+    return _EVIDENCE_LEVEL_TO_HIERARCHY.get(key)
+
+
+def _split_dimension_string(value):
+    """Reverses the "; ".join(...) applied when the Applicability_*
+    dimension/mismatch fields were persisted (see build_standard_evidence()
+    above) — the inverse of that join, not a new parsing rule."""
+    value = value or ""
+    return [part.strip() for part in str(value).split(";") if part.strip()]
+
+
+def build_scientific_evidence(record):
+    """Task 11.1 — adapts an active evidence_records row (the same
+    PascalCase dict shape build_standard_evidence() produces, and
+    database.load_evidence_records() reloads) into a
+    data_contracts.ScientificEvidence instance.
+
+    Maps ONLY fields this pipeline already carries under an existing
+    name — no new Supabase column, no inferred value. Every field with
+    no current source in the active schema is left at its dataclass
+    default (None / False / empty list), never fabricated. See this
+    module's own docstring, immediately above, for exactly which fields
+    that applies to and why.
+    """
+    applicability_raw = record.get("Applicability_Classification") or None
+    applicability_classification = None
+    if applicability_raw:
+        try:
+            applicability_classification = EvidenceApplicability(applicability_raw)
+        except ValueError:
+            # A classification string that doesn't match any current
+            # EvidenceApplicability value (e.g. a foreign/corrupted
+            # row) — left None rather than guessed, same conservative
+            # rule as normalize_evidence_level() above.
+            applicability_classification = None
+
+    evidence_record_id = record.get("Evidence_Record_ID")
+
+    return ScientificEvidence(
+        source_type=record.get("Source_Type") or None,
+        doi_pmid_url=record.get("Source_URL") or None,
+        study_type=record.get("Evidence_Type") or record.get("Study_Type") or None,
+        population=record.get("Population") or None,
+        comparator=record.get("Comparator") or None,
+        outcome=record.get("Primary_Outcome") or None,
+        evidence_hierarchy_level=normalize_evidence_level(record.get("Evidence_Level")),
+        source_record_id=(
+            str(evidence_record_id) if evidence_record_id not in (None, "") else None
+        ),
+        applicability_classification=applicability_classification,
+        applicability_rationale=record.get("Applicability_Rationale") or None,
+        applicability_evaluated_dimensions=_split_dimension_string(
+            record.get("Applicability_Evaluated_Dimensions")
+        ),
+        applicability_missing_dimensions=_split_dimension_string(
+            record.get("Applicability_Missing_Dimensions")
+        ),
+        applicability_detected_mismatches=_split_dimension_string(
+            record.get("Applicability_Detected_Mismatches")
+        ),
+        # Deliberately left at dataclass defaults — no current source in
+        # the active evidence_records schema (Task 11 audit §4/§6):
+        # sample_size, intervention, dose, duration, statistical_result,
+        # plant_identity_verified, extract_characterized, risk_of_bias,
+        # relevance_to_dosage_form, relevance_to_indication,
+        # confidence_score, is_negative_or_contradictory,
+        # negative_finding_type.
+    )

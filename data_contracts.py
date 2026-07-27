@@ -311,6 +311,24 @@ class ScientificEvidence:
     negative_finding_type: Optional[str] = None  # "failed trial" | "null result" | "retraction" | ...
     source_record_id: Optional[str] = None
 
+    # Task 11.1 — Task 10.2's Preparation Applicability fields, added
+    # additively so ScientificEvidence can represent everything a real
+    # evidence_records row already carries. Deliberately NOT collapsed
+    # into relevance_to_dosage_form/relevance_to_indication above:
+    # those two predate the EvidenceApplicability enum, are untyped
+    # free strings, and were never wired to the conservative,
+    # dimension-based classification standard_evidence_builder.py
+    # actually computes (see that module's docstring) — reusing them
+    # here would silently narrow a 5-value controlled vocabulary with
+    # an explicit rationale/evaluated/missing/mismatch breakdown back
+    # down to an untyped string, losing information Task 10.2
+    # deliberately added.
+    applicability_classification: Optional[EvidenceApplicability] = None
+    applicability_rationale: Optional[str] = None
+    applicability_evaluated_dimensions: list = field(default_factory=list)
+    applicability_missing_dimensions: list = field(default_factory=list)
+    applicability_detected_mismatches: list = field(default_factory=list)
+
 
 @dataclass
 class CommercialProduct:

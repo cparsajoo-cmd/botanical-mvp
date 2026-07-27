@@ -1137,6 +1137,69 @@ def build_not_searched(row) -> list:
     return not_searched
 
 
+def build_applicability_traceability(row) -> dict:
+    """Task 13.1 — defensive, read-only extraction of Task 10.2's
+    Applicability_Summary (BotanicalRDCandidateEngine.
+    _summarize_applicability()/_merge_applicability_summaries()) for
+    report rendering.
+
+    PURE READ. Never recomputes, reclassifies, infers, or fabricates
+    anything — every value in the returned dict already existed,
+    verbatim, on row["Applicability_Summary"]. Does not read
+    Source_Record_IDs, does not touch BotanicalRDCandidateEngine or
+    scientific_evidence_index, does not query anything — this function
+    accepts only `row` and reads one existing column from it.
+
+    Returns {} (empty dict) whenever Applicability_Summary is missing,
+    None, or not a dict — including rows from an analysis run before
+    Task 10.2 existed, and any malformed/foreign value. The report
+    layer (pharma_report_generator._format_evidence_applicability_section)
+    treats an empty dict as "omit this section" — never as license to
+    show a fabricated placeholder value.
+
+    A key present in Applicability_Summary but empty/None/""/NaN is
+    simply omitted from the returned dict (e.g. an old row with a dict
+    that has some but not all Task 10.2 keys, or a value that ended up
+    as pandas NaN through no fault of this function) — except
+    evidence_record_ids/critical_mismatches/missing_dimensions, where
+    an empty LIST is a genuine, honest "none found" state and is kept,
+    not treated as missing.
+    """
+    # Reuses the same missing-value definition Task 11.1 already built
+    # and tested (None/NaN/pandas-NA/""/"nan" all treated as missing) —
+    # not a new NaN-handling rule invented here. This function only
+    # imports the helper; it does not modify standard_evidence_builder.py.
+    from standard_evidence_builder import normalize_missing_value
+
+    summary = row.get("Applicability_Summary") if hasattr(row, "get") else None
+    if not isinstance(summary, dict):
+        return {}
+
+    result = {}
+
+    for scalar_key in ("strongest_category", "total_evidence_items",
+                       "not_assessable_items", "summary_rationale"):
+        value = normalize_missing_value(summary.get(scalar_key))
+        # 0 is a real, meaningful count (e.g. zero not-assessable
+        # items) and survives normalize_missing_value() unchanged —
+        # only None/""/NaN/"nan" are treated as absent.
+        if value is not None:
+            result[scalar_key] = value
+
+    for list_key in ("evidence_record_ids", "critical_mismatches", "missing_dimensions"):
+        value = summary.get(list_key)
+        if isinstance(value, list):
+            # Each individual id/label is also NaN-safe: a malformed
+            # per-item value (e.g. float('nan') sitting inside an
+            # otherwise-valid list) is dropped rather than rendered as
+            # the literal string "nan" — never fabricated as something
+            # else, just excluded.
+            cleaned = [normalize_missing_value(item) for item in value]
+            result[list_key] = [item for item in cleaned if item is not None]
+
+    return result
+
+
 def build_recommendation_card(row) -> dict:
     """Sprint 1 (post-review corrections) — the Explainable
     Recommendation Card. Every field below is required by the review

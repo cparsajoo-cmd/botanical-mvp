@@ -479,6 +479,167 @@ def test_us_status_never_calls_a_network_connector():
     assert "requests" not in source
 
 
+# ---------------------------------------------------------------------
+# Task 13.1 — Evidence Applicability report subsection. All additive/
+# formatting-only: nothing here recomputes or reinterprets
+# Applicability_Summary; every value already exists on the row. Never
+# touches BotanicalRDCandidateEngine, scientific_evidence_index, or the
+# database — this whole section is a pure read of a DataFrame column.
+# ---------------------------------------------------------------------
+
+def _applicability_summary(**overrides):
+    defaults = dict(
+        counts={"Directly applicable": 0, "Partially applicable": 1,
+                "Indirectly relevant": 0, "Not assessable": 1, "Not applicable": 0},
+        total_evidence_items=2, assessable_items=1, not_assessable_items=1,
+        strongest_category="Partially applicable",
+        critical_mismatches=[],
+        missing_dimensions=["plant_part", "extraction_or_solvent"],
+        evidence_record_ids=["ev-101", "ev-102"],
+        summary_rationale="2 evidence item(s) assessed for preparation applicability.",
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_evidence_applicability_section_renders_a_complete_summary():
+    result = pd.DataFrame([_make_row(Applicability_Summary=_applicability_summary())])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    assert "**Evidence applicability**" in report
+    assert "Strongest applicable category: Partially applicable" in report
+    assert "Total evidence items assessed: 2" in report
+    assert "Not assessable: 1" in report
+    assert "Missing dimensions: plant_part; extraction_or_solvent" in report
+    assert "2 evidence item(s) assessed for preparation applicability." in report
+
+
+def test_evidence_applicability_section_shows_genuine_evidence_record_ids_unchanged():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary(evidence_record_ids=["ev-7", "ev-19"])
+    )])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "ev-7; ev-19" in report
+
+
+def test_evidence_record_ids_are_clearly_distinguished_from_source_record_ids():
+    """_make_row()'s default Source_Record_IDs is a URL
+    (https://pubmed.ncbi.nlm.nih.gov/12345/) — the report must label
+    the two differently and never let a reader conflate them."""
+    result = pd.DataFrame([_make_row(
+        Source_Record_IDs="https://pubmed.ncbi.nlm.nih.gov/12345/",
+        Applicability_Summary=_applicability_summary(evidence_record_ids=["ev-101", "ev-102"]),
+    )])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    # The existing URL-based line is untouched.
+    assert "**Traceability:** sources — https://pubmed.ncbi.nlm.nih.gov/12345/" in report
+    # The new line explicitly names what it is and how it differs.
+    assert "Database evidence-record IDs (evidence_records.id" in report
+    assert "distinct from the source URLs in Traceability above" in report
+    assert "ev-101; ev-102" in report
+    # The genuine database ids never appear inside the URL-labeled line.
+    traceability_line = next(line for line in report.splitlines() if line.startswith("**Traceability:**"))
+    assert "ev-101" not in traceability_line
+    assert "ev-102" not in traceability_line
+
+
+def test_evidence_applicability_section_absent_when_summary_missing():
+    """_make_row() does not set Applicability_Summary at all by
+    default — this is the exact shape of a row from an analysis run
+    before Task 10.2 existed."""
+    result = pd.DataFrame([_make_row()])
+    assert "Applicability_Summary" not in result.columns
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Evidence applicability**" not in report
+
+
+def test_evidence_applicability_section_absent_when_summary_is_none():
+    result = pd.DataFrame([_make_row(Applicability_Summary=None)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Evidence applicability**" not in report
+
+
+def test_evidence_applicability_section_absent_when_summary_is_nan():
+    result = pd.DataFrame([_make_row(Applicability_Summary=float("nan"))])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Evidence applicability**" not in report
+
+
+def test_evidence_applicability_section_malformed_summary_does_not_crash():
+    for malformed in ("not a dict", 42, ["a", "list"]):
+        result = pd.DataFrame([_make_row(Applicability_Summary=malformed)])
+        report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+        assert "**Evidence applicability**" not in report
+
+
+def test_evidence_applicability_section_renders_only_available_partial_fields():
+    partial_summary = {"strongest_category": "Not applicable"}  # every other key absent
+    result = pd.DataFrame([_make_row(Applicability_Summary=partial_summary)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    assert "**Evidence applicability**" in report
+    assert "Strongest applicable category: Not applicable" in report
+    assert "Total evidence items assessed:" not in report
+    assert "Database evidence-record IDs" not in report
+    assert "Rationale:" not in report
+
+
+def test_evidence_applicability_section_nan_fields_do_not_crash_or_leak_as_text():
+    summary = _applicability_summary(
+        total_evidence_items=float("nan"),
+        evidence_record_ids=["ev-1", float("nan"), None],
+    )
+    result = pd.DataFrame([_make_row(Applicability_Summary=summary)])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    assert "Total evidence items assessed:" not in report
+    assert "ev-1" in report
+    # Precise check: the ids line itself must never contain the
+    # literal string "nan" (the exact failure mode this guards).
+    ids_line = next(line for line in report.splitlines() if "Database evidence-record IDs" in line)
+    assert "nan" not in ids_line.lower()
+
+
+def test_existing_report_sections_remain_present_alongside_evidence_applicability():
+    """Non-regression: adding the new subsection must not remove or
+    reorder any existing section."""
+    result = pd.DataFrame([_make_row(Applicability_Summary=_applicability_summary())])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    for expected_marker in (
+        "# Botanical R&D Decision Intelligence Report",
+        "**Scientific rationale:**",
+        "**Clinical rationale:**",
+        "**Regulatory rationale:**",
+        "**Commercial rationale:**",
+        "**Safety profile:**",
+        "**Traceability:** sources —",
+        "**Confidence basis:**",
+        "**Decision gates**",
+    ):
+        assert expected_marker in report
+
+    # Ordering: the new section sits between Traceability and
+    # Confidence basis, exactly where it was inserted.
+    traceability_pos = report.index("**Traceability:**")
+    applicability_pos = report.index("**Evidence applicability**")
+    confidence_basis_pos = report.index("**Confidence basis:**")
+    assert traceability_pos < applicability_pos < confidence_basis_pos
+
+
+def test_existing_report_output_unchanged_when_no_applicability_summary():
+    """A row shaped exactly like every pre-Task-13.1 test fixture in
+    this file must produce byte-identical report content around the
+    (now-absent) new section — proven by generating the report and
+    confirming no new section text appears anywhere, not just checking
+    one line."""
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Evidence applicability" not in report
+    assert "evidence-record IDs" not in report
+
+
 if __name__ == "__main__":
     import sys
 

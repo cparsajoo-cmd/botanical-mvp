@@ -51,7 +51,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from structured_rationale import build_recommendation_card, build_regulatory_intelligence
+from structured_rationale import (
+    build_applicability_traceability,
+    build_recommendation_card,
+    build_regulatory_intelligence,
+)
 from regulatory_frameworks import get_us_uk_status
 from scoring_sensitivity_report import build_robustness_analysis
 
@@ -260,6 +264,71 @@ def _format_gate_results_section(gate_results) -> list:
     return lines
 
 
+def _format_evidence_applicability_section(applicability_traceability) -> list:
+    """Task 13.1 — formats structured_rationale.build_applicability_
+    traceability()'s output. Formatting only: every value already
+    exists on Applicability_Summary (Task 10.2); nothing is
+    recomputed, reclassified, or inferred here. Missing/malformed
+    input (an empty dict — see build_applicability_traceability()'s
+    own contract) simply omits this whole section, exactly like
+    _format_gate_results_section() does for Gate_Results — never a
+    fabricated "Not available" line pretending to be real content, and
+    never a crash.
+
+    DELIBERATELY SEPARATE FROM THE EXISTING "Traceability" LINE ABOVE
+    (Source_Record_IDs / card['traceability']['source_record_ids']),
+    which holds Source_URL values — not database record ids (see the
+    Task 12 audit's own finding on this naming). This section's
+    evidence_record_ids ARE the genuine evidence_records.id primary
+    keys, and are labeled as such explicitly so a reader can never
+    mistake the two for the same thing.
+    """
+    if not applicability_traceability:
+        return []
+
+    lines = [
+        "**Evidence applicability** (candidate-level summary — "
+        "see evidence_records for the full detail behind each item):",
+    ]
+
+    if "strongest_category" in applicability_traceability:
+        lines.append(
+            f"- Strongest applicable category: "
+            f"{applicability_traceability['strongest_category']}"
+        )
+    if "total_evidence_items" in applicability_traceability:
+        lines.append(
+            f"- Total evidence items assessed: "
+            f"{applicability_traceability['total_evidence_items']}"
+        )
+    if "not_assessable_items" in applicability_traceability:
+        lines.append(
+            f"- Not assessable: {applicability_traceability['not_assessable_items']}"
+        )
+    if applicability_traceability.get("critical_mismatches"):
+        lines.append(
+            f"- Critical mismatch(es): "
+            f"{'; '.join(applicability_traceability['critical_mismatches'])}"
+        )
+    if applicability_traceability.get("missing_dimensions"):
+        lines.append(
+            f"- Missing dimensions: "
+            f"{'; '.join(applicability_traceability['missing_dimensions'])}"
+        )
+    if "evidence_record_ids" in applicability_traceability:
+        ids = applicability_traceability["evidence_record_ids"]
+        ids_text = "; ".join(str(i) for i in ids) if ids else "None"
+        lines.append(
+            f"- Database evidence-record IDs (evidence_records.id — "
+            f"distinct from the source URLs in Traceability above): {ids_text}"
+        )
+    if "summary_rationale" in applicability_traceability:
+        lines.append(f"- Rationale: {applicability_traceability['summary_rationale']}")
+
+    lines.append("")
+    return lines
+
+
 def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
@@ -353,6 +422,17 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) 
         f"corroboration — {card['traceability']['corroboration']}",
         "",
     ]
+
+    # Task 13.1 — additive only. Reads row["Applicability_Summary"]
+    # directly (not via `card`, since build_recommendation_card()'s
+    # own "traceability" key predates this and is deliberately left
+    # untouched, per the requirement to not rename/modify
+    # Source_Record_IDs). Renders nothing (empty list) for a row from
+    # an analysis before Task 10.2 existed, or any malformed value —
+    # see build_applicability_traceability()'s own contract.
+    lines += _format_evidence_applicability_section(
+        build_applicability_traceability(row)
+    )
 
     basis = card["confidence_basis"]
     lines += [

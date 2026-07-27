@@ -18,6 +18,7 @@ from structured_rationale import (
     build_confidence_basis,
     build_missing_information,
     build_not_searched,
+    build_applicability_traceability,
     NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE,
     classify_evidence_consistency,
     classify_dominant_evidence_pattern,
@@ -32,6 +33,8 @@ from structured_rationale import (
     SUPPORTED_REGULATORY_AUTHORITIES,
     UNAVAILABLE_REGULATORY_AUTHORITIES,
 )
+
+import pandas as pd
 
 
 # ---------------------------------------------------------------------
@@ -1194,6 +1197,137 @@ def test_regulatory_intelligence_never_touches_scoring_fields():
     )
     forbidden = {"score", "rank", "r&d_opportunity_score", "evidence_confidence", "regulatory_score", "regulatory_risk_score"}
     assert not (set(k.lower() for k in obj.keys()) & forbidden)
+
+
+# =====================================================================
+# Task 13.1 — build_applicability_traceability()
+# =====================================================================
+
+def _full_applicability_summary(**overrides):
+    defaults = dict(
+        counts={
+            "Directly applicable": 0,
+            "Partially applicable": 1,
+            "Indirectly relevant": 0,
+            "Not assessable": 1,
+            "Not applicable": 0,
+        },
+        total_evidence_items=2,
+        assessable_items=1,
+        not_assessable_items=1,
+        strongest_category="Partially applicable",
+        critical_mismatches=[],
+        missing_dimensions=["plant_part", "extraction_or_solvent"],
+        evidence_record_ids=["ev-101", "ev-102"],
+        summary_rationale="2 evidence item(s) assessed for preparation applicability.",
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_build_applicability_traceability_extracts_a_complete_summary_verbatim():
+    summary = _full_applicability_summary()
+    row = pd.Series({"Applicability_Summary": summary})
+
+    traceability = build_applicability_traceability(row)
+
+    assert traceability["strongest_category"] == "Partially applicable"
+    assert traceability["total_evidence_items"] == 2
+    assert traceability["not_assessable_items"] == 1
+    assert traceability["evidence_record_ids"] == ["ev-101", "ev-102"]
+    assert traceability["missing_dimensions"] == ["plant_part", "extraction_or_solvent"]
+    assert traceability["summary_rationale"] == summary["summary_rationale"]
+    # critical_mismatches is an empty list — a genuine "none found"
+    # state, kept, not omitted.
+    assert traceability["critical_mismatches"] == []
+
+
+def test_build_applicability_traceability_never_recomputes_a_classification():
+    """This function must be a pure, verbatim extraction — it must
+    never reclassify, re-derive, or alter the value of
+    strongest_category (or any other field) based on the OTHER fields
+    present. Proven with a deliberately internally-inconsistent summary
+    (strongest_category says one thing, counts say another) — the
+    function must still return strongest_category completely
+    unmodified, not reconciled against counts."""
+    summary = _full_applicability_summary(
+        strongest_category="Directly applicable",  # inconsistent with counts on purpose
+        counts={"Directly applicable": 0, "Partially applicable": 1,
+                "Indirectly relevant": 0, "Not assessable": 1, "Not applicable": 0},
+    )
+    row = pd.Series({"Applicability_Summary": summary})
+    traceability = build_applicability_traceability(row)
+    assert traceability["strongest_category"] == "Directly applicable"
+
+
+def test_build_applicability_traceability_evidence_record_ids_unchanged():
+    exact_ids = ["ev-7", "ev-19", "ev-not-sequential"]
+    row = pd.Series({"Applicability_Summary": _full_applicability_summary(evidence_record_ids=exact_ids)})
+    assert build_applicability_traceability(row)["evidence_record_ids"] == exact_ids
+
+
+def test_build_applicability_traceability_missing_summary_returns_empty_dict():
+    for missing_value in (None, float("nan")):
+        row = pd.Series({"Applicability_Summary": missing_value})
+        assert build_applicability_traceability(row) == {}
+
+    # Column entirely absent from the row.
+    row_no_column = pd.Series({"Some_Other_Column": "x"})
+    assert build_applicability_traceability(row_no_column) == {}
+
+
+def test_build_applicability_traceability_malformed_summary_returns_empty_dict():
+    for malformed_value in ("not a dict", 42, ["a", "list", "not", "a", "dict"]):
+        row = pd.Series({"Applicability_Summary": malformed_value})
+        assert build_applicability_traceability(row) == {}
+
+
+def test_build_applicability_traceability_partial_summary_omits_missing_keys():
+    partial = {"strongest_category": "Not applicable"}  # every other key absent
+    row = pd.Series({"Applicability_Summary": partial})
+    traceability = build_applicability_traceability(row)
+    assert traceability == {"strongest_category": "Not applicable"}
+
+
+def test_build_applicability_traceability_nan_scalar_fields_are_dropped():
+    summary = _full_applicability_summary(
+        total_evidence_items=float("nan"),
+        summary_rationale="nan",  # the literal string, a real observed failure mode
+    )
+    row = pd.Series({"Applicability_Summary": summary})
+    traceability = build_applicability_traceability(row)
+    assert "total_evidence_items" not in traceability
+    assert "summary_rationale" not in traceability
+    # Unaffected fields still come through.
+    assert traceability["strongest_category"] == "Partially applicable"
+
+
+def test_build_applicability_traceability_zero_counts_are_kept_not_dropped():
+    summary = _full_applicability_summary(not_assessable_items=0, total_evidence_items=0)
+    row = pd.Series({"Applicability_Summary": summary})
+    traceability = build_applicability_traceability(row)
+    assert traceability["not_assessable_items"] == 0
+    assert traceability["total_evidence_items"] == 0
+
+
+def test_build_applicability_traceability_nan_items_inside_a_list_are_dropped_not_stringified():
+    summary = _full_applicability_summary(
+        evidence_record_ids=["ev-9", float("nan"), None, "ev-10"]
+    )
+    row = pd.Series({"Applicability_Summary": summary})
+    traceability = build_applicability_traceability(row)
+    assert traceability["evidence_record_ids"] == ["ev-9", "ev-10"]
+    assert "nan" not in traceability["evidence_record_ids"]
+
+
+def test_build_applicability_traceability_works_with_plain_dict_rows_too():
+    """The real pipeline always passes a pd.Series, but this function's
+    only requirement is `.get()` support — proven against a plain dict
+    too, since that's what a hand-built test fixture (or a future
+    caller) might reasonably pass."""
+    row = {"Applicability_Summary": _full_applicability_summary()}
+    traceability = build_applicability_traceability(row)
+    assert traceability["strongest_category"] == "Partially applicable"
 
 
 if __name__ == "__main__":

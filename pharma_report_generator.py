@@ -329,7 +329,86 @@ def _format_evidence_applicability_section(applicability_traceability) -> list:
     return lines
 
 
-def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) -> str:
+# Presentation-payload field -> report label. The exact seven keys
+# build_scientific_evidence_presentation_payload() produces (Task
+# 13.2B) — no other key is ever read from a payload entry, and no
+# field outside this list is ever rendered.
+_SCIENTIFIC_EVIDENCE_FIELD_LABELS = (
+    ("source_type", "Source type"),
+    ("study_type", "Study type"),
+    ("population", "Population"),
+    ("applicability_classification", "Applicability"),
+    ("applicability_rationale", "Rationale"),
+    ("doi_pmid_url", "DOI / PMID / URL"),
+)
+
+
+def _format_scientific_evidence_details_section(evidence_record_ids, scientific_evidence_payload) -> list:
+    """Task 13.2C — formats per-evidence-item detail for the ids this
+    candidate's own Applicability_Summary already carries, using
+    ONLY the presentation payload the caller supplies.
+
+    THIS FUNCTION NEVER TOUCHES THE ENGINE, ScientificEvidence, evidence_df,
+    OR THE DATABASE. Its two inputs are: (1) a plain list of id strings
+    (already extracted from row["Applicability_Summary"] by the caller,
+    via build_applicability_traceability()) and (2) a plain
+    {id: dict} mapping the caller built ONCE, upstream of report
+    generation entirely, via standard_evidence_builder.
+    get_scientific_evidence_by_ids() + build_scientific_evidence_
+    presentation_payload() (both Task 13.2A/B — neither is imported or
+    called anywhere in this file). Every value rendered below is
+    already a plain string (or None) on arrival — no enum, no
+    dataclass, no object of any kind ever reaches an f-string here,
+    because build_scientific_evidence_presentation_payload() already
+    guarantees that at its own boundary (Task 13.2B).
+
+    Omits the WHOLE subsection (returns []) when:
+      - no evidence_record_ids exist for this candidate, or
+      - no presentation payload was supplied at all (None, not a
+        dict, or empty), or
+      - none of this candidate's ids actually resolve to an entry in
+        the payload (e.g. the payload was built for a different
+        candidate's ids, or the lookup simply found nothing).
+
+    Renders one "Evidence #<id>" block per id that DOES resolve, with
+    only the fields that are non-None on that entry — a field with no
+    value is omitted from that block entirely, never shown as a blank
+    or fabricated placeholder line.
+    """
+    if not evidence_record_ids:
+        return []
+    if not isinstance(scientific_evidence_payload, dict) or not scientific_evidence_payload:
+        return []
+
+    blocks = []
+    for record_id in evidence_record_ids:
+        entry = scientific_evidence_payload.get(record_id)
+        if not isinstance(entry, dict):
+            continue
+
+        field_lines = []
+        for field_key, label in _SCIENTIFIC_EVIDENCE_FIELD_LABELS:
+            value = entry.get(field_key)
+            if value is not None and value != "":
+                field_lines.append(f"  - {label}: {value}")
+
+        if not field_lines:
+            # Resolved to an entry, but every field on it is empty —
+            # nothing genuine to show; skip this one id rather than
+            # render an empty "Evidence #X" header with no content.
+            continue
+
+        blocks.append(f"- **Evidence #{record_id}**")
+        blocks.extend(field_lines)
+
+    if not blocks:
+        return []
+
+    return ["**Scientific Evidence Details:**", *blocks, ""]
+
+
+def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None,
+                        scientific_evidence_payload=None) -> str:
     """Formats the ONE canonical Recommendation Card
     (structured_rationale.build_recommendation_card) as markdown. This
     function does not compute, re-derive, or duplicate any of the
@@ -430,8 +509,26 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None) 
     # Source_Record_IDs). Renders nothing (empty list) for a row from
     # an analysis before Task 10.2 existed, or any malformed value —
     # see build_applicability_traceability()'s own contract.
-    lines += _format_evidence_applicability_section(
-        build_applicability_traceability(row)
+    #
+    # Computed ONCE here (Task 13.2C) and reused below for the
+    # per-item Scientific Evidence Details subsection too, rather than
+    # calling build_applicability_traceability(row) a second time —
+    # both sections need the same evidence_record_ids list, from the
+    # same single read of row["Applicability_Summary"].
+    applicability_traceability = build_applicability_traceability(row)
+    lines += _format_evidence_applicability_section(applicability_traceability)
+
+    # Task 13.2C — per-item scientific evidence detail. Entirely
+    # optional: `scientific_evidence_payload` is None unless the
+    # caller (step_rd_candidates.py) explicitly built one upstream via
+    # standard_evidence_builder.get_scientific_evidence_by_ids() +
+    # build_scientific_evidence_presentation_payload() — this function
+    # never builds, fetches, or looks up anything itself; see
+    # _format_scientific_evidence_details_section()'s own docstring
+    # for the full "never touches the engine/database" guarantee.
+    lines += _format_scientific_evidence_details_section(
+        applicability_traceability.get("evidence_record_ids"),
+        scientific_evidence_payload,
     )
 
     basis = card["confidence_basis"]
@@ -468,6 +565,7 @@ def generate_pharma_report(
     top_n: int = 20,
     standardized_project: dict = None,
     decision_record_id: str = None,
+    scientific_evidence_payload: dict = None,
 ) -> str:
     """Builds the full Markdown report. Returns a short, explicit
     "no candidates" report (not an empty string, not an exception) if
@@ -486,6 +584,20 @@ def generate_pharma_report(
     through — never generated, looked up, or persisted here. When
     None (e.g. this report was generated before validation ran), the
     report says so plainly rather than fabricating an ID.
+
+    scientific_evidence_payload (Task 13.2C, optional): a
+    {evidence_record_id: dict} mapping built ENTIRELY by the caller,
+    upstream of this call, via standard_evidence_builder.
+    get_scientific_evidence_by_ids() + build_scientific_evidence_
+    presentation_payload() (typically step_rd_candidates.py, using the
+    union of every candidate row's own Applicability_Summary.
+    evidence_record_ids and st.session_state["evidence_df"]). This
+    module never builds, fetches, or looks anything up to produce
+    it — passed straight through and only ever read, matching every
+    other optional parameter here. When None (the default — every
+    existing caller that doesn't pass it), no per-item evidence detail
+    section appears anywhere in the report; every other section is
+    unaffected.
     """
     lines = [
         "# Botanical R&D Decision Intelligence Report",
@@ -592,7 +704,10 @@ def generate_pharma_report(
     lines.append(f"## Top Candidates (top {len(top)} of {total}, ranked by R&D Opportunity Score)")
     lines.append("")
     for i, (idx, row) in enumerate(top.iterrows(), start=1):
-        lines.append(_candidate_section(row, i, robustness_series.get(idx), market=market))
+        lines.append(_candidate_section(
+            row, i, robustness_series.get(idx), market=market,
+            scientific_evidence_payload=scientific_evidence_payload,
+        ))
 
     # Compact summary table for everything else.
     remainder = sortable.iloc[len(top):]

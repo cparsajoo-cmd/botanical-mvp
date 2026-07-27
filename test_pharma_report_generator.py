@@ -640,6 +640,266 @@ def test_existing_report_output_unchanged_when_no_applicability_summary():
     assert "evidence-record IDs" not in report
 
 
+# ---------------------------------------------------------------------
+# Task 13.2C — Scientific Evidence Details report wiring. All additive/
+# formatting-only: pharma_report_generator.py only ever RECEIVES an
+# already-built {id: dict} payload as a parameter — it never imports
+# standard_evidence_builder, data_contracts, botanical_rd_candidate_
+# engine, or database, and never looks anything up itself.
+# ---------------------------------------------------------------------
+
+def _applicability_summary_with_ids(ids):
+    return {
+        "strongest_category": "Partially applicable",
+        "total_evidence_items": len(ids),
+        "not_assessable_items": 0,
+        "evidence_record_ids": ids,
+        "critical_mismatches": [],
+        "missing_dimensions": [],
+        "summary_rationale": f"{len(ids)} evidence item(s) assessed.",
+    }
+
+
+_FULL_EVIDENCE_ENTRY = {
+    "evidence_record_id": "ev-1",
+    "source_type": "PubMed",
+    "study_type": "Randomized Controlled Trial",
+    "population": "human",
+    "applicability_classification": "Partially applicable",
+    "applicability_rationale": "PARTIALLY_APPLICABLE: indication and dosage form match.",
+    "doi_pmid_url": "https://pubmed.ncbi.nlm.nih.gov/1/",
+}
+
+
+def test_report_with_no_payload_remains_unchanged():
+    """A candidate row with real evidence_record_ids, but no payload
+    passed at all (the default) — the section must not appear, and no
+    existing content is altered."""
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1", "ev-2"])
+    )])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+
+    assert "Scientific Evidence Details" not in report
+    # Every other section is still present and unaffected.
+    assert "**Evidence applicability**" in report
+    assert "**Traceability:** sources —" in report
+    assert "**Confidence basis:**" in report
+
+
+def test_report_with_payload_renders_evidence_details():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1"])
+    )])
+    payload = {"ev-1": dict(_FULL_EVIDENCE_ENTRY)}
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+
+    assert "**Scientific Evidence Details:**" in report
+    assert "Evidence #ev-1" in report
+    assert "Source type: PubMed" in report
+    assert "Study type: Randomized Controlled Trial" in report
+    assert "Population: human" in report
+    assert "Applicability: Partially applicable" in report
+    assert "Rationale: PARTIALLY_APPLICABLE: indication and dosage form match." in report
+    assert "DOI / PMID / URL: https://pubmed.ncbi.nlm.nih.gov/1/" in report
+
+
+def test_unmatched_ids_are_ignored_safely():
+    """The candidate references ev-2, but the payload only has ev-1 —
+    ev-2 must simply not appear, no error, no placeholder line."""
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1", "ev-2"])
+    )])
+    payload = {"ev-1": dict(_FULL_EVIDENCE_ENTRY)}
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+
+    assert "Evidence #ev-1" in report
+    assert "Evidence #ev-2" not in report
+
+
+def test_no_matching_evidence_at_all_omits_the_whole_subsection():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-99"])
+    )])
+    payload = {"ev-1": dict(_FULL_EVIDENCE_ENTRY)}  # no overlap at all
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+    assert "Scientific Evidence Details" not in report
+
+
+def test_partial_payload_renders_only_available_fields():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-2"])
+    )])
+    payload = {"ev-2": {
+        "evidence_record_id": "ev-2",
+        "source_type": "ClinicalTrials.gov",
+        "study_type": None,
+        "population": None,
+        "applicability_classification": None,
+        "applicability_rationale": None,
+        "doi_pmid_url": None,
+    }}
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+
+    assert "Evidence #ev-2" in report
+    assert "Source type: ClinicalTrials.gov" in report
+    assert "Study type:" not in report
+    assert "Population:" not in report
+    assert "Applicability:" not in report
+    # Precise check: this section's own "  - Rationale: ..." line
+    # (2-space indent), NOT Task 13.1's differently-formatted
+    # "- Rationale: ..." line (no indent) inside the separate "Evidence
+    # applicability" section above, which legitimately has its own
+    # unrelated summary_rationale text.
+    assert "  - Rationale:" not in report
+    assert "  - DOI / PMID / URL:" not in report
+
+
+def test_enum_values_appear_as_human_readable_text():
+    """The payload (as build_scientific_evidence_presentation_payload()
+    always produces) already carries the .value string, never a raw
+    enum — proven end-to-end through the report."""
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1"])
+    )])
+    payload = {"ev-1": dict(_FULL_EVIDENCE_ENTRY, applicability_classification="Not applicable")}
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+    assert "Applicability: Not applicable" in report
+    assert "EvidenceApplicability" not in report
+    assert "<EvidenceApplicability" not in report
+
+
+def test_multiple_evidence_items_render_correctly():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1", "ev-2", "ev-3"])
+    )])
+    payload = {
+        "ev-1": dict(_FULL_EVIDENCE_ENTRY),
+        "ev-2": dict(_FULL_EVIDENCE_ENTRY, evidence_record_id="ev-2", source_type="Europe PMC"),
+        "ev-3": dict(_FULL_EVIDENCE_ENTRY, evidence_record_id="ev-3", source_type="ClinicalTrials.gov"),
+    }
+    report = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload=payload,
+    )
+
+    for expected_id, expected_source in (
+        ("ev-1", "PubMed"), ("ev-2", "Europe PMC"), ("ev-3", "ClinicalTrials.gov"),
+    ):
+        block_start = report.index(f"Evidence #{expected_id}")
+        block_end = report.index("\n\n", block_start)
+        block = report[block_start:block_end]
+        assert f"Source type: {expected_source}" in block
+
+    # Ordering matches the candidate's own evidence_record_ids order.
+    assert report.index("Evidence #ev-1") < report.index("Evidence #ev-2") < report.index("Evidence #ev-3")
+
+
+def test_report_generation_never_imports_engine_or_database():
+    """Report generation must never depend on engine or database
+    access — proven by inspecting pharma_report_generator.py's actual
+    import STATEMENTS via ast (not a raw text search, which would also
+    match this module's own docstrings — e.g. its module-level
+    docstring illustrates a caller's usage pattern with an example
+    `from botanical_rd_candidate_engine import ...` line, which is
+    documentation, not a real import)."""
+    import ast
+    with open("pharma_report_generator.py", encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename="pharma_report_generator.py")
+
+    imported_modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module)
+
+    forbidden_modules = {
+        "botanical_rd_candidate_engine", "database", "standard_evidence_builder",
+        "data_contracts", "supabase_client", "supabase",
+    }
+    assert not (imported_modules & forbidden_modules), (
+        f"forbidden import(s) found: {imported_modules & forbidden_modules}"
+    )
+
+    # scientific_evidence_index must never be referenced as real code
+    # either (only as prose, if at all) — checked by looking for it
+    # inside actual attribute-access / call expressions in the AST,
+    # not the raw text.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "scientific_evidence_index":
+            raise AssertionError("scientific_evidence_index accessed as real code")
+        if isinstance(node, ast.Name) and node.id == "scientific_evidence_index":
+            raise AssertionError("scientific_evidence_index referenced as real code")
+
+
+def test_scientific_evidence_details_section_malformed_payload_does_not_crash():
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1"])
+    )])
+    for malformed_payload in ("not a dict", 42, ["a", "list"], {}, None):
+        report = generate_pharma_report(
+            result, indication="X", dosage_form="Y", market="Z",
+            scientific_evidence_payload=malformed_payload,
+        )
+        assert "Scientific Evidence Details" not in report
+
+
+def test_existing_report_content_unaffected_by_new_optional_parameter():
+    """Passing scientific_evidence_payload must not change ANY other
+    section's content — proven by generating the same report with and
+    without the new parameter (payload has no matching ids) and
+    diffing everything except the new section."""
+    result = pd.DataFrame([_make_row(
+        Applicability_Summary=_applicability_summary_with_ids(["ev-1"])
+    )])
+    report_without = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    report_with_empty_payload = generate_pharma_report(
+        result, indication="X", dosage_form="Y", market="Z",
+        scientific_evidence_payload={},
+    )
+    assert report_without == report_with_empty_payload
+
+
+def test_step_rd_candidates_builds_the_payload_once_upstream_of_report_generation():
+    """The building (get_scientific_evidence_by_ids() +
+    build_scientific_evidence_presentation_payload()) happens in
+    step_rd_candidates.py, NOT in pharma_report_generator.py — proven
+    by inspecting step_rd_candidates.py's own source for the two calls
+    and confirming their result is what gets passed into
+    generate_pharma_report()."""
+    with open("step_rd_candidates.py", encoding="utf-8") as f:
+        source = f.read()
+
+    assert "from standard_evidence_builder import" in source
+    assert "get_scientific_evidence_by_ids" in source
+    assert "build_scientific_evidence_presentation_payload" in source
+    assert "scientific_evidence_payload=scientific_evidence_payload" in source
+
+    # Each builder is actually CALLED (assigned to a result) exactly
+    # once in this file — not once per candidate row, not once per
+    # report section. Matched against the assignment pattern
+    # specifically so this doesn't also match the import line or this
+    # file's own prose mentioning the function name.
+    assert source.count("= get_scientific_evidence_by_ids(") == 1
+    assert source.count("= build_scientific_evidence_presentation_payload(") == 1
+
+
 if __name__ == "__main__":
     import sys
 

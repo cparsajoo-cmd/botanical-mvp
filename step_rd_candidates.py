@@ -7,6 +7,10 @@ from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
+from standard_evidence_builder import (
+    build_scientific_evidence_presentation_payload,
+    get_scientific_evidence_by_ids,
+)
 
 
 def _unique_nonempty(values):
@@ -28,6 +32,35 @@ def _get_evidence_df():
     if isinstance(evidence_df, pd.DataFrame):
         return evidence_df
     return None
+
+
+def _collect_evidence_record_ids(result_df):
+    """Task 13.2C — the union of every candidate row's own
+    Applicability_Summary.evidence_record_ids (Task 10.2), deduplicated,
+    order-preserving. Read-only over `result_df` — never touches the
+    engine, evidence_df, or the database itself; this only decides
+    WHICH ids to later ask standard_evidence_builder.
+    get_scientific_evidence_by_ids() to resolve.
+
+    A row with no "Applicability_Summary" column at all, a None value,
+    or any non-dict value simply contributes nothing — never an error,
+    matching the same degrade-safely discipline
+    build_applicability_traceability() already established for reading
+    this same field in pharma_report_generator.py.
+    """
+    ids = []
+    seen = set()
+    if not isinstance(result_df, pd.DataFrame) or "Applicability_Summary" not in result_df.columns:
+        return ids
+    for summary in result_df["Applicability_Summary"]:
+        if not isinstance(summary, dict):
+            continue
+        for record_id in summary.get("evidence_record_ids") or []:
+            if record_id is None or record_id in seen:
+                continue
+            seen.add(record_id)
+            ids.append(record_id)
+    return ids
 
 
 # ---------------------------------------------------------------------- #
@@ -585,10 +618,29 @@ def render_rd_candidates_step(inputs):
             mime="text/csv",
         )
 
+        # Task 13.2C — per-item scientific evidence detail. Built ONCE
+        # here, outside pharma_report_generator.py entirely: collect
+        # this analysis's evidence_record_ids (already on every
+        # candidate row via Task 10.2's Applicability_Summary), resolve
+        # them against the same evidence_df already loaded for this
+        # session, then convert to a presentation-safe payload before
+        # it ever reaches the report layer. generate_pharma_report()
+        # only ever receives the final plain-dict payload below — it
+        # never imports standard_evidence_builder, never sees a
+        # ScientificEvidence object, and never touches evidence_df or
+        # the engine itself.
+        scientific_evidence_by_id = get_scientific_evidence_by_ids(
+            _collect_evidence_record_ids(result_df), _get_evidence_df()
+        )
+        scientific_evidence_payload = build_scientific_evidence_presentation_payload(
+            scientific_evidence_by_id
+        )
+
         report_markdown = generate_pharma_report(
             result_df, indication=indication, dosage_form=dosage_form, market=market,
             standardized_project=inputs.get("standardized_project"),
             decision_record_id=st.session_state.get("rd_last_decision_record_id"),
+            scientific_evidence_payload=scientific_evidence_payload,
         )
         st.download_button(
             "Download R&D report (Markdown)",

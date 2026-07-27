@@ -65,6 +65,8 @@ tests) for the explicit regression lock on this.
 
 from data_contracts import EvidenceApplicability, EvidenceHierarchyLevel, ScientificEvidence
 
+import pandas as pd
+
 # Every dimension considered "material" to preparation applicability.
 # route/population/dose/DER/standardization/chemotype are deliberately
 # NOT included here: route and population are proposed-product/session
@@ -345,15 +347,61 @@ _EVIDENCE_LEVEL_TO_HIERARCHY = {
     "listed in official ema hmpc inventory": EvidenceHierarchyLevel.TRADITIONAL_USE_MONOGRAPH,
 }
 
+# Task 11.1 correction — a single, reusable definition of "missing",
+# used everywhere build_scientific_evidence()/_build_scientific_evidence_index()
+# read a scalar field. Before this correction, `record.get("Source_Type") or None`
+# -style checks silently let a pandas NaN through: float('nan') is
+# TRUTHY in Python, so `nan or None` evaluates to `nan`, not `None` —
+# the exact bug this fixes. A row loaded via .iterrows()/.to_dict() on
+# a DataFrame with any missing cell in a column produces float('nan')
+# for that cell, not None or "" — this is normal, expected pandas
+# behavior, not a data-quality problem, but every reader of a
+# DataFrame row must account for it explicitly.
+_MISSING_STRING_TOKENS = {"nan", "none", "null", "na", "n/a"}
+
+
+def normalize_missing_value(value):
+    """Treats as missing (returns None), and NEVER infers a replacement
+    value for:
+      - None
+      - float NaN / pandas NA / NaT (via pd.isna())
+      - "" or whitespace-only strings
+      - the literal strings "nan"/"none"/"null"/"na"/"n/a" (case-
+        insensitive) — the same tokens BotanicalRDCandidateEngine._pick()
+        already treats as missing, so a value already stringified
+        somewhere upstream (e.g. str(float('nan')) == "nan") is still
+        caught, not just genuine NaN objects.
+
+    Any other value (including 0, False, and non-empty strings) is
+    returned completely unchanged.
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        # pd.isna() raises for some array-like inputs — not a concern
+        # for the scalar fields this helper is used on; fail open
+        # (treat as not-missing) rather than raise for any unexpected
+        # non-scalar type.
+        pass
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped.lower() in _MISSING_STRING_TOKENS:
+            return None
+    return value
+
 
 def normalize_evidence_level(evidence_level):
     """Conservative Evidence_Level (free string) -> EvidenceHierarchyLevel
     (enum) normalization. Returns None for any value not in the
     explicit, documented map above — including "Unknown", "", missing
-    values, and every evidence-quality-ordinal value this function does
-    not attempt to guess a study type for.
+    values (None/NaN/"nan"), and every evidence-quality-ordinal value
+    this function does not attempt to guess a study type for.
     """
-    if not evidence_level:
+    evidence_level = normalize_missing_value(evidence_level)
+    if evidence_level is None:
         return None
     key = str(evidence_level).strip().lower()
     return _EVIDENCE_LEVEL_TO_HIERARCHY.get(key)
@@ -363,7 +411,9 @@ def _split_dimension_string(value):
     """Reverses the "; ".join(...) applied when the Applicability_*
     dimension/mismatch fields were persisted (see build_standard_evidence()
     above) — the inverse of that join, not a new parsing rule."""
-    value = value or ""
+    value = normalize_missing_value(value)
+    if value is None:
+        return []
     return [part.strip() for part in str(value).split(";") if part.strip()]
 
 
@@ -380,9 +430,9 @@ def build_scientific_evidence(record):
     module's own docstring, immediately above, for exactly which fields
     that applies to and why.
     """
-    applicability_raw = record.get("Applicability_Classification") or None
+    applicability_raw = normalize_missing_value(record.get("Applicability_Classification"))
     applicability_classification = None
-    if applicability_raw:
+    if applicability_raw is not None:
         try:
             applicability_classification = EvidenceApplicability(applicability_raw)
         except ValueError:
@@ -392,21 +442,30 @@ def build_scientific_evidence(record):
             # rule as normalize_evidence_level() above.
             applicability_classification = None
 
-    evidence_record_id = record.get("Evidence_Record_ID")
+    # Task 11.1 correction — normalize BEFORE stringifying. The
+    # pre-correction code checked `evidence_record_id not in (None, "")`
+    # and only then called str(...) — a NaN evidence_record_id (a real,
+    # observed pandas behavior, not a hypothetical) passed that check
+    # (NaN is neither None nor "") and produced the literal string
+    # "nan" as source_record_id. Normalizing first closes this exactly.
+    evidence_record_id = normalize_missing_value(record.get("Evidence_Record_ID"))
 
     return ScientificEvidence(
-        source_type=record.get("Source_Type") or None,
-        doi_pmid_url=record.get("Source_URL") or None,
-        study_type=record.get("Evidence_Type") or record.get("Study_Type") or None,
-        population=record.get("Population") or None,
-        comparator=record.get("Comparator") or None,
-        outcome=record.get("Primary_Outcome") or None,
+        source_type=normalize_missing_value(record.get("Source_Type")),
+        doi_pmid_url=normalize_missing_value(record.get("Source_URL")),
+        study_type=(
+            normalize_missing_value(record.get("Evidence_Type"))
+            or normalize_missing_value(record.get("Study_Type"))
+        ),
+        population=normalize_missing_value(record.get("Population")),
+        comparator=normalize_missing_value(record.get("Comparator")),
+        outcome=normalize_missing_value(record.get("Primary_Outcome")),
         evidence_hierarchy_level=normalize_evidence_level(record.get("Evidence_Level")),
         source_record_id=(
-            str(evidence_record_id) if evidence_record_id not in (None, "") else None
+            str(evidence_record_id) if evidence_record_id is not None else None
         ),
         applicability_classification=applicability_classification,
-        applicability_rationale=record.get("Applicability_Rationale") or None,
+        applicability_rationale=normalize_missing_value(record.get("Applicability_Rationale")),
         applicability_evaluated_dimensions=_split_dimension_string(
             record.get("Applicability_Evaluated_Dimensions")
         ),

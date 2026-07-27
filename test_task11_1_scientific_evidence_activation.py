@@ -9,16 +9,21 @@ WHAT THIS COVERS
    data_contracts.ScientificEvidence.
 2. standard_evidence_builder.normalize_evidence_level() — conservative
    Evidence_Level -> EvidenceHierarchyLevel normalization.
-3. botanical_rd_candidate_engine.BotanicalRDCandidateEngine.
+3. standard_evidence_builder.normalize_missing_value() — the shared
+   missing-value helper (correction: None/NaN/pandas-NA/""/"nan" all
+   treated as missing, uniformly, everywhere a scalar field is read).
+4. botanical_rd_candidate_engine.BotanicalRDCandidateEngine.
    _build_scientific_evidence_index() — the structured, separate
    evidence_record_id -> ScientificEvidence index.
-4. Non-regression: scores/ranking/gates/Decision_Class_AH unchanged;
+5. Non-regression: scores/ranking/gates/Decision_Class_AH unchanged;
    no new Supabase column introduced; no legacy module reachable.
 
 HOW TO RUN
     pytest -q test_task11_1_scientific_evidence_activation.py
     (or `pytest -q` from the repo root — auto-discovered)
 """
+
+import math
 
 import pandas as pd
 
@@ -30,6 +35,7 @@ from standard_evidence_builder import (
     build_scientific_evidence,
     build_standard_evidence,
     normalize_evidence_level,
+    normalize_missing_value,
 )
 
 
@@ -110,6 +116,66 @@ def test_applicability_classification_unparseable_value_stays_none():
     row = _full_row(Applicability_Classification="Some Foreign Value")
     evidence = build_scientific_evidence(row)
     assert evidence.applicability_classification is None
+
+
+# ======================================================================
+# Correction — missing-value handling. None/NaN/pandas-NA/""/"nan" must
+# all be treated as missing, uniformly, never inferred as a real value.
+# ======================================================================
+
+def test_normalize_missing_value_treats_all_missing_forms_as_none():
+    for value in (
+        None, float("nan"), math.nan, pd.NA, "", "   ",
+        "nan", "NaN", "NAN", "none", "None", "null", "NULL", "na", "N/A",
+    ):
+        assert normalize_missing_value(value) is None, f"{value!r} should normalize to None"
+
+
+def test_normalize_missing_value_never_infers_a_replacement_for_real_values():
+    assert normalize_missing_value("PubMed") == "PubMed"
+    assert normalize_missing_value(0) == 0
+    assert normalize_missing_value(False) is False
+    assert normalize_missing_value("ev-1") == "ev-1"
+    assert normalize_missing_value(42) == 42
+
+
+def test_nan_fields_become_none_in_build_scientific_evidence():
+    """The exact bug this correction fixes: `value or None` lets a
+    truthy float('nan') through unchanged. Every scalar field must
+    normalize NaN to a real None."""
+    row = _full_row(
+        Source_Type=float("nan"),
+        Population=float("nan"),
+        Comparator=pd.NA,
+        Primary_Outcome="",
+        Applicability_Rationale="nan",
+    )
+    evidence = build_scientific_evidence(row)
+    assert evidence.source_type is None
+    assert evidence.population is None
+    assert evidence.comparator is None
+    assert evidence.outcome is None
+    assert evidence.applicability_rationale is None
+    # None of these may ever be the literal float NaN or the string "nan".
+    for value in (evidence.source_type, evidence.population, evidence.comparator,
+                  evidence.outcome, evidence.applicability_rationale):
+        assert value != "nan"
+        assert not (isinstance(value, float) and value != value)  # not NaN
+
+
+def test_nan_evidence_id_produces_none_source_record_id_not_the_string_nan():
+    row = _full_row(Evidence_Record_ID=float("nan"))
+    evidence = build_scientific_evidence(row)
+    assert evidence.source_record_id is None
+    assert evidence.source_record_id != "nan"
+
+
+def test_valid_numeric_and_string_ids_still_work():
+    numeric = build_scientific_evidence(_full_row(Evidence_Record_ID=42))
+    assert numeric.source_record_id == "42"
+
+    stringy = build_scientific_evidence(_full_row(Evidence_Record_ID="ev-1"))
+    assert stringy.source_record_id == "ev-1"
 
 
 def test_each_object_retains_the_existing_evidence_record_id():
@@ -264,6 +330,51 @@ def test_scientific_evidence_index_skips_rows_without_an_id():
     engine = _make_engine(evidence_df)
     index = engine._build_scientific_evidence_index()
     assert index == {}
+
+
+def test_nan_evidence_id_is_skipped_and_no_nan_index_key_is_created():
+    """A row whose Evidence_Record_ID cell is NaN (the exact real-world
+    shape pandas produces for a missing cell) must be skipped entirely,
+    and no "nan" string key may ever appear in the index."""
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
+        "Notes": "RefCompoundA study with a missing id",
+        "Source_Type": "PubMed",
+        "Evidence_Record_ID": float("nan"),
+    }])
+    engine = _make_engine(evidence_df)
+    index = engine._build_scientific_evidence_index()
+
+    assert "nan" not in index
+    assert index == {}
+
+
+def test_valid_ids_still_work_when_a_different_row_has_a_missing_id():
+    """A NaN id on one row must not corrupt a genuinely valid id on
+    another row processed by the same index build — tested with a
+    string id column (which pandas does not silently coerce the way it
+    coerces an int column containing a NaN to float64) to isolate the
+    missing-value fix itself from that unrelated pandas dtype quirk."""
+    evidence_df = pd.DataFrame([
+        {
+            "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
+            "Notes": "RefCompoundA study with a missing id",
+            "Source_Type": "PubMed",
+            "Evidence_Record_ID": float("nan"),
+        },
+        {
+            "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
+            "Notes": "RefCompoundA study with a real id",
+            "Source_Type": "PubMed",
+            "Evidence_Record_ID": "ev-valid-7",
+        },
+    ])
+    engine = _make_engine(evidence_df)
+    index = engine._build_scientific_evidence_index()
+
+    assert "nan" not in index
+    assert set(index.keys()) == {"ev-valid-7"}
+    assert index["ev-valid-7"].source_record_id == "ev-valid-7"
 
 
 def test_scientific_evidence_index_built_automatically_by_run():

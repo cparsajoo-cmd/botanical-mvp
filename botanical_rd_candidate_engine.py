@@ -32,7 +32,7 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
-from standard_evidence_builder import build_scientific_evidence
+from standard_evidence_builder import build_scientific_evidence, normalize_missing_value
 from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -2413,16 +2413,39 @@ class BotanicalRDCandidateEngine:
         happen — it's the table's own primary key) keeps the LAST row,
         same "last one wins" convention as occurrence_seed.
         build_occurrence_lookup().
+
+        KNOWN PANDAS DTYPE CAVEAT (disclosed, not fixed here — out of
+        this correction's scope, which is missing-VALUE handling, not
+        numeric-formatting): if an Evidence_Record_ID column contains
+        BOTH a real integer id and a missing (NaN) cell, pandas silently
+        upcasts the whole column to float64 — a valid id like 7 becomes
+        7.0, which this method then stringifies as "7.0", not "7". This
+        cannot happen for a real evidence_records table (its `id` column
+        is never actually null for a persisted row), so it is a
+        test-fixture/in-memory-only concern, not a production one — but
+        it is real and worth knowing if a future test mixes a NaN id row
+        with an integer id row in one DataFrame.
         """
         index = {}
         if self.evidence_df.empty:
             return index
 
         for _, row in self.evidence_df.iterrows():
-            record_id = self._pick(row, ["Evidence_Record_ID", "evidence_record_id"])
-            if not record_id:
+            # Task 11.1 correction — explicit normalize_missing_value() call,
+            # not just self._pick()'s incidental NaN handling: a pandas
+            # row with a missing "Evidence_Record_ID" cell holds
+            # float('nan') there, not None or "" — normalizing before
+            # the `if record_id is None` check is what guarantees this
+            # index never gets a "nan" string key, and that the SAME
+            # id value (once stringified) is used here as the key and
+            # inside build_scientific_evidence()'s own
+            # source_record_id field below, so the two never disagree.
+            record_id = normalize_missing_value(row.get("Evidence_Record_ID"))
+            if record_id is None:
+                record_id = normalize_missing_value(row.get("evidence_record_id"))
+            if record_id is None:
                 continue
-            index[record_id] = build_scientific_evidence(row.to_dict())
+            index[str(record_id)] = build_scientific_evidence(row.to_dict())
 
         return index
 

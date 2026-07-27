@@ -821,13 +821,18 @@ def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRec
         as having a published monograph.
       - jurisdiction_or_market: from Target_Market, verbatim.
       - monograph_source: the literal string "EMA/HMPC", but ONLY when
-        Source_Organization also identifies the EMA/HMPC connector
-        (contains "ema", case-insensitive, after normalization) —
-        otherwise None. This is deliberately a second, independent
-        check on top of the Source_Type gate, not redundant with it:
-        Source_Type=="Regulatory" alone does not guarantee this
-        particular row is EMA-sourced if some other regulatory
-        connector existed in the future.
+        Source_Organization also identifies the EMA/HMPC connector —
+        a strict normalized-prefix check (startswith "ema hmpc",
+        case-insensitive), matching the real connector's actual
+        organization strings only, NOT a loose substring/"contains
+        ema" check (which would also match, e.g., an organization
+        named "Schema Regulatory Authority", or one that merely
+        mentions EMA mid-sentence) — otherwise None. This is
+        deliberately a second, independent check on top of the
+        Source_Type gate, not redundant with it: Source_Type==
+        "Regulatory" alone does not guarantee this particular row is
+        EMA-sourced if some other regulatory connector existed in the
+        future.
       - source_record_ids: exactly one entry, the normalized
         Evidence_Record_ID.
 
@@ -873,8 +878,23 @@ def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRec
 
         source_organization = normalize_missing_value(record.get("Source_Organization"))
         monograph_source = None
-        if source_organization is not None and "ema" in str(source_organization).strip().lower():
-            monograph_source = "EMA/HMPC"
+        if source_organization is not None:
+            # Task 14.1 correction — narrowly matches the real EMA
+            # connector's actual organization strings only:
+            #   "EMA HMPC — Inventory of herbal substances for assessment"
+            #   "EMA HMPC (live fetch failed)"
+            #   "EMA HMPC (lookup unavailable)"
+            # (ema_regulatory_connector.py / regulatory_connector.py,
+            # confirmed by direct inspection — every real value begins
+            # with exactly "EMA HMPC"). Deliberately a strict
+            # normalized-prefix check, NOT a substring/contains check:
+            # "ema" anywhere in the string (e.g. an organization named
+            # "Schema Regulatory Authority", or one that merely
+            # mentions EMA mid-sentence) must NOT match — only genuine
+            # EMA/HMPC connector output starts this way.
+            normalized_org = str(source_organization).strip().lower()
+            if normalized_org.startswith("ema hmpc"):
+                monograph_source = "EMA/HMPC"
 
         return RegulatoryRecord(
             status=status,

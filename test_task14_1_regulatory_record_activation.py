@@ -25,6 +25,7 @@ HOW TO RUN
 
 import pandas as pd
 
+import botanical_rd_candidate_engine as eng
 from data_contracts import MarketVerificationStatus, RegulatoryRecord
 from standard_evidence_builder import build_regulatory_record
 
@@ -109,6 +110,51 @@ def test_genuine_ema_inventory_row_creates_a_real_regulatory_record():
     assert result.source_record_ids == ["ev-101"]
     assert result.jurisdiction_or_market == "European Union"
     assert result.monograph_source == "EMA/HMPC"
+
+
+# ---------------------------------------------------------------------
+# Task 14.1 correction — tightened EMA/HMPC organization identification.
+# monograph_source must be set only for the real connector's actual
+# organization strings (a strict "starts with EMA HMPC" match), never
+# a loose "contains ema" substring match.
+# ---------------------------------------------------------------------
+
+def test_ema_hmpc_inventory_organization_string_maps_to_ema_hmpc():
+    result = build_regulatory_record(_ema_inventory_listed_row(
+        Source_Organization="EMA HMPC — Inventory of herbal substances for assessment",
+    ))
+    assert result.monograph_source == "EMA/HMPC"
+
+
+def test_ema_hmpc_live_fetch_failed_organization_string_maps_to_ema_hmpc():
+    result = build_regulatory_record(_ema_inventory_listed_row(
+        Source_Organization="EMA HMPC (live fetch failed)",
+    ))
+    assert result.monograph_source == "EMA/HMPC"
+
+
+def test_schema_regulatory_authority_organization_does_not_map_to_ema_hmpc():
+    """The exact false-positive shape the loose "contains ema" check
+    would have wrongly matched — "Schema" contains "ema" as a
+    substring, but is obviously not an EMA/HMPC organization."""
+    result = build_regulatory_record(_ema_inventory_listed_row(
+        Source_Organization="Schema Regulatory Authority",
+    ))
+    assert result.monograph_source is None
+
+
+def test_organization_merely_mentioning_ema_mid_text_does_not_map_to_ema_hmpc():
+    result = build_regulatory_record(_ema_inventory_listed_row(
+        Source_Organization="Some Authority mentioning EMA in the middle of unrelated text",
+    ))
+    assert result.monograph_source is None
+
+
+def test_missing_organization_leaves_monograph_source_none():
+    row = _ema_inventory_listed_row()
+    del row["Source_Organization"]
+    result = build_regulatory_record(row)
+    assert result.monograph_source is None
 
 
 # ---------------------------------------------------------------------
@@ -388,18 +434,11 @@ def test_existing_flat_regulatory_fields_pass_through_unread_and_unwritten():
 # 17) Scoring, gates, ranking, decision outputs remain byte-identical.
 # ---------------------------------------------------------------------
 
-def test_no_import_time_dependency_on_engine_scoring_gates_or_streamlit():
-    """This module must remain importable, and this function callable,
-    with zero engine/scoring/gates/Streamlit involvement — proven the
-    same way every prior activation in this module proved it."""
-    import sys
-    for forbidden_module in ("botanical_rd_candidate_engine", "streamlit", "database"):
-        assert forbidden_module not in sys.modules or True  # import already succeeded above
-    # The real proof: build_regulatory_record() was already called
-    # dozens of times above in this file without ever importing any of
-    # botanical_rd_candidate_engine.py, database.py, or streamlit —
-    # confirmed by this test file's own import list containing none of
-    # them, and every test above passing.
+def test_standard_evidence_builder_has_no_engine_or_streamlit_import():
+    """Real, non-tautological check: standard_evidence_builder.py's own
+    import statements (parsed via ast, not a sys.modules check that
+    would trivially pass regardless of what this function does) must
+    not include the engine, Streamlit, or the database layer."""
     import ast
     with open("standard_evidence_builder.py", encoding="utf-8") as f:
         tree = ast.parse(f.read())
@@ -409,4 +448,124 @@ def test_no_import_time_dependency_on_engine_scoring_gates_or_streamlit():
             imported.update(a.name for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    assert not (imported & {"botanical_rd_candidate_engine", "streamlit", "database"})
+    forbidden = {"botanical_rd_candidate_engine", "streamlit", "database"}
+    assert not (imported & forbidden), f"forbidden import(s) found: {imported & forbidden}"
+
+
+def test_constructing_regulatory_records_does_not_alter_engine_output():
+    """Task 14.1 correction — a REAL regression test, not an import
+    check. Proves that constructing RegulatoryRecord objects (via
+    build_regulatory_record(), called directly against the same
+    evidence rows the engine also sees) has zero effect on the
+    engine's own R&D_Opportunity_Score/Decision_Class/Gate_Results/
+    candidate ranking — the builder is a pure, disconnected reader,
+    never wired into scoring.
+
+    Uses a deterministic mixed evidence fixture: two alternative
+    plants competing for the same reference compound (so ranking is
+    real and non-trivial, not a single-row edge case), plus one
+    genuine Source_Type=="Regulatory" EMA row (the exact shape
+    build_regulatory_record() is meant to activate) mixed in among
+    ordinary PubMed rows.
+
+    Same reusable engine-construction pattern as Task 11.1's own
+    test_scores_ranking_gates_and_decision_class_unchanged() — no new
+    harness invented.
+    """
+    evidence_df = pd.DataFrame([
+        {
+            "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
+            "Notes": "randomized controlled trial RefCompoundA outcome improved",
+            "Primary_Outcome": "randomized controlled trial RefCompoundA outcome improved",
+            "Source_Type": "PubMed",
+            "Evidence_Record_ID": "ev-sci-1",
+            "Evidence_Level": "High",
+        },
+        {
+            "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
+            "Notes": "European Medicines Agency HMPC assessment context for PlantAlt",
+            "Source_Type": "Regulatory",
+            "Source_Organization": "EMA HMPC — Inventory of herbal substances for assessment",
+            "Evidence_Level": "Listed in official EMA HMPC inventory",
+            "Target_Market": "European Union",
+            "Evidence_Record_ID": "ev-reg-1",
+        },
+        {
+            "Scientific_Name": "PlantAlt2", "Plant": "PlantAlt2",
+            "Notes": "weak observational report RefCompoundA no clear effect",
+            "Source_Type": "PubMed",
+            "Evidence_Record_ID": "ev-sci-2",
+            "Evidence_Level": "Low",
+        },
+    ])
+
+    def _make_ranking_engine(edf):
+        rows = [
+            dict(scientific_name="PlantRef", compound_name="RefCompoundA",
+                 indication="TestIndication", target="Laxative",
+                 common_name="", plant_part="", extraction_method=""),
+            dict(scientific_name="PlantAlt", compound_name="RefCompoundA",
+                 indication="TestIndication", target="Laxative",
+                 common_name="", plant_part="", extraction_method=""),
+            dict(scientific_name="PlantAlt2", compound_name="RefCompoundA",
+                 indication="TestIndication", target="Laxative",
+                 common_name="", plant_part="", extraction_method=""),
+        ] + [
+            dict(scientific_name=f"Bg{i}", compound_name=f"BgCompound{i}",
+                 indication="background", target="Antioxidant",
+                 common_name="", plant_part="", extraction_method="")
+            for i in range(25)
+        ]
+        return eng.BotanicalRDCandidateEngine(
+            plant_compounds_df=pd.DataFrame(rows),
+            compound_profiles_df=pd.DataFrame(),
+            scientific_evidence_df=pd.DataFrame(),
+            evidence_df=edf,
+            use_live_search=False,
+        )
+
+    # Step 1 — run the engine normally, capture the fields of interest.
+    engine_a = _make_ranking_engine(evidence_df)
+    result_a = engine_a.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    captured_a = result_a[result_a["Alternative_Plant"].isin(["PlantAlt", "PlantAlt2"])][
+        ["Alternative_Plant", "R&D_Opportunity_Score", "Decision_Class",
+         "Decision_Class_AH", "Gate_Results"]
+    ].reset_index(drop=True)
+
+    # Step 2 — construct RegulatoryRecord objects from the SAME evidence
+    # rows, entirely outside the engine. This is the additive
+    # construction under test; nothing about its result is fed back
+    # into the engine or into evidence_df.
+    regulatory_records = []
+    for _, row in evidence_df.iterrows():
+        record = build_regulatory_record(row.to_dict())
+        if record is not None:
+            regulatory_records.append(record)
+    assert len(regulatory_records) == 1  # only the genuine Regulatory row
+    assert regulatory_records[0].source_record_ids == ["ev-reg-1"]
+    assert regulatory_records[0].status == MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED
+
+    # evidence_df itself must be untouched by step 2.
+    assert list(evidence_df["Evidence_Record_ID"]) == ["ev-sci-1", "ev-reg-1", "ev-sci-2"]
+
+    # Step 3 — run the (unchanged) engine again, fresh instance, same
+    # inputs, same evidence_df object.
+    engine_b = _make_ranking_engine(evidence_df)
+    result_b = engine_b.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    captured_b = result_b[result_b["Alternative_Plant"].isin(["PlantAlt", "PlantAlt2"])][
+        ["Alternative_Plant", "R&D_Opportunity_Score", "Decision_Class",
+         "Decision_Class_AH", "Gate_Results"]
+    ].reset_index(drop=True)
+
+    # Step 4 — exact equality of captured fields AND row order/ranking.
+    assert list(captured_a["Alternative_Plant"]) == list(captured_b["Alternative_Plant"])
+    assert captured_a["R&D_Opportunity_Score"].tolist() == captured_b["R&D_Opportunity_Score"].tolist()
+    assert captured_a["Decision_Class"].tolist() == captured_b["Decision_Class"].tolist()
+    assert captured_a["Decision_Class_AH"].tolist() == captured_b["Decision_Class_AH"].tolist()
+    assert captured_a["Gate_Results"].tolist() == captured_b["Gate_Results"].tolist()
+
+    # PlantAlt (real evidence + regulatory row) must rank ahead of
+    # PlantAlt2 (weak evidence only) in BOTH runs, identically — a real
+    # ranking assertion, not just "the numbers match."
+    assert list(captured_a["Alternative_Plant"])[0] == "PlantAlt"
+    assert list(captured_b["Alternative_Plant"])[0] == "PlantAlt"

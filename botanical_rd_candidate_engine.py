@@ -31,7 +31,7 @@ from structured_rationale import (
 )
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
-from data_contracts import GateStatus
+from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
 from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -143,7 +143,64 @@ OUTPUT_COLUMNS = [
     # self.scoring_config in __init__). Purely descriptive metadata —
     # never read back into scoring itself.
     "Scoring_Config_Version",
+    # Task 10.2 — Evidence-level Preparation Applicability, candidate-
+    # level summary. Additive only: see _summarize_applicability() and
+    # CandidateAssessment.applicability_summary. Never read by
+    # _decision_class(), _score_candidate(), _evaluate_gates(), or
+    # go_investigate_hold_no_go() — carries no influence on
+    # Decision_Class, Decision_Class_AH, R&D_Opportunity_Score, gate
+    # outcomes, or ranking.
+    "Applicability_Summary",
 ]
+
+
+# Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
+# self.evidence_df pass. Replaces the previous unconditional
+# `str(value) for value in row.values` (every column, unfiltered).
+#
+# WHY: that unfiltered join meant any column added to evidence_df in
+# the future automatically became part of the free text that
+# classify_evidence_hierarchy()/classify_negative_evidence() pattern-
+# match against for Evidence_Hierarchy_Detail/Has_Negative_Evidence.
+# Task 10.2 adds several PLATFORM-GENERATED interpretation columns
+# (Applicability_Classification/_Rationale/_Evaluated_Dimensions/
+# _Missing_Dimensions/_Detected_Mismatches) to that same DataFrame —
+# feeding platform-generated interpretation back into the classifiers
+# that interpretation was itself derived from is a feedback loop, not
+# scientific source evidence, and must not happen.
+#
+# This list was built by auditing database.load_evidence_records()'s
+# actual row-dict keys (the only place self.evidence_df's columns are
+# defined) — no column name here is invented, and none of the excluded
+# columns are removed from evidence_df itself, only from this text
+# concatenation.
+#
+# Excluded, deliberately:
+#   - Applicability_Classification / _Rationale / _Evaluated_Dimensions
+#     / _Missing_Dimensions / _Detected_Mismatches (Task 10.2, this
+#     task's own generated output)
+#   - Direct_For_Selected_Product / Directness_Reason ("directness
+#     interpretation" — pre-existing platform-generated interpretation,
+#     was already leaking into this index before this task; corrected
+#     here per the same principle)
+#   - Plant_ID / Evidence_Record_ID (identifiers, not scientific text)
+EVIDENCE_TEXT_INDEX_ALLOWLIST = (
+    "Scientific_Name", "Common_Name", "Plant",
+    "Product_Type", "Dosage_Form", "Target_Indication", "Target_Market",
+    "EMA_Status", "WHO_Status", "ESCOP_Status",
+    "Clinical_Level", "Clinical_RCT_Count", "Meta_Level", "Meta_Count",
+    "Dosage_Form_Evidence", "Infusion_Evidence",
+    "Safety_Level", "Drug_Interaction_Level", "Commercial_Level",
+    "Regulatory_Status", "Novel_Food_Status", "Notes",
+    "Evidence_Type", "Evidence_Level", "Dosage_Form_Relevance", "Study_Model",
+    "Detected_Dosage_Forms", "Detected_Indications", "Regulatory_Evidence",
+    "Evidence_Score",
+    "Study_Type", "Dosage_Form_Detected", "Target_Indication_Detected",
+    "Population", "Sample_Size", "Comparator", "Primary_Outcome",
+    "Result_Direction", "Safety_Signal",
+    "Reference_Count", "Source_Type", "Source_Title",
+    "Source_Organization", "Source_Year", "Source_URL",
+)
 
 
 SIMILAR_COMPOUND_GROUPS = {
@@ -680,7 +737,9 @@ class BotanicalRDCandidateEngine:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
         rows = []
-        evidence_index, evidence_source_index = self._build_evidence_text_index()
+        evidence_index, evidence_source_index, evidence_applicability_index = (
+            self._build_evidence_text_index()
+        )
 
         # Precompute the alternative-candidate list ONCE, outside the
         # reference/compound loops below. Previously `all_candidates
@@ -976,6 +1035,19 @@ class BotanicalRDCandidateEngine:
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
                     )
 
+                    # Task 10.2 — Evidence-level Preparation Applicability,
+                    # candidate-level summary. Purely additive, read-only
+                    # aggregation over evidence_applicability_index (built
+                    # once, alongside evidence_index/evidence_source_index,
+                    # by _build_evidence_text_index()); never influences
+                    # score, decision, or gate_results above.
+                    applicability_items = self._collect_applicability_items(
+                        applicability_index=evidence_applicability_index,
+                        plant=alt_plant,
+                        compound=matched_compound,
+                    )
+                    applicability_summary = self._summarize_applicability(applicability_items)
+
                     evidence_confidence = compute_evidence_confidence(
                         evidence_hierarchy_detail=evidence_hierarchy_detail,
                         evidence_level=evidence_level,
@@ -1131,6 +1203,7 @@ class BotanicalRDCandidateEngine:
                             "Decision_Class_AH": decision_class_ah,
                             "Gate_Results": gate_results,
                             "Scoring_Config_Version": self.scoring_config.version,
+                            "Applicability_Summary": applicability_summary,
                             "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
                             # Internal-only — used by _merge_multi_compound_matches
@@ -1473,6 +1546,36 @@ class BotanicalRDCandidateEngine:
                     match_quality=str(best.get("_match_quality", "")),
                     same_plant=bool(best.get("_same_plant", False)),
                 )
+
+            if "Applicability_Summary" in group.columns:
+                # Task 10.2 — a merged row can combine several sub-rows,
+                # each matched to a different compound and therefore
+                # each potentially carrying a DIFFERENT set of evidence
+                # items (_collect_applicability_items() is scoped per
+                # matched compound) — same "recompute from the merged
+                # group, don't just keep whichever sub-row scored
+                # highest" reasoning as every other field in this
+                # function.
+                #
+                # This merges by UNIONING each sub-row's own
+                # Applicability_Summary, deduplicating
+                # evidence_record_ids (an evidence item's classification
+                # is fixed at collection time — build_standard_evidence()
+                # computes it once, independent of which candidate row
+                # later matches to it — so the same id can never carry
+                # two different classifications). Known limitation,
+                # documented rather than silently accepted: counts/
+                # total_evidence_items are SUMMED across sub-row
+                # summaries, not re-derived from the deduplicated id set
+                # — an item with no evidence_record_id (an in-memory-only
+                # record, never persisted) that happens to appear under
+                # both the compound- and plant-level fallback bucket in
+                # two different sub-rows could be counted twice. This
+                # does not affect evidence_record_ids itself (which IS
+                # deduplicated) or Decision_Class/score/gates (this
+                # column influences none of them).
+                summaries = [s for s in group["Applicability_Summary"] if isinstance(s, dict)]
+                best["Applicability_Summary"] = self._merge_applicability_summaries(summaries)
 
             if "Gate_Results" in group.columns:
                 # Task 1 — a merged row can combine multiple sub-rows'
@@ -2063,14 +2166,16 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(rows)
 
     def _build_evidence_text_index(self):
-        """Returns (text_index, source_index).
+        """Returns (text_index, source_index, applicability_index).
 
-        text_index: unchanged from before Gap 1 — dict of
-        normalized_key -> concatenated evidence text, used for
-        Evidence_Level/safety-flag/hierarchy extraction.
+        text_index: dict of normalized_key -> concatenated evidence
+        text, used for Evidence_Level/safety-flag/hierarchy extraction.
+        As of Task 10.2, the self.evidence_df pass concatenates only
+        EVIDENCE_TEXT_INDEX_ALLOWLIST's columns (source-derived fields),
+        not every column — see that constant's docstring for why.
 
-        source_index: NEW (audit "Gap 1: traceability"). Every
-        connector that saves evidence to Supabase already writes a real
+        source_index: (audit "Gap 1: traceability"). Every connector
+        that saves evidence to Supabase already writes a real
         Source_URL for that specific record (pubmed_connector.py:
         https://pubmed.ncbi.nlm.nih.gov/{pmid}/, and the same pattern in
         chembl_connector.py, clinicaltrials_connector.py,
@@ -2081,21 +2186,73 @@ class BotanicalRDCandidateEngine:
         Source_URLs that contributed to that key, so a downstream
         candidate row can cite exactly which record(s) it came from
         instead of only a generic "Live-collected evidence" label.
+
+        applicability_index: NEW (Task 10.2). SAME normalized_key
+        structure as text_index/source_index, but maps to a list of
+        small structured dicts — one per self.evidence_df row that
+        contributed to that key — each carrying that row's
+        Evidence_Record_ID/Applicability_Classification/rationale/
+        missing dimensions/mismatches. Built from self.evidence_df
+        only: self.scientific_evidence_df has no Task 10.2 applicability
+        columns (that table has no active write path at all — see
+        repo_dependency_audit.py's legacy_candidates classification of
+        scientific_evidence_collector.py — so there is nothing to read
+        there). Kept STRUCTURED (never folded into the free-text
+        string) specifically so a candidate-level summary can read
+        exact classifications/ids rather than re-parsing text.
         """
         index = defaultdict(str)
         source_index = defaultdict(list)
+        applicability_index = defaultdict(list)
 
         def _record_source(key, row):
             url = self._pick(row, ["Source_URL", "source_url", "URL", "url"])
             if url:
                 source_index[key].append(url)
 
+        def _record_applicability(key, row):
+            # Backward compatible with rows saved before Task 10.2 (or
+            # loaded from a Supabase table that hasn't had the new
+            # columns added yet, per database.py's documented
+            # degrade-to-"" behavior): a row with no classification is
+            # simply not appended here, rather than appended as a
+            # fabricated "Not assessable" entry with no evidence record
+            # actually behind it.
+            classification = self._pick(
+                row, ["Applicability_Classification", "applicability_classification"]
+            )
+            if not classification:
+                return
+
+            def _split(value):
+                value = value or ""
+                return [part.strip() for part in str(value).split(";") if part.strip()]
+
+            applicability_index[key].append({
+                "evidence_record_id": self._pick(
+                    row, ["Evidence_Record_ID", "evidence_record_id"]
+                ) or None,
+                "classification": classification,
+                "rationale": self._pick(
+                    row, ["Applicability_Rationale", "applicability_rationale"]
+                ) or "",
+                "evaluated_dimensions": _split(self._pick(
+                    row, ["Applicability_Evaluated_Dimensions", "applicability_evaluated_dimensions"]
+                )),
+                "missing_dimensions": _split(self._pick(
+                    row, ["Applicability_Missing_Dimensions", "applicability_missing_dimensions"]
+                )),
+                "detected_mismatches": _split(self._pick(
+                    row, ["Applicability_Detected_Mismatches", "applicability_detected_mismatches"]
+                )),
+            })
+
         if not self.evidence_df.empty:
             for _, row in self.evidence_df.iterrows():
                 text = " ".join(
-                    str(value)
-                    for value in row.values
-                    if pd.notna(value)
+                    str(row.get(col))
+                    for col in EVIDENCE_TEXT_INDEX_ALLOWLIST
+                    if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip()
                 )
 
                 plant = self._pick(
@@ -2114,11 +2271,13 @@ class BotanicalRDCandidateEngine:
                     plant_key = self._norm(plant)
                     index[plant_key] += " " + text
                     _record_source(plant_key, row)
+                    _record_applicability(plant_key, row)
 
                 for compound in self._known_compounds_from_text(text):
                     compound_key = self._norm(compound)
                     index[compound_key] += " " + text
                     _record_source(compound_key, row)
+                    _record_applicability(compound_key, row)
 
         if not self.scientific_evidence_df.empty:
             text_columns = [
@@ -2167,7 +2326,7 @@ class BotanicalRDCandidateEngine:
             # this key's source list empty.
             source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
 
-        return index, source_index
+        return index, source_index, applicability_index
 
     def _collect_raw_evidence(
         self,
@@ -2227,6 +2386,221 @@ class BotanicalRDCandidateEngine:
         plant_key = self._norm(plant)
         plant_text = evidence_index.get(plant_key, "")
         return plant_text.strip()[:6000], list(dict.fromkeys(source_index.get(plant_key, [])))
+
+    def _collect_applicability_items(self, applicability_index, plant, compound):
+        """Task 10.2 — structured counterpart to _collect_raw_evidence().
+
+        Same compound-key-first, plant-key-fallback lookup as
+        _collect_raw_evidence() (see that method's docstring for why:
+        compound-specific evidence is the primary, correctly-scoped
+        signal; the whole-plant bucket is a fallback only used when no
+        compound-specific evidence exists at all), but returns the
+        structured applicability dicts built by
+        _build_evidence_text_index()'s _record_applicability(), not
+        free text. Deduplicated by evidence_record_id so an item
+        present under both the compound and problem key is not double
+        counted.
+
+        Returns a list[dict], each with exactly the keys
+        _record_applicability() writes: evidence_record_id,
+        classification, rationale, evaluated_dimensions,
+        missing_dimensions, detected_mismatches. Empty list when
+        nothing is found anywhere — never fabricated.
+        """
+        compound_clean = compound.split("[")[0].strip()
+        compound_key = self._norm(compound_clean)
+        plant_key = self._norm(plant)
+
+        items = (
+            applicability_index.get(compound_key, []) +
+            applicability_index.get(plant_key, [])
+        )
+
+        deduped = []
+        seen_ids = set()
+        seen_signatures = set()
+        for item in items:
+            record_id = item.get("evidence_record_id")
+            if record_id is not None:
+                if record_id in seen_ids:
+                    continue
+                seen_ids.add(record_id)
+            else:
+                # No id available (e.g. a row saved before Task 10.2's
+                # id capture, or an in-memory-only record never
+                # persisted) — fall back to de-duplicating on the
+                # content itself so the same unattributable item isn't
+                # counted twice.
+                signature = (item.get("classification"), item.get("rationale"))
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+            deduped.append(item)
+
+        return deduped
+
+    @staticmethod
+    def _summarize_applicability(items):
+        """Task 10.2 — candidate-level Applicability_Summary, built by
+        counting/aggregating the evidence-ITEM-level classifications in
+        `items` (as returned by _collect_applicability_items()).
+
+        Deliberately does NOT collapse the items into one derived
+        applicability verdict for the candidate (explicitly out of
+        scope for this task) — it counts and surfaces what is there,
+        keyed by the same EvidenceApplicability vocabulary, so a
+        reviewer can see the underlying distribution rather than one
+        opaque label. Every evidence_record_id in `items` is preserved
+        in evidence_record_ids, so the individual evidence items behind
+        this summary remain independently traceable back to specific
+        evidence_records rows — not merely to a plant or compound name.
+
+        Never reads or writes R&D_Opportunity_Score, Decision_Class,
+        Decision_Class_AH, gate_results, or any scoring input — this is
+        a pure, read-only aggregation over already-computed evidence-
+        level fields.
+        """
+        counts = {
+            EvidenceApplicability.DIRECTLY_APPLICABLE.value: 0,
+            EvidenceApplicability.PARTIALLY_APPLICABLE.value: 0,
+            EvidenceApplicability.INDIRECTLY_RELEVANT.value: 0,
+            EvidenceApplicability.NOT_ASSESSABLE.value: 0,
+            EvidenceApplicability.NOT_APPLICABLE.value: 0,
+        }
+        critical_mismatches = []
+        missing_dimensions = set()
+        evidence_record_ids = []
+
+        for item in items:
+            classification = item.get("classification")
+            if classification in counts:
+                counts[classification] += 1
+
+            for mismatch in item.get("detected_mismatches", []):
+                label = f"{classification}: {mismatch}" if classification else mismatch
+                if label not in critical_mismatches:
+                    critical_mismatches.append(label)
+
+            missing_dimensions.update(item.get("missing_dimensions", []))
+
+            record_id = item.get("evidence_record_id")
+            if record_id is not None and record_id not in evidence_record_ids:
+                evidence_record_ids.append(record_id)
+
+        total_evidence_items = len(items)
+        not_assessable_items = counts[EvidenceApplicability.NOT_ASSESSABLE.value]
+        assessable_items = total_evidence_items - not_assessable_items
+
+        strongest_category = None
+        for candidate in APPLICABILITY_STRENGTH_ORDER:
+            if counts.get(candidate.value, 0) > 0:
+                strongest_category = candidate.value
+                break
+
+        if total_evidence_items == 0:
+            summary_rationale = (
+                "No evidence item with an Applicability_Classification was found "
+                "for this candidate."
+            )
+        else:
+            summary_rationale = (
+                f"{total_evidence_items} evidence item(s) assessed for preparation "
+                f"applicability: {counts[EvidenceApplicability.DIRECTLY_APPLICABLE.value]} directly "
+                f"applicable, {counts[EvidenceApplicability.PARTIALLY_APPLICABLE.value]} partially "
+                f"applicable, {counts[EvidenceApplicability.INDIRECTLY_RELEVANT.value]} indirectly "
+                f"relevant, {not_assessable_items} not assessable, "
+                f"{counts[EvidenceApplicability.NOT_APPLICABLE.value]} not applicable."
+            )
+            if critical_mismatches:
+                summary_rationale += f" Critical mismatch(es): {'; '.join(critical_mismatches)}."
+
+        return {
+            "counts": counts,
+            "total_evidence_items": total_evidence_items,
+            "assessable_items": assessable_items,
+            "not_assessable_items": not_assessable_items,
+            "strongest_category": strongest_category,
+            "critical_mismatches": critical_mismatches,
+            "missing_dimensions": sorted(missing_dimensions),
+            "evidence_record_ids": evidence_record_ids,
+            "summary_rationale": summary_rationale,
+        }
+
+    @staticmethod
+    def _merge_applicability_summaries(summaries):
+        """Task 10.2 — combines multiple sub-rows' Applicability_Summary
+        dicts (one per matched compound) into one for a merged
+        candidate row. See the call site's comment
+        (_merge_multi_compound_matches) for the counts-summing
+        limitation this method documents rather than silently hides.
+        """
+        if not summaries:
+            return BotanicalRDCandidateEngine._summarize_applicability([])
+
+        merged_counts = {
+            EvidenceApplicability.DIRECTLY_APPLICABLE.value: 0,
+            EvidenceApplicability.PARTIALLY_APPLICABLE.value: 0,
+            EvidenceApplicability.INDIRECTLY_RELEVANT.value: 0,
+            EvidenceApplicability.NOT_ASSESSABLE.value: 0,
+            EvidenceApplicability.NOT_APPLICABLE.value: 0,
+        }
+        evidence_record_ids = []
+        missing_dimensions = set()
+        critical_mismatches = []
+        total_evidence_items = 0
+
+        for summary in summaries:
+            for key, value in (summary.get("counts") or {}).items():
+                if key in merged_counts:
+                    merged_counts[key] += int(value or 0)
+            total_evidence_items += int(summary.get("total_evidence_items") or 0)
+            missing_dimensions.update(summary.get("missing_dimensions") or [])
+            for mismatch in summary.get("critical_mismatches") or []:
+                if mismatch not in critical_mismatches:
+                    critical_mismatches.append(mismatch)
+            for record_id in summary.get("evidence_record_ids") or []:
+                if record_id not in evidence_record_ids:
+                    evidence_record_ids.append(record_id)
+
+        not_assessable_items = merged_counts[EvidenceApplicability.NOT_ASSESSABLE.value]
+        assessable_items = total_evidence_items - not_assessable_items
+
+        strongest_category = None
+        for candidate in APPLICABILITY_STRENGTH_ORDER:
+            if merged_counts.get(candidate.value, 0) > 0:
+                strongest_category = candidate.value
+                break
+
+        if total_evidence_items == 0:
+            summary_rationale = (
+                "No evidence item with an Applicability_Classification was found "
+                "for this candidate."
+            )
+        else:
+            summary_rationale = (
+                f"{total_evidence_items} evidence item(s) assessed across "
+                f"{len(summaries)} matched compound(s) for preparation applicability: "
+                f"{merged_counts[EvidenceApplicability.DIRECTLY_APPLICABLE.value]} directly "
+                f"applicable, {merged_counts[EvidenceApplicability.PARTIALLY_APPLICABLE.value]} "
+                f"partially applicable, "
+                f"{merged_counts[EvidenceApplicability.INDIRECTLY_RELEVANT.value]} indirectly "
+                f"relevant, {not_assessable_items} not assessable, "
+                f"{merged_counts[EvidenceApplicability.NOT_APPLICABLE.value]} not applicable."
+            )
+            if critical_mismatches:
+                summary_rationale += f" Critical mismatch(es): {'; '.join(critical_mismatches)}."
+
+        return {
+            "counts": merged_counts,
+            "total_evidence_items": total_evidence_items,
+            "assessable_items": assessable_items,
+            "not_assessable_items": not_assessable_items,
+            "strongest_category": strongest_category,
+            "critical_mismatches": critical_mismatches,
+            "missing_dimensions": sorted(missing_dimensions),
+            "evidence_record_ids": evidence_record_ids,
+            "summary_rationale": summary_rationale,
+        }
 
     def _match_compounds(
         self,

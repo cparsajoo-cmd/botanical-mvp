@@ -201,6 +201,16 @@ def validate_row(row, indication: str, project_id: str = "unspecified-run"):
         str(scoring_config_version) if scoring_config_version not in (None, "") else None
     )
 
+    # Task 10.2 — Applicability_Summary is already a dict (produced by
+    # BotanicalRDCandidateEngine._summarize_applicability()/
+    # _merge_applicability_summaries(), never CSV-joined like the
+    # _LIST_COLUMNS above), same pass-through pattern as Gate_Results.
+    # Absent entirely on rows produced before this field existed.
+    applicability_summary = row.get("Applicability_Summary")
+    kwargs["applicability_summary"] = (
+        applicability_summary if isinstance(applicability_summary, dict) else None
+    )
+
     try:
         record = CandidateAssessment(**kwargs)
     except TypeError as exc:

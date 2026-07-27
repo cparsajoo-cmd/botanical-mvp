@@ -168,6 +168,43 @@ class ExtractionSuitability(str, Enum):
     SUITABILITY_INFERRED_ONLY = "Suitability inferred only"
 
 
+class EvidenceApplicability(str, Enum):
+    """Task 10.2 — evidence-ITEM-level preparation applicability.
+
+    Deliberately separate from ExtractionSuitability (4.11, above):
+    ExtractionSuitability describes whether a compound's extraction
+    method is reported/suitable — a claim about the EXTRACTION. This
+    enum describes whether ONE evidence record, as a whole, can
+    reasonably inform the proposed product concept (selected
+    indication / dosage form / preparation) — a claim about the
+    EVIDENCE ITEM'S transferability. Conflating the two was flagged
+    explicitly and rejected; this enum must not be assigned to
+    ExtractionSuitability fields or vice versa.
+
+    Ordered strongest-to-weakest for `APPLICABILITY_STRENGTH_ORDER`
+    below, mirroring the EVIDENCE_HIERARCHY_ORDER pattern. NOT_ASSESSABLE
+    and NOT_APPLICABLE are intentionally excluded from ranking as
+    "applicable" — see
+    botanical_rd_candidate_engine._summarize_applicability().
+    """
+    DIRECTLY_APPLICABLE = "Directly applicable"
+    PARTIALLY_APPLICABLE = "Partially applicable"
+    INDIRECTLY_RELEVANT = "Indirectly relevant"
+    NOT_ASSESSABLE = "Not assessable"
+    NOT_APPLICABLE = "Not applicable"
+
+
+# Strongest-first order, for "what is the best applicability found among
+# this candidate's evidence items" — NOT_ASSESSABLE/NOT_APPLICABLE are
+# intentionally excluded from ranking as "applicable" (see
+# botanical_rd_candidate_engine._summarize_applicability()).
+APPLICABILITY_STRENGTH_ORDER = [
+    EvidenceApplicability.DIRECTLY_APPLICABLE,
+    EvidenceApplicability.PARTIALLY_APPLICABLE,
+    EvidenceApplicability.INDIRECTLY_RELEVANT,
+]
+
+
 # ======================================================================
 # Core entities
 # ======================================================================
@@ -446,6 +483,17 @@ class CandidateAssessment:
     # metadata — never read back into scoring. None on any row
     # produced before this field existed.
     scoring_config_version: Optional[str] = None
+
+    # Task 10.2 — Evidence-level Preparation Applicability. Additive
+    # only: a dict summarizing the EvidenceApplicability classification
+    # of every evidence item matched to this candidate (see
+    # botanical_rd_candidate_engine._summarize_applicability() for the
+    # exact shape). Never read by _decision_class(), _score_candidate(),
+    # _evaluate_gates(), or go_investigate_hold_no_go() — carries no
+    # influence on Decision_Class, Decision_Class_AH,
+    # R&D_Opportunity_Score, gate outcomes, or ranking. None on any row
+    # produced before this field existed — never backfilled or inferred.
+    applicability_summary: Optional[dict] = None
 
 
 # ======================================================================

@@ -1,6 +1,37 @@
 import pandas as pd
 from supabase_client import get_supabase_client
 
+# ======================================================================
+# Task 10.2 — REQUIRED SUPABASE SCHEMA CHANGE (not performed by this
+# repository; no migration mechanism exists for any table here — see
+# ARCHITECTURE.md's "Known oddities" and telemetry_persistence.py's/
+# decision_record_persistence.py's identical precedent).
+#
+# save_evidence_record() below now writes, and load_evidence_records()
+# now reads, five additional TEXT columns on the existing evidence_records
+# table, plus reads (never writes) the table's own existing primary key:
+#
+#   applicability_classification         TEXT
+#   applicability_rationale              TEXT
+#   applicability_evaluated_dimensions   TEXT
+#   applicability_missing_dimensions     TEXT
+#   applicability_detected_mismatches    TEXT
+#   id                                   (already exists as the table's
+#                                          primary key — only newly READ
+#                                          here, not newly written)
+#
+# Until an operator adds the five new columns by hand in Supabase:
+#   - save_evidence_record()'s insert will raise a PostgREST
+#     "column ... does not exist" error for the whole row (see the
+#     inline comment at the insert call site for which callers catch
+#     this and which don't) — existing columns are unaffected.
+#   - load_evidence_records() degrades gracefully: item.get(<new key>, "")
+#     simply returns "" for a column that doesn't exist in the response,
+#     so existing callers and existing rows are unaffected either way.
+# This module does not attempt to create the columns itself, matching
+# every other persistence module in this repository.
+# ======================================================================
+
 
 def _safe_int(value, default=0):
     try:
@@ -133,6 +164,33 @@ def save_evidence_record(record):
         "safety_signal": record.get("Safety_Signal", ""),
         "direct_for_selected_product": record.get("Direct_For_Selected_Product", ""),
         "directness_reason": record.get("Directness_Reason", ""),
+
+        # Task 10.2 — Evidence-level Preparation Applicability. Additive
+        # only; never overwrites/duplicates direct_for_selected_product/
+        # directness_reason above. REQUIRES these five columns to exist
+        # on the real Supabase evidence_records table before this will
+        # persist anything — see REQUIRED_SUPABASE_COLUMNS_TASK_10_2 at
+        # the top of this module. Like every other table in this
+        # repository, there is no migration file; until the columns are
+        # added by hand in Supabase, this insert raises a PostgREST
+        # "column does not exist" error, exactly like adding any other
+        # new column to this dict would. save_evidence_record() itself
+        # has never caught its own exceptions (true before this task
+        # too — every field in this insert shares this risk). Whether a
+        # caller sees that raised exception or a graceful per-record
+        # error depends on the caller: multi_source_collector.py's
+        # _save_records_from_connector() wraps this call in a per-record
+        # try/except and reports failures in its `errors` list (the
+        # dominant, Step-2 production path); evidence_collector.py's
+        # collect_pubmed_evidence() and source_pipeline.py's
+        # run_source_pipeline() do not wrap this call and would
+        # propagate the exception. This is pre-existing behavior,
+        # unchanged by this task.
+        "applicability_classification": record.get("Applicability_Classification", ""),
+        "applicability_rationale": record.get("Applicability_Rationale", ""),
+        "applicability_evaluated_dimensions": record.get("Applicability_Evaluated_Dimensions", ""),
+        "applicability_missing_dimensions": record.get("Applicability_Missing_Dimensions", ""),
+        "applicability_detected_mismatches": record.get("Applicability_Detected_Mismatches", ""),
     }).execute()
 
     return evidence_result.data[0]["id"]
@@ -220,6 +278,27 @@ def load_evidence_records():
             "Safety_Signal": item.get("safety_signal", ""),
             "Direct_For_Selected_Product": item.get("direct_for_selected_product", ""),
             "Directness_Reason": item.get("directness_reason", ""),
+
+            # Task 10.2. .get(..., "") on a column that does not exist
+            # yet on the real Supabase table simply returns "" (item is
+            # a plain dict from PostgREST's response — a missing key
+            # behaves exactly like an existing-but-null one), so old
+            # rows / a not-yet-migrated table degrade to "" here rather
+            # than raising — no caller needs to change to tolerate the
+            # column's absence.
+            "Applicability_Classification": item.get("applicability_classification", ""),
+            "Applicability_Rationale": item.get("applicability_rationale", ""),
+            "Applicability_Evaluated_Dimensions": item.get("applicability_evaluated_dimensions", ""),
+            "Applicability_Missing_Dimensions": item.get("applicability_missing_dimensions", ""),
+            "Applicability_Detected_Mismatches": item.get("applicability_detected_mismatches", ""),
+
+            # Task 10.2 — previously discarded on read (id was selected
+            # implicitly via "*" but never mapped into the returned row
+            # dict). Needed so a candidate's Applicability_Summary can
+            # cite the exact evidence_records row(s) it was built from,
+            # not just a plant/compound name (rule: "Do not claim
+            # traceability merely through plant or compound names").
+            "Evidence_Record_ID": item.get("id", ""),
 
             "Reference_Count": 1,
             "Source_Type": source.get("source_type", ""),

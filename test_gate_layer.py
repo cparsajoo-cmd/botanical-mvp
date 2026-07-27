@@ -463,16 +463,16 @@ def test_deterministic_output_contract_locked_engineering_regression():
 
     # Row count and column count locked exactly.
     assert len(result) == 2
-    # Column count updated from 51 to 52 by Task 10.2's additive
-    # Applicability_Summary column (evidence-level preparation
-    # applicability, candidate-level summary) — a legitimate, expected
-    # change to this lock, not a regression. Row count, scores, and
-    # Decision_Class below are UNCHANGED, which is what this test
-    # actually guards. (Previously bumped 50 -> 51 by Task 3's
-    # Scoring_Config_Version, following the same pattern.)
-    assert len(result.columns) == 52
+    # Column count updated from 52 to 53 by Task 15's additive
+    # Decision_Engine_Version column (reproducibility metadata) — a
+    # legitimate, expected change to this lock, not a regression. Row
+    # count, scores, and Decision_Class below are UNCHANGED, which is
+    # what this test actually guards. (Previously bumped 51 -> 52 by
+    # Task 10.2's Applicability_Summary, following the same pattern.)
+    assert len(result.columns) == 53
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
+    assert "Decision_Engine_Version" in result.columns
 
     # A representative set of pre-existing output fields must still be
     # present and untouched by this task's column addition.

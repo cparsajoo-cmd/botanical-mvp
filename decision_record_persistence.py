@@ -130,6 +130,21 @@ _PERSISTED_RECORD_FIELDS = [
     # candidate_output_adapter.py — this allowlist entry is the only
     # change Task 12.1 makes anywhere in the pipeline.
     "applicability_summary",
+    # Task 15 — decision-engine logic version (see
+    # botanical_rd_candidate_engine.DECISION_ENGINE_VERSION). Deliberately
+    # a SEPARATE allowlist entry from scoring_config_version above, not
+    # a replacement or merge of it — the two identify different things
+    # (which LOGIC version vs. which scoring WEIGHTS) and must remain
+    # independently readable. Additive only; already computed and
+    # attached to every candidate row by botanical_rd_candidate_engine.run(),
+    # already validated onto CandidateAssessment by
+    # candidate_output_adapter.py — this allowlist entry is the only
+    # change Task 15 makes to this module's persisted-field set. None
+    # on any record persisted before this field existed (backward
+    # compatible, same degrade-to-None convention as every other field
+    # in this allowlist) — never fabricated as "1.0.0" for an old
+    # record that never actually carried a version.
+    "decision_engine_version",
 ]
 
 

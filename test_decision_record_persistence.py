@@ -459,10 +459,14 @@ def test_existing_persisted_fields_remain_unchanged_after_applicability_summary_
         "rd_opportunity_score", "decision_class", "evidence_confidence",
         "gate_results", "scoring_config_version",
     }
-    # Every pre-existing field is still there, and exactly one field
-    # was added — nothing removed, nothing else silently changed.
+    # Every pre-existing field is still there, and exactly two fields
+    # have been added since (applicability_summary, Task 12.1;
+    # decision_engine_version, Task 15) — nothing removed, nothing else
+    # silently changed.
     assert pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
-    assert set(_PERSISTED_RECORD_FIELDS) - pre_task_12_1_fields == {"applicability_summary"}
+    assert set(_PERSISTED_RECORD_FIELDS) - pre_task_12_1_fields == {
+        "applicability_summary", "decision_engine_version",
+    }
 
     gate_results = {"safety": {"gate_name": "safety", "status": "passed", "reason": "x", "evidence": "y"}}
     record = _sample_candidate_assessment(
@@ -470,12 +474,14 @@ def test_existing_persisted_fields_remain_unchanged_after_applicability_summary_
         gate_results=gate_results,
         rd_opportunity_score=63.5,
         decision_class="Early-stage candidate",
+        decision_engine_version="1.0.0",
     )
     serialized = _serialize_record(record)
     assert serialized["gate_results"] == gate_results
     assert serialized["rd_opportunity_score"] == 63.5
     assert serialized["decision_class"] == "Early-stage candidate"
     assert serialized["scoring_config_version"] == "1.0-default"
+    assert serialized["decision_engine_version"] == "1.0.0"
 
 
 def test_record_without_applicability_summary_serializes_as_none():

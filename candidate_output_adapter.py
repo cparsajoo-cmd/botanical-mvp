@@ -211,6 +211,15 @@ def validate_row(row, indication: str, project_id: str = "unspecified-run"):
         applicability_summary if isinstance(applicability_summary, dict) else None
     )
 
+    # Task 15 — plain string pass-through, identical pattern to
+    # scoring_config_version above: nothing to parse, absent entirely
+    # on rows produced before this field existed. Never fabricated —
+    # a missing/empty value stays None, not "1.0.0".
+    decision_engine_version = row.get("Decision_Engine_Version")
+    kwargs["decision_engine_version"] = (
+        str(decision_engine_version) if decision_engine_version not in (None, "") else None
+    )
+
     try:
         record = CandidateAssessment(**kwargs)
     except TypeError as exc:

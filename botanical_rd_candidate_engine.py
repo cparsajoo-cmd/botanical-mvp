@@ -152,7 +152,55 @@ OUTPUT_COLUMNS = [
     # Decision_Class, Decision_Class_AH, R&D_Opportunity_Score, gate
     # outcomes, or ranking.
     "Applicability_Summary",
+    # Task 15 — reproducibility metadata only, appended last (not
+    # inserted between existing analytical columns) so no historical
+    # column ORDER assumption breaks. See DECISION_ENGINE_VERSION below
+    # for what this value means and when it must change.
+    "Decision_Engine_Version",
 ]
+
+
+# ======================================================================
+# Task 15 — Decision Engine Version Tracking.
+#
+# DECISION_ENGINE_VERSION identifies which version of THIS FILE's
+# end-to-end decision logic (candidate assessment, evidence
+# interpretation, applicability handling, hierarchy/confidence logic,
+# gates, decision classification, and any other ranking-relevant
+# engine behavior) produced a given candidate row / persisted decision
+# record. It is reproducibility metadata ONLY — never read by
+# _score_candidate(), _decision_class(), _evaluate_gates(),
+# go_investigate_hold_no_go(), sorting, or filtering anywhere in this
+# file. Setting or reading it has no effect on any candidate's score,
+# rank, gate outcome, confidence, applicability, or decision class.
+#
+# THIS IS A SEPARATE CONCEPT FROM Scoring_Config_Version (Task 3).
+# Scoring_Config_Version identifies which ScoringConfig (weights) was
+# used; DECISION_ENGINE_VERSION identifies which version of the LOGIC
+# itself (this file's code) was used. A single ScoringConfig can be
+# run against multiple engine-logic versions over time, and a single
+# engine-logic version can be run with multiple ScoringConfigs — they
+# vary independently and must never be merged into one value or
+# derived from one another.
+#
+# WHEN TO INCREMENT: any change that can alter a candidate's
+# R&D_Opportunity_Score, Decision_Class, Decision_Class_AH, gate
+# outcome (PASSED/FAILED/NOT_EVALUABLE for any gate), Evidence_Confidence,
+# Applicability_Classification/Applicability_Summary content, or
+# candidate ranking/ordering. Formatting-only, documentation-only, or
+# report/presentation-only changes (e.g. Task 13.1-13.2C's report
+# wiring, or this comment itself) do NOT require an increment — nothing
+# about what a candidate IS changes when only how it's DISPLAYED
+# changes.
+#
+# WHY A HARDCODED STRING, NOT DERIVED FROM GIT/TIMESTAMPS/PACKAGE
+# METADATA: a persisted decision record must remain interpretable by
+# someone reading it years later, outside any Git checkout, with no
+# access to this repository's commit history or install environment.
+# A hardcoded, manually-incremented string is the only thing that
+# survives that — the same reasoning Task 3's Scoring_Config_Version
+# already established for scoring weights.
+DECISION_ENGINE_VERSION = "1.0.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1336,6 +1384,18 @@ class BotanicalRDCandidateEngine:
         # Sprint 2: additive structured companion to the string above —
         # never replaces it, never changes its type.
         output["Comparative_Rationale_Structured"] = build_comparative_rationale_structured(output)
+
+        # Task 15 — reproducibility metadata, attached ONCE here (the
+        # single final row-assembly point every candidate row already
+        # passes through, regardless of which earlier code path built
+        # it — the primary per-row loop or _merge_multi_compound_matches()'s
+        # rebuild). A whole-column broadcast assignment, not a loop, so
+        # the DECISION_ENGINE_VERSION string literal is written exactly
+        # once in this file, not duplicated across multiple row-
+        # construction sites. Metadata only — set after every score/
+        # gate/decision/ranking-affecting computation above has already
+        # finished; nothing below this line reads it back into anything.
+        output["Decision_Engine_Version"] = DECISION_ENGINE_VERSION
 
         return output[OUTPUT_COLUMNS]
 

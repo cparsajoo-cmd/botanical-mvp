@@ -129,8 +129,11 @@ def test_existing_persisted_fields_remain_unchanged():
         "gate_results", "scoring_config_version",
     }
     assert expected_pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
-    # Exactly one new field added, nothing removed.
-    assert set(_PERSISTED_RECORD_FIELDS) - expected_pre_task_12_1_fields == {"applicability_summary"}
+    # Two new fields added since (applicability_summary, Task 12.1;
+    # decision_engine_version, Task 15), nothing removed.
+    assert set(_PERSISTED_RECORD_FIELDS) - expected_pre_task_12_1_fields == {
+        "applicability_summary", "decision_engine_version",
+    }
 
 
 def test_gate_results_and_other_existing_fields_still_persist_correctly_alongside_it():

@@ -526,6 +526,23 @@ class CandidateAssessment:
     # produced before this field existed — never backfilled or inferred.
     applicability_summary: Optional[dict] = None
 
+    # Task 15 — reproducibility metadata only. Identifies which version
+    # of botanical_rd_candidate_engine.py's decision logic (candidate
+    # assessment, evidence interpretation, applicability handling,
+    # hierarchy/confidence, gates, decision classification, ranking-
+    # relevant behavior) produced this assessment — see
+    # botanical_rd_candidate_engine.DECISION_ENGINE_VERSION for the
+    # canonical value and full semantics. A SEPARATE concept from
+    # scoring_config_version above (that identifies the scoring
+    # WEIGHTS used; this identifies the LOGIC version) — the two vary
+    # independently and must never be conflated. Never read by
+    # _decision_class(), _score_candidate(), _evaluate_gates(), or any
+    # sorting/filtering — carries no influence on any decision output.
+    # None on any row produced before this field existed — never
+    # backfilled or inferred; a missing historical version must remain
+    # distinguishable from a genuine "1.0.0" record.
+    decision_engine_version: Optional[str] = None
+
 
 # ======================================================================
 # Shared helpers

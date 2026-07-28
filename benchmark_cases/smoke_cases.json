@@ -53,7 +53,7 @@
             "safety": "not_evaluable",
             "identity": "passed",
             "minimum_evidence": "not_evaluable",
-            "regulatory": "passed"
+            "regulatory": "not_evaluable"
           },
           "decision_class_ah": "G — Hold / insufficient evidence"
         },
@@ -165,7 +165,7 @@
             "safety": "not_evaluable",
             "identity": "passed",
             "minimum_evidence": "passed",
-            "regulatory": "passed"
+            "regulatory": "not_evaluable"
           },
           "decision_class_ah": "B — Established scientific candidate"
         }

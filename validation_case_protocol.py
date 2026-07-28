@@ -245,6 +245,15 @@ class ValidationCaseProtocol:
 
     locked / locked_date are only ever set by lock_protocol() below,
     never assigned directly — see that function's docstring for why.
+
+    protocol_id: a stable identity across saves, same "pure grouping
+    key" role as decision_record_persistence.py's analysis_id and
+    telemetry_persistence.py's session_id — None until a protocol is
+    first persisted (validation_protocol_persistence.persist_protocol()
+    assigns one on first save), then reused on every subsequent save
+    of the SAME evolving protocol so its full draft-to-locked history
+    can be retrieved together. Never a business or scientific
+    identifier; never assigned directly by hand.
     """
     case_name: str
     decision_context: DecisionContext = field(default_factory=DecisionContext)
@@ -253,6 +262,7 @@ class ValidationCaseProtocol:
     expert_panel: ExpertPanel = field(default_factory=ExpertPanel)
     locked: bool = False
     locked_date: Optional[date] = None
+    protocol_id: Optional[str] = None
 
 
 def _non_empty(value) -> bool:
@@ -378,6 +388,7 @@ def lock_protocol(protocol: ValidationCaseProtocol, locked_date: Optional[date] 
         expert_panel=protocol.expert_panel,
         locked=True,
         locked_date=locked_date or date.today(),
+        protocol_id=protocol.protocol_id,
     )
 
 
@@ -415,4 +426,153 @@ def protocol_completeness(protocol: ValidationCaseProtocol) -> dict:
         "total_elements": total,
         "completeness_score": round(100 * locked_count / total, 1) if total else 0.0,
         "elements_locked": {k: v.is_locked() for k, v in elements.items()},
+    }
+
+
+# ======================================================================
+# Serialization — for validation_protocol_persistence.py. Kept here
+# (not duplicated there), same reasoning as expert_sign_off.py keeping
+# sign_off_to_dict() alongside its own dataclass: the dataclass shape
+# and its serialization stay in one file, one place to update if either
+# changes.
+# ======================================================================
+
+def protocol_to_dict(protocol: ValidationCaseProtocol) -> dict:
+    """Full, JSON-safe serialization of a ValidationCaseProtocol,
+    including its nested dataclasses/Enums/date. Round-trips exactly
+    through protocol_from_dict() below (see
+    test_validation_case_protocol.py's round-trip tests) — every field
+    on every nested dataclass survives, nothing silently dropped."""
+    return {
+        "case_name": protocol.case_name,
+        "protocol_id": protocol.protocol_id,
+        "locked": protocol.locked,
+        "locked_date": protocol.locked_date.isoformat() if protocol.locked_date else None,
+        "decision_context": asdict(protocol.decision_context),
+        "candidate_set": {
+            "candidates": list(protocol.candidate_set.candidates),
+            "eligibility_rules": [
+                asdict(r) for r in protocol.candidate_set.eligibility_rules
+            ],
+            "exclusion_notes": protocol.candidate_set.exclusion_notes,
+        },
+        "reference_corpus": {
+            **{
+                k: v for k, v in asdict(protocol.reference_corpus).items()
+                if k != "evidence_cutoff_date"
+            },
+            "evidence_cutoff_date": (
+                protocol.reference_corpus.evidence_cutoff_date.isoformat()
+                if protocol.reference_corpus.evidence_cutoff_date else None
+            ),
+        },
+        "expert_panel": {
+            "members": [asdict(m) for m in protocol.expert_panel.members],
+            "review_protocol": protocol.expert_panel.review_protocol,
+            "independence_statement": protocol.expert_panel.independence_statement,
+        },
+    }
+
+
+def protocol_from_dict(data: dict) -> ValidationCaseProtocol:
+    """Inverse of protocol_to_dict() above. Missing keys degrade to
+    the same defaults the dataclasses themselves use (empty
+    lists/None), never raise on a partially-populated dict — a
+    protocol saved by an older version of this module (before a field
+    existed) must still load, exactly like every other backward-
+    compatible degrade-to-None convention in this pipeline."""
+    dc_data = data.get("decision_context") or {}
+    decision_context = DecisionContext(
+        population=dc_data.get("population"),
+        route_of_administration=dc_data.get("route_of_administration"),
+        dosage_form=dc_data.get("dosage_form"),
+        jurisdiction=dc_data.get("jurisdiction"),
+        product_type=dc_data.get("product_type"),
+        indication=dc_data.get("indication"),
+        notes=dc_data.get("notes"),
+    )
+
+    cs_data = data.get("candidate_set") or {}
+    candidate_set = LockedCandidateSet(
+        candidates=list(cs_data.get("candidates") or []),
+        eligibility_rules=[
+            CandidateEligibilityRule(rule=r.get("rule"), rationale=r.get("rationale"))
+            for r in (cs_data.get("eligibility_rules") or [])
+        ],
+        exclusion_notes=cs_data.get("exclusion_notes"),
+    )
+
+    rc_data = data.get("reference_corpus") or {}
+    cutoff = rc_data.get("evidence_cutoff_date")
+    reference_corpus = ReferenceEvidenceCorpus(
+        description=rc_data.get("description"),
+        built_independently_of_platform=bool(rc_data.get("built_independently_of_platform", False)),
+        sources=list(rc_data.get("sources") or []),
+        search_strategy=rc_data.get("search_strategy"),
+        evidence_cutoff_date=date.fromisoformat(cutoff) if cutoff else None,
+        corpus_size=rc_data.get("corpus_size"),
+    )
+
+    ep_data = data.get("expert_panel") or {}
+    expert_panel = ExpertPanel(
+        members=[
+            ExpertPanelMember(role=m.get("role"), credentials=m.get("credentials"))
+            for m in (ep_data.get("members") or [])
+        ],
+        review_protocol=ep_data.get("review_protocol"),
+        independence_statement=ep_data.get("independence_statement"),
+    )
+
+    locked_date_raw = data.get("locked_date")
+    return ValidationCaseProtocol(
+        case_name=data.get("case_name"),
+        decision_context=decision_context,
+        candidate_set=candidate_set,
+        reference_corpus=reference_corpus,
+        expert_panel=expert_panel,
+        locked=bool(data.get("locked", False)),
+        locked_date=date.fromisoformat(locked_date_raw) if locked_date_raw else None,
+        protocol_id=data.get("protocol_id"),
+    )
+
+
+# ======================================================================
+# Connecting LockedCandidateSet to real botanical data
+# ======================================================================
+
+def candidate_lookup_report(candidate_set: LockedCandidateSet, known_scientific_names) -> dict:
+    """Cross-checks candidate_set.candidates (plain strings — see that
+    dataclass's own docstring on why it stays untyped) against
+    `known_scientific_names`, an iterable of real Scientific_Name
+    values from the platform's own data (e.g.
+    evidence_database.load_evidence_database()["Scientific_Name"], or
+    a plant_compounds_df's "Scientific_Name" column — this module
+    takes the names as a plain argument rather than importing either
+    source directly, keeping it free of any Streamlit/Supabase
+    dependency exactly like the rest of this file).
+
+    This does NOT change candidate_set.candidates' type or validate
+    scientific correctness — it only tells the caller which locked
+    candidate names have no matching row anywhere in the data the
+    caller checked, which is otherwise a silent gap: a candidate name
+    with a typo, or one that was never actually collected, would
+    previously look identical to a real, resolvable one.
+
+    Returns:
+      {"known": [...], "unknown": [...], "known_count": int,
+       "unknown_count": int}
+    Case-sensitive, exact-match only — deliberately no fuzzy matching,
+    for the same reason user_roles.parse_reviewer_role() avoids fuzzy
+    matching a controlled vocabulary: a silent "close enough" match
+    would defeat the purpose of a cross-check meant to catch exactly
+    this kind of mismatch.
+    """
+    known_set = set(known_scientific_names)
+    known = [c for c in candidate_set.candidates if c in known_set]
+    unknown = [c for c in candidate_set.candidates if c not in known_set]
+    return {
+        "known": known,
+        "unknown": unknown,
+        "known_count": len(known),
+        "unknown_count": len(unknown),
     }

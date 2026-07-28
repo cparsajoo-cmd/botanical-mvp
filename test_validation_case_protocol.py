@@ -408,3 +408,167 @@ def test_works_for_a_non_infusion_non_sleep_case():
     assert assess_readiness(protocol) == ProtocolReadiness.LOCKED
     locked = lock_protocol(protocol)
     assert locked.locked is True
+
+
+# ---------------------------------------------------------------------
+# protocol_id — additive identity field, preserved through lock_protocol()
+# ---------------------------------------------------------------------
+
+def test_protocol_id_defaults_to_none():
+    protocol = _empty_protocol()
+    assert protocol.protocol_id is None
+
+
+def test_lock_protocol_preserves_protocol_id():
+    protocol = _fully_locked_protocol()
+    protocol.protocol_id = "abc-123"
+    locked = lock_protocol(protocol)
+    assert locked.protocol_id == "abc-123"
+
+
+def test_lock_protocol_preserves_none_protocol_id():
+    protocol = _fully_locked_protocol()
+    locked = lock_protocol(protocol)
+    assert locked.protocol_id is None
+
+
+# ---------------------------------------------------------------------
+# protocol_to_dict / protocol_from_dict — round-trip serialization
+# ---------------------------------------------------------------------
+
+from validation_case_protocol import protocol_to_dict, protocol_from_dict, candidate_lookup_report
+
+
+def test_round_trip_empty_protocol():
+    protocol = _empty_protocol("Round trip test")
+    d = protocol_to_dict(protocol)
+    back = protocol_from_dict(d)
+    assert back.case_name == protocol.case_name
+    assert back.locked is False
+    assert back.decision_context == protocol.decision_context
+    assert back.candidate_set == protocol.candidate_set
+
+
+def test_round_trip_fully_locked_protocol():
+    protocol = _fully_locked_protocol("Locked round trip")
+    locked = lock_protocol(protocol, locked_date=date(2026, 3, 15))
+    d = protocol_to_dict(locked)
+    back = protocol_from_dict(d)
+    assert back == locked
+
+
+def test_round_trip_preserves_protocol_id():
+    protocol = _fully_locked_protocol()
+    protocol.protocol_id = "xyz-789"
+    d = protocol_to_dict(protocol)
+    back = protocol_from_dict(d)
+    assert back.protocol_id == "xyz-789"
+
+
+def test_protocol_to_dict_is_json_serializable():
+    import json
+    protocol = _fully_locked_protocol()
+    locked = lock_protocol(protocol)
+    d = protocol_to_dict(locked)
+    # Must not raise — every value must be a JSON-safe primitive.
+    json_text = json.dumps(d)
+    assert isinstance(json_text, str)
+
+
+def test_protocol_from_dict_degrades_gracefully_on_missing_keys():
+    # Simulates loading a protocol saved by an older schema version.
+    back = protocol_from_dict({"case_name": "Minimal"})
+    assert back.case_name == "Minimal"
+    assert back.decision_context.population is None
+    assert back.candidate_set.candidates == []
+    assert back.locked is False
+
+
+def test_protocol_from_dict_handles_completely_empty_dict():
+    back = protocol_from_dict({})
+    assert back.case_name is None
+    assert back.locked is False
+    assert back.protocol_id is None
+
+
+def test_round_trip_preserves_multiple_candidates_and_eligibility_rules():
+    protocol = _empty_protocol()
+    protocol.candidate_set = LockedCandidateSet(
+        candidates=["Plant A", "Plant B", "Plant C"],
+        eligibility_rules=[
+            CandidateEligibilityRule("Rule 1", "Reason 1"),
+            CandidateEligibilityRule("Rule 2", "Reason 2"),
+        ],
+        exclusion_notes="Excluded Plant D for toxicity",
+    )
+    d = protocol_to_dict(protocol)
+    back = protocol_from_dict(d)
+    assert back.candidate_set.candidates == ["Plant A", "Plant B", "Plant C"]
+    assert len(back.candidate_set.eligibility_rules) == 2
+    assert back.candidate_set.eligibility_rules[0].rule == "Rule 1"
+    assert back.candidate_set.exclusion_notes == "Excluded Plant D for toxicity"
+
+
+def test_round_trip_preserves_evidence_cutoff_date():
+    protocol = _empty_protocol()
+    protocol.reference_corpus = ReferenceEvidenceCorpus(
+        description="d", built_independently_of_platform=True,
+        sources=["PubMed"], search_strategy="s",
+        evidence_cutoff_date=date(2025, 6, 30),
+    )
+    d = protocol_to_dict(protocol)
+    back = protocol_from_dict(d)
+    assert back.reference_corpus.evidence_cutoff_date == date(2025, 6, 30)
+
+
+def test_round_trip_with_no_evidence_cutoff_date():
+    protocol = _empty_protocol()
+    d = protocol_to_dict(protocol)
+    back = protocol_from_dict(d)
+    assert back.reference_corpus.evidence_cutoff_date is None
+
+
+# ---------------------------------------------------------------------
+# candidate_lookup_report — cross-checking against real botanical data
+# ---------------------------------------------------------------------
+
+def test_candidate_lookup_all_known():
+    cs = LockedCandidateSet(candidates=["Plant A", "Plant B"])
+    report = candidate_lookup_report(cs, known_scientific_names=["Plant A", "Plant B", "Plant C"])
+    assert report == {
+        "known": ["Plant A", "Plant B"], "unknown": [],
+        "known_count": 2, "unknown_count": 0,
+    }
+
+
+def test_candidate_lookup_all_unknown():
+    cs = LockedCandidateSet(candidates=["Ghost Plant"])
+    report = candidate_lookup_report(cs, known_scientific_names=["Plant A"])
+    assert report["known"] == []
+    assert report["unknown"] == ["Ghost Plant"]
+
+
+def test_candidate_lookup_mixed():
+    cs = LockedCandidateSet(candidates=["Plant A", "Typo Plant"])
+    report = candidate_lookup_report(cs, known_scientific_names={"Plant A", "Plant B"})
+    assert report["known"] == ["Plant A"]
+    assert report["unknown"] == ["Typo Plant"]
+
+
+def test_candidate_lookup_empty_candidate_set():
+    cs = LockedCandidateSet()
+    report = candidate_lookup_report(cs, known_scientific_names=["Plant A"])
+    assert report == {"known": [], "unknown": [], "known_count": 0, "unknown_count": 0}
+
+
+def test_candidate_lookup_is_case_sensitive_exact_match():
+    cs = LockedCandidateSet(candidates=["plant a"])
+    report = candidate_lookup_report(cs, known_scientific_names=["Plant A"])
+    assert report["unknown"] == ["plant a"]
+    assert report["known"] == []
+
+
+def test_candidate_lookup_preserves_candidate_order():
+    cs = LockedCandidateSet(candidates=["Plant C", "Plant A", "Plant B"])
+    report = candidate_lookup_report(cs, known_scientific_names=["Plant A", "Plant B", "Plant C"])
+    assert report["known"] == ["Plant C", "Plant A", "Plant B"]

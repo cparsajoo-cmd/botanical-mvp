@@ -26,7 +26,7 @@ automatic demotion.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -70,7 +70,7 @@ class AuditRecord:
     previous_split: DatasetSplit
     new_split: DatasetSplit
     reason: str
-    performed_at: datetime = field(default_factory=datetime.utcnow)
+    performed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def assess_leakage(case_id: str, dataset_split: DatasetSplit, leakage_control: LeakageControl) -> LeakageAssessmentResult:

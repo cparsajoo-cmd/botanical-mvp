@@ -297,6 +297,39 @@ def compute_evidence_confidence(
     return round(min(100.0, max(0.0, base)), 1)
 
 
+def methodological_quality_signals(evidence_text: Optional[str]) -> dict:
+    """Task 2 (GRADE-style certainty grading) — exposes WHICH of the
+    Task 10.1 methodological markers fired for `evidence_text`, not
+    just their summed point total. Read-only wrapper around the same
+    _detect_blinding_modifier()/_detect_placebo_control_modifier()/
+    _detect_sample_size_modifier() detectors _methodological_quality_modifier()
+    above already calls — no new pattern-matching, no change to
+    compute_evidence_confidence()'s behavior or return value for any
+    existing caller.
+
+    Added so grade_certainty_classifier.py's risk-of-bias/imprecision
+    domains can reuse these exact, already-tested detectors (rather
+    than re-implementing similar-but-subtly-different regexes) without
+    grade_certainty_classifier.py reaching into this module's
+    underscore-prefixed internals directly.
+
+    Returns a dict with three booleans:
+      - "blinded": single- or double/triple-blind mentioned
+      - "placebo_controlled": placebo-controlled design mentioned
+      - "large_sample": a sample-size mention of >= 100 participants
+        (the SAMPLE_SIZE_CONFIDENCE_MODIFIERS "100" band or above) was
+        matched — deliberately the >=100 band, not >=30, since
+        grade_certainty_classifier.py's imprecision domain treats
+        anything below 100 as an imprecision concern per GRADE's own
+        cautious-by-default convention for unclear/small samples.
+    """
+    return {
+        "blinded": _detect_blinding_modifier(evidence_text) > 0,
+        "placebo_controlled": _detect_placebo_control_modifier(evidence_text) > 0,
+        "large_sample": _detect_sample_size_modifier(evidence_text) >= 4,
+    }
+
+
 def confidence_adjusted_framing_note(
     rd_opportunity_score: Optional[float],
     evidence_confidence: Optional[float],

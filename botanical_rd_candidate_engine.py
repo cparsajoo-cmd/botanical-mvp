@@ -11,6 +11,7 @@ from concentration_normalizer import parse_concentration, format_concentration_i
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
+from grade_certainty_classifier import classify_grade_certainty
 from decision_class_ah import classify_decision_ah
 from white_space_classifier import classify_white_space
 from structured_rationale import (
@@ -152,6 +153,15 @@ OUTPUT_COLUMNS = [
     # Decision_Class, Decision_Class_AH, R&D_Opportunity_Score, gate
     # outcomes, or ranking.
     "Applicability_Summary",
+    # Task 2 — GRADE-style clinical-evidence certainty grading.
+    # Additive only: see grade_certainty_classifier.py and
+    # classify_grade_certainty(). Never read by _decision_class(),
+    # _score_candidate(), _evaluate_gates(), or
+    # go_investigate_hold_no_go() — carries no influence on
+    # Decision_Class, Decision_Class_AH, R&D_Opportunity_Score, gate
+    # outcomes, Evidence_Confidence, or ranking.
+    "GRADE_Certainty",
+    "GRADE_Certainty_Rationale",
     # Task 15 — reproducibility metadata only, appended last (not
     # inserted between existing analytical columns) so no historical
     # column ORDER assumption breaks. See DECISION_ENGINE_VERSION below
@@ -1174,6 +1184,26 @@ class BotanicalRDCandidateEngine:
                         evidence_hierarchy_detail=evidence_hierarchy_detail,
                     )
 
+                    # Task 2 — GRADE-style clinical-evidence certainty
+                    # grading (previously "Designed only" — see
+                    # grade_certainty_classifier.py's module docstring
+                    # for the full documented method and its declared
+                    # limitations). Purely additive: built entirely
+                    # from signals already computed above
+                    # (evidence_hierarchy_detail, raw_evidence,
+                    # negative_evidence, occurrence_corroboration,
+                    # applicability_summary's strongest_category) —
+                    # never reads or influences R&D_Opportunity_Score,
+                    # Decision_Class, Decision_Class_AH, Gate_Results,
+                    # or Evidence_Confidence.
+                    grade_certainty_result = classify_grade_certainty(
+                        evidence_hierarchy_detail=evidence_hierarchy_detail,
+                        evidence_text=raw_evidence,
+                        has_negative_evidence=negative_evidence.is_negative,
+                        occurrence_corroboration=occurrence_corroboration,
+                        applicability_classification=applicability_summary.get("strongest_category"),
+                    )
+
                     # Gap 6 + Gap 8: structured rationale, built purely
                     # from signals already computed above — no new data
                     # collection, no LLM call. See structured_rationale.py.
@@ -1300,6 +1330,8 @@ class BotanicalRDCandidateEngine:
                             "Gate_Results": gate_results,
                             "Scoring_Config_Version": self.scoring_config.version,
                             "Applicability_Summary": applicability_summary,
+                            "GRADE_Certainty": grade_certainty_result.certainty,
+                            "GRADE_Certainty_Rationale": grade_certainty_result.rationale,
                             "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
                             # Internal-only — used by _merge_multi_compound_matches
@@ -1681,6 +1713,26 @@ class BotanicalRDCandidateEngine:
                 # narrow limitation this leaves.
                 summaries = [s for s in group["Applicability_Summary"] if isinstance(s, dict)]
                 best["Applicability_Summary"] = self._merge_applicability_summaries(summaries)
+
+            if "GRADE_Certainty" in group.columns:
+                # Task 2 — same "any one matched compound with a real,
+                # strong signal is a genuine signal about the candidate
+                # as a whole" reasoning already used for
+                # Evidence_Confidence's merge above (group.max()),
+                # applied to a categorical rating instead of a numeric
+                # score: picks whichever sub-row's GRADE_Certainty
+                # ranks highest ("Not GRADE-applicable" ranks lowest,
+                # below "Very Low", so a genuinely-graded sub-row is
+                # always preferred over an ungraded one when both
+                # exist in the same group).
+                _rank_map = {
+                    "High": 3, "Moderate": 2, "Low": 1, "Very Low": 0,
+                }
+                best_idx = group["GRADE_Certainty"].map(
+                    lambda c: _rank_map.get(c, -1)
+                ).idxmax()
+                best["GRADE_Certainty"] = group.loc[best_idx, "GRADE_Certainty"]
+                best["GRADE_Certainty_Rationale"] = group.loc[best_idx, "GRADE_Certainty_Rationale"]
 
             if "Gate_Results" in group.columns:
                 # Task 1 — a merged row can combine multiple sub-rows'

@@ -204,6 +204,71 @@ class IncompleteSignOffError(Exception):
     failure."""
 
 
+class UnauthorizedReviewerError(IncompleteSignOffError):
+    """Task 9 — raised when a reviewer's asserted role does not cover
+    every domain a candidate's sign-off requires (see user_roles.py)
+    — e.g. a market/investment analyst attempting to sign off on a
+    candidate with safety flags present, which Chapter 11 explicitly
+    names as prohibited: "a market analyst should not independently
+    approve a safety conclusion." Subclasses IncompleteSignOffError so
+    existing code that catches IncompleteSignOffError still catches
+    this too, while callers that specifically need to distinguish
+    "incomplete" from "wrong reviewer for this candidate" can catch
+    this subclass instead."""
+
+
+def is_meaningful_and_authorized(sign_off: ExpertSignOff, required_domains: set) -> tuple:
+    """Task 9 — combines is_meaningful_sign_off() with a role-
+    authorization check against `required_domains` (a set of
+    user_roles.ReviewDomain values — see
+    user_roles.required_domains_for_candidate()). Returns
+    (is_valid, reasons).
+
+    Deliberately takes required_domains as an explicit argument rather
+    than deriving it internally: this function has no opinion on WHICH
+    domains a given candidate requires — that judgment stays entirely
+    in user_roles.py, independently callable and independently
+    testable, exactly like is_meaningful_sign_off() above has no
+    opinion on what a correct disposition would be, only on whether
+    one was documented.
+    """
+    from user_roles import parse_reviewer_role, is_role_authorized
+
+    is_meaningful, reasons = is_meaningful_sign_off(sign_off)
+    role = parse_reviewer_role(sign_off.reviewer_role)
+    is_authorized, auth_reasons = is_role_authorized(role, required_domains)
+    return (is_meaningful and is_authorized, reasons + auth_reasons)
+
+
+def require_authorized_sign_off(sign_off: ExpertSignOff, required_domains: set) -> ExpertSignOff:
+    """Task 9 — hard-refusal gate combining require_meaningful_sign_off()'s
+    check with role-authorization. Raises UnauthorizedReviewerError
+    when the reviewer's role is the (or a) failing element, and the
+    base IncompleteSignOffError when the sign-off is simply incomplete
+    with no role-authorization problem — letting a caller react
+    differently to the two cases (e.g. "please finish documenting
+    your review" versus "please route this candidate to a reviewer
+    with regulatory competence") without string-matching the error
+    message.
+    """
+    from user_roles import parse_reviewer_role, is_role_authorized
+
+    is_meaningful, reasons = is_meaningful_sign_off(sign_off)
+    role = parse_reviewer_role(sign_off.reviewer_role)
+    is_authorized, auth_reasons = is_role_authorized(role, required_domains)
+
+    if not is_meaningful or not is_authorized:
+        all_reasons = reasons + auth_reasons
+        error_cls = UnauthorizedReviewerError if auth_reasons else IncompleteSignOffError
+        error = error_cls(
+            f"Sign-off for {sign_off.reference_plant} vs "
+            f"{sign_off.alternative_plant} is not valid: {'; '.join(all_reasons)}"
+        )
+        error.reasons = all_reasons
+        raise error
+    return sign_off
+
+
 def require_meaningful_sign_off(sign_off: ExpertSignOff) -> ExpertSignOff:
     """Returns `sign_off` unchanged if it is meaningful; raises
     IncompleteSignOffError otherwise. This is the hard-refusal gate —

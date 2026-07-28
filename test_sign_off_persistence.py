@@ -215,3 +215,74 @@ def test_load_returns_empty_list_on_missing_identifiers():
     assert load_sign_offs_for_candidate("", "RefPlant", "AltPlant", supabase_client=client) == []
     assert load_sign_offs_for_candidate("a1", "", "AltPlant", supabase_client=client) == []
     assert load_sign_offs_for_candidate("a1", "RefPlant", "", supabase_client=client) == []
+
+
+# ---------------------------------------------------------------------
+# Task 9 — persist_authorized_sign_off(). persist_sign_off() itself is
+# untouched by this section; all tests above must still pass unchanged.
+# ---------------------------------------------------------------------
+
+from user_roles import ReviewDomain
+from expert_sign_off import UnauthorizedReviewerError
+from sign_off_persistence import persist_authorized_sign_off
+
+
+def test_persist_authorized_blocks_market_analyst_on_safety_flagged_candidate():
+    client = _FakeSupabaseClient()
+    sign_off = _meaningful_sign_off(reviewer_role="Market / investment analyst")
+    required = {ReviewDomain.SCIENTIFIC_EVIDENCE, ReviewDomain.SAFETY}
+    try:
+        persist_authorized_sign_off(sign_off, required, supabase_client=client)
+        assert False, "should have raised"
+    except UnauthorizedReviewerError:
+        pass
+    assert client.store == {}
+
+
+def test_persist_authorized_succeeds_for_toxicologist_on_safety_flagged_candidate():
+    client = _FakeSupabaseClient()
+    sign_off = _meaningful_sign_off(reviewer_role="Pharmacologist / Toxicologist")
+    required = {ReviewDomain.SCIENTIFIC_EVIDENCE, ReviewDomain.SAFETY}
+    result = persist_authorized_sign_off(sign_off, required, supabase_client=client)
+    assert result["status"] == "persisted"
+    assert len(client.store[SIGN_OFF_TABLE_NAME]) == 1
+
+
+def test_persist_authorized_still_enforces_meaningfulness():
+    client = _FakeSupabaseClient()
+    incomplete = ExpertSignOff(
+        analysis_id="a1", reference_plant="RefPlant", alternative_plant="AltPlant",
+        reviewer_role="Pharmacognosist",
+    )
+    try:
+        persist_authorized_sign_off(
+            incomplete, {ReviewDomain.SCIENTIFIC_EVIDENCE}, supabase_client=client,
+        )
+        assert False, "should have raised"
+    except Exception:
+        pass
+    assert client.store == {}
+
+
+def test_persist_authorized_row_shape_matches_persist_sign_off():
+    client_a = _FakeSupabaseClient()
+    client_b = _FakeSupabaseClient()
+    sign_off = _meaningful_sign_off(reviewer_role="Pharmacognosist")
+
+    persist_sign_off(sign_off, supabase_client=client_a)
+    persist_authorized_sign_off(
+        sign_off, {ReviewDomain.SCIENTIFIC_EVIDENCE}, supabase_client=client_b,
+    )
+
+    row_a = client_a.store[SIGN_OFF_TABLE_NAME][0]
+    row_b = client_b.store[SIGN_OFF_TABLE_NAME][0]
+    assert set(row_a.keys()) == set(row_b.keys())
+
+
+def test_persist_authorized_degrades_gracefully_on_connection_failure_after_authorization_passes():
+    client = _FailingSupabaseClient()
+    sign_off = _meaningful_sign_off(reviewer_role="Pharmacognosist")
+    result = persist_authorized_sign_off(
+        sign_off, {ReviewDomain.SCIENTIFIC_EVIDENCE}, supabase_client=client,
+    )
+    assert result["status"] == "unavailable"

@@ -56,34 +56,23 @@ from datetime import datetime, timezone
 from expert_sign_off import (
     ExpertSignOff,
     require_meaningful_sign_off,
+    require_authorized_sign_off,
     sign_off_to_dict,
 )
 
 SIGN_OFF_TABLE_NAME = "expert_sign_offs"
 
 
-def persist_sign_off(sign_off: ExpertSignOff, supabase_client=None) -> dict:
-    """The ONE write function this module exists to provide.
-
-    Raises expert_sign_off.IncompleteSignOffError if `sign_off` does
-    not satisfy is_meaningful_sign_off() — see module docstring for
-    why this function, unlike this repo's other persistence functions,
-    does not swallow that failure into a status dict. Only database/
-    connectivity failures AFTER that check produce a
-    {"status": "unavailable", ...} return instead of a raise.
-
-    Returns:
-      {
-        "status": "persisted" | "unavailable",
-        "reference_plant": str,
-        "alternative_plant": str,
-        "disposition": str,
-        "detail": str,   # human-readable, safe to show in the UI —
-                          # never a raw SQL error or credential value.
-      }
+def _write_sign_off_row(sign_off: ExpertSignOff, supabase_client=None) -> dict:
+    """Shared DB-write logic for persist_sign_off() and (Task 9)
+    persist_authorized_sign_off() — both call this ONLY after their
+    own respective completeness/authorization check has already
+    passed (require_meaningful_sign_off() / require_authorized_sign_off()),
+    so this helper itself performs no validation and assumes
+    `sign_off` is already known-good. Never raises: database/
+    connectivity failures degrade to a status dict, same as this
+    repo's other persistence functions' failure path.
     """
-    require_meaningful_sign_off(sign_off)
-
     row = sign_off_to_dict(sign_off)
     row["recorded_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -116,6 +105,55 @@ def persist_sign_off(sign_off: ExpertSignOff, supabase_client=None) -> dict:
             "detail": "Sign-off persistence unavailable this session "
                       "(table may not exist yet, or the database is unreachable).",
         }
+
+
+def persist_sign_off(sign_off: ExpertSignOff, supabase_client=None) -> dict:
+    """The ONE write function this module exists to provide.
+
+    Raises expert_sign_off.IncompleteSignOffError if `sign_off` does
+    not satisfy is_meaningful_sign_off() — see module docstring for
+    why this function, unlike this repo's other persistence functions,
+    does not swallow that failure into a status dict. Only database/
+    connectivity failures AFTER that check produce a
+    {"status": "unavailable", ...} return instead of a raise.
+
+    Returns:
+      {
+        "status": "persisted" | "unavailable",
+        "reference_plant": str,
+        "alternative_plant": str,
+        "disposition": str,
+        "detail": str,   # human-readable, safe to show in the UI —
+                          # never a raw SQL error or credential value.
+      }
+    """
+    require_meaningful_sign_off(sign_off)
+    return _write_sign_off_row(sign_off, supabase_client)
+
+
+def persist_authorized_sign_off(
+    sign_off: ExpertSignOff, required_domains: set, supabase_client=None
+) -> dict:
+    """Task 9 — same contract as persist_sign_off() above, plus a
+    role-authorization check: raises
+    expert_sign_off.UnauthorizedReviewerError (a subclass of
+    IncompleteSignOffError) if the reviewer's asserted role does not
+    cover every domain in `required_domains` (see
+    user_roles.required_domains_for_candidate() for how to derive that
+    set from a candidate row's Safety_Flags/Regulatory_Barriers/
+    Market_Status).
+
+    persist_sign_off() itself is INTENTIONALLY left as-is (not made to
+    require a role check) — a caller that has no domain-requirement
+    context to supply (e.g. a migration script backfilling historical
+    sign-offs, or a context where role authorization is enforced
+    upstream instead) can still use the base function. This one is for
+    the normal, forward-looking case: every NEW sign-off collected
+    through a UI that knows what domains a candidate touches should
+    call this one instead of the base function.
+    """
+    require_authorized_sign_off(sign_off, required_domains)
+    return _write_sign_off_row(sign_off, supabase_client)
 
 
 def load_sign_offs_for_candidate(

@@ -268,3 +268,94 @@ def test_sign_off_to_dict_includes_identification_fields():
     assert as_dict["analysis_id"] == "a1"
     assert as_dict["reference_plant"] == "RefPlant"
     assert as_dict["alternative_plant"] == "AltPlant"
+
+
+# ---------------------------------------------------------------------
+# Task 9 — role-authorization additions (is_meaningful_and_authorized,
+# require_authorized_sign_off, UnauthorizedReviewerError). These are
+# purely additive to the module — none of the tests above should be
+# affected by anything in this section.
+# ---------------------------------------------------------------------
+
+from user_roles import ReviewDomain
+from expert_sign_off import (
+    is_meaningful_and_authorized, require_authorized_sign_off,
+    UnauthorizedReviewerError,
+)
+
+
+def test_unauthorized_reviewer_error_is_a_subclass_of_incomplete_sign_off_error():
+    assert issubclass(UnauthorizedReviewerError, IncompleteSignOffError)
+
+
+def test_meaningful_and_authorized_true_for_valid_matching_sign_off():
+    s = _meaningful_sign_off(reviewer_role="Pharmacognosist")
+    ok, reasons = is_meaningful_and_authorized(s, {ReviewDomain.SCIENTIFIC_EVIDENCE})
+    assert ok is True
+    assert reasons == []
+
+
+def test_meaningful_and_authorized_false_when_role_wrong_for_domain():
+    s = _meaningful_sign_off(reviewer_role="Market / investment analyst")
+    ok, reasons = is_meaningful_and_authorized(
+        s, {ReviewDomain.SCIENTIFIC_EVIDENCE, ReviewDomain.SAFETY},
+    )
+    assert ok is False
+    assert any("Market / investment analyst" in r for r in reasons)
+
+
+def test_meaningful_and_authorized_false_when_sign_off_incomplete_even_if_role_would_be_ok():
+    s = ExpertSignOff(**_base_kwargs(), reviewer_role="Pharmacognosist")
+    ok, reasons = is_meaningful_and_authorized(s, {ReviewDomain.SCIENTIFIC_EVIDENCE})
+    assert ok is False
+    # Both an incompleteness reason and no false-positive authorization.
+    assert any("disposition" in r for r in reasons)
+
+
+def test_meaningful_and_authorized_combines_both_failure_reasons():
+    s = ExpertSignOff(**_base_kwargs(), reviewer_role="Market / investment analyst")
+    ok, reasons = is_meaningful_and_authorized(s, {ReviewDomain.SAFETY})
+    assert ok is False
+    assert any("disposition" in r for r in reasons)
+    assert any("Market / investment analyst" in r for r in reasons)
+
+
+def test_require_authorized_raises_unauthorized_when_only_role_is_wrong():
+    s = _meaningful_sign_off(reviewer_role="Market / investment analyst")
+    try:
+        require_authorized_sign_off(s, {ReviewDomain.SAFETY})
+        assert False, "should have raised"
+    except UnauthorizedReviewerError as e:
+        assert len(e.reasons) >= 1
+
+
+def test_require_authorized_raises_base_incomplete_error_when_role_would_be_fine():
+    # Sign-off itself is incomplete (no disposition), but the asserted
+    # role WOULD have been authorized — should raise the base
+    # IncompleteSignOffError, not UnauthorizedReviewerError, since role
+    # is not the (or a) failing element here.
+    s = ExpertSignOff(
+        **_base_kwargs(), reviewer_role="Pharmacognosist",
+        evidence_access_confirmed=True,
+    )
+    try:
+        require_authorized_sign_off(s, {ReviewDomain.SCIENTIFIC_EVIDENCE})
+        assert False, "should have raised"
+    except UnauthorizedReviewerError:
+        assert False, "should not be the Unauthorized subclass here"
+    except IncompleteSignOffError:
+        pass
+
+
+def test_require_authorized_returns_same_object_when_fully_valid():
+    s = _meaningful_sign_off(reviewer_role="Pharmacognosist")
+    result = require_authorized_sign_off(s, {ReviewDomain.SCIENTIFIC_EVIDENCE})
+    assert result is s
+
+
+def test_require_authorized_toxicologist_on_safety_flagged_candidate_succeeds():
+    s = _meaningful_sign_off(reviewer_role="Pharmacologist / Toxicologist")
+    result = require_authorized_sign_off(
+        s, {ReviewDomain.SCIENTIFIC_EVIDENCE, ReviewDomain.SAFETY},
+    )
+    assert result is s

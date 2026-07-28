@@ -7,7 +7,7 @@ from scoring_sensitivity_report import (
     classify_baseline_reconstruction, build_robustness_analysis,
     _contribution_shift_thresholds, _leave_one_dimension_out,
     _classify_rank_stability, RECONSTRUCTION_ROUNDING_TOLERANCE,
-    RANK_STABILITY_TIE_TOLERANCE,
+    RANK_STABILITY_TIE_TOLERANCE, boundary_fragility_series,
 )
 
 
@@ -461,3 +461,84 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"\nALL TESTS PASSED ({len(passed)}/{len(passed)}).\n")
         sys.exit(0)
+
+
+# ---------------------------------------------------------------------
+# Task 5 — boundary_fragility_series(): per-row companion to
+# fragility_report() above, for automatic wiring into
+# BotanicalRDCandidateEngine.run(). Must stay in exact agreement with
+# fragility_report() on what counts as "nearest boundary" and
+# "fragile" — both now share _nearest_boundary_and_distance().
+# ---------------------------------------------------------------------
+
+def test_boundary_fragility_series_same_index_as_input():
+    result = _make_result([38.0, 78.0, 100.0])
+    series = boundary_fragility_series(result, margin=3.0)
+    assert list(series.index) == list(result.index)
+    assert len(series) == len(result)
+
+
+def test_boundary_fragility_series_flags_agree_with_fragility_report():
+    result = _make_result([46.0, 100.0, 78.0, 44.0])
+    report = fragility_report(result, margin=3.0)
+    series = boundary_fragility_series(result, margin=3.0)
+
+    fragile_indices_from_report = set(report["fragile_rows"].index)
+    fragile_indices_from_series = {
+        idx for idx, entry in series.items() if entry["is_boundary_fragile"]
+    }
+    assert fragile_indices_from_series == fragile_indices_from_report
+
+
+def test_boundary_fragility_series_nearest_boundary_and_distance_match_report():
+    result = _make_result([46.0])
+    report = fragility_report(result, margin=3.0)
+    series = boundary_fragility_series(result, margin=3.0)
+
+    report_row = report["fragile_rows"].iloc[0]
+    entry = series.iloc[0]
+    assert entry["nearest_boundary"] == report_row["Nearest_Boundary"]
+    assert entry["distance_to_boundary"] == report_row["Distance_To_Boundary"]
+
+
+def test_boundary_fragility_series_far_from_boundary_is_not_fragile():
+    result = _make_result([100.0])
+    series = boundary_fragility_series(result, margin=3.0)
+    entry = series.iloc[0]
+    assert entry["is_boundary_fragile"] is False
+    assert entry["nearest_boundary"] == 78
+
+
+def test_boundary_fragility_series_records_margin_used():
+    result = _make_result([78.0])
+    series = boundary_fragility_series(result, margin=5.0)
+    assert series.iloc[0]["margin"] == 5.0
+
+
+def test_boundary_fragility_series_empty_input_returns_empty_series():
+    result = _make_result([])
+    series = boundary_fragility_series(result)
+    assert len(series) == 0
+
+
+def test_boundary_fragility_series_missing_score_column_returns_none_entries():
+    result = pd.DataFrame({"Alternative_Plant": ["PlantA", "PlantB"]})
+    series = boundary_fragility_series(result)
+    assert len(series) == 2
+    assert series.iloc[0] is None
+
+
+def test_boundary_fragility_series_never_mutates_input_dataframe():
+    result = _make_result([46.0, 78.0])
+    original = result.copy(deep=True)
+    boundary_fragility_series(result, margin=3.0)
+    pd.testing.assert_frame_equal(result, original)
+
+
+def test_boundary_fragility_series_default_margin_matches_fragility_report_default():
+    result = _make_result([48.0])  # 3 away from 45 boundary
+    series_default = boundary_fragility_series(result)
+    report_default = fragility_report(result)
+    assert series_default.iloc[0]["is_boundary_fragile"] == (
+        report_default["fragile_count"] == 1
+    )

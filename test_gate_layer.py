@@ -469,17 +469,21 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # Decision_Engine_Version column (reproducibility metadata), then
     # from 53 to 55 by Task 2's additive GRADE_Certainty/
     # GRADE_Certainty_Rationale columns (GRADE-style clinical-evidence
-    # certainty grading) — a legitimate, expected change to this lock,
-    # not a regression. Row count, scores, and Decision_Class below
-    # are UNCHANGED, which is what this test actually guards.
+    # certainty grading), then from 55 to 57 by Task 5's additive
+    # Robustness_Analysis/Boundary_Fragility columns (automatic
+    # sensitivity analysis) — a legitimate, expected change to this
+    # lock, not a regression. Row count, scores, and Decision_Class
+    # below are UNCHANGED, which is what this test actually guards.
     # (Previously bumped 51 -> 52 by Task 10.2's Applicability_Summary,
     # following the same pattern.)
-    assert len(result.columns) == 55
+    assert len(result.columns) == 57
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns
     assert "GRADE_Certainty" in result.columns
     assert "GRADE_Certainty_Rationale" in result.columns
+    assert "Robustness_Analysis" in result.columns
+    assert "Boundary_Fragility" in result.columns
 
     # A representative set of pre-existing output fields must still be
     # present and untouched by this task's column addition.

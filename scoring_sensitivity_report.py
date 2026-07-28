@@ -132,6 +132,20 @@ DECISION_BOUNDARIES = [45, 62, 78]
 DEFAULT_MARGIN = 3.0
 
 
+def _nearest_boundary_and_distance(score: float):
+    """Shared per-row computation: which DECISION_BOUNDARIES entry is
+    closest to `score`, and how far away. Factored out of
+    fragility_report() (Task 5) so boundary_fragility_series() below
+    can reuse the exact same logic instead of re-deriving it — the two
+    functions can never silently drift apart on what "nearest boundary"
+    means. Behavior is byte-identical to the pre-Task-5 inline closure
+    this replaced.
+    """
+    distances = [(abs(score - b), b) for b in DECISION_BOUNDARIES]
+    distances.sort()
+    return distances[0][1], distances[0][0]
+
+
 def fragility_report(result: pd.DataFrame, margin: float = DEFAULT_MARGIN) -> dict:
     """For each row in `result` (a botanical_rd_candidate_engine.run()
     output), computes the distance from its R&D_Opportunity_Score to
@@ -154,11 +168,6 @@ def fragility_report(result: pd.DataFrame, margin: float = DEFAULT_MARGIN) -> di
         }
 
     scores = result["R&D_Opportunity_Score"].astype(float)
-
-    def _nearest_boundary_and_distance(score: float):
-        distances = [(abs(score - b), b) for b in DECISION_BOUNDARIES]
-        distances.sort()
-        return distances[0][1], distances[0][0]
 
     nearest = scores.map(_nearest_boundary_and_distance)
     result_with_distance = result.copy()
@@ -187,6 +196,46 @@ def fragility_report(result: pd.DataFrame, margin: float = DEFAULT_MARGIN) -> di
         "total_count": total,
         "summary": summary,
     }
+
+
+def boundary_fragility_series(result: pd.DataFrame, margin: float = DEFAULT_MARGIN) -> pd.Series:
+    """Task 5 — per-row companion to fragility_report() above, for
+    callers that want boundary-fragility exposed as an additive
+    DataFrame COLUMN on every row (not just the fragile subset) — this
+    is what lets BotanicalRDCandidateEngine.run() attach sensitivity
+    information automatically to every comparison, per Chapter 8 of
+    the whitepaper's "formal robustness analysis is supported through
+    a separate, standalone post-processing tool... but this analysis
+    is not yet run automatically as part of every comparison" gap.
+
+    Same index as `result`; each entry is a small dict:
+      {"nearest_boundary": int, "distance_to_boundary": float,
+       "is_boundary_fragile": bool, "margin": float}
+
+    Reuses the exact same _nearest_boundary_and_distance() computation
+    fragility_report() uses — never a second, differently-derived
+    notion of "fragile." Purely additive and read-only: never calls
+    _score_candidate(), never mutates `result`, never changes
+    R&D_Opportunity_Score or Decision_Class. Row order and index are
+    preserved exactly (unlike fragility_report()'s fragile_rows, which
+    is a sorted subset) — a caller assigning this Series directly onto
+    `result` as a new column gets one entry per row, aligned by index.
+    """
+    if result.empty or "R&D_Opportunity_Score" not in result.columns:
+        return pd.Series([None] * len(result), index=result.index, dtype=object)
+
+    scores = result["R&D_Opportunity_Score"].astype(float)
+
+    def _build(score: float) -> dict:
+        boundary, distance = _nearest_boundary_and_distance(score)
+        return {
+            "nearest_boundary": boundary,
+            "distance_to_boundary": distance,
+            "is_boundary_fragile": distance <= margin,
+            "margin": margin,
+        }
+
+    return scores.map(_build)
 
 
 # =====================================================================

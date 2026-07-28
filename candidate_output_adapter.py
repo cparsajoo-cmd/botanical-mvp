@@ -103,6 +103,8 @@ _STRING_COLUMNS = {
     "Next_Experiment_Suggestion": "next_experiment_suggestion",
     "Comparative_Rationale": "comparative_rationale",
     "Rationale": "rationale",
+    "GRADE_Certainty": "grade_certainty",
+    "GRADE_Certainty_Rationale": "grade_certainty_rationale",
 }
 
 _FLOAT_COLUMNS = {

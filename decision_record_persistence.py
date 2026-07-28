@@ -145,6 +145,16 @@ _PERSISTED_RECORD_FIELDS = [
     # in this allowlist) — never fabricated as "1.0.0" for an old
     # record that never actually carried a version.
     "decision_engine_version",
+    # GRADE-informed clinical-evidence certainty (see
+    # data_contracts.CandidateAssessment.grade_certainty and
+    # grade_certainty_classifier.py for the full documented method).
+    # Additive only; already validated onto CandidateAssessment by
+    # candidate_output_adapter.py — this allowlist entry is the only
+    # change made anywhere in the persistence pipeline to close the
+    # previously-broken result_df -> CandidateAssessment ->
+    # decision_records path for this field. None on any record
+    # persisted before this field existed.
+    "grade_certainty", "grade_certainty_rationale",
 ]
 
 

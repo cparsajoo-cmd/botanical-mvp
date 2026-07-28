@@ -543,6 +543,27 @@ class CandidateAssessment:
     # distinguishable from a genuine "1.0.0" record.
     decision_engine_version: Optional[str] = None
 
+    # GRADE-informed clinical-evidence certainty (see
+    # grade_certainty_classifier.classify_grade_certainty() for the
+    # full documented method and its declared limitations —
+    # "GRADE-informed proxy", not a formal GRADE assessment).
+    # Additive only: already computed and attached to every candidate
+    # row by botanical_rd_candidate_engine.run() as GRADE_Certainty/
+    # GRADE_Certainty_Rationale; this pair of fields is what lets
+    # candidate_output_adapter.py carry that value onto
+    # CandidateAssessment instead of silently dropping it (previously
+    # the only place a GRADE_Certainty value could be seen was a raw
+    # CSV export — it never reached this dataclass or
+    # decision_record_persistence.py). Never read by _decision_class(),
+    # _score_candidate(), _evaluate_gates(), or any sorting/filtering —
+    # carries no influence on any decision output. None on any row
+    # produced before this field existed, or for a tier GRADE does not
+    # apply to (classify_grade_certainty() itself returns
+    # "Not GRADE-applicable" as the certainty value in that case, not
+    # None — None here means the field was never populated at all).
+    grade_certainty: Optional[str] = None
+    grade_certainty_rationale: Optional[str] = None
+
 
 # ======================================================================
 # Shared helpers

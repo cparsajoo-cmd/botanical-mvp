@@ -129,10 +129,14 @@ def test_existing_persisted_fields_remain_unchanged():
         "gate_results", "scoring_config_version",
     }
     assert expected_pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
-    # Two new fields added since (applicability_summary, Task 12.1;
-    # decision_engine_version, Task 15), nothing removed.
+    # Four new fields added since (applicability_summary, Task 12.1;
+    # decision_engine_version, Task 15; grade_certainty and
+    # grade_certainty_rationale, closing the result_df ->
+    # CandidateAssessment -> decision_records path for GRADE
+    # certainty), nothing removed.
     assert set(_PERSISTED_RECORD_FIELDS) - expected_pre_task_12_1_fields == {
         "applicability_summary", "decision_engine_version",
+        "grade_certainty", "grade_certainty_rationale",
     }
 
 

@@ -1,94 +1,127 @@
 """
-Task 5 — Automatic sensitivity analysis, wired into
-BotanicalRDCandidateEngine.run().
+Task 5 rollback — sensitivity analysis de-duplication.
 
 WHAT THIS COVERS
-- Robustness_Analysis / Boundary_Fragility on OUTPUT_COLUMNS and on
-  every candidate row produced by run().
-- Non-regression: scoring, ranking, gates, confidence, Decision_Class
-  unchanged apart from the two additive columns (same pattern as
-  test_task15_decision_engine_version_tracking.py).
-- Both new columns agree with directly calling
-  scoring_sensitivity_report.py's functions on the same result.
+An earlier version of BotanicalRDCandidateEngine.run() computed
+Robustness_Analysis/Boundary_Fragility internally, duplicating
+sensitivity_display_adapter.py's existing, UI-facing sensitivity
+analysis (same underlying functions, same result_df, called a second
+time for no additional consumer — neither column was ever read by
+anything downstream of run(); see the Dependency Audit that found
+this). That duplicate computation has been removed from run(); this
+file proves:
+  1. run() no longer produces Robustness_Analysis/Boundary_Fragility,
+     and the engine module no longer even imports
+     scoring_sensitivity_report (the duplicate call site is gone, not
+     just its output).
+  2. sensitivity_display_adapter.py — called from step_rd_candidates.py
+     AFTER run() returns, exactly as before this rollback — is
+     untouched and still produces its UI payload correctly from
+     run()'s result_df. UI behavior is unchanged.
+  3. Non-regression: scoring, ranking, gates, confidence, Decision_Class,
+     and OUTPUT_COLUMNS are otherwise exactly what they were before
+     Task 5 was ever added (55 columns, not 57).
 
 WHAT THIS DELIBERATELY DOES NOT COVER
-The internal correctness of build_robustness_analysis()/
-boundary_fragility_series() themselves (see
-test_scoring_sensitivity_report.py) — this file only covers that
-run() wires them in correctly, once, without disturbing anything else.
+The internal correctness of fragility_report()/build_robustness_analysis()
+themselves (see test_scoring_sensitivity_report.py) or of
+prepare_sensitivity_payload()'s own reshaping logic (see
+test_task2_sensitivity_ui.py) — this file only covers that run() no
+longer duplicates that work, and that removing the duplicate did not
+disturb anything else.
 
 HOW TO RUN
     pytest -q test_task5_sensitivity_analysis_activation.py
     (or `pytest -q` from the repo root — auto-discovered)
 """
 
+import inspect
+
 import pandas as pd
 
 import botanical_rd_candidate_engine as eng
-from scoring_sensitivity_report import build_robustness_analysis, boundary_fragility_series
+from sensitivity_display_adapter import prepare_sensitivity_payload
 from test_task15_decision_engine_version_tracking import _make_engine, _run
 
 
 # ---------------------------------------------------------------------
-# 1) The two new columns exist on OUTPUT_COLUMNS and on every row.
+# 1) The duplicate computation is gone — from OUTPUT_COLUMNS, from
+#    every row run() produces, and from the module's own imports.
 # ---------------------------------------------------------------------
 
-def test_output_columns_include_the_two_new_fields():
-    assert "Robustness_Analysis" in eng.OUTPUT_COLUMNS
-    assert "Boundary_Fragility" in eng.OUTPUT_COLUMNS
-    # Both must sit before the always-last reproducibility column.
-    assert eng.OUTPUT_COLUMNS.index("Robustness_Analysis") < eng.OUTPUT_COLUMNS.index("Decision_Engine_Version")
-    assert eng.OUTPUT_COLUMNS.index("Boundary_Fragility") < eng.OUTPUT_COLUMNS.index("Decision_Engine_Version")
+def test_output_columns_do_not_include_the_removed_fields():
+    assert "Robustness_Analysis" not in eng.OUTPUT_COLUMNS
+    assert "Boundary_Fragility" not in eng.OUTPUT_COLUMNS
+
+
+def test_output_columns_count_matches_pre_task_5_baseline():
+    # 55 = 53 (Task 15's Decision_Engine_Version baseline) + 2 (Task 2's
+    # GRADE_Certainty/GRADE_Certainty_Rationale, which is NOT part of
+    # this rollback and stays). See test_gate_layer.py's own locked
+    # column-count assertion for the authoritative version of this
+    # check against a real run() result; this is the OUTPUT_COLUMNS
+    # list itself.
+    assert len(eng.OUTPUT_COLUMNS) == 55
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 
-def test_every_candidate_row_contains_both_new_fields():
+def test_no_candidate_row_contains_the_removed_fields():
     result = _run()
     assert not result.empty
-    assert "Robustness_Analysis" in result.columns
-    assert "Boundary_Fragility" in result.columns
-    assert result["Robustness_Analysis"].notna().all()
-    assert result["Boundary_Fragility"].notna().all()
+    assert "Robustness_Analysis" not in result.columns
+    assert "Boundary_Fragility" not in result.columns
+
+
+def test_engine_module_no_longer_imports_scoring_sensitivity_report():
+    # Proves the duplicate CALL SITE is gone, not just its output — a
+    # stray "compute it but don't attach it" leftover would still show
+    # up as an import of this module.
+    source = inspect.getsource(eng)
+    assert "scoring_sensitivity_report" not in source
+
+
+def test_engine_module_has_no_top_level_import_of_robustness_functions():
+    import ast
+    tree = ast.parse(inspect.getsource(eng))
+    imported_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported_names.add(alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_names.add(alias.name.split(".")[0])
+    assert "build_robustness_analysis" not in imported_names
+    assert "boundary_fragility_series" not in imported_names
 
 
 # ---------------------------------------------------------------------
-# 2) Values agree with calling the standalone functions directly on
-#    the same result — run() must not compute a second, different
-#    version of this analysis.
+# 2) UI path preserved: sensitivity_display_adapter.py, called after
+#    run() returns exactly as before, still works unchanged.
 # ---------------------------------------------------------------------
 
-def test_wired_values_match_calling_the_standalone_functions_directly():
+def test_sensitivity_display_adapter_still_works_on_runs_result():
     result = _run()
-
-    expected_robustness = build_robustness_analysis(result)
-    expected_fragility = boundary_fragility_series(result)
-
-    for idx in result.index:
-        assert result.loc[idx, "Robustness_Analysis"] == expected_robustness.loc[idx]
-        assert result.loc[idx, "Boundary_Fragility"] == expected_fragility.loc[idx]
+    payload = prepare_sensitivity_payload(result)
+    assert payload["status"] != "insufficient_data"
+    assert "fragility" in payload
+    assert "rank_stability_counts" in payload
+    assert "boundary_statement" in payload
 
 
-def test_boundary_fragility_shape_is_correct():
+def test_sensitivity_display_adapter_payload_shape_unchanged():
     result = _run()
-    for entry in result["Boundary_Fragility"]:
-        assert isinstance(entry, dict)
-        assert set(entry.keys()) == {
-            "nearest_boundary", "distance_to_boundary",
-            "is_boundary_fragile", "margin",
-        }
-
-
-def test_robustness_analysis_shape_is_correct():
-    result = _run()
-    for entry in result["Robustness_Analysis"]:
-        assert isinstance(entry, dict)
-        assert "status" in entry
+    payload = prepare_sensitivity_payload(result)
+    assert set(payload.keys()) == {
+        "status", "total_rows", "message", "fragility",
+        "rank_stability_counts", "boundary_statement", "boundary_explanation",
+    }
 
 
 # ---------------------------------------------------------------------
 # 3) Non-regression: scoring, ranking, gates, confidence, Decision_Class
-#    are completely unaffected by this task, exactly like Task 15's own
-#    non-regression test for its own additive column.
+#    unaffected by removing the duplicate — identical to the checks
+#    this file ran before the rollback.
 # ---------------------------------------------------------------------
 
 def test_non_regression_scoring_and_decision_unaffected():
@@ -136,15 +169,16 @@ def test_run_still_returns_a_plain_dataframe_with_exactly_output_columns():
     assert list(result.columns) == eng.OUTPUT_COLUMNS
 
 
-# ---------------------------------------------------------------------
-# 4) Determinism: two fresh engine instances on the same inputs must
-#    produce identical Robustness_Analysis / Boundary_Fragility.
-# ---------------------------------------------------------------------
-
-def test_deterministic_across_two_runs_with_same_inputs():
-    result_a = _run()
-    result_b = _run()
-
-    for idx in result_a.index:
-        assert result_a.loc[idx, "Boundary_Fragility"] == result_b.loc[idx, "Boundary_Fragility"]
-        assert result_a.loc[idx, "Robustness_Analysis"] == result_b.loc[idx, "Robustness_Analysis"]
+def test_csv_export_shape_unaffected_by_the_rollback():
+    # step_rd_candidates.py's "Download decision table (CSV)" button
+    # serializes result_df.to_csv() directly — confirms that export no
+    # longer contains the removed columns (it previously did, as an
+    # unintended side effect of the duplicate computation) and that
+    # every other column round-trips through CSV unchanged.
+    result = _run()
+    csv_text = result.to_csv(index=False)
+    header = csv_text.splitlines()[0]
+    assert "Robustness_Analysis" not in header
+    assert "Boundary_Fragility" not in header
+    for col in ("R&D_Opportunity_Score", "Decision_Class", "GRADE_Certainty"):
+        assert col in header

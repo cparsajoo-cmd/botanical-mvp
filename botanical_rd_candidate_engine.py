@@ -12,7 +12,6 @@ from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from grade_certainty_classifier import classify_grade_certainty
-from scoring_sensitivity_report import build_robustness_analysis, boundary_fragility_series
 from decision_class_ah import classify_decision_ah
 from white_space_classifier import classify_white_space
 from structured_rationale import (
@@ -164,16 +163,16 @@ OUTPUT_COLUMNS = [
     # outcomes, Evidence_Confidence, or ranking.
     "GRADE_Certainty",
     "GRADE_Certainty_Rationale",
-    # Task 5 — automatic sensitivity analysis (rank-stability
-    # robustness + decision-boundary fragility), attached to every
-    # run() result. Additive only: see scoring_sensitivity_report.py's
-    # build_robustness_analysis()/boundary_fragility_series(). Never
-    # read by _decision_class(), _score_candidate(), _evaluate_gates(),
-    # or go_investigate_hold_no_go() — carries no influence on
-    # Decision_Class, Decision_Class_AH, R&D_Opportunity_Score, gate
-    # outcomes, or ranking.
-    "Robustness_Analysis",
-    "Boundary_Fragility",
+    # NOTE (post-Task-5 rollback): an earlier version of this file also
+    # computed Robustness_Analysis/Boundary_Fragility here, duplicating
+    # sensitivity_display_adapter.py's existing, UI-facing
+    # fragility_report()/build_robustness_analysis() calls (same
+    # functions, same result_df, called a second time for no
+    # additional consumer — neither column was ever read by anything
+    # downstream of run()). Removed; sensitivity_display_adapter.py
+    # (called from step_rd_candidates.py after run() returns) remains
+    # the single source of truth for sensitivity/robustness analysis.
+    # Do not re-add a second computation path here.
     # Task 15 — reproducibility metadata only, appended last (not
     # inserted between existing analytical columns) so no historical
     # column ORDER assumption breaks. See DECISION_ENGINE_VERSION below
@@ -1462,23 +1461,6 @@ class BotanicalRDCandidateEngine:
         # gate/decision/ranking-affecting computation above has already
         # finished; nothing below this line reads it back into anything.
         output["Decision_Engine_Version"] = DECISION_ENGINE_VERSION
-
-        # Task 5 — automatic sensitivity analysis, closing the gap
-        # Chapter 8 of the whitepaper names explicitly: "formal
-        # robustness analysis is supported through a separate,
-        # standalone post-processing tool (scoring_sensitivity_report.py)
-        # ... but this analysis is not yet run automatically as part of
-        # every comparison." Both functions are pure post-processing
-        # over the now-final, now-sorted `output` (see
-        # scoring_sensitivity_report.py's own module docstring,
-        # "Production scoring and ranking are unchanged" — neither
-        # function calls _score_candidate(), mutates a score, or
-        # changes Decision_Class/Decision_Class_AH/rank). Run last, for
-        # the same reason Comparative_Rationale above does: every row's
-        # FINAL score and its reference-group membership must already
-        # be settled before either analysis is meaningful.
-        output["Robustness_Analysis"] = build_robustness_analysis(output)
-        output["Boundary_Fragility"] = boundary_fragility_series(output)
 
         return output[OUTPUT_COLUMNS]
 

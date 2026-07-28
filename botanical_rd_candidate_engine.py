@@ -135,9 +135,10 @@ OUTPUT_COLUMNS = [
     # Task 1 — Formal Gate Layer. Additive only: see _evaluate_gates()
     # and CandidateAssessment.gate_results. Never read by _decision_class()
     # or _score_candidate() — carrying no influence on Decision_Class,
-    # R&D_Opportunity_Score, or ranking, except that its "safety" entry
-    # reports (rather than changes) the pre-existing HARD_SAFETY_TERMS
-    # auto-exclusion _decision_class() already enforced before this task.
+    # R&D_Opportunity_Score, or ranking, except that its "safety" and
+    # (as of Task 4) "regulatory" entries report (rather than change)
+    # the same hard, non-compensatory exclusions _decision_class()
+    # already enforces via _hard_safety_gate()/_hard_regulatory_gate().
     "Gate_Results",
     # Task 3 — externalized, versioned scoring weights. Records WHICH
     # ScoringConfig this row's R&D_Opportunity_Score was computed with
@@ -401,6 +402,23 @@ CONTROVERSIAL_SAFETY_TERMS = {
     "carcinogenic", "mutagenic", "genotoxic",
     "hepatotoxic", "hepatotoxin", "nephrotoxic", "nephrotoxin",
     "cardiotoxic", "neurotoxic",
+}
+
+# Task 4 — activating the regulatory gate as a second, non-compensatory
+# hard stop on Decision_Class, alongside the existing hard-safety
+# exclusion. A documented explicit "Prohibited / banned" regulatory
+# finding is exactly as decisive a reason to stop as a documented hard
+# safety term: no score, market signal, or mechanistic plausibility
+# should be able to compensate for either. See _hard_regulatory_gate()
+# and _decision_class()'s early-return for where this is enforced, and
+# HARD_STOP_DECISION_CLASSES below for where the two hard-stop strings
+# are treated as equally "worst" during multi-compound merging.
+REGULATORY_PROHIBITION_DECISION_CLASS = (
+    "Regulatory prohibition — not suitable without regulatory review"
+)
+HARD_STOP_DECISION_CLASSES = {
+    "Safety concern — not suitable without expert review",
+    REGULATORY_PROHIBITION_DECISION_CLASS,
 }
 
 
@@ -1118,6 +1136,11 @@ class BotanicalRDCandidateEngine:
                         compound_is_common=compound_is_common,
                         target_specificity=target_specificity,
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
+                        regulatory_barrier_types=(
+                            regulatory_barrier_result.barrier_types
+                            if raw_evidence and raw_evidence.strip()
+                            else None
+                        ),
                     )
 
                     # Task 1 — Formal Gate Layer. Purely additive: built
@@ -1126,8 +1149,8 @@ class BotanicalRDCandidateEngine:
                     # evidence_level, regulatory_barrier_result), never
                     # read by anything upstream of this line. See
                     # _evaluate_gates()'s own docstring for what each
-                    # gate means and why only "safety" is behaviorally
-                    # tied to Decision_Class today.
+                    # gate means — as of Task 4, both "safety" and
+                    # "regulatory" are behaviorally tied to Decision_Class.
                     gate_results = self._evaluate_gates(
                         safety_flags=safety_flags,
                         match_quality=match_quality,
@@ -1471,6 +1494,18 @@ class BotanicalRDCandidateEngine:
 
         def _rank(decision):
             decision = str(decision)
+            # Task 4 — REGULATORY_PROHIBITION_DECISION_CLASS is a second
+            # hard-stop string, exactly as decisive as "Safety concern"
+            # above, but deliberately NOT inserted into `order` itself:
+            # doing so would shift every other entry's index, which
+            # nothing downstream should need to care about but which is
+            # an unnecessary risk to introduce in an additive change.
+            # Instead both hard-stop strings rank below (worse than)
+            # everything in `order`, including "Safety concern" at index
+            # 0 — same relative ordering as before, just expressed via
+            # this explicit membership check rather than list position.
+            if decision in HARD_STOP_DECISION_CLASSES:
+                return -1
             return order.index(decision) if decision in order else 0
 
         merged_rows = []
@@ -3642,6 +3677,39 @@ class BotanicalRDCandidateEngine:
         return GateStatus.PASSED, hit_terms, flagged_terms
 
     @staticmethod
+    def _hard_regulatory_gate(regulatory_barrier_types, same_plant):
+        """Single source of truth for the hard regulatory-prohibition
+        auto-exclusion — Task 4 (activating the regulatory gate).
+        Mirrors _hard_safety_gate()'s structure exactly, so
+        _decision_class() and _evaluate_gates()'s "regulatory" entry
+        can never disagree.
+
+        same_plant skips the hard exclusion for the reference plant
+        matched to itself, for the identical reason _hard_safety_gate()
+        does: a merged self-row can combine dozens of a plant's own
+        compounds' pooled evidence text, and one trace/incidental
+        compound's regulatory mention must not label the reference
+        plant itself as prohibited. The flag itself stays visible in
+        Regulatory_Barriers/Rationale either way — only the hard
+        exclusion is skipped, and the gate reports NOT_EVALUABLE
+        (like safety does) rather than silently passing.
+
+        regulatory_barrier_types is None when no evidence text was
+        ever collected for this row (never checked) — that is a data
+        gap, not a prohibition, and must never be treated as a
+        hard-stop; only an explicit "Prohibited / banned" entry is.
+
+        Returns (GateStatus, banned_types: set).
+        """
+        if same_plant:
+            return GateStatus.NOT_EVALUABLE, set()
+        if regulatory_barrier_types is None:
+            return GateStatus.NOT_EVALUABLE, set()
+        if "Prohibited / banned" in regulatory_barrier_types:
+            return GateStatus.FAILED, {"Prohibited / banned"}
+        return GateStatus.PASSED, set()
+
+    @staticmethod
     def _evaluate_gates(
         safety_flags,
         match_quality,
@@ -3650,24 +3718,25 @@ class BotanicalRDCandidateEngine:
         regulatory_barrier_types,
         same_plant=False,
     ):
-        """Task 1 — Formal Gate Layer. Additive, non-blocking output:
-        a gate reports whether a candidate clears a specific,
-        independently-named precondition, separate from
-        R&D_Opportunity_Score and Decision_Class. Nothing in this
-        method influences scoring or ranking. The ONE exception is
-        "safety", which reports (via _hard_safety_gate) exactly the
-        pre-existing HARD_SAFETY_TERMS auto-exclusion that
-        _decision_class() already enforced before this task — that
-        behavior is unchanged, only exposed here in structured form as
-        well as the original string return value.
+        """Task 1 — Formal Gate Layer. Additive, non-blocking output for
+        two of its four gates: a gate reports whether a candidate
+        clears a specific, independently-named precondition, separate
+        from R&D_Opportunity_Score and Decision_Class. TWO gates are
+        an exception to "non-blocking": "safety" (via
+        _hard_safety_gate, unchanged since Task 1) and, as of Task 4,
+        "regulatory" (via _hard_regulatory_gate) — each reports the
+        SAME hard, non-compensatory exclusion that _decision_class()
+        enforces, exposed here in structured form as well as the
+        original string return value. Neither gate's FAILED status can
+        be offset by score, market signal, or mechanistic plausibility.
 
-        The other three gates (identity / minimum_evidence /
-        regulatory) are informational only in this task: computed and
-        reported on every row, but never read by _decision_class() or
-        _score_candidate(), and therefore never able to change
-        Decision_Class, R&D_Opportunity_Score, or rank. Making any of
-        them hard-blocking is a deliberate later step, gated on
-        validating them against the Task 5 benchmark set first.
+        The other two gates (identity / minimum_evidence) remain
+        informational only: computed and reported on every row, but
+        never read by _decision_class() or _score_candidate(), and
+        therefore never able to change Decision_Class,
+        R&D_Opportunity_Score, or rank. Making either hard-blocking is
+        a deliberate later step, gated on validating them against the
+        Task 5 benchmark set first.
 
         Public status vocabulary is exactly GateStatus.PASSED /
         GateStatus.FAILED / GateStatus.NOT_EVALUABLE — there is no
@@ -3835,15 +3904,39 @@ class BotanicalRDCandidateEngine:
         # _market_status() already makes for its own vocabulary. Any
         # non-ban restriction (prescription-only, controlled, restricted
         # access, claim-limited, etc.) stays visible in evidence/reason
-        # but never fails this gate. ---
-        if regulatory_barrier_types is None:
+        # but never fails this gate.
+        #
+        # Task 4 — delegates to the single shared check
+        # (_hard_regulatory_gate) so this status can never disagree with
+        # _decision_class()'s own hard-exclusion, exactly mirroring how
+        # the "safety" gate above delegates to _hard_safety_gate(). This
+        # also threads same_plant through for the first time: a
+        # reference plant matched to itself skips the hard exclusion for
+        # the same reason the safety gate already does (see
+        # _hard_regulatory_gate()'s own docstring). ---
+        regulatory_status, _banned_types = (
+            BotanicalRDCandidateEngine._hard_regulatory_gate(regulatory_barrier_types, same_plant)
+        )
+        if same_plant:
+            gates["regulatory"] = {
+                "gate_name": "regulatory",
+                "status": regulatory_status,
+                "reason": (
+                    "Reference plant matched to itself; the hard "
+                    "regulatory-prohibition auto-exclusion is "
+                    "intentionally skipped for this self-row (see "
+                    "_decision_class same_plant handling)."
+                ),
+                "evidence": "; ".join(regulatory_barrier_types) if regulatory_barrier_types else "",
+            }
+        elif regulatory_status == GateStatus.NOT_EVALUABLE:
             gates["regulatory"] = {
                 "gate_name": "regulatory",
                 "status": GateStatus.NOT_EVALUABLE,
                 "reason": "No evidence text was available to check for a regulatory prohibition.",
                 "evidence": "",
             }
-        elif "Prohibited / banned" in regulatory_barrier_types:
+        elif regulatory_status == GateStatus.FAILED:
             gates["regulatory"] = {
                 "gate_name": "regulatory",
                 "status": GateStatus.FAILED,
@@ -3874,6 +3967,7 @@ class BotanicalRDCandidateEngine:
         compound_is_common=False,
         target_specificity=None,
         same_plant=False,
+        regulatory_barrier_types=None,
     ):
         # A documented serious toxicity (kidney-stone formation,
         # carcinogenicity, organ toxicity, etc.) is a hard stop: no score,
@@ -3915,6 +4009,26 @@ class BotanicalRDCandidateEngine:
         )
         if safety_gate_status == GateStatus.FAILED:
             return "Safety concern — not suitable without expert review"
+
+        # Task 4 — activating the regulatory gate as a second hard,
+        # non-compensatory stop, checked immediately after safety and
+        # before any score-based tier is computed below — same
+        # "delegates to the single shared check so this and
+        # _evaluate_gates()'s 'regulatory' entry can never disagree"
+        # reasoning as the safety check just above. An explicit
+        # documented "Prohibited / banned" finding is exactly as
+        # decisive a reason to stop as a documented hard safety term:
+        # no score, market signal, or mechanistic plausibility can
+        # compensate for it. same_plant skips this exclusion for the
+        # same reason it skips the safety one — see
+        # _hard_regulatory_gate()'s own docstring.
+        regulatory_gate_status, _banned_types = (
+            BotanicalRDCandidateEngine._hard_regulatory_gate(
+                regulatory_barrier_types, same_plant
+            )
+        )
+        if regulatory_gate_status == GateStatus.FAILED:
+            return REGULATORY_PROHIBITION_DECISION_CLASS
 
         # Controversial-only flags (carcinogenic/mutagenic/genotoxic with
         # no accompanying hard-tier term) fall straight through past the

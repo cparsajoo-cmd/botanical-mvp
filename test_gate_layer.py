@@ -33,6 +33,8 @@ import pandas as pd
 
 import botanical_rd_candidate_engine as eng
 from data_contracts import GateStatus
+from decision_class_ah import classify_decision_ah
+from structured_rationale import go_investigate_hold_no_go
 from test_botanical_rd_candidate_engine import make_engine
 
 
@@ -464,15 +466,20 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # Row count and column count locked exactly.
     assert len(result) == 2
     # Column count updated from 52 to 53 by Task 15's additive
-    # Decision_Engine_Version column (reproducibility metadata) — a
-    # legitimate, expected change to this lock, not a regression. Row
-    # count, scores, and Decision_Class below are UNCHANGED, which is
-    # what this test actually guards. (Previously bumped 51 -> 52 by
-    # Task 10.2's Applicability_Summary, following the same pattern.)
-    assert len(result.columns) == 53
+    # Decision_Engine_Version column (reproducibility metadata), then
+    # from 53 to 55 by Task 2's additive GRADE_Certainty/
+    # GRADE_Certainty_Rationale columns (GRADE-style clinical-evidence
+    # certainty grading) — a legitimate, expected change to this lock,
+    # not a regression. Row count, scores, and Decision_Class below
+    # are UNCHANGED, which is what this test actually guards.
+    # (Previously bumped 51 -> 52 by Task 10.2's Applicability_Summary,
+    # following the same pattern.)
+    assert len(result.columns) == 55
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns
+    assert "GRADE_Certainty" in result.columns
+    assert "GRADE_Certainty_Rationale" in result.columns
 
     # A representative set of pre-existing output fields must still be
     # present and untouched by this task's column addition.
@@ -674,3 +681,233 @@ def test_step_rd_candidates_call_site_still_wires_botanical_rd_candidate_engine(
     assert _gate_results_not_stripped(tree), (
         "step_rd_candidates.py must not drop or allowlist-exclude the Gate_Results column"
     )
+
+
+# ---------------------------------------------------------------------
+# Task 4 — activating the regulatory gate as a second hard,
+# non-compensatory Decision_Class stop, alongside the existing safety
+# one. See _hard_regulatory_gate(), the REGULATORY_PROHIBITION_
+# DECISION_CLASS/HARD_STOP_DECISION_CLASSES constants, and
+# _decision_class()'s early-return in botanical_rd_candidate_engine.py.
+# ---------------------------------------------------------------------
+
+def test_hard_regulatory_gate_fails_on_explicit_prohibition():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Prohibited / banned"], same_plant=False,
+    )
+    assert status == GateStatus.FAILED
+    assert banned == {"Prohibited / banned"}
+
+
+def test_hard_regulatory_gate_passes_when_checked_and_clear():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        [], same_plant=False,
+    )
+    assert status == GateStatus.PASSED
+    assert banned == set()
+
+
+def test_hard_regulatory_gate_not_evaluable_when_never_checked():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        None, same_plant=False,
+    )
+    assert status == GateStatus.NOT_EVALUABLE
+    assert banned == set()
+
+
+def test_hard_regulatory_gate_non_ban_restriction_does_not_fail():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Restricted access (prescription/controlled)"], same_plant=False,
+    )
+    assert status == GateStatus.PASSED
+    assert banned == set()
+
+
+def test_hard_regulatory_gate_same_plant_skips_exclusion_even_when_banned():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Prohibited / banned"], same_plant=True,
+    )
+    assert status == GateStatus.NOT_EVALUABLE
+    assert banned == set()
+
+
+def test_evaluate_gates_regulatory_same_plant_reason_and_status():
+    # same_plant now overrides ANY regulatory_barrier_types value,
+    # exactly like the safety gate already does — the reason text must
+    # reflect the exemption, not "never checked" or a bare pass/fail.
+    gates = eng.BotanicalRDCandidateEngine._evaluate_gates(
+        safety_flags="", match_quality="exact", has_evidence=True,
+        evidence_level="Clinical / human evidence",
+        regulatory_barrier_types=["Prohibited / banned"], same_plant=True,
+    )
+    assert gates["regulatory"]["status"] == GateStatus.NOT_EVALUABLE
+    assert "matched to itself" in gates["regulatory"]["reason"]
+    assert "Prohibited / banned" in gates["regulatory"]["evidence"]
+
+
+def test_decision_class_regulatory_prohibition_hard_stop():
+    decision = eng.BotanicalRDCandidateEngine._decision_class(
+        None,
+        score=90, safety_flags="", interaction_flags="",
+        has_evidence=True, match_quality="exact",
+        evidence_level="Clinical / human evidence", same_plant=False,
+        regulatory_barrier_types=["Prohibited / banned"],
+    )
+    assert decision == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+
+
+def test_decision_class_regulatory_prohibition_beats_high_score():
+    # Non-compensatory: even a score that would otherwise earn "Strong"
+    # must not escape the regulatory hard-stop.
+    decision = eng.BotanicalRDCandidateEngine._decision_class(
+        None,
+        score=99, safety_flags="", interaction_flags="",
+        has_evidence=True, match_quality="exact",
+        evidence_level="Clinical / human evidence", same_plant=False,
+        regulatory_barrier_types=["Prohibited / banned"],
+    )
+    assert decision == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+
+
+def test_decision_class_same_plant_skips_regulatory_hard_stop():
+    decision = eng.BotanicalRDCandidateEngine._decision_class(
+        None,
+        score=80, safety_flags="", interaction_flags="",
+        has_evidence=True, match_quality="exact",
+        evidence_level="Clinical / human evidence", same_plant=True,
+        regulatory_barrier_types=["Prohibited / banned"],
+    )
+    assert decision != eng.REGULATORY_PROHIBITION_DECISION_CLASS
+
+
+def test_decision_class_non_ban_restriction_does_not_trigger_hard_stop():
+    decision = eng.BotanicalRDCandidateEngine._decision_class(
+        None,
+        score=90, safety_flags="", interaction_flags="",
+        has_evidence=True, match_quality="exact",
+        evidence_level="Clinical / human evidence", same_plant=False,
+        regulatory_barrier_types=["Restricted access (prescription/controlled)"],
+    )
+    assert decision != eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert decision == "Strong R&D candidate"
+
+
+def test_decision_class_default_regulatory_barrier_types_is_backward_compatible():
+    # Every pre-Task-4 caller that doesn't pass regulatory_barrier_types
+    # at all must be completely unaffected (defaults to None -> never a
+    # hard stop).
+    decision = eng.BotanicalRDCandidateEngine._decision_class(
+        None,
+        score=90, safety_flags="", interaction_flags="",
+        has_evidence=True, match_quality="exact",
+        evidence_level="Clinical / human evidence", same_plant=False,
+    )
+    assert decision == "Strong R&D candidate"
+
+
+def test_decision_class_ah_maps_regulatory_prohibition_to_h():
+    result = classify_decision_ah(
+        existing_decision_class=eng.REGULATORY_PROHIBITION_DECISION_CLASS,
+        evidence_confidence=90, rd_opportunity_score=99,
+        market_status="", match_quality="exact", same_plant=False,
+    )
+    assert result == "H — No-go / safety concern"
+
+
+def test_go_investigate_hold_no_go_is_no_go_for_regulatory_prohibition():
+    decision_ah = classify_decision_ah(
+        existing_decision_class=eng.REGULATORY_PROHIBITION_DECISION_CLASS,
+        evidence_confidence=90, rd_opportunity_score=99,
+        market_status="", match_quality="exact", same_plant=False,
+    )
+    assert go_investigate_hold_no_go(decision_ah) == "No-Go"
+
+
+def test_regulatory_prohibition_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="RefPlant", compound_name="SharedCompound",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="SharedCompound",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "AltPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "This substance is prohibited and banned for sale in several jurisdictions.",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    alt_row = result[
+        (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
+    ].iloc[0]
+    assert alt_row["Decision_Class"] == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert alt_row["Decision_Class_AH"] == "H — No-go / safety concern"
+    assert alt_row["Go_Investigate_Hold_NoGo"] == "No-Go"
+    assert alt_row["Gate_Results"]["regulatory"]["status"] == GateStatus.FAILED
+
+
+def test_regulatory_prohibition_same_plant_exempt_end_to_end_through_run():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="RefPlant", compound_name="SharedCompound",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="AltPlant", compound_name="SharedCompound",
+             indication="TestIndication", target="Laxative",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    # The banned text is attached to the REFERENCE plant itself, so the
+    # self-matched row (RefPlant vs RefPlant) must be exempt.
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "RefPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "This substance is prohibited and banned for sale in several jurisdictions.",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+
+    self_row = result[
+        (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "RefPlant")
+    ].iloc[0]
+    assert self_row["Decision_Class"] != eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert self_row["Gate_Results"]["regulatory"]["status"] == GateStatus.NOT_EVALUABLE
+    assert "Prohibited / banned" in self_row["Gate_Results"]["regulatory"]["evidence"]
+
+
+def test_merge_tightest_pool_treats_both_hard_stops_as_equally_worst():
+    # A candidate matching on TWO compounds, where one sub-row is
+    # "Strong" and the other independently earned the regulatory
+    # hard-stop, must merge down to the hard-stop — same conservative
+    # "tightest wins" principle as the pre-existing safety case, now
+    # covering the regulatory hard-stop too.
+    output = pd.DataFrame([
+        {
+            "Reference_Plant": "RefPlant", "Alternative_Plant": "AltPlant",
+            "Reference_Compound": "CompoundA", "Shared_or_Similar_Compound": "CompoundA",
+            "R&D_Opportunity_Score": 90.0, "Decision_Class": "Strong R&D candidate",
+            "Safety_Flags": "No explicit flag found", "Interaction_Flags": "No explicit flag found",
+            "Novelty_Status": "Alternative source with similar compound",
+            "Rationale": "Decision: Strong R&D candidate.",
+        },
+        {
+            "Reference_Plant": "RefPlant", "Alternative_Plant": "AltPlant",
+            "Reference_Compound": "CompoundB", "Shared_or_Similar_Compound": "CompoundB",
+            "R&D_Opportunity_Score": 40.0,
+            "Decision_Class": eng.REGULATORY_PROHIBITION_DECISION_CLASS,
+            "Safety_Flags": "No explicit flag found", "Interaction_Flags": "No explicit flag found",
+            "Novelty_Status": "Alternative source with similar compound",
+            "Rationale": f"Decision: {eng.REGULATORY_PROHIBITION_DECISION_CLASS}.",
+        },
+    ])
+    engine = eng.BotanicalRDCandidateEngine.__new__(eng.BotanicalRDCandidateEngine)
+    merged = engine._merge_multi_compound_matches(output)
+    assert len(merged) == 1
+    assert merged.iloc[0]["Decision_Class"] == eng.REGULATORY_PROHIBITION_DECISION_CLASS

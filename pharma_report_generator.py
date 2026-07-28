@@ -247,8 +247,9 @@ def _format_gate_results_section(gate_results) -> list:
     are informational in this report exactly as they are in the
     underlying data — this section never states or implies that a
     gate blocked or changed the Decision_Class above it (only the
-    "safety" gate's FAILED status is, in fact, tied to Decision_Class,
-    and even that relationship is reported here, not re-derived)."""
+    "safety" and, as of Task 4, "regulatory" gates' FAILED status
+    are, in fact, tied to Decision_Class, and even that
+    relationship is reported here, not re-derived)."""
     if not isinstance(gate_results, dict) or not gate_results:
         return []
 

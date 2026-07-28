@@ -79,11 +79,14 @@ def classify_decision_ah(
     is priority order — first matching rule wins.
 
     H. No-go / safety concern
-       Rule: existing_decision_class is already "Safety concern...".
-       Reasoning: the existing hard-safety-exclusion logic in
-       _decision_class() is more thoroughly tested and reasoned-about
-       (HARD_SAFETY_TERMS, the same-plant exemption) than anything this
-       module would add — reuse it rather than re-deriving it.
+       Rule: existing_decision_class is already "Safety concern..." or
+       "Regulatory prohibition...".
+       Reasoning: the existing hard-safety-exclusion and (Task 4) hard-
+       regulatory-prohibition-exclusion logic in _decision_class() is
+       more thoroughly tested and reasoned-about (HARD_SAFETY_TERMS /
+       explicit "Prohibited / banned" findings, both with the same-
+       plant exemption) than anything this module would add — reuse it
+       rather than re-deriving it.
 
     A. Verified commercial route
        Rule: market_status == "Verified marketed product".
@@ -190,7 +193,7 @@ def classify_decision_ah(
        — G is deliberately the class every candidate falls into unless
        a more specific, better-evidenced claim can be made about it.
     """
-    if "Safety concern" in existing_decision_class:
+    if "Safety concern" in existing_decision_class or "Regulatory prohibition" in existing_decision_class:
         return "H — No-go / safety concern"
 
     if market_status == "Verified marketed product":

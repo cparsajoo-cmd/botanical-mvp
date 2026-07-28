@@ -5,6 +5,100 @@ from free_text_question_parser import parse_free_text_question
 from question_understanding_engine import standardize_project_definition
 
 
+# Task 7 — extracted from inline selectbox literals into named,
+# importable constants (behavior-preserving: still passed as the exact
+# same list to the exact same st.selectbox() calls below). This is
+# what lets validation_case_protocol.py's coverage-matrix tooling
+# (validation_matrix.py) generate a DecisionContext for every real
+# product_type/indication/dosage_form/market combination the platform
+# actually supports, instead of maintaining a second, separately-typed
+# copy of these four lists that could silently drift out of sync with
+# what Step 0 actually offers.
+PRODUCT_TYPES = [
+    "Herbal medicinal product (THMP)",
+    "Food supplement",
+    "Cosmetic",
+    "Novel food ingredient",
+    "Functional food / beverage",
+    "Botanical extract / raw ingredient (B2B)",
+    "Veterinary botanical product",
+]
+
+INDICATIONS = [
+    "Sleep and relaxation",
+    "Anxiety",
+    "Stress",
+    "Inflammation",
+    "Constipation",
+    "Cough",
+    "Digestive comfort",
+    "Skin inflammation",
+    "Dry mouth",
+    "Allergic rhinitis",
+    "IBS",
+    "Wound healing",
+    "Cognitive decline / Alzheimer's support",
+    "Immune support",
+    "Cardiovascular / circulation",
+    "Liver support / detox",
+    "Joint & muscle comfort",
+    "Energy / fatigue",
+    "Metabolic & blood sugar support",
+    "Weight management",
+    "Menopause support",
+    "Menstrual / PMS support",
+    "Prostate / men's health",
+    "Urinary tract health",
+    "Cold & flu / respiratory",
+    "Headache / mood support",
+    "Hair, skin & nail beauty-from-within",
+    "Eye health",
+]
+
+DOSAGE_FORMS = [
+    "Infusion",
+    "Capsule",
+    "Tablet",
+    "Syrup",
+    "Cream",
+    "Gel",
+    "Mouthwash",
+    "Nasal spray",
+    "Chewing gum",
+    "Powder",
+    "Extract",
+    "Essential oil",
+]
+
+MARKETS = [
+    "European Union",
+    "Germany",
+    "France",
+    "Italy",
+    "Spain",
+    "Netherlands",
+    "Poland",
+    "United Kingdom",
+    "Switzerland",
+    "Nordic countries (Sweden, Norway, Denmark, Finland)",
+    "Iran",
+    "Middle East / GCC",
+    "Turkey",
+    "United States",
+    "Canada",
+    "Brazil / Latin America",
+    "China",
+    "Japan",
+    "South Korea",
+    "India",
+    "Southeast Asia (Vietnam / Thailand / Indonesia)",
+    "Australia",
+    "New Zealand",
+    "South Africa",
+    "Global / Multi-market",
+]
+
+
 # Each hero scenario was one of the plants actually run through the
 # known-answer validation round (real regulatory backing, clean
 # compound data, no safety exclusions) — these are meant to be safe,
@@ -133,102 +227,26 @@ def render_inputs():
     with col1:
         product_type = st.selectbox(
             "Product type",
-            [
-                "Herbal medicinal product (THMP)",
-                "Food supplement",
-                "Cosmetic",
-                "Novel food ingredient",
-                "Functional food / beverage",
-                "Botanical extract / raw ingredient (B2B)",
-                "Veterinary botanical product",
-            ],
+            PRODUCT_TYPES,
             key="rd_product_type",
         )
 
         indication = st.selectbox(
             "Target indication",
-            [
-                "Sleep and relaxation",
-                "Anxiety",
-                "Stress",
-                "Inflammation",
-                "Constipation",
-                "Cough",
-                "Digestive comfort",
-                "Skin inflammation",
-                "Dry mouth",
-                "Allergic rhinitis",
-                "IBS",
-                "Wound healing",
-                "Cognitive decline / Alzheimer's support",
-                "Immune support",
-                "Cardiovascular / circulation",
-                "Liver support / detox",
-                "Joint & muscle comfort",
-                "Energy / fatigue",
-                "Metabolic & blood sugar support",
-                "Weight management",
-                "Menopause support",
-                "Menstrual / PMS support",
-                "Prostate / men's health",
-                "Urinary tract health",
-                "Cold & flu / respiratory",
-                "Headache / mood support",
-                "Hair, skin & nail beauty-from-within",
-                "Eye health",
-            ],
+            INDICATIONS,
             key="rd_indication",
         )
 
     with col2:
         dosage_form = st.selectbox(
             "Dosage form",
-            [
-                "Infusion",
-                "Capsule",
-                "Tablet",
-                "Syrup",
-                "Cream",
-                "Gel",
-                "Mouthwash",
-                "Nasal spray",
-                "Chewing gum",
-                "Powder",
-                "Extract",
-                "Essential oil",
-            ],
+            DOSAGE_FORMS,
             key="rd_dosage_form",
         )
 
         market = st.selectbox(
             "Target market",
-            [
-                "European Union",
-                "Germany",
-                "France",
-                "Italy",
-                "Spain",
-                "Netherlands",
-                "Poland",
-                "United Kingdom",
-                "Switzerland",
-                "Nordic countries (Sweden, Norway, Denmark, Finland)",
-                "Iran",
-                "Middle East / GCC",
-                "Turkey",
-                "United States",
-                "Canada",
-                "Brazil / Latin America",
-                "China",
-                "Japan",
-                "South Korea",
-                "India",
-                "Southeast Asia (Vietnam / Thailand / Indonesia)",
-                "Australia",
-                "New Zealand",
-                "South Africa",
-                "Global / Multi-market",
-            ],
+            MARKETS,
             key="rd_market",
         )
 

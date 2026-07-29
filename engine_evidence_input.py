@@ -72,22 +72,42 @@ answer manufacture its own engine input, defeating the point of an
 independent gate check. See EngineEvidenceOrigin and
 test_structural_leakage_boundary.py's factory-absence tests for the
 structural side of this guarantee.
+WHY target_indication IS OPTIONAL (Optional[str] = None)
+Originally a required plain str. gold_case_execution.py's execution
+architecture now distinguishes indication-DEPENDENT domains (e.g.
+INDICATION_EVIDENCE, where the engine's candidate discovery and
+evidence matching are genuinely indication-driven) from indication-
+INDEPENDENT domains (e.g. SAFETY, where a contraindication/interaction
+claim holds regardless of which indication the preparation is used
+for — see gold_case_execution.py's INDICATION_INDEPENDENT_DOMAINS and
+_requires_indication()). For an indication-independent case,
+target_indication is genuinely inapplicable, not merely inconvenient
+to supply — leaving it None is honest, not a workaround, and no
+placeholder string (e.g. "indication-independent") is ever written
+here in its place. When indication IS required by the case's domain,
+callers must still supply a real value; this module does not enforce
+that requirement itself (gold_case_execution.py does, per-domain) —
+the same separation of concerns already used for dosage_form.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class EngineEvidenceInput:
     """Frozen: cannot be mutated after construction to smuggle in an
     extra attribute at runtime. Exactly four fields, all plain
-    strings or a plain list of strings — see module docstring for
-    why each exists and what production channel each maps to."""
+    strings (or a plain list of strings) — see module docstring for
+    why each exists and what production channel each maps to.
+    target_indication is Optional[str] = None — see "WHY
+    target_indication IS OPTIONAL" above; the other three fields are
+    unchanged."""
     scientific_name: str
-    target_indication: str
+    target_indication: Optional[str] = None
     notes: str = ""
     compound_activity_targets: tuple = ()
 

@@ -1,39 +1,65 @@
 """
 Tests for Case 006 (Hypericum perforatum / SAFETY contraindication).
 
+CORRECTED (this revision): the previous version of this file asserted
+severity=None / resolution_status=INSUFFICIENT_METADATA / execution
+raising GoldCaseNotExecutableError for missing indication — all
+accurate for an EARLIER revision of Case 006's own file, but stale
+once that file was updated to assign severity via
+severity_assignment_policy.py and once gold_case_execution.py's
+domain-aware indication architecture landed. This revision re-reads
+the CURRENT Case 006 file and gold_case_execution.py and asserts what
+they actually do now.
+
 Scope, per explicit instruction: the MINIMUM tests needed to verify —
 1. The underlying ReferenceClaim states assertion_state=PRESENT and
    its subject preserves ALL FOUR source-stated CYP pathways (CYP3A4,
    CYP2B6, CYP2C9, CYP2C19) plus P-glycoprotein — not narrowed to
-   CYP3A4/P-gp alone. Severity is deliberately left unresolved (None),
-   and — as a direct, mechanical consequence of that, not a separately
-   invented status — the case's SAFETY resolved outcome is
-   resolution_status=INSUFFICIENT_METADATA, not SELECTED.
-2. SAFETY is correctly NOT_ELIGIBLE for whole-case
+   CYP3A4/P-gp alone.
+2. severity_assignment_policy.py assigns SeverityLevel.SERIOUS to this
+   claim (a documented repository rule, not curator judgment), and, as
+   a direct, mechanical consequence, the case's SAFETY resolved
+   outcome reaches ResolutionStatus.SELECTED with assertion_state=
+   PRESENT, severity=SERIOUS, and selected_reference_id pointing at
+   the governing EMA reference.
+3. SAFETY is correctly NOT_ELIGIBLE for whole-case
    decision_direction_agreement (reason=NO_ELIGIBLE_DOMAIN_OUTCOME) —
    Protocol §14.1 behaves as documented, not worked around, and this
-   holds regardless of the severity/resolution-status change in (1).
-3. Engine evidence remains empty and no whole-case expected direction
-   was set.
-4. The WEU preparation is locked (exact preparation/population/route/
+   holds regardless of (2).
+4. Engine evidence remains empty on THIS file's own build function (no
+   whole-case expected direction was set either) — Case 006's Ground
+   Truth builder deliberately never attaches EngineEvidenceInput or
+   runs the engine itself; that happens in the separate
+   case_006_engine_evidence_run.py, per the Leakage-Rule-9.1
+   file-separation convention Case 003 already established.
+5. The WEU preparation is locked (exact preparation/population/route/
    claim_type/applicability metadata verified, not just an inequality
    check against "traditional-use"), and the governing claim text
    itself contains no Traditional-Use hyperforin dose-gating language.
-5. validation_unit.indication is deliberately left unset, and
-   attempting to execute this case against the engine fails closed
-   with GoldCaseNotExecutableError — the open architectural question
-   is a real, enforced stop condition, not just a comment.
+6. validation_unit.indication is deliberately None, but Case 006 is
+   NOT rejected merely because indication is absent — SAFETY is
+   outside gold_case_execution.INDICATION_REQUIRED_DOMAINS, so
+   execute_gold_case_against_engine() runs it. Execution still fails
+   closed for genuinely missing MANDATORY non-indication metadata
+   (dosage_form), and the separate engine-evidence execution path
+   (case_006_engine_evidence_run.py) is confirmed to actually reach
+   ExecutionReadiness.READY and execute the real engine.
 
-Does not execute the real engine's evaluation path, does not modify
-gold_case_reference_grounded_006_hypericum_perforatum_safety_
-interaction.py or any other existing file.
+Does not modify gold_case_reference_grounded_006_hypericum_perforatum_
+safety_interaction.py, severity_assignment_policy.py, or engine
+evidence wording. Does execute the real engine (via the separate
+case_006_engine_evidence_run.py module) for test 6's third assertion,
+same as case_006_engine_evidence_run.py's own __main__ already does.
 """
+
+from dataclasses import replace
 
 from agreement_eligibility import (
     AgreementEligibility, AgreementIneligibilityReason, assess_agreement_eligibility,
 )
 from applicability_check import ReferenceDomain
-from assertion_vocabulary import AssertionState, AssertionType
+from assertion_vocabulary import AssertionState, AssertionType, SeverityLevel
+from execution_readiness import ExecutionReadiness
 from gold_case_execution import GoldCaseNotExecutableError, execute_gold_case_against_engine
 from gold_case_reference_grounded_006_hypericum_perforatum_safety_interaction import (
     build_gold_case_refgrounded_006_hypericum_perforatum_safety_interaction,
@@ -42,7 +68,7 @@ from reference_precedence import ResolutionStatus
 
 
 def test_claim_subject_preserves_all_four_source_pathways():
-    """(1a) The underlying ReferenceClaim's subject preserves every
+    """(1) The underlying ReferenceClaim's subject preserves every
     pathway Section 4.3 actually names — CYP3A4, CYP2B6, CYP2C9,
     CYP2C19, and P-glycoprotein — not narrowed to CYP3A4/P-gp alone
     (the defect corrected in this revision). Checked on the claim
@@ -61,34 +87,32 @@ def test_claim_subject_preserves_all_four_source_pathways():
     assert claim.assertion_state == AssertionState.PRESENT
 
 
-def test_severity_left_unresolved_no_explicit_rule_exists():
-    """(1b) claim.severity is None — not SERIOUS, not any other
-    SeverityLevel — because no explicit repository rule maps this
-    contraindication class to a severity (confirmed by inspecting
-    VALIDATION_PROTOCOL.md, assertion_vocabulary.py, and
-    reference_precedence.py; none defines such a rule). As a direct,
-    mechanical consequence (not a separately invented status), the
-    SAFETY resolved outcome's resolution_status is
-    INSUFFICIENT_METADATA, not SELECTED, and its assertion_state/
-    severity are both None."""
+def test_severity_assigned_via_policy_resolution_selected():
+    """(2) claim.severity == SeverityLevel.SERIOUS, assigned by
+    severity_assignment_policy.assign_contraindication_severity() — a
+    documented repository rule, not curator judgment inside this
+    file's docstring. As a direct, mechanical consequence, the SAFETY
+    resolved outcome reaches ResolutionStatus.SELECTED, with
+    assertion_state=PRESENT, severity=SERIOUS, and
+    selected_reference_id pointing at the governing EMA reference."""
     case = build_gold_case_refgrounded_006_hypericum_perforatum_safety_interaction()
 
     claim = case.references[0].claims[0]
-    assert claim.severity is None
+    assert claim.severity == SeverityLevel.SERIOUS
 
     safety_outcomes = [o for o in case.resolved_outcomes if o.domain == ReferenceDomain.SAFETY]
     assert len(safety_outcomes) == 1
     outcome = safety_outcomes[0]
 
     assert outcome.assertion_type == AssertionType.CONTRAINDICATION
-    assert outcome.resolution_status == ResolutionStatus.INSUFFICIENT_METADATA
-    assert outcome.assertion_state is None
-    assert outcome.severity is None
-    assert outcome.selected_reference_id is None
+    assert outcome.resolution_status == ResolutionStatus.SELECTED
+    assert outcome.assertion_state == AssertionState.PRESENT
+    assert outcome.severity == SeverityLevel.SERIOUS
+    assert outcome.selected_reference_id == "EMA_HMPC_7695_2021_hypericum_perforatum_herba"
 
 
 def test_safety_domain_not_eligible_for_whole_case_agreement():
-    """(2) assess_agreement_eligibility() — the real protocol mapping —
+    """(3) assess_agreement_eligibility() — the real protocol mapping —
     returns NOT_ELIGIBLE with reason NO_ELIGIBLE_DOMAIN_OUTCOME, because
     ReferenceDomain.SAFETY is not in agreement_eligibility._ELIGIBLE_
     DOMAINS (Protocol §14.1: only INDICATION_EVIDENCE is presently
@@ -103,8 +127,11 @@ def test_safety_domain_not_eligible_for_whole_case_agreement():
 
 
 def test_engine_evidence_remains_empty_and_no_whole_case_direction():
-    """(3) No EngineEvidenceInput was constructed for this case, and no
-    whole-case expected_decision_direction was set."""
+    """(4) No EngineEvidenceInput was constructed on THIS file's build
+    function — by the Leakage-Rule-9.1 file-separation convention
+    (execution happens in case_006_engine_evidence_run.py instead),
+    not because execution is architecturally blocked. No whole-case
+    expected_decision_direction was set either."""
     case = build_gold_case_refgrounded_006_hypericum_perforatum_safety_interaction()
     assert case.engine_evidence == []
     assert case.engine_evidence_origin is None
@@ -112,7 +139,7 @@ def test_engine_evidence_remains_empty_and_no_whole_case_direction():
 
 
 def test_weu_preparation_locked_no_traditional_use_reference():
-    """(4) The locked preparation is exactly WEU preparation a) (DER
+    """(5) The locked preparation is exactly WEU preparation a) (DER
     3-7:1, methanol 80% V/V), identical on both the ReferenceDescriptor
     and the ValidationUnit; population/route/jurisdiction match the
     WEU posology; claim_type is 'well-established-use'; the reference
@@ -159,21 +186,47 @@ def test_weu_preparation_locked_no_traditional_use_reference():
     assert "1 mg/day" not in claim_text_lower
 
 
-def test_indication_left_unset_and_execution_fails_closed():
-    """(5) validation_unit.indication is deliberately None (the open
-    architectural question documented in the case file's module
-    docstring is not silently worked around), and actually attempting
-    to execute this case against the engine fails closed with
-    GoldCaseNotExecutableError rather than running with a guessed
-    indication value."""
+def test_indication_absent_does_not_block_execution_but_dosage_form_still_does():
+    """(6) validation_unit.indication is deliberately None, and Case
+    006 is NOT rejected merely because indication is absent — SAFETY
+    is outside gold_case_execution.INDICATION_REQUIRED_DOMAINS, so
+    execute_gold_case_against_engine() runs the case with no evidence
+    at all (a legitimate, meaningful case per that function's own
+    docstring: no evidence -> NOT_EVALUABLE-leaning gates, not an
+    error). Execution still fails closed for genuinely missing
+    MANDATORY non-indication metadata (dosage_form), proving this
+    isn't a blanket 'skip all validation' change — only indication
+    was widened. Finally, confirms the separate engine-evidence
+    execution path (case_006_engine_evidence_run.py) actually reaches
+    ExecutionReadiness.READY and executes the real engine, rather than
+    this file's own build function ever doing so."""
     case = build_gold_case_refgrounded_006_hypericum_perforatum_safety_interaction()
     assert case.validation_unit.indication is None
 
+    # Not rejected merely for missing indication — runs with no
+    # evidence, returns a real (possibly empty-signal) result_df,
+    # never raises GoldCaseNotExecutableError.
+    result_df = execute_gold_case_against_engine(case)
+    assert result_df is not None
+
+    # Execution still fails closed for missing MANDATORY non-indication
+    # metadata (dosage_form) — the widening is domain-scoped to
+    # indication only, not a general relaxation of GoldCaseNotExecutableError.
+    unit_without_preparation = replace(case.validation_unit, preparation=None)
+    case_without_preparation = replace(case, validation_unit=unit_without_preparation)
     try:
-        execute_gold_case_against_engine(case)
-        assert False, "expected GoldCaseNotExecutableError, engine ran instead"
+        execute_gold_case_against_engine(case_without_preparation)
+        assert False, "expected GoldCaseNotExecutableError for missing dosage_form"
     except GoldCaseNotExecutableError as exc:
-        assert "indication" in str(exc)
+        assert "dosage_form" in str(exc)
+
+    # The separate engine-evidence execution path is what's actually
+    # used for real execution — confirmed to reach READY and execute.
+    from case_006_engine_evidence_run import run_case_006_through_readiness_gate
+    _case_with_evidence, readiness, evidence_result_df = run_case_006_through_readiness_gate()
+    assert readiness.decision == ExecutionReadiness.READY
+    assert evidence_result_df is not None
+    assert not evidence_result_df.empty
 
 
 if __name__ == "__main__":
@@ -182,11 +235,11 @@ if __name__ == "__main__":
 
     tests = [
         test_claim_subject_preserves_all_four_source_pathways,
-        test_severity_left_unresolved_no_explicit_rule_exists,
+        test_severity_assigned_via_policy_resolution_selected,
         test_safety_domain_not_eligible_for_whole_case_agreement,
         test_engine_evidence_remains_empty_and_no_whole_case_direction,
         test_weu_preparation_locked_no_traditional_use_reference,
-        test_indication_left_unset_and_execution_fails_closed,
+        test_indication_absent_does_not_block_execution_but_dosage_form_still_does,
     ]
     failures = 0
     for test in tests:

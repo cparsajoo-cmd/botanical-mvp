@@ -45,20 +45,43 @@ WHAT THIS NEVER DOES
 Never modifies botanical_rd_candidate_engine.py. Never computes a
 metric itself (see evaluation_run.py). Never persists anything (see
 gold_case_persistence.py / evaluation_run_persistence.py).
+
+INDICATION-INDEPENDENT DOMAINS (architecture addition)
+validation_unit.indication and EngineEvidenceInput.target_indication
+used to be unconditionally required for every GoldCase, regardless of
+domain. That was correct for ReferenceDomain.INDICATION_EVIDENCE
+(where the engine's candidate discovery and evidence matching are
+genuinely indication-driven) but wrong for a domain like SAFETY, whose
+claims (e.g. a drug-interaction contraindication) hold regardless of
+which indication the preparation is used for — see Case 006. Indication
+is now required only when the case's own claims declare a domain in
+INDICATION_REQUIRED_DOMAINS (see _requires_indication() below); this
+is an explicit, reviewed WHITELIST of domains known to need it, not an
+opt-out blacklist — an unrecognized or empty/mixed domain set fails
+SAFE (indication still required), so this change can only ever WIDEN
+what's optional for a domain explicitly reasoned about, never silently
+narrow the requirement elsewhere. No placeholder indication string
+(e.g. "indication-independent") is ever substituted; when indication
+is not required, it is genuinely omitted (None / "" downstream), and
+the engine is run via its own existing reference_plant= parameter
+(see below), never via a modification to
+botanical_rd_candidate_engine.py itself.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
+from applicability_check import ReferenceDomain
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from engine_evidence_input import EngineEvidenceInput
 from gold_case import GoldCase
 
 
 class GoldCaseNotExecutableError(Exception):
-    """Raised when a GoldCase cannot be run — missing indication, or
-    missing preparation/dosage_form."""
+    """Raised when a GoldCase cannot be run — missing indication (for
+    an indication-dependent domain), or missing preparation/
+    dosage_form."""
 
 
 # A fixed, neutral placeholder scientific name used ONLY as the
@@ -67,20 +90,60 @@ class GoldCaseNotExecutableError(Exception):
 # genuine GoldCase taxon.
 _GOLD_CASE_ANCHOR_TAXON = "GoldSetExecutionAnchorPlant__DoNotUseAsRealTaxon"
 
+# Explicit WHITELIST of domains that genuinely require
+# validation_unit.indication / EngineEvidenceInput.target_indication —
+# see module docstring's "INDICATION-INDEPENDENT DOMAINS" section. Any
+# domain NOT in this set is treated as indication-independent ONLY
+# when it is the case's SOLE domain (see _requires_indication()); an
+# unknown/mixed/empty domain set still requires indication, by design.
+INDICATION_REQUIRED_DOMAINS = frozenset({ReferenceDomain.INDICATION_EVIDENCE})
+
+
+def _case_claim_domains(gold_case: GoldCase) -> set:
+    """The set of ReferenceDomain values actually declared by this
+    case's claims (across every GoldCaseReference). Protocol §3
+    requires exactly one domain per case; this reads whatever the
+    claims actually contain rather than assuming that invariant holds,
+    so a case with zero or multiple domains is handled explicitly by
+    the caller (_requires_indication()) rather than silently."""
+    domains = set()
+    for gref in gold_case.references:
+        for claim in gref.claims:
+            domains.add(claim.domain)
+    return domains
+
+
+def _requires_indication(gold_case: GoldCase) -> bool:
+    """True unless every domain this case's claims declare is
+    explicitly known NOT to require indication (i.e. is outside
+    INDICATION_REQUIRED_DOMAINS) AND at least one such domain exists.
+    A case with no claims at all, or whose declared domains include
+    any INDICATION_REQUIRED_DOMAINS member, requires indication — this
+    function only ever widens what counts as indication-independent
+    for domains explicitly reasoned about; it never narrows the
+    requirement by omission."""
+    domains = _case_claim_domains(gold_case)
+    if not domains:
+        return True
+    return bool(domains & INDICATION_REQUIRED_DOMAINS)
+
 
 def _evidence_inputs_to_dataframe(evidence: list) -> pd.DataFrame:
     """The ONLY function that converts EngineEvidenceInput records
     into the DataFrame shape botanical_rd_candidate_engine.py's
     evidence_df parameter expects (Scientific_Name/Target_Indication/
-    Notes). Reads exactly EngineEvidenceInput's three plain-string
-    fields — nothing else can reach this conversion, by construction
-    of that frozen dataclass."""
+    Notes). Reads exactly EngineEvidenceInput's plain-string fields —
+    nothing else can reach this conversion, by construction of that
+    frozen dataclass. target_indication=None becomes "" — the same
+    "absent means empty string" convention already used elsewhere in
+    this module for market (`unit.jurisdiction or ""`), never a
+    fabricated placeholder."""
     if not evidence:
         return pd.DataFrame()
     return pd.DataFrame([
         {
             "Scientific_Name": item.scientific_name,
-            "Target_Indication": item.target_indication,
+            "Target_Indication": item.target_indication or "",
             "Notes": item.notes,
         }
         for item in evidence
@@ -97,8 +160,11 @@ def execute_gold_case_against_engine(
 ) -> pd.DataFrame:
     """Runs BotanicalRDCandidateEngine.run() for exactly the one taxon
     named in gold_case.validation_unit, against a neutral anchor
-    reference plant. Raises GoldCaseNotExecutableError if the
-    ValidationUnit lacks an indication or a dosage_form.
+    reference plant. Raises GoldCaseNotExecutableError if
+    validation_unit lacks a dosage_form, or lacks an indication WHILE
+    the case's domain requires one (see _requires_indication() /
+    INDICATION_REQUIRED_DOMAINS above) — indication is no longer
+    unconditionally required.
 
     evidence: list[EngineEvidenceInput] — the ONLY way real evidence
     text reaches the engine (see module docstring's leakage-boundary
@@ -117,10 +183,12 @@ def execute_gold_case_against_engine(
     GoldCase's own taxon (never the anchor's own self-match row).
     """
     unit = gold_case.validation_unit
+    indication_required = _requires_indication(gold_case)
 
-    if not unit.indication:
+    if indication_required and not unit.indication:
         raise GoldCaseNotExecutableError(
-            f"GoldCase {gold_case.case_id!r}: validation_unit.indication is not set."
+            f"GoldCase {gold_case.case_id!r}: validation_unit.indication is not set "
+            f"(required for this case's domain)."
         )
     dosage_form = unit.preparation.dosage_form if unit.preparation else None
     if not dosage_form:
@@ -138,14 +206,14 @@ def execute_gold_case_against_engine(
         {
             "scientific_name": _GOLD_CASE_ANCHOR_TAXON,
             "compound_name": compound_name,
-            "indication": unit.indication,
+            "indication": unit.indication or "",
             "target": "unspecified",
             "common_name": "", "plant_part": "", "extraction_method": "",
         },
         {
             "scientific_name": unit.taxon,
             "compound_name": compound_name,
-            "indication": unit.indication,
+            "indication": unit.indication or "",
             "target": target_value,
             "common_name": "",
             "plant_part": unit.plant_part or "",
@@ -163,11 +231,27 @@ def execute_gold_case_against_engine(
         use_live_search=use_live_search,
     )
 
-    result_df = engine.run(
-        indication=unit.indication,
-        dosage_form=dosage_form,
-        market=unit.jurisdiction or "",
-    )
+    if indication_required:
+        result_df = engine.run(
+            indication=unit.indication,
+            dosage_form=dosage_form,
+            market=unit.jurisdiction or "",
+        )
+    else:
+        # Indication-independent domain (e.g. SAFETY): bypass the
+        # indication-driven reference-plant discovery entirely via
+        # BotanicalRDCandidateEngine.run()'s OWN existing
+        # reference_plant= parameter, which matches by taxon name
+        # across the candidate universe regardless of indication. This
+        # is an already-existing engine capability being used as
+        # intended, not a new one invented here, and
+        # botanical_rd_candidate_engine.py itself is not modified.
+        result_df = engine.run(
+            indication=unit.indication or "",
+            dosage_form=dosage_form,
+            market=unit.jurisdiction or "",
+            reference_plant=_GOLD_CASE_ANCHOR_TAXON,
+        )
 
     return result_df[
         (result_df["Reference_Plant"] == _GOLD_CASE_ANCHOR_TAXON)

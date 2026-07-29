@@ -87,6 +87,46 @@ def test_unrecognized_class_outside_vocabulary_returns_none():
     assert result is None
 
 
+def test_mixed_recognized_and_unrecognized_classes_fails_closed_to_none():
+    """A set containing ONE recognized HighRiskInteractionDrugClass
+    together with ONE unrecognized/invalid value must NOT silently
+    assign SERIOUS from the recognized member while ignoring the
+    invalid one — assign_contraindication_severity()'s own
+    `issubset(set(HighRiskInteractionDrugClass))` check (severity_
+    assignment_policy.py) requires the ENTIRE input set to be within
+    the controlled vocabulary, so any invalid member fails the whole
+    call closed to None. This is the policy's documented validation
+    contract (module docstring: 'a caller passing something outside
+    the controlled vocabulary gets no assignment, never a partial/
+    best-effort one silently computed from the recognized subset'),
+    exercised here specifically for a MIXED set (one valid + one
+    invalid), not just an all-invalid set as in the test above."""
+    result = assign_contraindication_severity(
+        assertion_type=AssertionType.CONTRAINDICATION,
+        drug_classes=frozenset({
+            HighRiskInteractionDrugClass.ANTICOAGULANT,  # recognized
+            "NOT_A_REAL_DRUG_CLASS",                      # unrecognized
+        }),
+    )
+    assert result is None, (
+        "expected fail-closed None for a mixed valid+invalid input set — "
+        f"got {result!r} instead, which would mean SERIOUS was silently "
+        "assigned from the recognized subset while ignoring invalid input"
+    )
+
+    # Same check for AssertionType.INTERACTION, the policy's other
+    # covered assertion type — the fail-closed contract must not be
+    # assertion-type-specific.
+    result_interaction = assign_contraindication_severity(
+        assertion_type=AssertionType.INTERACTION,
+        drug_classes=frozenset({
+            HighRiskInteractionDrugClass.TRANSPLANT_IMMUNOSUPPRESSANT,
+            "ALSO_NOT_A_REAL_DRUG_CLASS",
+        }),
+    )
+    assert result_interaction is None
+
+
 def test_no_accidental_moderate_or_minor_assignment():
     """This policy currently formalizes only the SERIOUS case (module
     docstring: 'WHAT THIS RULE DELIBERATELY DOES NOT COVER'). No input
@@ -120,6 +160,7 @@ if __name__ == "__main__":
         test_empty_class_set_returns_none,
         test_unsupported_assertion_type_returns_none,
         test_unrecognized_class_outside_vocabulary_returns_none,
+        test_mixed_recognized_and_unrecognized_classes_fails_closed_to_none,
         test_no_accidental_moderate_or_minor_assignment,
     ]
     failures = 0

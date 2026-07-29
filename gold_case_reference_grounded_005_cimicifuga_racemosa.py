@@ -159,14 +159,14 @@ APPLICABILITY LIMITATIONS — RECORDED HONESTLY, NOT RESOLVED
 2. PREPARATION EQUIVALENCE: UNVERIFIED. EMA/HMPC/48745/2017 well-
    established-use pathway defines THREE distinct extract
    preparations (DER 5-10:1 ethanol 58%; DER 4.5-8.5:1 ethanol 60%;
-   DER 6-11:1 propan-2-ol 40%). ReferenceDescriptor.preparation below
-   is set to the second of these (arbitrarily selected as the
+   DER 6-11:1 propan-2-ol 40%). The second of these is used as
+   ValidationUnit.preparation (the proposed clinical target unit this
+   case would be evaluated against), arbitrarily selected as an
    applicability-metadata anchor, not because it was shown to match
-   what CD007244's trials used) — see TD-001, which this case
-   reproduces in the same way Case004 did. CD007244 itself pooled
-   trials using "various formulations" with no single declared DER;
-   which (if any) of the three EMA preparations any given included
-   trial used is NOT verified here.
+   what CD007244's trials used. CD007244 itself pooled trials using
+   "various formulations" with no single declared DER; which (if any)
+   of the three EMA preparations any given included trial used is NOT
+   verified here.
 3. DOSE EQUIVALENCE: PARTIALLY PLAUSIBLE AFTER DER CONVERSION, NOT
    CONFIRMED. The NIH ODS Health Professional Fact Sheet (an
    authoritative secondary source, fetched directly) states CD007244's
@@ -195,6 +195,9 @@ APPLICABILITY LIMITATIONS — RECORDED HONESTLY, NOT RESOLVED
    language, not independently derived from CD007244's pooled trial
    population characteristics beyond the review's own general
    eligibility criterion ("perimenopausal and postmenopausal women").
+   This value lives ONLY on ValidationUnit, never on the Cochrane
+   ReferenceDescriptor (see "APPLICABILITY-CHECK FIX" below) — so it
+   is never compared against itself.
 5. ROUTE COMPARABILITY: Oral, on both sides — the one dimension with
    a clean, unqualified match (CD007244's eligibility criterion is
    explicitly "orally administered monopreparations"; EMA's route of
@@ -218,6 +221,32 @@ APPLICABILITY LIMITATIONS — RECORDED HONESTLY, NOT RESOLVED
    reference field was left unspecified rather than because
    equivalence was actively verified, that pass must never later be
    read as a confirmed match.
+
+APPLICABILITY-CHECK FIX (post-supervisory-revision)
+An earlier revision of this file set ReferenceDescriptor.preparation
+and .population on the COCHRANE reference itself to the same
+EMA-derived values used on ValidationUnit (the pattern Case004 also
+uses, per TD-001). That construction makes
+applicability_check._check_preparation()/_check_population() compare
+the EMA figure against itself — both sides non-None and equal by
+construction — which trivially returns "pass" and reads, in the
+ApplicabilityResult.detail dict, indistinguishably from a genuinely
+verified match. That is a false signal: CD007244's own preparation/
+population were never actually confirmed equivalent to EMA's (see
+points 2 and 4 above). FIX: reference.preparation and
+reference.population are now left None on the Cochrane
+ReferenceDescriptor. check_applicability() is unmodified (frozen
+architecture) — its own documented Phase-1 convention is that a
+dimension with an unspecified value on either side "passes" (see that
+module's own docstring). Because reference.preparation/population are
+now genuinely absent rather than fabricated-and-matching, any pass on
+those two dimensions is now honestly a pass-by-absence, exactly the
+same disclosed category the "PASS-BY-ABSENCE PRINCIPLE" note above
+already warns readers about — not a manufactured pass-by-identity that
+looked like verification. This revision does not change VALIDATION_
+PROTOCOL.md, applicability_check.py, TD-001, or Case004; it only stops
+THIS case from reproducing Case004's pattern in a way that would
+misrepresent an unverified equivalence as checked.
 
 WHAT THIS FILE DELIBERATELY DOES NOT DO (per explicit instruction)
 - Does not construct or infer any EngineEvidenceInput.
@@ -299,9 +328,9 @@ def _black_cohosh_ema_preparation_b() -> PreparationSpec:
     EMA/HMPC/48745/2017 (arbitrarily selected as the applicability-
     metadata anchor — see 'PREPARATION EQUIVALENCE: UNVERIFIED' above;
     this is not a claim that CD007244's trials used this specific
-    preparation). Shared between the ReferenceDescriptor and
-    ValidationUnit so they cannot silently diverge (Case001/Case004
-    convention)."""
+    preparation). Used on ValidationUnit only — the Cochrane
+    ReferenceDescriptor deliberately leaves preparation unset (None);
+    see "APPLICABILITY-CHECK FIX" in the module docstring."""
     return PreparationSpec(
         dosage_form="Extract",
         solvent="ethanol 60% (V/V)",
@@ -318,16 +347,60 @@ def _build_reference_descriptor() -> ReferenceDescriptor:
         version=_SR_CITATION,
         document_date=_SR_DOCUMENT_DATE,
         jurisdiction=None,  # international literature synthesis, not jurisdiction-bound
-        taxon="Cimicifuga racemosa (L.) Nutt.",
-        plant_part="rhizome",
-        # NOTE: this PreparationSpec is EMA-sourced applicability
-        # metadata, not something CD007244 itself specifies as a
-        # single standardized preparation — see "PREPARATION
-        # EQUIVALENCE: UNVERIFIED" in the module docstring and TD-001.
-        preparation=_black_cohosh_ema_preparation_b(),
-        population="Female adults",
-        claim_type="well-established-use",
-        indication_scope=["Menopause support"],
+        # taxon and plant_part DELIBERATELY left unset (None) — see
+        # "REFERENCE-DESCRIPTOR FIELD AUDIT" in the module docstring.
+        # CD007244's own title uses genus-level "Cimicifuga spp.," and
+        # I could not verify from the paywalled Characteristics of
+        # Included Studies table that every included trial used the
+        # precise species+authority string "Cimicifuga racemosa (L.)
+        # Nutt." (an EMA-formatted citation, not Cochrane's own
+        # wording) or specifically "rhizome" as plant part. Recording
+        # either here would overstate certainty this case's own
+        # taxonomy caveat (point 1, "Direct taxonomy comparability:
+        # NO / UNVERIFIED AT TRIAL LEVEL") explicitly disclaims.
+        # ValidationUnit.taxon/.plant_part (the proposed target,
+        # sourced from EMA) are unaffected — check_applicability()
+        # never reads reference.taxon (it is not one of the seven
+        # checked dimensions), so this has no effect on the
+        # applicability boolean; it only stops the reference metadata
+        # itself from asserting a precision CD007244 never claimed.
+        taxon=None,
+        plant_part=None,
+        # preparation/population DELIBERATELY left unset (None) — see
+        # "APPLICABILITY-CHECK FIX" in the module docstring.
+        # CD007244 itself does not specify one standardized preparation
+        # or a single population value; copying EMA's preparation/
+        # population onto THIS descriptor (as an earlier revision of
+        # this file did) makes applicability_check._check_preparation()/
+        # _check_population() compare the reference against itself
+        # (both sides sourced from the same EMA figure), which
+        # trivially and misleadingly PASSES — a "verified equivalence"
+        # that was never actually verified against CD007244. Leaving
+        # these None instead means the applicability pass on these two
+        # dimensions (if any) comes from check_applicability()'s own
+        # documented Phase-1 pass-by-absence rule, never from a
+        # fabricated match. EMA's preparation/population remain
+        # available as applicability-only metadata on ValidationUnit
+        # and in case_provenance below — never here.
+        preparation=None,
+        population=None,
+        # claim_type DELIBERATELY left unset (None) — "well-established-
+        # use" is an EMA/HMPC regulatory-pathway term; CD007244 is a
+        # systematic review and makes no well-established-use/
+        # traditional-use claim-type assertion of its own.
+        claim_type=None,
+        # indication_scope DELIBERATELY left empty — "Menopause
+        # support" is this platform's own indication vocabulary
+        # (step_inputs.INDICATIONS), never a scope CD007244 itself
+        # declares. An empty list is not read by _check_document_scope()
+        # as "covers nothing" (see that function's own docstring) — it
+        # simply means this dimension is not checked from the
+        # reference side, which is the honest state here.
+        indication_scope=[],
+        # route_scope KEPT as ["Oral"] — this is the one list-valued
+        # field directly, explicitly supported by CD007244 itself:
+        # its own eligibility criteria restrict inclusion to "orally
+        # administered monopreparations of black cohosh."
         route_scope=["Oral"],
         retracted_or_superseded=False,
     )

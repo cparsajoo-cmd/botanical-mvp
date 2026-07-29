@@ -96,6 +96,46 @@ def _locked_safety_serious_case(case_id="safety1", taxon="DangerousTaxon"):
     return lock_gold_case(case)
 
 
+def _locked_indication_evidence_case(case_id="ie1", taxon="EligibleTaxon"):
+    """A fully locked case whose resolved outcome is in
+    ReferenceDomain.INDICATION_EVIDENCE with AssertionState.PRESENT —
+    the ONLY domain/state combination currently eligible for
+    decision_direction_agreement under agreement_eligibility.py's
+    policy (Prospective Claim-to-Decision Mapping Proposal, Phase 3).
+    Distinct from _locked_clean_case()/_locked_safety_serious_case(),
+    which are both SAFETY-domain-only and therefore correctly
+    NOT_ELIGIBLE under that same policy."""
+    unit = ValidationUnit(
+        taxon=taxon, indication="TestIndication", jurisdiction="EU",
+        preparation=PreparationSpec(dosage_form="Infusion"),
+    )
+    ref = ReferenceDescriptor(reference_id=f"{case_id}_ref", source_type="EMA_HMPC", version="v1")
+    claim = ReferenceClaim(
+        domain=ReferenceDomain.INDICATION_EVIDENCE, assertion_type=AssertionType.SUPPORTS_INDICATION,
+        subject="sleep", assertion_state=AssertionState.PRESENT,
+        source_reference_id=ref.reference_id, source_locator="sec 1",
+        evidence_text=NormalizedEvidenceText("x", "y", TransformationType.VERBATIM, "1.0", "sec 1"),
+    )
+    gref = GoldCaseReference(reference=ref, claims=[claim])
+    gref.applicability_by_domain[ReferenceDomain.INDICATION_EVIDENCE] = check_applicability(
+        ref, unit, ReferenceDomain.INDICATION_EVIDENCE,
+    )
+
+    case = GoldCase(
+        case_id=case_id, validation_unit=unit, references=[gref],
+        expected_output=ExpectedOutput(expected_decision_direction=DecisionDirection.POSITIVE),
+        dataset_split=DatasetSplit.LOCKED_HOLDOUT,
+        leakage_control=LeakageControl(engine_output_observed_before_finalization=False),
+        curation_status=CurationStatus.REFERENCE_CURATED,
+        engine_evidence=[EngineEvidenceInput(
+            scientific_name=taxon, target_indication="TestIndication",
+            notes="A randomized controlled trial reported improved outcomes versus placebo.",
+        )],
+    )
+    case.resolved_outcomes = resolve_expected_outcomes(case)
+    return lock_gold_case(case)
+
+
 # ---------------------------------------------------------------------
 # _derive_direction_from_decision_class
 # ---------------------------------------------------------------------
@@ -213,14 +253,45 @@ def test_two_runs_on_same_input_get_different_run_ids_but_same_hash():
     assert run_a.dataset_snapshot_hash == run_b.dataset_snapshot_hash
 
 
-def test_clean_case_produces_full_direction_agreement():
+def test_safety_only_case_is_not_eligible_for_direction_agreement():
+    """UPDATED (Prospective Claim-to-Decision Mapping Proposal, Phase
+    3): _locked_clean_case() has only a SAFETY-domain resolved
+    outcome. Under the current, intentional protocol policy — only
+    INDICATION_EVIDENCE is eligible for whole-case
+    decision_direction_agreement — this case is correctly NOT_ELIGIBLE,
+    so the metric has nothing to compute from it. This replaces the
+    PRE-Phase-3 expectation (this exact fixture used to silently
+    count toward the metric merely because expected_output happened
+    to be set, regardless of domain) — that old behavior is exactly
+    what this policy exists to close off."""
     _reset_engine_globals()
     case = _locked_clean_case()
+    run = build_evaluation_run([case])
+    direction_metric = next(m for m in run.results if m.metric_name == "decision_direction_agreement")
+    assert direction_metric.status == MetricStatus.NOT_COMPUTABLE
+
+    from agreement_eligibility import AgreementEligibility, AgreementIneligibilityReason
+    result = run.agreement_eligibility[case.case_id]
+    assert result.eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert result.reason == AgreementIneligibilityReason.NO_ELIGIBLE_DOMAIN_OUTCOME
+
+
+def test_indication_evidence_case_produces_full_direction_agreement():
+    """The genuinely eligible replacement for the old (SAFETY-only)
+    "clean case" agreement test — see test_safety_only_case_is_not_
+    eligible_for_direction_agreement() for why that fixture no longer
+    demonstrates agreement under the new policy."""
+    _reset_engine_globals()
+    case = _locked_indication_evidence_case()
     run = build_evaluation_run([case])
     direction_metric = next(m for m in run.results if m.metric_name == "decision_direction_agreement")
     assert direction_metric.status == MetricStatus.COMPUTED
     assert direction_metric.proportion.numerator == 1
     assert direction_metric.proportion.denominator == 1
+
+    from agreement_eligibility import AgreementEligibility
+    result = run.agreement_eligibility[case.case_id]
+    assert result.eligibility == AgreementEligibility.ELIGIBLE
 
 
 def test_safety_serious_resolved_outcome_correctly_detected_zero_false_negatives():
@@ -265,10 +336,24 @@ def test_explicit_engine_version_override():
 
 
 def test_multiple_cases_produce_correct_aggregate_metrics():
+    """UPDATED (Phase 3): the two original SAFETY-only cases
+    (clean/safety) are correctly NOT_ELIGIBLE for
+    decision_direction_agreement under the current policy — only the
+    added INDICATION_EVIDENCE case contributes to that metric's
+    denominator now. safety_serious_false_negative_rate (unaffected by
+    Phase 3) still aggregates across all three, as before."""
     _reset_engine_globals()
     clean = _locked_clean_case(case_id="clean1", taxon="CleanTaxon1")
     safety = _locked_safety_serious_case(case_id="safety2", taxon="DangerousTaxon2")
-    run = build_evaluation_run([clean, safety])
-    assert run.case_count == 2
+    eligible = _locked_indication_evidence_case(case_id="ie2", taxon="EligibleTaxon2")
+    run = build_evaluation_run([clean, safety, eligible])
+    assert run.case_count == 3
+
     direction_metric = next(m for m in run.results if m.metric_name == "decision_direction_agreement")
-    assert direction_metric.proportion.denominator == 2
+    assert direction_metric.proportion.denominator == 1  # only `eligible` counts
+    assert direction_metric.proportion.numerator == 1
+
+    from agreement_eligibility import AgreementEligibility
+    assert run.agreement_eligibility["clean1"].eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert run.agreement_eligibility["safety2"].eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert run.agreement_eligibility["ie2"].eligibility == AgreementEligibility.ELIGIBLE

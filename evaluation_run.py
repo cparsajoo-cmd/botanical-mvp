@@ -28,7 +28,12 @@ WHAT METRICS THIS COMPUTES (AND WHAT IT DELIBERATELY DOES NOT)
   - decision_direction_agreement: proportion metric, POSITIVE/NEGATIVE/
     HOLD/ABSTAIN agreement between GoldCase.expected_output (a
     simplified, human-curated summary field — see gold_case.py) and
-    the engine's actual derived direction.
+    the engine's actual derived direction. AS OF THE Prospective
+    Claim-to-Decision Mapping Proposal (Phase 3): only cases assessed
+    ELIGIBLE by agreement_eligibility.assess_agreement_eligibility()
+    contribute to this metric's numerator/denominator — see
+    EvaluationRun.agreement_eligibility below for the full,
+    never-silent record of why any given case was or wasn't included.
   - safety_serious_false_negative_rate: proportion metric, computed
     against GoldCase.resolved_outcomes (the FINAL Reference-Grounded
     Validation truth — see resolved_expected_outcome.py), restricted
@@ -36,7 +41,9 @@ WHAT METRICS THIS COMPUTES (AND WHAT IT DELIBERATELY DOES NOT)
     is the release-blocking metric named explicitly in the
     architecture's acceptance criteria, and the one that actually
     reflects the new ReferenceClaim -> ResolvedExpectedOutcome
-    pipeline, not a simplified per-case label.
+    pipeline, not a simplified per-case label. UNAFFECTED by the
+    Phase 3 addition — this metric never used expected_output/
+    DecisionDirection in the first place.
 Gate-level agreement, Top-k inclusion, pairwise agreement, and GRADE
 calibration are NOT implemented here — real, separate work.
 
@@ -63,6 +70,7 @@ from gold_case import GoldCase, DecisionDirection
 from gold_case_execution import execute_gold_case_against_engine, platform_output_for_gold_case, GoldCaseNotExecutableError
 from metric_report import build_proportion_metric, MetricReport
 from reference_precedence import ResolutionStatus
+from agreement_eligibility import AgreementEligibility, assess_agreement_eligibility
 
 
 class EvaluationRunError(Exception):
@@ -88,6 +96,13 @@ class EvaluationRun:
     results: list = field(default_factory=list)  # list[MetricReport]
     case_count: int = 0
     inexecutable_case_ids: list = field(default_factory=list)
+    # Phase 3 addition (Prospective Claim-to-Decision Mapping Proposal).
+    # case_id -> AgreementEligibilityResult, for EVERY executable case,
+    # both ELIGIBLE and NOT_ELIGIBLE — never a silent omission. Empty
+    # dict by default so any existing code constructing an
+    # EvaluationRun without this field (or reading one built before
+    # this field existed) is unaffected — backward compatible.
+    agreement_eligibility: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if self.validation_scope != ValidationScope.PROVIDED_EVIDENCE:
@@ -161,6 +176,12 @@ def build_evaluation_run(
 
     A GoldCase that raises GoldCaseNotExecutableError is recorded in
     inexecutable_case_ids and excluded from metric denominators.
+
+    Every case that DOES execute gets an explicit
+    agreement_eligibility.AgreementEligibilityResult recorded in the
+    returned EvaluationRun.agreement_eligibility dict — ELIGIBLE cases
+    contribute to decision_direction_agreement; NOT_ELIGIBLE cases are
+    named with a specific reason, never silently dropped.
     """
     for case in gold_cases:
         if case.dataset_split != DatasetSplit.LOCKED_HOLDOUT:
@@ -181,8 +202,9 @@ def build_evaluation_run(
             )
 
     inexecutable_case_ids = []
-    direction_pairs = []  # (expected, actual) for decision_direction_agreement
+    direction_pairs = []  # (expected, actual) for decision_direction_agreement — ELIGIBLE cases only
     safety_serious_pairs = []  # (expected_present: bool, gate_failed: bool)
+    agreement_eligibility_by_case = {}  # case_id -> AgreementEligibilityResult, EVERY executed case
 
     for case in gold_cases:
         try:
@@ -193,9 +215,24 @@ def build_evaluation_run(
 
         output = platform_output_for_gold_case(result_df)
         actual_direction = _derive_direction_from_decision_class(output.get("decision_class"))
-        expected_direction = case.expected_output.expected_decision_direction
 
-        if expected_direction is not None and actual_direction is not None:
+        # Phase 3 (Prospective Claim-to-Decision Mapping Proposal):
+        # eligibility is now assessed and recorded explicitly for
+        # EVERY executed case — never a silent skip. Only ELIGIBLE
+        # cases (see agreement_eligibility.py for the exact rule —
+        # domain currently restricted to INDICATION_EVIDENCE, a
+        # mappable AssertionState, and a set expected_decision_direction)
+        # contribute to the decision_direction_agreement metric below.
+        # This is an intentional behavior change from the module's
+        # prior bare "expected is not None and actual is not None"
+        # check — a case could previously contribute to this metric
+        # without ever having a domain/AssertionState-eligible Ground
+        # Truth basis for doing so; that is no longer possible.
+        eligibility_result = assess_agreement_eligibility(case)
+        agreement_eligibility_by_case[case.case_id] = eligibility_result
+
+        if eligibility_result.eligibility == AgreementEligibility.ELIGIBLE and actual_direction is not None:
+            expected_direction = case.expected_output.expected_decision_direction
             direction_pairs.append((expected_direction, actual_direction))
 
         expected_serious_outcomes = [
@@ -240,4 +277,5 @@ def build_evaluation_run(
         results=[direction_metric, safety_fn_metric],
         case_count=len(gold_cases),
         inexecutable_case_ids=inexecutable_case_ids,
+        agreement_eligibility=agreement_eligibility_by_case,
     )

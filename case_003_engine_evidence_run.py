@@ -95,9 +95,36 @@ OVERWRITTEN OR REINTERPRETED
    equivalent.
 3. THIS execution: a different independent evidence source (Khalid
    et al. 2025), reassessed dimensions, reported fully below on its
-   own terms.
+   own terms. Its EngineEvidenceInput.notes content was itself
+   corrected once (cortisol/interpretive content removed — see
+   _independent_engine_evidence()'s own docstring) before being
+   accepted as final.
 Both prior results remain documented in the project's conversation
 record exactly as they were produced.
+
+AGREEMENT STATUS FOR THIS EXECUTION — PERMANENT RECORD, NOT TO BE
+RETROACTIVELY CHANGED
+    Readiness: READY
+    Evidence transport: VERIFIED
+    Engine execution: SUCCESSFUL
+    All gates: PASSED
+    Engine candidate decision: Strong R&D candidate
+    Ground Truth claim state: CONDITIONAL
+    Direct taxonomy comparability: NO
+    Agreement metric: NOT COMPUTABLE
+    Reason: no pre-specified mapping from claim-level AssertionState
+            to candidate-level DecisionDirection existed before this
+            execution.
+This file MUST NOT be later modified to attach an ExpectedOutput or
+DecisionDirection to this specific execution and then present a
+resulting agreement metric as unbiased — the engine's actual output is
+already known at this point, so any expected-direction definition
+created now would be post-outcome specification, not a genuine
+prospective prediction. A real agreement measurement for Case 003
+requires a NEW execution, run only after a prospective claim-to-
+decision mapping has been defined and frozen (see the accompanying
+protocol-amendment proposal), with the expected direction fixed before
+that new execution, not after.
 """
 
 from __future__ import annotations
@@ -118,25 +145,35 @@ from gold_case_reference_grounded_003_matricaria_chamomilla import (
 def _independent_engine_evidence() -> EngineEvidenceInput:
     """Khalid et al. 2025 — see module docstring. Built ONLY from the
     study's own Methods/Results (design, population, intervention,
-    comparator, duration, directly reported sleep outcomes) — no
-    Discussion-section literature references, no mechanistic claims
-    attributed to earlier work, no liver-function/melatonin content
-    (not needed for sleep evidence), and no restatement of the frozen
-    Ground Truth or of Kazemi et al. 2024."""
+    comparator, duration, directly reported sleep/insomnia outcomes).
+
+    CORRECTED (methodological review): an earlier version of this
+    function's notes included salivary cortisol and an interpretive
+    "indicating stress reduction" phrase — cortisol is not a direct
+    sleep outcome, "indicating stress reduction" was this file's own
+    interpretation rather than the study's reported result, and the
+    passionflower-arm cortisol finding was not needed to evaluate
+    chamomile for this case. Both removed. The insomnia-symptom result
+    is stated exactly as the source reports it (an explicit
+    chamomile-vs-passionflower comparison); the daytime-dysfunction
+    finding is stated without asserting a specific comparison basis
+    (within-group vs. control vs. vs. passionflower) that has not been
+    independently verified against the study's own analysis structure
+    — avoiding implying a between-group effect the text does not
+    clearly support."""
     return EngineEvidenceInput(
         scientific_name="Matricaria chamomilla L.",
         target_indication="Sleep quality",
         notes=(
             "A randomized controlled trial in 90 participants aged 25-45 "
-            "with primary insomnia (selected using the Pittsburgh Sleep "
-            "Quality Index), divided into three groups: control, chamomile "
-            "flower powder tea (1 g powder steeped in 250 ml boiling water "
-            "for 10 minutes, consumed daily), and passionflower powder tea, "
-            "for 8 weeks. Chamomile significantly alleviated insomnia "
-            "symptoms compared with passionflower, and reduced daytime "
-            "dysfunction and salivary cortisol levels, indicating stress "
-            "reduction; passionflower showed no significant change in "
-            "cortisol."
+            "with primary insomnia, selected using the Pittsburgh Sleep "
+            "Quality Index, assigned to a control group, chamomile flower "
+            "powder tea, or passionflower powder tea for 8 weeks. The "
+            "chamomile intervention consisted of 1 g flower powder steeped "
+            "in 250 ml boiling water for 10 minutes, consumed daily. The "
+            "study reported that chamomile significantly alleviated "
+            "insomnia symptoms compared with passionflower, and reported "
+            "improvement in daytime dysfunction in the chamomile group."
         ),
         compound_activity_targets=(),  # no independent structured compound-activity data available
     )
@@ -241,12 +278,15 @@ if __name__ == "__main__":
         for key, value in output.items():
             print(f"{key}: {value}")
 
-        print("\n=== 5/6. Comparison with Ground Truth (reported, not auto-classified) ===")
-        print(f"Ground Truth: assertion_state={gt.assertion_state} (a claim-level, mixed/qualified finding)")
-        print(f"Engine: decision_class={output.get('decision_class')!r}, decision_class_ah={output.get('decision_class_ah')!r}")
-        print("NOTE: these are two different taxonomies (claim-level AssertionState vs. "
-              "candidate-level Decision_Class) — see accompanying report for why a forced "
-              "binary agree/disagree label is not applied here.")
+        print("\n=== 5/6. Comparison with Ground Truth ===")
+        print(f"Ground Truth: assertion_state={gt.assertion_state} (claim-level, mixed/qualified finding)")
+        print(f"Engine: decision_class={output.get('decision_class')!r}, decision_class_ah={output.get('decision_class_ah')!r} (candidate-level)")
+        print("Direct taxonomy comparability: NO")
+        print("Agreement metric: NOT COMPUTABLE")
+        print("Reason: no pre-specified mapping from claim-level AssertionState to "
+              "candidate-level DecisionDirection existed before this execution — see "
+              "module docstring's frozen AGREEMENT STATUS record. No ExpectedOutput/"
+              "DecisionDirection will be attached to this execution after the fact.")
     else:
         print("\n=== Engine NOT executed (guard did not return READY) ===")
         print("result_df is None:", result_df is None)

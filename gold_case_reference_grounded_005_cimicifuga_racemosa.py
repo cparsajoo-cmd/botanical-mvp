@@ -208,10 +208,10 @@ APPLICABILITY LIMITATIONS — RECORDED HONESTLY, NOT RESOLVED
    menopausal complaints such as hot flushes and profuse sweating."
    The two overlap but are not coextensive; EMA's wording names a
    subset, not a synonym, of CD007244's broader scope.
-7. EMA METADATA IS APPLICABILITY-ONLY, NEVER GROUND TRUTH. Every EMA-
-   sourced field on this case's ReferenceDescriptor/ValidationUnit
-   (preparation, population, indication wording) is provenance-tagged
-   to EMA/HMPC/48745/2017 specifically, separately from the Cochrane-
+7. EMA METADATA IS APPLICABILITY-ONLY, NEVER GROUND TRUTH. Every
+   EMA-sourced field on this case's ValidationUnit (preparation,
+   population, and indication wording) is provenance-tagged to
+   EMA/HMPC/48745/2017 specifically, separately from the Cochrane-
    sourced Ground Truth provenance record. assertion_state,
    evidence_text, and selected_reference_id for the resolved outcome
    are 100% CD007244-derived; nothing from EMA enters the claim
@@ -348,7 +348,7 @@ def _build_reference_descriptor() -> ReferenceDescriptor:
         document_date=_SR_DOCUMENT_DATE,
         jurisdiction=None,  # international literature synthesis, not jurisdiction-bound
         # taxon and plant_part DELIBERATELY left unset (None) — see
-        # "REFERENCE-DESCRIPTOR FIELD AUDIT" in the module docstring.
+        # "APPLICABILITY LIMITATIONS", point 1, in the module docstring.
         # CD007244's own title uses genus-level "Cimicifuga spp.," and
         # I could not verify from the paywalled Characteristics of
         # Included Studies table that every included trial used the

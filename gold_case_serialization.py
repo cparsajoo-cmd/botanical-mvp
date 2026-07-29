@@ -25,7 +25,7 @@ from assertion_vocabulary import (
     GoldCaseKind, SeverityLevel, TransformationType,
 )
 from dataset_split import DatasetSplit, LeakageControl
-from engine_evidence_input import EngineEvidenceInput
+from engine_evidence_input import EngineEvidenceInput, EngineEvidenceOrigin
 from field_provenance import FieldProvenance, VerificationStatus
 from gold_case import GoldCase, GoldCaseReference, ExpectedOutput, RiskStratum, DecisionDirection
 from reference_claim import ReferenceClaim, NormalizedEvidenceText, ExtractionConfidence
@@ -343,6 +343,7 @@ def gold_case_to_dict(case: GoldCase) -> dict:
         "curation_status": case.curation_status.value,
         "resolved_outcomes": [_resolved_outcome_to_dict(o) for o in case.resolved_outcomes],
         "engine_evidence": [_engine_evidence_to_dict(e) for e in case.engine_evidence],
+        "engine_evidence_origin": case.engine_evidence_origin.value if case.engine_evidence_origin else None,
         "locked": case.locked,
         "dataset_snapshot_hash": case.dataset_snapshot_hash,
     }
@@ -376,6 +377,10 @@ def gold_case_from_dict(data: dict) -> GoldCase:
         curation_status=CurationStatus(data.get("curation_status", CurationStatus.DRAFT.value)),
         resolved_outcomes=[_resolved_outcome_from_dict(o) for o in data.get("resolved_outcomes", [])],
         engine_evidence=[_engine_evidence_from_dict(e) for e in data.get("engine_evidence", [])],
+        engine_evidence_origin=(
+            EngineEvidenceOrigin(data["engine_evidence_origin"])
+            if data.get("engine_evidence_origin") else None
+        ),
         locked=bool(data.get("locked", False)),
         dataset_snapshot_hash=data.get("dataset_snapshot_hash"),
     )

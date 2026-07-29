@@ -1,5 +1,7 @@
 """
-Structural leakage boundary tests (v4 correction #1).
+Structural leakage boundary tests (v4 correction #1, plus v4
+correction #2's no-derivation-factory / provenance-enum invariant —
+see the dedicated section near the end of this file).
 
 WHAT THIS PROVES
 That EngineEvidenceInput is structurally incapable of holding a
@@ -212,3 +214,49 @@ def test_spy_confirms_evidence_df_contains_only_the_three_expected_columns():
 
     evidence_df = captured["kwargs"]["evidence_df"]
     assert set(evidence_df.columns) == {"Scientific_Name", "Target_Indication", "Notes"}
+
+
+# ---------------------------------------------------------------------
+# v4 correction #2 — no automated ReferenceClaim/ResolvedExpectedOutcome
+# -> compound_activity_targets derivation, now or in the future.
+#
+# WHAT THIS PROVES AND DOESN'T
+# Same philosophy as the rest of this file: type/interface
+# introspection, not a runtime scan of string content. These tests
+# cannot prove no such derivation will ever be written anywhere in the
+# codebase — they lock the specific, obvious places one would be
+# added (a factory method on EngineEvidenceInput, an expanded
+# EngineEvidenceOrigin) so that adding one breaks a test loudly
+# instead of landing silently.
+# ---------------------------------------------------------------------
+
+def test_engine_evidence_input_has_no_reference_truth_derivation_factory():
+    forbidden_factory_names = (
+        "from_reference_claim", "from_resolved_outcome", "from_expected_output",
+        "from_claim", "from_assertion", "from_severity", "from_gate_status",
+        "from_decision_class",
+    )
+    for name in forbidden_factory_names:
+        assert not hasattr(EngineEvidenceInput, name), (
+            f"EngineEvidenceInput.{name} exists — this looks like a "
+            f"ReferenceClaim/ResolvedExpectedOutcome-derived factory, "
+            f"which v4 correction #2 explicitly disallows."
+        )
+
+
+def test_engine_evidence_origin_has_exactly_the_three_approved_values():
+    from engine_evidence_input import EngineEvidenceOrigin
+    assert {o.name for o in EngineEvidenceOrigin} == {
+        "INDEPENDENT_PRODUCTION_SOURCE", "MANUAL_TEST_FIXTURE", "CURATOR_SUPPLIED",
+    }
+
+
+def test_gold_case_field_named_engine_evidence_origin_is_optional_and_defaults_none():
+    import dataclasses
+    from gold_case import GoldCase
+    from validation_unit import ValidationUnit
+    fields_by_name = {f.name: f for f in dataclasses.fields(GoldCase)}
+    assert "engine_evidence_origin" in fields_by_name
+    unit = ValidationUnit(taxon="X")
+    case = GoldCase(case_id="c", validation_unit=unit)
+    assert case.engine_evidence_origin is None

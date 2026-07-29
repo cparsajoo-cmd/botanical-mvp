@@ -481,3 +481,39 @@ currently deferred** — see the architecture note directly above
 level traceability (`gate_results` + `Applicability_Summary.
 evidence_record_ids`) is the current, intentional stopping point.
 
+## Reference-Grounded Validation v4 — Phase 2 capability statement
+
+Verified by characterization (source-level read of
+`botanical_rd_candidate_engine.py` plus an empirical run of the real,
+unmodified engine through `execute_gold_case_against_engine()`), then
+locked by `test_gold_case_execution.py`'s Structured Safety-Target
+Gate Validation pair and `test_structural_leakage_boundary.py`'s v4
+correction #2 tests:
+
+- Hard-safety-gate behavior is validated for **structured,
+  preclassified safety-target inputs** —
+  `EngineEvidenceInput.compound_activity_targets` →
+  `plant_compounds_df["target"]` → `_hard_safety_gate()`. This is the
+  same production column/code path the engine uses against live
+  Supabase data; the GoldCase pipeline exercises it with
+  curator/fixture-supplied values, not a parallel or mocked path.
+- **Natural-text extraction of hard-safety concepts is not
+  implemented or validated in this Phase.** `SAFETY_TERMS` (what
+  `notes`/free text is scanned against) and `HARD_SAFETY_TERMS` (what
+  actually forces the hard stop) are disjoint vocabularies by design —
+  a hazard word typed into `notes` alone cannot trigger the gate, and
+  no code path in this repository derives `compound_activity_targets`
+  from `ReferenceClaim`, `ResolvedExpectedOutcome`, or
+  `expected_output`.
+- **Free-text `notes` currently supports only the soft safety
+  vocabulary** (`SAFETY_TERMS`) — a real, independent production input
+  to the engine, but not a channel to the hard exclusion.
+- The accepted scope remains: **"Reference-grounded, provided-evidence
+  validation."** Where a GoldCase's engine evidence came from is now
+  explicit and optional metadata — `GoldCase.engine_evidence_origin`
+  (`EngineEvidenceOrigin`: `INDEPENDENT_PRODUCTION_SOURCE` /
+  `MANUAL_TEST_FIXTURE` / `CURATOR_SUPPLIED`) — separate from
+  `EngineEvidenceInput` itself, whose four-field shape remains locked.
+
+No change was made to `botanical_rd_candidate_engine.py`'s safety
+vocabulary or extraction logic in this correction.

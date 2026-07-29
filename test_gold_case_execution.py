@@ -120,11 +120,29 @@ def test_no_evidence_argument_defaults_to_empty_and_does_not_raise():
 
 
 # ---------------------------------------------------------------------
-# Real execution WITH EngineEvidenceInput — natural text + structured
-# compound_activity_targets, NO bare target= kwarg anywhere.
+# Structured Safety-Target Gate Validation (v4 correction #2)
+#
+# Real execution WITH EngineEvidenceInput, NO bare target= kwarg
+# anywhere. The pair of tests below documents the CURRENT capability
+# boundary, not an aspiration: compound_activity_targets (a
+# preclassified structured hazard input) is the only channel that can
+# activate the Hard Safety Gate. notes (natural text) is a real,
+# independent production input to the engine, but it cannot reach
+# HARD_SAFETY_TERMS — SAFETY_TERMS (what free text is scanned against)
+# and HARD_SAFETY_TERMS (what forces the hard stop) are disjoint
+# vocabularies by design. See engine_evidence_input.py's module
+# docstring and botanical_rd_candidate_engine.py's SAFETY_TERMS /
+# HARD_SAFETY_TERMS definitions. This file does NOT claim natural-text
+# extraction of hard-safety concepts is implemented or validated.
 # ---------------------------------------------------------------------
 
-def test_safety_serious_case_triggers_hard_safety_gate_via_structured_field():
+def test_structured_safety_target_gate_validation_fails_on_preclassified_hazard_target():
+    """Validates: preclassified structured hazard input
+    (compound_activity_targets) -> production plant_compounds_df["target"]
+    column -> Hard Safety Gate. Does NOT demonstrate natural-text
+    detection — see the companion capability-boundary test below,
+    which shows the same hazard word in notes alone does not fire this
+    gate."""
     _reset_engine_globals()
     case = _executable_case(taxon="DangerousTestTaxon")
     evidence = [EngineEvidenceInput(
@@ -136,6 +154,32 @@ def test_safety_serious_case_triggers_hard_safety_gate_via_structured_field():
     output = platform_output_for_gold_case(result)
     assert output["decision_class"] == "Safety concern — not suitable without expert review"
     assert output["gate_results"]["safety"]["status"] == GateStatus.FAILED
+
+
+def test_capability_boundary_notes_alone_cannot_trigger_hard_safety_gate():
+    """Documents the current capability boundary: even hazard-adjacent
+    language in notes — the literal word "lithogenic" plus
+    "contraindicated" and "pregnancy" — does NOT activate the Hard
+    Safety Gate when compound_activity_targets is empty. Free text is
+    scanned only against SAFETY_TERMS (a disjoint, softer vocabulary);
+    HARD_SAFETY_TERMS is reachable only via the structured target
+    field — see the companion test above for the positive case. This
+    is not a desired future capability being asserted; it is what the
+    engine, unmodified, does today."""
+    _reset_engine_globals()
+    case = _executable_case(taxon="NotesOnlyHazardLanguageTaxon")
+    evidence = [EngineEvidenceInput(
+        scientific_name="NotesOnlyHazardLanguageTaxon", target_indication="TestIndication",
+        notes=(
+            "Documented lithogenic activity; case reports describe kidney "
+            "stone formation. Contraindicated in pregnancy. Serious risk."
+        ),
+        compound_activity_targets=(),
+    )]
+    result = execute_gold_case_against_engine(case, evidence=evidence)
+    output = platform_output_for_gold_case(result)
+    assert output["gate_results"]["safety"]["status"] == GateStatus.PASSED
+    assert "lithogenic" not in output["gate_results"]["safety"]["reason"].lower()
 
 
 def test_regulatory_prohibition_triggers_via_natural_text_notes():

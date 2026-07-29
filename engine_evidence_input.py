@@ -51,11 +51,33 @@ structurally (a list of plain strings) rather than as an undocumented
 positional kwarg — still cannot hold a ReferenceClaim/
 ResolvedExpectedOutcome object, for the same structural reason notes
 cannot.
+
+WHAT "REAL PRODUCTION CHANNEL" DOES NOT CLAIM (v4 correction #2)
+The paragraph above is about the ENGINE side: plant_compounds_df["target"]
+is a genuine, independently-sourced production column (Dr. Duke) when
+the engine runs against live Supabase data. It is NOT a claim about
+where any given GoldCase gets the values it puts into
+compound_activity_targets. In the current GoldCase pipeline, those
+values are supplied directly by a curator or fixture author — see
+EngineEvidenceOrigin below — never fetched from Dr. Duke, ChEMBL, or
+any other independent source, and never derived from this same case's
+own ReferenceClaim/ResolvedExpectedOutcome/expected_output. A case
+whose engine_evidence happens to describe the same fact as its
+reference claims (e.g. both mention "Lithogenic") is curator
+coincidence, not automated derivation — there is no code path in this
+repository that takes a ReferenceClaim, ResolvedExpectedOutcome, or
+ExpectedOutput and produces a compound_activity_targets value from it,
+and none should be added: doing so would let a case's expected
+answer manufacture its own engine input, defeating the point of an
+independent gate check. See EngineEvidenceOrigin and
+test_structural_leakage_boundary.py's factory-absence tests for the
+structural side of this guarantee.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -68,3 +90,23 @@ class EngineEvidenceInput:
     target_indication: str
     notes: str = ""
     compound_activity_targets: tuple = ()
+
+
+class EngineEvidenceOrigin(str, Enum):
+    """Provenance of a GoldCase's engine_evidence — see gold_case.py's
+    GoldCase.engine_evidence_origin. Deliberately NOT a field on
+    EngineEvidenceInput itself: EngineEvidenceInput's field set is a
+    locked structural invariant (exactly four fields — see
+    test_structural_leakage_boundary.py), and provenance is metadata
+    ABOUT how a case's evidence was obtained, not part of what the
+    engine consumes. Lives at the GoldCase level instead.
+
+    Exactly three values, on purpose. There is deliberately no
+    "REFERENCE_CLAIM_DERIVED" or similar member — see the module
+    docstring's "WHAT 'REAL PRODUCTION CHANNEL' DOES NOT CLAIM"
+    section. Adding one would document, not prevent, a leakage path;
+    the absence is itself the guardrail this enum exists to express.
+    """
+    INDEPENDENT_PRODUCTION_SOURCE = "Independent production source"
+    MANUAL_TEST_FIXTURE = "Manual test fixture"
+    CURATOR_SUPPLIED = "Curator supplied"

@@ -65,6 +65,7 @@ from assertion_vocabulary import (
     is_curation_status_lock_eligible,
 )
 from dataset_split import DatasetSplit, LeakageControl
+from engine_evidence_input import EngineEvidenceOrigin
 from field_provenance import FieldProvenance
 from reference_claim import ReferenceClaim
 from reference_descriptor import ReferenceDescriptor
@@ -153,6 +154,15 @@ class GoldCase:
     locked/dataset_snapshot_hash: only ever set by lock_gold_case()
     below, never assigned directly — same convention
     validation_case_protocol.lock_protocol() already established.
+
+    engine_evidence_origin (v4 correction #2): declares how THIS
+    case's engine_evidence was obtained — see
+    engine_evidence_input.EngineEvidenceOrigin. Optional and
+    None-by-default so existing cases degrade gracefully; a case
+    carrying non-empty engine_evidence should set this. Never set
+    from ReferenceClaim/ResolvedExpectedOutcome/expected_output —
+    it records who supplied the evidence, not a value computed from
+    the case's own expected answer.
     """
     case_id: str
     validation_unit: ValidationUnit
@@ -167,6 +177,7 @@ class GoldCase:
     curation_status: CurationStatus = CurationStatus.DRAFT
     resolved_outcomes: list = field(default_factory=list)  # list[ResolvedExpectedOutcome]
     engine_evidence: list = field(default_factory=list)  # list[EngineEvidenceInput] — see module docstring's structural-separation note
+    engine_evidence_origin: Optional[EngineEvidenceOrigin] = None  # see class docstring's v4 correction #2 note
     locked: bool = False
     dataset_snapshot_hash: Optional[str] = None
 

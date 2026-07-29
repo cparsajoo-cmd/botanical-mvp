@@ -120,12 +120,15 @@ def test_evidence_passed_only_via_parameter_now_reaches_execution_after_the_fix(
     assert gate["evidence"] == "Clinical / human evidence"
 
 
-def test_correct_invocation_requires_setting_both_independent_evidence_channels():
-    """UPDATED after the fix: this pattern (both channels set to the
-    same content) still works — it was always correct, and the fix
-    makes it explicit rather than accidental. Kept as a regression
-    test for the "both populated and equal -> use shared content"
-    branch of _resolve_effective_evidence()."""
+def test_identical_evidence_on_both_channels_remains_supported():
+    """Verifies that supplying identical evidence through BOTH
+    GoldCase.engine_evidence and the explicit evidence= parameter
+    resolves to one effective evidence value and executes correctly —
+    NOT because both channels are required (they aren't; either one
+    alone is sufficient, see the other tests in this file and in
+    test_gold_case_execution_evidence_channel.py), but because
+    supplying the same content on both must remain a valid, supported
+    pattern, not treated as a conflict."""
     from dataclasses import replace
 
     case = build_gold_case_refgrounded_003_matricaria_chamomilla_sleep()
@@ -163,7 +166,7 @@ if __name__ == "__main__":
     tests = [
         test_engine_evidence_on_gold_case_field_alone_is_not_used_by_execute_gold_case_against_engine,
         test_evidence_passed_only_via_parameter_now_reaches_execution_after_the_fix,
-        test_correct_invocation_requires_setting_both_independent_evidence_channels,
+        test_identical_evidence_on_both_channels_remains_supported,
     ]
     failures = 0
     for test in tests:

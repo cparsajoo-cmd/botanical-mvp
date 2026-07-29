@@ -43,7 +43,7 @@ from assertion_vocabulary import (
     GoldCaseKind, SeverityLevel, TransformationType,
 )
 from dataset_split import DatasetSplit, LeakageControl
-from engine_evidence_input import EngineEvidenceInput
+from engine_evidence_input import EngineEvidenceInput, EngineEvidenceOrigin
 from gold_case import GoldCase, GoldCaseReference, ExpectedOutput, RiskStratum, DecisionDirection, lock_gold_case
 from reference_claim import ReferenceClaim, NormalizedEvidenceText, ExtractionConfidence
 from reference_descriptor import ReferenceDescriptor
@@ -117,9 +117,24 @@ def _safety_serious_case() -> GoldCase:
     """One reference with a SERIOUS pregnancy contraindication claim —
     this is the case that exercises the real end-to-end Safety-Serious
     data path: the resolved outcome (evaluator-only) expects a serious
-    flag, and engine_evidence (structurally separate) carries the
-    natural-text + structured activity-target signal that makes the
-    REAL engine independently detect it."""
+    flag, and engine_evidence (structurally separate) carries a
+    preclassified structured activity-target ("Lithogenic") that makes
+    the REAL engine's Hard Safety Gate independently fail this
+    candidate.
+
+    CORRECTION (v4 correction #2): an earlier version of this
+    docstring said the "natural-text + structured activity-target
+    signal" together made the engine detect this. Characterization
+    disproved that — SAFETY_TERMS (what free text is scanned against)
+    and HARD_SAFETY_TERMS (what actually forces the hard stop) are
+    disjoint vocabularies, so notes below contributes nothing to the
+    gate outcome; only compound_activity_targets does. See
+    test_gold_case_execution.py's capability-boundary tests. notes is
+    kept here for narrative realism (what a curator would also see in
+    the source text) — it is deliberately NOT what triggers the gate.
+    "Lithogenic" is a deliberately preclassified synthetic engine
+    input chosen to exercise gate behavior, not an extracted
+    scientific conclusion — see engine_evidence_origin below."""
     unit = ValidationUnit(
         taxon="Synthetica periculosa", plant_part="leaf",
         preparation=PreparationSpec(dosage_form="Extract", solvent="ethanol 70%"),
@@ -155,11 +170,15 @@ def _safety_serious_case() -> GoldCase:
         # happens to describe the same underlying fact here (expected
         # in real curation too), but the engine only ever sees this,
         # never the ReferenceClaim/ResolvedExpectedOutcome objects.
+        # "Lithogenic" below is typed in by hand, matching the claim's
+        # evidence_text by fixture-author choice, NOT computed from
+        # claim/reference/expected_output — see engine_evidence_origin.
         engine_evidence=[EngineEvidenceInput(
             scientific_name=unit.taxon, target_indication=unit.indication,
             notes="Case reports describe kidney stone formation associated with prolonged use of this preparation.",
             compound_activity_targets=("Lithogenic",),
         )],
+        engine_evidence_origin=EngineEvidenceOrigin.MANUAL_TEST_FIXTURE,
     )
     case.resolved_outcomes = resolve_expected_outcomes(case)
     return case

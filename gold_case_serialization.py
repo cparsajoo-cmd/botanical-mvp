@@ -20,11 +20,18 @@ reference and every provenance record.
 from __future__ import annotations
 
 from applicability_check import ApplicabilityDimension, ApplicabilityResult, ReferenceDomain
+from assertion_vocabulary import (
+    AssertionState, AssertionType, CurationStatus, ExtractionConfidenceLevel,
+    GoldCaseKind, SeverityLevel, TransformationType,
+)
 from dataset_split import DatasetSplit, LeakageControl
+from engine_evidence_input import EngineEvidenceInput
 from field_provenance import FieldProvenance, VerificationStatus
 from gold_case import GoldCase, GoldCaseReference, ExpectedOutput, RiskStratum, DecisionDirection
+from reference_claim import ReferenceClaim, NormalizedEvidenceText, ExtractionConfidence
 from reference_descriptor import ReferenceDescriptor
-from reference_precedence import ReferenceVerdict
+from reference_precedence import ReferenceVerdict, ResolutionStatus
+from resolved_expected_outcome import ResolvedExpectedOutcome
 from user_roles import ReviewerRole
 from validation_unit import ValidationUnit, PreparationSpec, Dose
 
@@ -148,6 +155,119 @@ def _applicability_result_from_dict(data: dict) -> ApplicabilityResult:
     )
 
 
+def _extraction_confidence_to_dict(conf):
+    if conf is None:
+        return None
+    return {
+        "level": conf.level.value, "basis": conf.basis,
+        "extractor_type": conf.extractor_type, "extractor_version": conf.extractor_version,
+    }
+
+
+def _extraction_confidence_from_dict(data):
+    if data is None:
+        return None
+    return ExtractionConfidence(
+        level=ExtractionConfidenceLevel(data["level"]), basis=data.get("basis", ""),
+        extractor_type=data.get("extractor_type", ""), extractor_version=data.get("extractor_version", ""),
+    )
+
+
+def _normalized_evidence_text_to_dict(text):
+    if text is None:
+        return None
+    return {
+        "original_text": text.original_text, "normalized_text": text.normalized_text,
+        "transformation_type": text.transformation_type.value,
+        "transformation_version": text.transformation_version,
+        "source_locator": text.source_locator,
+    }
+
+
+def _normalized_evidence_text_from_dict(data):
+    if data is None:
+        return None
+    return NormalizedEvidenceText(
+        original_text=data.get("original_text", ""), normalized_text=data.get("normalized_text", ""),
+        transformation_type=TransformationType(data["transformation_type"]),
+        transformation_version=data.get("transformation_version", ""),
+        source_locator=data.get("source_locator", ""),
+    )
+
+
+def _claim_to_dict(claim: ReferenceClaim) -> dict:
+    return {
+        "domain": claim.domain.value, "assertion_type": claim.assertion_type.value,
+        "subject": claim.subject, "assertion_state": claim.assertion_state.value,
+        "severity": claim.severity.value if claim.severity else None,
+        "source_reference_id": claim.source_reference_id, "source_locator": claim.source_locator,
+        "evidence_text": _normalized_evidence_text_to_dict(claim.evidence_text),
+        "extraction_confidence": _extraction_confidence_to_dict(claim.extraction_confidence),
+    }
+
+
+def _claim_from_dict(data: dict) -> ReferenceClaim:
+    severity = data.get("severity")
+    return ReferenceClaim(
+        domain=ReferenceDomain(data["domain"]), assertion_type=AssertionType(data["assertion_type"]),
+        subject=data.get("subject", ""), assertion_state=AssertionState(data["assertion_state"]),
+        severity=SeverityLevel(severity) if severity else None,
+        source_reference_id=data.get("source_reference_id", ""), source_locator=data.get("source_locator", ""),
+        evidence_text=_normalized_evidence_text_from_dict(data.get("evidence_text")),
+        extraction_confidence=_extraction_confidence_from_dict(data.get("extraction_confidence")),
+    )
+
+
+def _resolved_outcome_to_dict(outcome: ResolvedExpectedOutcome) -> dict:
+    return {
+        "domain": outcome.domain.value, "subject": outcome.subject,
+        "assertion_type": outcome.assertion_type.value,
+        "assertion_state": outcome.assertion_state.value if outcome.assertion_state else None,
+        "severity": outcome.severity.value if outcome.severity else None,
+        "resolution_status": outcome.resolution_status.value,
+        "selected_reference_id": outcome.selected_reference_id,
+        "conflicting_reference_ids": list(outcome.conflicting_reference_ids),
+        "translation_rule_id": outcome.translation_rule_id,
+        "translation_rule_version": outcome.translation_rule_version,
+        "precedence_policy_version": outcome.precedence_policy_version,
+        "applicability_policy_version": outcome.applicability_policy_version,
+        "subject_normalization_rule_version": outcome.subject_normalization_rule_version,
+    }
+
+
+def _resolved_outcome_from_dict(data: dict) -> ResolvedExpectedOutcome:
+    assertion_state = data.get("assertion_state")
+    severity = data.get("severity")
+    return ResolvedExpectedOutcome(
+        domain=ReferenceDomain(data["domain"]), subject=data.get("subject", ""),
+        assertion_type=AssertionType(data["assertion_type"]),
+        assertion_state=AssertionState(assertion_state) if assertion_state else None,
+        severity=SeverityLevel(severity) if severity else None,
+        resolution_status=ResolutionStatus(data.get("resolution_status", ResolutionStatus.NO_APPLICABLE_REFERENCE.value)),
+        selected_reference_id=data.get("selected_reference_id"),
+        conflicting_reference_ids=list(data.get("conflicting_reference_ids") or []),
+        translation_rule_id=data.get("translation_rule_id", ""),
+        translation_rule_version=data.get("translation_rule_version", ""),
+        precedence_policy_version=data.get("precedence_policy_version", ""),
+        applicability_policy_version=data.get("applicability_policy_version", ""),
+        subject_normalization_rule_version=data.get("subject_normalization_rule_version", ""),
+    )
+
+
+def _engine_evidence_to_dict(item: EngineEvidenceInput) -> dict:
+    return {
+        "scientific_name": item.scientific_name, "target_indication": item.target_indication,
+        "notes": item.notes, "compound_activity_targets": list(item.compound_activity_targets),
+    }
+
+
+def _engine_evidence_from_dict(data: dict) -> EngineEvidenceInput:
+    return EngineEvidenceInput(
+        scientific_name=data.get("scientific_name", ""), target_indication=data.get("target_indication", ""),
+        notes=data.get("notes", ""), compound_activity_targets=tuple(data.get("compound_activity_targets") or ()),
+    )
+
+
 def _gold_case_reference_to_dict(gref: GoldCaseReference) -> dict:
     return {
         "reference": _reference_to_dict(gref.reference),
@@ -160,6 +280,7 @@ def _gold_case_reference_to_dict(gref: GoldCaseReference) -> dict:
             if gref.verdict is not None else None
         ),
         "provenance": [_provenance_to_dict(p) for p in gref.provenance],
+        "claims": [_claim_to_dict(c) for c in gref.claims],
     }
 
 
@@ -174,6 +295,7 @@ def _gold_case_reference_from_dict(data: dict) -> GoldCaseReference:
         },
         verdict=verdict,
         provenance=[_provenance_from_dict(p) for p in data.get("provenance", [])],
+        claims=[_claim_from_dict(c) for c in data.get("claims", [])],
     )
 
 
@@ -217,6 +339,12 @@ def gold_case_to_dict(case: GoldCase) -> dict:
             "observed_at": case.leakage_control.observed_at.isoformat() if case.leakage_control.observed_at else None,
             "case_modified_after_observation": case.leakage_control.case_modified_after_observation,
         },
+        "kind": case.kind.value,
+        "curation_status": case.curation_status.value,
+        "resolved_outcomes": [_resolved_outcome_to_dict(o) for o in case.resolved_outcomes],
+        "engine_evidence": [_engine_evidence_to_dict(e) for e in case.engine_evidence],
+        "locked": case.locked,
+        "dataset_snapshot_hash": case.dataset_snapshot_hash,
     }
 
 
@@ -244,4 +372,10 @@ def gold_case_from_dict(data: dict) -> GoldCase:
         case_provenance=[_provenance_from_dict(p) for p in data.get("case_provenance", [])],
         dataset_split=DatasetSplit(data.get("dataset_split", DatasetSplit.DEVELOPMENT.value)),
         leakage_control=leakage_control,
+        kind=GoldCaseKind(data.get("kind", GoldCaseKind.REFERENCE_GROUNDED.value)),
+        curation_status=CurationStatus(data.get("curation_status", CurationStatus.DRAFT.value)),
+        resolved_outcomes=[_resolved_outcome_from_dict(o) for o in data.get("resolved_outcomes", [])],
+        engine_evidence=[_engine_evidence_from_dict(e) for e in data.get("engine_evidence", [])],
+        locked=bool(data.get("locked", False)),
+        dataset_snapshot_hash=data.get("dataset_snapshot_hash"),
     )

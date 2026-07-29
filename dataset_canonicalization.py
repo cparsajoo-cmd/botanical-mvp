@@ -93,9 +93,40 @@ def _canonicalize_reference(gold_case_reference) -> dict:
     }
 
 
+def _canonicalize_resolved_outcome(outcome) -> dict:
+    return {
+        "domain": outcome.domain.value,
+        "subject": outcome.subject,
+        "assertion_type": outcome.assertion_type.value,
+        "assertion_state": outcome.assertion_state.value if outcome.assertion_state else None,
+        "severity": outcome.severity.value if outcome.severity else None,
+        "resolution_status": outcome.resolution_status.value,
+        "selected_reference_id": outcome.selected_reference_id,
+        "conflicting_reference_ids": sorted(outcome.conflicting_reference_ids),
+        "translation_rule_id": outcome.translation_rule_id,
+        "translation_rule_version": outcome.translation_rule_version,
+        "precedence_policy_version": outcome.precedence_policy_version,
+        "applicability_policy_version": outcome.applicability_policy_version,
+        "subject_normalization_rule_version": outcome.subject_normalization_rule_version,
+    }
+
+
+def _canonicalize_engine_evidence(item) -> dict:
+    return {
+        "scientific_name": item.scientific_name,
+        "target_indication": item.target_indication,
+        "notes": item.notes,
+        "compound_activity_targets": sorted(item.compound_activity_targets),
+    }
+
+
 def canonicalize_gold_case(case: GoldCase) -> dict:
     """Extracts exactly the content-relevant fields of one GoldCase —
-    see module docstring for what is deliberately excluded and why."""
+    see module docstring for what is deliberately excluded and why.
+    dataset_snapshot_hash itself is deliberately excluded (a field's
+    own hash cannot be part of what it hashes) — see
+    gold_case.lock_gold_case()'s two-step replace() for how that
+    self-reference is avoided at lock time."""
     return {
         "case_id": case.case_id,
         "validation_unit": _canonicalize_validation_unit(case.validation_unit),
@@ -107,6 +138,14 @@ def canonicalize_gold_case(case: GoldCase) -> dict:
         ),
         "correct_abstention_expected": case.correct_abstention_expected,
         "dataset_split": case.dataset_split.value,
+        "kind": case.kind.value,
+        "curation_status": case.curation_status.value,
+        "locked": case.locked,
+        "resolved_outcomes": sorted(
+            (_canonicalize_resolved_outcome(o) for o in case.resolved_outcomes),
+            key=lambda o: (o["domain"], o["assertion_type"], o["subject"]),
+        ),
+        "engine_evidence": [_canonicalize_engine_evidence(e) for e in case.engine_evidence],
     }
 
 

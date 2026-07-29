@@ -1,17 +1,17 @@
-"""Tests for gold_case_execution.py (Validation Architecture v3, Phase 2).
+"""Tests for gold_case_execution.py (Reference-Grounded Validation, v4).
 
-Runs the REAL BotanicalRDCandidateEngine — no stubbing — same
-convention as test_validation_protocol_execution.py's own end-to-end
-tests. The most important test in this file
-(test_safety_serious_case_actually_triggers_the_hard_safety_gate) is a
-direct regression lock against the self-match bug this module's
-docstring documents finding and fixing.
+Runs the REAL BotanicalRDCandidateEngine — no stubbing. Uses
+EngineEvidenceInput exclusively; no bare target= kwarg exists anymore
+(see test_structural_leakage_boundary.py for the interface-level
+regression lock on that removal).
 """
 
 import pandas as pd
 
 import botanical_rd_candidate_engine as eng
-from gold_case import GoldCase, GoldCaseReference, ExpectedOutput, RiskStratum, DecisionDirection
+from data_contracts import GateStatus
+from engine_evidence_input import EngineEvidenceInput
+from gold_case import GoldCase
 from gold_case_execution import (
     execute_gold_case_against_engine,
     platform_output_for_gold_case,
@@ -35,7 +35,7 @@ def _executable_case(taxon="TestTaxon", **overrides):
     )
     defaults.update(overrides)
     unit = ValidationUnit(**defaults)
-    return GoldCase(case_id="test_case", validation_unit=unit, risk_strata=[RiskStratum.CLEAN_BASELINE])
+    return GoldCase(case_id="test_case", validation_unit=unit)
 
 
 # ---------------------------------------------------------------------
@@ -66,7 +66,7 @@ def test_missing_dosage_form_raises():
 
 def test_missing_preparation_entirely_raises():
     _reset_engine_globals()
-    unit = ValidationUnit(taxon="X", indication="TestIndication")  # preparation=None
+    unit = ValidationUnit(taxon="X", indication="TestIndication")
     case = GoldCase(case_id="c1", validation_unit=unit)
     try:
         execute_gold_case_against_engine(case)
@@ -76,7 +76,7 @@ def test_missing_preparation_entirely_raises():
 
 
 # ---------------------------------------------------------------------
-# Real execution
+# Real execution, no evidence
 # ---------------------------------------------------------------------
 
 def test_executable_case_returns_exactly_one_row():
@@ -87,38 +87,13 @@ def test_executable_case_returns_exactly_one_row():
 
 
 def test_returned_row_uses_anchor_as_reference_and_taxon_as_alternative():
-    # Direct regression lock for the self-match bug this module exists
-    # to avoid — see module docstring.
     _reset_engine_globals()
     case = _executable_case(taxon="MyTestTaxon")
     result = execute_gold_case_against_engine(case)
     row = result.iloc[0]
     assert row["Reference_Plant"] == _GOLD_CASE_ANCHOR_TAXON
     assert row["Alternative_Plant"] == "MyTestTaxon"
-    assert row["Reference_Plant"] != row["Alternative_Plant"]  # never a self-match
-
-
-def test_safety_serious_case_actually_triggers_the_hard_safety_gate():
-    # THE critical test: a hard-safety-triggering target must actually
-    # produce GateStatus.FAILED and the "Safety concern" Decision_Class
-    # — this is exactly what the self-match bug silently prevented.
-    _reset_engine_globals()
-    case = _executable_case(taxon="DangerousTestTaxon")
-    result = execute_gold_case_against_engine(case, target="Lithogenic")
-    output = platform_output_for_gold_case(result)
-    assert output["decision_class"] == "Safety concern — not suitable without expert review"
-    from data_contracts import GateStatus
-    assert output["gate_results"]["safety"]["status"] == GateStatus.FAILED
-
-
-def test_safety_gate_not_exempted_by_same_plant_logic():
-    # Confirms the safety gate reason text is a REAL evaluation, not
-    # the same_plant exemption text a self-match row would produce.
-    _reset_engine_globals()
-    case = _executable_case()
-    result = execute_gold_case_against_engine(case)
-    output = platform_output_for_gold_case(result)
-    assert "matched to itself" not in output["gate_results"]["safety"]["reason"]
+    assert row["Reference_Plant"] != row["Alternative_Plant"]
 
 
 def test_clean_case_passes_safety_gate():
@@ -126,28 +101,75 @@ def test_clean_case_passes_safety_gate():
     case = _executable_case()
     result = execute_gold_case_against_engine(case)
     output = platform_output_for_gold_case(result)
-    from data_contracts import GateStatus
     assert output["gate_results"]["safety"]["status"] == GateStatus.PASSED
 
 
-def test_regulatory_prohibition_also_triggers_correctly():
+def test_safety_gate_not_exempted_by_same_plant_logic():
+    _reset_engine_globals()
+    case = _executable_case()
+    result = execute_gold_case_against_engine(case)
+    output = platform_output_for_gold_case(result)
+    assert "matched to itself" not in output["gate_results"]["safety"]["reason"]
+
+
+def test_no_evidence_argument_defaults_to_empty_and_does_not_raise():
+    _reset_engine_globals()
+    case = _executable_case()
+    result = execute_gold_case_against_engine(case, evidence=None)
+    assert len(result) == 1
+
+
+# ---------------------------------------------------------------------
+# Real execution WITH EngineEvidenceInput — natural text + structured
+# compound_activity_targets, NO bare target= kwarg anywhere.
+# ---------------------------------------------------------------------
+
+def test_safety_serious_case_triggers_hard_safety_gate_via_structured_field():
+    _reset_engine_globals()
+    case = _executable_case(taxon="DangerousTestTaxon")
+    evidence = [EngineEvidenceInput(
+        scientific_name="DangerousTestTaxon", target_indication="TestIndication",
+        notes="Case reports describe kidney stone formation associated with prolonged use.",
+        compound_activity_targets=("Lithogenic",),
+    )]
+    result = execute_gold_case_against_engine(case, evidence=evidence)
+    output = platform_output_for_gold_case(result)
+    assert output["decision_class"] == "Safety concern — not suitable without expert review"
+    assert output["gate_results"]["safety"]["status"] == GateStatus.FAILED
+
+
+def test_regulatory_prohibition_triggers_via_natural_text_notes():
     _reset_engine_globals()
     case = _executable_case(taxon="ProhibitedTestTaxon")
-    evidence_df = pd.DataFrame([{
-        "Scientific_Name": "ProhibitedTestTaxon",
-        "Target_Indication": "TestIndication",
-        "Notes": "This substance is prohibited and banned for sale in several jurisdictions.",
-    }])
-    result = execute_gold_case_against_engine(case, evidence_df=evidence_df)
+    evidence = [EngineEvidenceInput(
+        scientific_name="ProhibitedTestTaxon", target_indication="TestIndication",
+        notes="This substance is prohibited and banned for sale in several jurisdictions.",
+    )]
+    result = execute_gold_case_against_engine(case, evidence=evidence)
     output = platform_output_for_gold_case(result)
     assert output["decision_class"] == "Regulatory prohibition — not suitable without regulatory review"
+
+
+def test_evidence_for_a_different_taxon_does_not_affect_this_case():
+    # Evidence keyed to a DIFFERENT scientific_name must not leak into
+    # this taxon's row.
+    _reset_engine_globals()
+    case = _executable_case(taxon="InnocentTaxon")
+    evidence = [EngineEvidenceInput(
+        scientific_name="SomeOtherTaxon", target_indication="TestIndication",
+        notes="Irrelevant evidence about a different plant.",
+        compound_activity_targets=("Lithogenic",),
+    )]
+    result = execute_gold_case_against_engine(case, evidence=evidence)
+    output = platform_output_for_gold_case(result)
+    assert output["gate_results"]["safety"]["status"] == GateStatus.PASSED
 
 
 def test_plant_part_and_solvent_flow_into_extraction_method():
     _reset_engine_globals()
     case = _executable_case(plant_part="root", preparation=PreparationSpec(dosage_form="Extract", solvent="ethanol 70%"))
     result = execute_gold_case_against_engine(case)
-    assert len(result) == 1  # doesn't raise, ran successfully with these fields set
+    assert len(result) == 1
 
 
 def test_output_includes_grade_certainty_field():
@@ -180,10 +202,6 @@ def test_platform_output_shape():
         "grade_certainty", "rd_opportunity_score",
     }
 
-
-# ---------------------------------------------------------------------
-# Never touches the real engine's own code, never mutates it
-# ---------------------------------------------------------------------
 
 def test_module_never_modifies_botanical_rd_candidate_engine_output_columns():
     _reset_engine_globals()

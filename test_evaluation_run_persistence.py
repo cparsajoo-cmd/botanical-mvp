@@ -64,15 +64,11 @@ class _FailingSupabaseClient:
 
 
 def _sample_run():
-    case = GoldCase(
-        case_id="c1",
-        validation_unit=ValidationUnit(taxon="Taxon1", indication="TestIndication", preparation=PreparationSpec(dosage_form="Infusion"), jurisdiction="EU"),
-        risk_strata=[RiskStratum.CLEAN_BASELINE],
-        expected_output=ExpectedOutput(expected_decision_direction=DecisionDirection.HOLD),
-        dataset_split=DatasetSplit.LOCKED_HOLDOUT,
-        leakage_control=LeakageControl(engine_output_observed_before_finalization=False),
-    )
-    return build_evaluation_run([case], gold_set_version="test-v1")
+    from synthetic_validation_fixtures.fixtures import build_synthetic_gold_cases
+    cases = {c.case_id: c for c in build_synthetic_gold_cases()}
+    locked_holdout_case = cases["synthetic_locked_holdout_clean_001"]
+    assert locked_holdout_case.locked is True
+    return build_evaluation_run([locked_holdout_case], gold_set_version="test-v1")
 
 
 def test_persist_succeeds():

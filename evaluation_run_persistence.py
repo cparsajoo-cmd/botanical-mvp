@@ -40,6 +40,7 @@ def _evaluation_run_to_dict(run: EvaluationRun) -> dict:
         "execution_timestamp": run.execution_timestamp.isoformat(),
         "dataset_snapshot_hash": run.dataset_snapshot_hash,
         "dataset_split_used": run.dataset_split_used,
+        "validation_scope": run.validation_scope.value,
         "case_count": run.case_count,
         "inexecutable_case_ids": list(run.inexecutable_case_ids),
         "results": [_metric_report_to_dict(r) for r in run.results],

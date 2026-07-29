@@ -91,6 +91,38 @@ WHAT THIS FILE DELIBERATELY DOES NOT DO (per explicit instruction)
   separate, later, independently-decided step.
 - Does not modify botanical_rd_candidate_engine.py or any other
   existing file.
+
+DOCUMENTED EXECUTION STATUS: DEFERRED — 2026-07-29
+"Deferred" is a documentation-level execution status, not a native
+GoldCase schema field, enum member, or runtime behavior — the
+dataclasses below (curation_status, dataset_split, locked) are
+completely unchanged by this note and remain the actual source of
+truth for any code that reads this case.
+
+Ground Truth — the ReferenceDescriptor, ReferenceClaim, applicability
+result, and resolved_outcomes built below — is complete and remains
+valid. Engine execution is deferred, not the case itself, because:
+
+  1. No independent Engine Evidence has been located that is
+     simultaneously scope-equivalent for preparation, population, AND
+     route. The closest independent candidate found (Chehroudi et al.
+     2016, Trauma Monthly 22(4):e33630 — a real Melissa tea/infusion
+     RCT) matches preparation but not population (hospitalized burn
+     patients, not this case's general population scope).
+  2. A validation-layer guard for possible seed-data contamination
+     (seed_data.SLEEP_TEA_EVIDENCE carries a Melissa officinalis entry
+     whose content closely echoes this case's own EMA-derived Ground
+     Truth — see Phase 3B report) has not yet been designed, approved,
+     and implemented. The current non-collision between this case's
+     taxon string "Melissa officinalis L." and that seed key
+     "Melissa officinalis" is an artifact of BotanicalRDCandidateEngine
+     ._norm()'s literal string handling, not a designed safeguard.
+
+Re-evaluate this case for execution only when BOTH conditions above
+are resolved — resolving only one is not sufficient to proceed. The
+case is not failed, retired, locked, or approved for holdout
+execution; it is a curation-complete Reference-Grounded GoldCase
+awaiting execution preconditions.
 """
 
 from __future__ import annotations

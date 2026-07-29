@@ -192,6 +192,45 @@ def platform_output_for_gold_case(result_df: pd.DataFrame) -> dict:
     }
 
 
+class EvidenceChannelConflictError(Exception):
+    """Raised by execute_gold_case_with_readiness_gate() when
+    GoldCase.engine_evidence and the explicit evidence= parameter are
+    both non-empty but not equal. Fails closed rather than silently
+    preferring either channel — see that function's own docstring for
+    why this class of bug (guard sees one evidence set, engine
+    executes against a different one) must never be resolved by
+    guessing which channel the caller "really meant"."""
+
+
+def _resolve_effective_evidence(gold_case: GoldCase, evidence: list):
+    """The ONE evidence value both assess_execution_readiness() and
+    execute_gold_case_against_engine() will use — see
+    execute_gold_case_with_readiness_gate()'s docstring for the full
+    rule. `evidence=None` means "no explicit override was passed";
+    an explicitly passed empty list ([]) is treated as no override
+    either (there is nothing in it to conflict with), which is why
+    "populated" below means non-empty, not merely not-None.
+    """
+    case_evidence = gold_case.engine_evidence or []
+
+    if evidence is None:
+        return case_evidence
+    if not case_evidence:
+        return evidence
+    if not evidence:
+        return case_evidence
+    if evidence == case_evidence:
+        return case_evidence
+
+    raise EvidenceChannelConflictError(
+        f"GoldCase {gold_case.case_id!r}: gold_case.engine_evidence "
+        f"({len(case_evidence)} item(s)) and the explicit evidence= "
+        f"parameter ({len(evidence)} item(s)) are both populated and "
+        f"differ. Refusing to silently prefer either channel — pass "
+        f"matching content on both, or populate only one."
+    )
+
+
 def execute_gold_case_with_readiness_gate(
     gold_case: GoldCase,
     dimension_assessments: tuple = (),
@@ -208,16 +247,38 @@ def execute_gold_case_with_readiness_gate(
     enforces the existing execution_readiness.ExecutionReadiness
     decision. Not a redesign of either module.
 
+    EVIDENCE-CHANNEL INVARIANT (fixes the gap found while
+    characterizing Case 003's first execution): GoldCase.engine_evidence
+    and this function's own `evidence=` parameter used to be read by
+    two different places (the guard read only the former;
+    execute_gold_case_against_engine() read only the latter), so
+    populating only one produced a silently wrong result either way.
+    _resolve_effective_evidence() now computes ONE effective_evidence
+    value up front:
+        - evidence=None                          -> gold_case.engine_evidence
+        - evidence given, gold_case.engine_evidence empty -> evidence
+        - both populated and equal                -> that shared value
+        - both populated and different             -> EvidenceChannelConflictError (fail closed)
+    Both the readiness assessment (via a case copy carrying
+    effective_evidence — the original gold_case object is never
+    mutated) and the actual engine call below use this SAME value, so
+    the guard and the engine can never see different evidence again.
+
     Returns (ExecutionReadinessResult, result_df_or_None). result_df is
     None whenever decision != READY — the engine is never instantiated
     or run in that case.
     """
+    from dataclasses import replace
+
     from execution_readiness import (
         ExecutionReadiness, ExecutionReadinessInput, assess_execution_readiness,
     )
 
+    effective_evidence = _resolve_effective_evidence(gold_case, evidence)
+    case_for_assessment = replace(gold_case, engine_evidence=effective_evidence)
+
     readiness = assess_execution_readiness(
-        ExecutionReadinessInput(gold_case=gold_case, dimension_assessments=dimension_assessments)
+        ExecutionReadinessInput(gold_case=case_for_assessment, dimension_assessments=dimension_assessments)
     )
 
     if readiness.decision != ExecutionReadiness.READY:
@@ -225,7 +286,7 @@ def execute_gold_case_with_readiness_gate(
 
     result_df = execute_gold_case_against_engine(
         gold_case,
-        evidence=evidence,
+        evidence=effective_evidence,
         compound_name=compound_name,
         compound_profiles_df=compound_profiles_df,
         scientific_evidence_df=scientific_evidence_df,

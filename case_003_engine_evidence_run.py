@@ -36,31 +36,50 @@ execution_readiness.py's design: the guard never infers these itself)
   infusion, matching PreparationSpec(dosage_form="Infusion",
   solvent="water") directly, not merely by curator judgment.
 - ROUTE: EXACT. Oral in both.
-- POPULATION: ACCEPTABLE_EQUIVALENCE, not EXACT — postnatal women are
-  a specific subpopulation, not simply "Adults" in general (real,
-  disclosed confound: postpartum physiology/newborn-care sleep
-  disruption is a different etiology than general adult sleep
-  difficulty). The equivalence judgment here is NOT free-floating: the
-  case's own governing source, Kazemi et al. 2024, itself pools this
-  same population type (postnatal/postpartum women) into its general
-  "healthy or diseased adults" pooled sleep conclusion (see Case 003's
-  own module docstring, Applicability Limitation #2). Since the
-  Ground-Truth-governing review already treats this population as
-  within-scope for a general-adult sleep question, treating this
-  specific trial's evidence the same way for Engine Evidence is a
-  defensible, source-grounded equivalence — not an EXACT match, and
-  not asserted as one.
-  PER CASE 003's OWN FROZEN PRINCIPLE ("pass-by-absence is not
-  evidence of equivalence"): this ACCEPTABLE_EQUIVALENCE judgment is
-  an explicit curator judgment with a stated rationale, not a
-  pass-by-absence — it is not the same thing as the reference-side
-  applicability check silently passing on an unspecified field.
+- POPULATION: UNKNOWN — REASSESSED, Ground-Truth-based rationale
+  REMOVED. An earlier version of this file justified
+  ACCEPTABLE_EQUIVALENCE by citing that Case 003's own governing
+  systematic review (Kazemi et al. 2024) pools this same population
+  type into its pooled conclusion. That reasoning has been withdrawn:
+  citing the Ground-Truth-governing source to shape an Engine-Evidence
+  scope-equivalence judgment risks shaping Engine Evidence design
+  around knowledge drawn from Ground Truth, which is exactly the
+  category of influence Leakage Rule 9.1 exists to prevent — even
+  though it does not inject the Ground Truth's actual CONCLUSION into
+  the evidence text itself.
+  Reassessed using ONLY: (a) this case's ValidationUnit.population =
+  "Adults"; (b) Chang & Chen's actual trial population = postnatal
+  women with poor sleep; (c) the protocol/guard's own defined
+  ScopeEquivalence categories (EXACT / ACCEPTABLE_EQUIVALENCE /
+  MISMATCH / UNKNOWN). Neither the frozen VALIDATION_PROTOCOL.md nor
+  execution_readiness.py define a concrete threshold for how much
+  population-specificity does or does not disqualify equivalence —
+  and postpartum physiology / newborn-care-driven sleep disruption is
+  a real, plausible confound relative to general adult sleep
+  difficulty, not a trivial demographic technicality. Absent a
+  protocol-defined basis to confidently call this either an acceptable
+  equivalence or a confirmed mismatch, UNKNOWN is the honest
+  classification — not stretched to ACCEPTABLE_EQUIVALENCE to reach
+  READY. See _dimension_assessments() below: no EquivalenceJustification
+  is attached, and none is required for UNKNOWN.
 
 SEED-DATA COLLISION CHECK (execution_readiness.py, run for real below)
 seed_data.SLEEP_TEA_EVIDENCE contains a "Matricaria chamomilla" key
 (without an authority suffix) — the SAME latent-collision shape
 already disclosed for Melissa officinalis. Checked explicitly below,
 not assumed.
+
+EVIDENCE-CHANNEL FIX (applies to this rerun)
+gold_case_execution.execute_gold_case_with_readiness_gate() previously
+read GoldCase.engine_evidence and its own `evidence=` parameter as two
+independent, unsynchronized channels — the ORIGINAL run of this file
+set engine_evidence on the case copy but never passed evidence=
+explicitly, so the guard saw evidence (READY) while the engine received
+none (NOT_EVALUABLE minimum_evidence gate). That has been fixed at the
+wrapper level (_resolve_effective_evidence() in gold_case_execution.py);
+this file's call below is unchanged (it only ever set
+GoldCase.engine_evidence), and now works correctly as a side effect of
+the wrapper fix, not because this file itself changed how it calls in.
 
 WHAT THIS FILE DOES
 Attaches EngineEvidenceInput to a COPY of the Case 003 GoldCase
@@ -70,6 +89,14 @@ gold_case_execution.execute_gold_case_with_readiness_gate() — the
 single Phase 3C orchestration point — and reports the result. If and
 only if the guard returns READY does this file's own call chain reach
 the real BotanicalRDCandidateEngine.
+
+THIS IS A RERUN, NOT A REPLACEMENT OF THE ORIGINAL RESULT
+The original execution (READY, engine ran, minimum_evidence
+NOT_EVALUABLE due to the evidence-channel bug) is preserved as a
+documented finding in the project's conversation record and is not
+overwritten or reinterpreted here. This file, run again after both the
+wrapper fix and the population reassessment, produces a NEW, separate
+result reported on its own terms.
 """
 
 from __future__ import annotations
@@ -78,7 +105,7 @@ from dataclasses import replace
 
 from engine_evidence_input import EngineEvidenceInput, EngineEvidenceOrigin
 from execution_readiness import (
-    DimensionAssessment, EquivalenceJustification, ExecutionReadiness,
+    DimensionAssessment, ExecutionReadiness,
     ScopeDimension, ScopeEquivalence,
 )
 from gold_case_execution import execute_gold_case_with_readiness_gate, platform_output_for_gold_case
@@ -125,18 +152,17 @@ def _dimension_assessments() -> tuple:
         ),
         DimensionAssessment(
             dimension=ScopeDimension.POPULATION,
-            equivalence=ScopeEquivalence.ACCEPTABLE_EQUIVALENCE,
-            justification=EquivalenceJustification(
-                rationale=(
-                    "Postnatal women are a specific adult subpopulation, not "
-                    "an exact match to this case's general 'Adults' scope. "
-                    "Treated as acceptable equivalence, not exact, because "
-                    "this case's OWN governing source (Kazemi et al. 2024) "
-                    "pools this same population type into its general "
-                    "adult-sleep conclusion — see Case 003's own "
-                    "Applicability Limitation #2. Not a pass-by-absence."
-                ),
-                reference_id="CTM_2024_Kazemi_chamomile_sleep_SR",
+            equivalence=ScopeEquivalence.UNKNOWN,
+            detail=(
+                "Reassessed independently of Ground Truth (see module "
+                "docstring). ValidationUnit population is 'Adults'; the "
+                "trial's actual population is postnatal women with poor "
+                "sleep — a real, plausible physiological confound "
+                "(postpartum state / newborn-care sleep disruption), not "
+                "merely a demographic subset. No protocol-defined "
+                "threshold exists to confidently classify this as either "
+                "acceptable equivalence or a confirmed mismatch, so it is "
+                "recorded as UNKNOWN rather than stretched toward READY."
             ),
         ),
     )
@@ -164,7 +190,9 @@ def run_case_003_through_readiness_gate():
 if __name__ == "__main__":
     case, readiness, result_df = run_case_003_through_readiness_gate()
 
-    print("=== Execution Readiness ===")
+    print("=== RERUN — after evidence-channel fix + independent population reassessment ===")
+    print("(original run's READY/NOT_EVALUABLE result is preserved separately, not overwritten)")
+    print("\n=== Execution Readiness ===")
     print("case_id:", readiness.case_id)
     print("decision:", readiness.decision.value)
     print("reasons:", [r.value for r in readiness.reasons])

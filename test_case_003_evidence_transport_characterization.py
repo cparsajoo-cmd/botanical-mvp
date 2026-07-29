@@ -2,24 +2,28 @@
 Characterization test — Case 003 evidence-transport investigation.
 
 WHAT THIS RECORDS, AND WHY IT EXISTS
-This is NOT a regression test for a bug fix — no production behavior
-is changed anywhere in this repository as a result of this file.
-It records CURRENT, OBSERVED behavior of the existing, unmodified
-gold_case_execution.py API: GoldCase.engine_evidence (the field a
-curator populates on the case) and the `evidence=` parameter accepted
-by execute_gold_case_against_engine()/execute_gold_case_with_readiness
-_gate() are two SEPARATE things — populating the former does not
-automatically populate the latter. This was discovered while
-investigating why case_003_engine_evidence_run.py's first real
-execution reported "no direct evidence" despite EngineEvidenceInput
-.notes containing real text (see conversation record for the full
-characterization report).
+This file originally recorded the PRE-FIX behavior of
+gold_case_execution.py: GoldCase.engine_evidence and the `evidence=`
+parameter accepted by execute_gold_case_against_engine()/
+execute_gold_case_with_readiness_gate() were two independent channels,
+neither kept in sync with the other, which is why
+case_003_engine_evidence_run.py's first real execution reported "no
+direct evidence" despite EngineEvidenceInput.notes containing real
+text (see conversation record for the full characterization report).
 
-Both tests below use a minimal, deterministic, local-only engine
-construction (empty DataFrames, use_live_search=False) — no Supabase,
-no network. Neither test modifies botanical_rd_candidate_engine.py,
-gold_case_execution.py, execution_readiness.py, or Case 003's frozen
-Ground Truth file.
+gold_case_execution.py has SINCE BEEN CORRECTED (the evidence-channel-
+unification fix: _resolve_effective_evidence() +
+execute_gold_case_with_readiness_gate() now compute one effective
+evidence value and pass it to both the readiness guard and the
+engine). Test 1 below is unaffected by that fix (it calls
+execute_gold_case_against_engine() directly, whose own contract never
+changed — evidence is, and always was, only ever its own explicit
+parameter). Tests 2 and 3 exercise the WRAPPER and have been updated
+to assert its current, corrected behavior; their docstrings note what
+used to be true before the fix, for historical traceability.
+
+Neither this file nor its execution modifies botanical_rd_candidate_
+engine.py, or Case 003's frozen Ground Truth file.
 """
 
 import pandas as pd
@@ -51,14 +55,15 @@ def _evidence():
 
 
 def test_engine_evidence_on_gold_case_field_alone_is_not_used_by_execute_gold_case_against_engine():
-    """CHARACTERIZATION (current behavior, not a claim this is correct
-    or incorrect): setting GoldCase.engine_evidence directly and then
-    calling execute_gold_case_against_engine() WITHOUT also passing
-    evidence= explicitly results in the engine receiving ZERO evidence
-    for the candidate — because that function reads only its own
-    `evidence` parameter (default None), never gold_case.engine_evidence.
-    This reproduces case_003_engine_evidence_run.py's original
-    NOT_EVALUABLE result and confirms its exact mechanism."""
+    """STILL TRUE AFTER THE FIX — this function's own contract never
+    changed. execute_gold_case_against_engine() (called directly, not
+    through the wrapper) reads only its own `evidence` parameter,
+    never gold_case.engine_evidence — by design, documented in its own
+    docstring. Calling it directly with evidence=None still ignores a
+    populated GoldCase.engine_evidence field. The unification fix
+    lives in the WRAPPER (execute_gold_case_with_readiness_gate()),
+    which now computes the effective evidence before calling this
+    lower-level function — see tests below."""
     from dataclasses import replace
 
     case = build_gold_case_refgrounded_003_matricaria_chamomilla_sleep()
@@ -78,19 +83,16 @@ def test_engine_evidence_on_gold_case_field_alone_is_not_used_by_execute_gold_ca
     assert "No direct evidence is recorded" in gate["reason"]
 
 
-def test_engine_evidence_explicitly_passed_through_is_used_and_passes_the_gate():
-    """CHARACTERIZATION: passing evidence ONLY via the `evidence=`
-    parameter (matching execute_gold_case_against_engine()'s own
-    documented convention) — WITHOUT also setting it on
-    GoldCase.engine_evidence — is not sufficient to reach execution at
-    all via execute_gold_case_with_readiness_gate(): the readiness
-    guard checks GoldCase.engine_evidence specifically (see
-    execution_readiness.py's _ground_truth_ok/NO_ENGINE_EVIDENCE
-    check), sees it empty, and returns DEFER before the engine is ever
-    reached — regardless of what was passed via `evidence=`. This
-    isolates that the two evidence channels are read by two different
-    parts of the pipeline. See the next test for the invocation that
-    actually reaches a real PASSED gate."""
+def test_evidence_passed_only_via_parameter_now_reaches_execution_after_the_fix():
+    """UPDATED after the evidence-channel-unification fix.
+    BEFORE THE FIX, this exact call (evidence passed only via the
+    `evidence=` parameter, GoldCase.engine_evidence left empty)
+    returned DEFER/NO_ENGINE_EVIDENCE without ever reaching the
+    engine — because the guard checked only GoldCase.engine_evidence.
+    AFTER THE FIX: _resolve_effective_evidence() sees evidence is not
+    None and gold_case.engine_evidence is empty, so it uses the
+    explicit evidence for BOTH the readiness check and the engine
+    call — this now reaches READY and a real PASSED gate."""
     case = build_gold_case_refgrounded_003_matricaria_chamomilla_sleep()
     evidence = _evidence()
     dimension_assessments = (
@@ -98,7 +100,7 @@ def test_engine_evidence_explicitly_passed_through_is_used_and_passes_the_gate()
         DimensionAssessment(ScopeDimension.ROUTE, ScopeEquivalence.EXACT),
         DimensionAssessment(
             ScopeDimension.POPULATION, ScopeEquivalence.ACCEPTABLE_EQUIVALENCE,
-            justification=EquivalenceJustification(rationale="See case_003_engine_evidence_run.py."),
+            justification=EquivalenceJustification(rationale="Test fixture only — not Case 003's real judgment."),
         ),
     )
 
@@ -111,32 +113,19 @@ def test_engine_evidence_explicitly_passed_through_is_used_and_passes_the_gate()
         use_live_search=False,
     )
 
-    assert readiness.decision.value == "Defer"
-    assert readiness.reasons == (
-        __import__("execution_readiness").ReadinessReasonCode.NO_ENGINE_EVIDENCE,
-    )
-    assert result_df is None, "guard must refuse execution when GoldCase.engine_evidence is empty"
+    assert readiness.decision.value == "Ready", readiness.reasons
+    assert result_df is not None
+    gate = result_df.iloc[0]["Gate_Results"]["minimum_evidence"]
+    assert gate["status"].value == "passed"
+    assert gate["evidence"] == "Clinical / human evidence"
 
 
 def test_correct_invocation_requires_setting_both_independent_evidence_channels():
-    """CHARACTERIZATION — the more important finding, found while
-    fixing the test above: execute_gold_case_with_readiness_gate()
-    consults TWO INDEPENDENT evidence channels that are not kept in
-    sync by any existing code:
-      (a) GoldCase.engine_evidence — read by
-          execution_readiness.assess_execution_readiness()'s
-          NO_ENGINE_EVIDENCE check;
-      (b) the separate `evidence=` parameter — read by
-          execute_gold_case_against_engine() to actually build
-          evidence_df for the engine.
-    Passing evidence only via (b) (previous test) leaves (a) empty,
-    so the readiness guard reports NO_ENGINE_EVIDENCE and refuses to
-    execute at all — even though the evidence that would have worked
-    was right there in the `evidence=` argument. This test shows the
-    only invocation pattern that currently produces a real, correct
-    READY-and-executed result: setting BOTH GoldCase.engine_evidence
-    (via dataclasses.replace) AND the `evidence=` parameter to the
-    same content."""
+    """UPDATED after the fix: this pattern (both channels set to the
+    same content) still works — it was always correct, and the fix
+    makes it explicit rather than accidental. Kept as a regression
+    test for the "both populated and equal -> use shared content"
+    branch of _resolve_effective_evidence()."""
     from dataclasses import replace
 
     case = build_gold_case_refgrounded_003_matricaria_chamomilla_sleep()
@@ -173,7 +162,7 @@ if __name__ == "__main__":
 
     tests = [
         test_engine_evidence_on_gold_case_field_alone_is_not_used_by_execute_gold_case_against_engine,
-        test_engine_evidence_explicitly_passed_through_is_used_and_passes_the_gate,
+        test_evidence_passed_only_via_parameter_now_reaches_execution_after_the_fix,
         test_correct_invocation_requires_setting_both_independent_evidence_channels,
     ]
     failures = 0

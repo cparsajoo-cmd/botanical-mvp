@@ -130,6 +130,21 @@ _EMA_INDICATION_1_VERBATIM = (
     "Traditional herbal medicinal product for relief of mild symptoms "
     "of mental stress and to aid sleep."
 )
+# Fixed, explicit date this source extraction was actually performed —
+# deliberately NOT date.today(). A Gold Case's provenance must not
+# change merely because its builder is executed on a different day
+# (it will later be locked/serialized/hashed, and a nondeterministic
+# field would make that hash unreproducible).
+_EXTRACTION_DATE = date(2026, 7, 29)
+
+
+def _melissa_infusion_preparation() -> PreparationSpec:
+    """The ONE PreparationSpec both the ReferenceDescriptor (what the
+    source document covers) and the ValidationUnit (what the case
+    evaluates) use — see _EMA_PREPARATION_LOCATOR. Sharing one helper
+    prevents the two objects silently diverging (e.g. one carrying
+    source_status="native" and the other omitting it)."""
+    return PreparationSpec(dosage_form="Infusion", solvent="water", source_status="native")
 
 
 def _build_reference_descriptor() -> ReferenceDescriptor:
@@ -141,9 +156,7 @@ def _build_reference_descriptor() -> ReferenceDescriptor:
         jurisdiction="EU",
         taxon="Melissa officinalis L.",
         plant_part="leaf",
-        preparation=PreparationSpec(
-            dosage_form="Infusion", solvent="water", source_status="native",
-        ),
+        preparation=_melissa_infusion_preparation(),
         # EMA-grounded population, verbatim from Section 4.2 Posology —
         # never "Adults" alone; the monograph explicitly names three
         # age bands and this case must not be later described as
@@ -202,7 +215,7 @@ def _build_case_provenance() -> list:
             document_version=_EMA_DOCUMENT_VERSION,
             locator=_EMA_INDICATION_LOCATOR,
             supported_field="resolved_outcomes[domain=Indication/Evidence, subject='sleep']",
-            extraction_date=date.today(),
+            extraction_date=_EXTRACTION_DATE,
             curator=None,
             verification_status=VerificationStatus.UNVERIFIED,
         ),
@@ -211,7 +224,7 @@ def _build_case_provenance() -> list:
             document_version=_EMA_DOCUMENT_VERSION,
             locator=_EMA_PREPARATION_LOCATOR,
             supported_field="validation_unit.preparation (Infusion/water)",
-            extraction_date=date.today(),
+            extraction_date=_EXTRACTION_DATE,
             curator=None,
             verification_status=VerificationStatus.UNVERIFIED,
         ),
@@ -227,7 +240,7 @@ def build_gold_case_refgrounded_001_melissa_officinalis_sleep() -> GoldCase:
     unit = ValidationUnit(
         taxon="Melissa officinalis L.",
         plant_part="leaf",
-        preparation=PreparationSpec(dosage_form="Infusion", solvent="water"),
+        preparation=_melissa_infusion_preparation(),
         population="Adolescents over 12 years of age, adults and elderly",
         route_of_administration="Oral",
         # Platform-vocabulary mapping, not a verbatim EMA term — see

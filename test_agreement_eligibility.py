@@ -10,8 +10,9 @@ from datetime import date
 
 from agreement_eligibility import (
     ADOPTED_CONDITIONAL_POLICY, AgreementEligibility, AgreementIneligibilityReason,
-    ConditionalMappingPolicy, assess_agreement_eligibility,
-    derive_expected_output_from_resolved_outcomes, map_assertion_state_to_direction,
+    ConditionalMappingPolicy, ExpectedOutputDirectionConflictError,
+    assess_agreement_eligibility, derive_expected_output_from_resolved_outcomes,
+    map_assertion_state_to_direction,
 )
 from applicability_check import ReferenceDomain, check_applicability
 from assertion_vocabulary import AssertionState, AssertionType, CurationStatus, TransformationType
@@ -175,6 +176,40 @@ def test_conditional_becomes_eligible_if_a_policy_is_explicitly_passed():
     assert result.mapped_direction == DecisionDirection.HOLD
 
 
+def test_present_maps_positive_but_expected_output_negative_is_mismatch():
+    """Required test 1: PRESENT maps POSITIVE, but ExpectedOutput is
+    NEGATIVE -> NOT_ELIGIBLE / EXPECTED_OUTPUT_MAPPING_MISMATCH. A
+    manually supplied ExpectedOutput must never silently override, or
+    be silently trusted over, the prospective mapping."""
+    case = _case_with_single_claim(ReferenceDomain.INDICATION_EVIDENCE, AssertionState.PRESENT)
+    case.expected_output = ExpectedOutput(expected_decision_direction=DecisionDirection.NEGATIVE)
+    result = assess_agreement_eligibility(case)
+    assert result.eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert result.reason == AgreementIneligibilityReason.EXPECTED_OUTPUT_MAPPING_MISMATCH
+    assert result.mapped_direction == DecisionDirection.POSITIVE
+
+
+def test_absent_maps_negative_but_expected_output_positive_is_mismatch():
+    """Required test 2: ABSENT maps NEGATIVE, but ExpectedOutput is
+    POSITIVE -> NOT_ELIGIBLE / EXPECTED_OUTPUT_MAPPING_MISMATCH."""
+    case = _case_with_single_claim(ReferenceDomain.INDICATION_EVIDENCE, AssertionState.ABSENT)
+    case.expected_output = ExpectedOutput(expected_decision_direction=DecisionDirection.POSITIVE)
+    result = assess_agreement_eligibility(case)
+    assert result.eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert result.reason == AgreementIneligibilityReason.EXPECTED_OUTPUT_MAPPING_MISMATCH
+    assert result.mapped_direction == DecisionDirection.NEGATIVE
+
+
+def test_matching_expected_output_is_eligible_not_mismatch():
+    """Sanity complement to the two mismatch tests: an exact match is
+    still ELIGIBLE, not accidentally caught by the new check."""
+    case = _case_with_single_claim(ReferenceDomain.INDICATION_EVIDENCE, AssertionState.PRESENT)
+    case.expected_output = ExpectedOutput(expected_decision_direction=DecisionDirection.POSITIVE)
+    result = assess_agreement_eligibility(case)
+    assert result.eligibility == AgreementEligibility.ELIGIBLE
+    assert result.reason is None
+
+
 # ---------------------------------------------------------------------
 # derive_expected_output_from_resolved_outcomes()
 # ---------------------------------------------------------------------
@@ -199,6 +234,30 @@ def test_derive_leaves_unchanged_for_safety_only_case():
     derived = derive_expected_output_from_resolved_outcomes(case)
     assert derived is case.expected_output
     assert derived.expected_decision_direction is None
+
+
+def test_derive_does_not_overwrite_a_matching_existing_direction():
+    """Required test 3: derive does not overwrite a matching existing
+    direction — returns the SAME object (nothing to do), not a new,
+    merely equal-valued one."""
+    case = _case_with_single_claim(ReferenceDomain.INDICATION_EVIDENCE, AssertionState.PRESENT)
+    case.expected_output = ExpectedOutput(expected_decision_direction=DecisionDirection.POSITIVE)
+    derived = derive_expected_output_from_resolved_outcomes(case)
+    assert derived is case.expected_output
+    assert derived.expected_decision_direction == DecisionDirection.POSITIVE
+
+
+def test_derive_raises_on_conflicting_existing_direction():
+    """Required test 4: derive rejects (raises) a conflicting existing
+    direction — never silently overwrites it, never silently keeps it
+    while pretending derivation succeeded."""
+    case = _case_with_single_claim(ReferenceDomain.INDICATION_EVIDENCE, AssertionState.PRESENT)
+    case.expected_output = ExpectedOutput(expected_decision_direction=DecisionDirection.NEGATIVE)
+    try:
+        derive_expected_output_from_resolved_outcomes(case)
+        raise AssertionError("expected ExpectedOutputDirectionConflictError, none was raised")
+    except ExpectedOutputDirectionConflictError:
+        pass  # expected
 
 
 if __name__ == "__main__":

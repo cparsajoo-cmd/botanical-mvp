@@ -136,6 +136,42 @@ def _locked_indication_evidence_case(case_id="ie1", taxon="EligibleTaxon"):
     return lock_gold_case(case)
 
 
+def _locked_mapping_mismatch_case(case_id="mismatch1", taxon="MismatchTaxon"):
+    """Same shape as _locked_indication_evidence_case() (PRESENT ->
+    should map to POSITIVE), but with expected_output deliberately set
+    to NEGATIVE — a manually supplied direction that conflicts with
+    what the AssertionState mapping produces."""
+    unit = ValidationUnit(
+        taxon=taxon, indication="TestIndication", jurisdiction="EU",
+        preparation=PreparationSpec(dosage_form="Infusion"),
+    )
+    ref = ReferenceDescriptor(reference_id=f"{case_id}_ref", source_type="EMA_HMPC", version="v1")
+    claim = ReferenceClaim(
+        domain=ReferenceDomain.INDICATION_EVIDENCE, assertion_type=AssertionType.SUPPORTS_INDICATION,
+        subject="sleep", assertion_state=AssertionState.PRESENT,
+        source_reference_id=ref.reference_id, source_locator="sec 1",
+        evidence_text=NormalizedEvidenceText("x", "y", TransformationType.VERBATIM, "1.0", "sec 1"),
+    )
+    gref = GoldCaseReference(reference=ref, claims=[claim])
+    gref.applicability_by_domain[ReferenceDomain.INDICATION_EVIDENCE] = check_applicability(
+        ref, unit, ReferenceDomain.INDICATION_EVIDENCE,
+    )
+
+    case = GoldCase(
+        case_id=case_id, validation_unit=unit, references=[gref],
+        expected_output=ExpectedOutput(expected_decision_direction=DecisionDirection.NEGATIVE),  # conflicts with PRESENT->POSITIVE
+        dataset_split=DatasetSplit.LOCKED_HOLDOUT,
+        leakage_control=LeakageControl(engine_output_observed_before_finalization=False),
+        curation_status=CurationStatus.REFERENCE_CURATED,
+        engine_evidence=[EngineEvidenceInput(
+            scientific_name=taxon, target_indication="TestIndication",
+            notes="A randomized controlled trial reported improved outcomes versus placebo.",
+        )],
+    )
+    case.resolved_outcomes = resolve_expected_outcomes(case)
+    return lock_gold_case(case)
+
+
 # ---------------------------------------------------------------------
 # _derive_direction_from_decision_class
 # ---------------------------------------------------------------------
@@ -292,6 +328,25 @@ def test_indication_evidence_case_produces_full_direction_agreement():
     from agreement_eligibility import AgreementEligibility
     result = run.agreement_eligibility[case.case_id]
     assert result.eligibility == AgreementEligibility.ELIGIBLE
+
+
+def test_mapping_mismatch_case_excluded_from_denominator_with_exact_reason():
+    """Required test 5: a case whose manually supplied ExpectedOutput
+    conflicts with the AssertionState->DecisionDirection mapping is
+    excluded from decision_direction_agreement's denominator, with the
+    exact EXPECTED_OUTPUT_MAPPING_MISMATCH reason recorded — not
+    silently skipped, and never scored using the manual value."""
+    _reset_engine_globals()
+    case = _locked_mapping_mismatch_case()
+    run = build_evaluation_run([case])
+    direction_metric = next(m for m in run.results if m.metric_name == "decision_direction_agreement")
+    assert direction_metric.status == MetricStatus.NOT_COMPUTABLE
+
+    from agreement_eligibility import AgreementEligibility, AgreementIneligibilityReason
+    result = run.agreement_eligibility[case.case_id]
+    assert result.eligibility == AgreementEligibility.NOT_ELIGIBLE
+    assert result.reason == AgreementIneligibilityReason.EXPECTED_OUTPUT_MAPPING_MISMATCH
+    assert result.mapped_direction == DecisionDirection.POSITIVE  # PRESENT -> POSITIVE, not the case's own NEGATIVE
 
 
 def test_safety_serious_resolved_outcome_correctly_detected_zero_false_negatives():

@@ -75,6 +75,12 @@ class AgreementIneligibilityReason(str, Enum):
     EXPECTED_OUTPUT_NOT_SPECIFIED = (
         "GoldCase.expected_output.expected_decision_direction is not set"
     )
+    EXPECTED_OUTPUT_MAPPING_MISMATCH = (
+        "GoldCase.expected_output.expected_decision_direction disagrees with "
+        "the direction the AssertionState-to-DecisionDirection mapping "
+        "produces from Ground Truth — the manually supplied value is never "
+        "silently trusted over, or silently repaired to match, the mapping"
+    )
 
 
 class ConditionalMappingPolicy(str, Enum):
@@ -133,6 +139,17 @@ def map_assertion_state_to_direction(
     return None  # NOT_STATED, INSUFFICIENT, or any future AssertionState value
 
 
+class ExpectedOutputDirectionConflictError(Exception):
+    """Raised by derive_expected_output_from_resolved_outcomes() when
+    GoldCase.expected_output already carries a non-None
+    expected_decision_direction that DISAGREES with the direction the
+    AssertionState-to-DecisionDirection mapping would produce. Mirrors
+    gold_case_execution.EvidenceChannelConflictError's fail-closed
+    philosophy: never silently prefer the existing manually-supplied
+    value over the mapping, and never silently overwrite the existing
+    value with the mapping either."""
+
+
 @dataclass(frozen=True)
 class AgreementEligibilityResult:
     case_id: str
@@ -159,9 +176,15 @@ def assess_agreement_eligibility(
       2. That outcome's assertion_state maps to a DecisionDirection
          under the given/adopted ConditionalMappingPolicy.
       3. GoldCase.expected_output.expected_decision_direction is set.
-    Does NOT check that the mapped direction and the case's own
-    expected_output agree with each other — that consistency check is
-    a documented open question (design doc §9), not implemented here.
+      4. That set value EXACTLY EQUALS the mapped direction from step
+         2 — a manually supplied ExpectedOutput that disagrees with
+         what Ground Truth's own mapping produces makes the case
+         NOT_ELIGIBLE (reason EXPECTED_OUTPUT_MAPPING_MISMATCH), never
+         silently trusted, and never silently repaired. This is what
+         actually makes the mapping layer meaningful — without this
+         check, evaluation_run.py would score whatever expected_output
+         says, regardless of whether it agrees with the prospective
+         mapping this module exists to define.
 
     NOTE ON EXECUTION ORDER (design doc §7): this function cannot
     verify that expected_output was set BEFORE EngineEvidenceInput
@@ -197,11 +220,23 @@ def assess_agreement_eligibility(
             detail=f"assertion_state={outcome.assertion_state!r}",
         )
 
-    if gold_case.expected_output.expected_decision_direction is None:
+    expected_direction = gold_case.expected_output.expected_decision_direction
+    if expected_direction is None:
         return AgreementEligibilityResult(
             case_id=gold_case.case_id, eligibility=AgreementEligibility.NOT_ELIGIBLE,
             reason=AgreementIneligibilityReason.EXPECTED_OUTPUT_NOT_SPECIFIED,
             mapped_direction=mapped_direction,
+        )
+
+    if expected_direction != mapped_direction:
+        return AgreementEligibilityResult(
+            case_id=gold_case.case_id, eligibility=AgreementEligibility.NOT_ELIGIBLE,
+            reason=AgreementIneligibilityReason.EXPECTED_OUTPUT_MAPPING_MISMATCH,
+            mapped_direction=mapped_direction,
+            detail=(
+                f"expected_output.expected_decision_direction={expected_direction!r} "
+                f"!= mapped_direction={mapped_direction!r}"
+            ),
         )
 
     return AgreementEligibilityResult(
@@ -215,22 +250,32 @@ def derive_expected_output_from_resolved_outcomes(
     conditional_policy: Optional[ConditionalMappingPolicy] = None,
     case_specific_override: Optional[DecisionDirection] = None,
 ) -> ExpectedOutput:
-    """Phase 2 — returns a NEW ExpectedOutput (dataclasses.replace;
-    gold_case and its existing expected_output are never mutated) with
-    expected_decision_direction populated via
-    map_assertion_state_to_direction(), when derivable from exactly
-    one eligible-domain SELECTED outcome. If not derivable (zero or
-    multiple eligible outcomes, or an unmapped assertion_state), the
-    existing expected_output is returned completely unchanged — this
-    function never clears or overwrites a value it can't confidently
-    derive, and never invents a direction.
+    """Phase 2 — returns an ExpectedOutput with expected_decision_
+    direction populated via map_assertion_state_to_direction(), when
+    derivable from exactly one eligible-domain SELECTED outcome.
 
-    This does NOT populate expected_gate_results — gate-level
-    derivation would require a domain-to-gate correspondence table
-    this phase does not implement (see the design document's open
-    question on gate_level_agreement, §9/§3) — expected_gate_results
-    remains curator-supplied only, exactly as before this module
-    existed.
+    Behavior, by case:
+      - Not derivable (zero/multiple eligible outcomes, or an unmapped
+        assertion_state): returns gold_case.expected_output completely
+        UNCHANGED (same object) — never invents a direction.
+      - Derivable, and gold_case.expected_output.expected_decision_
+        direction is currently None: returns a NEW ExpectedOutput
+        (dataclasses.replace; gold_case itself is never mutated) with
+        the mapped direction populated.
+      - Derivable, and the existing direction already EQUALS the
+        mapped direction: returns gold_case.expected_output UNCHANGED
+        (the same object, not a new equal-valued one) — nothing to do.
+      - Derivable, but the existing direction CONFLICTS with the
+        mapped direction: raises ExpectedOutputDirectionConflictError.
+        Never silently overwrites the existing value, and never
+        silently keeps it while pretending derivation succeeded —
+        this is a real inconsistency the caller must resolve.
+
+    Does NOT populate expected_gate_results — gate-level derivation
+    would require a domain-to-gate correspondence table this phase
+    does not implement (see the design document's open question on
+    gate_level_agreement, §9/§3) — expected_gate_results remains
+    curator-supplied only, exactly as before this module existed.
     """
     eligible_outcomes = [
         o for o in gold_case.resolved_outcomes
@@ -246,4 +291,19 @@ def derive_expected_output_from_resolved_outcomes(
     if mapped_direction is None:
         return gold_case.expected_output
 
-    return replace(gold_case.expected_output, expected_decision_direction=mapped_direction)
+    existing_direction = gold_case.expected_output.expected_decision_direction
+
+    if existing_direction is None:
+        return replace(gold_case.expected_output, expected_decision_direction=mapped_direction)
+
+    if existing_direction == mapped_direction:
+        return gold_case.expected_output
+
+    raise ExpectedOutputDirectionConflictError(
+        f"GoldCase {gold_case.case_id!r}: existing expected_output."
+        f"expected_decision_direction={existing_direction!r} conflicts with "
+        f"the mapped direction={mapped_direction!r} derived from "
+        f"assertion_state={eligible_outcomes[0].assertion_state!r}. Refusing "
+        f"to silently overwrite or silently keep either value — resolve the "
+        f"conflict explicitly before deriving."
+    )

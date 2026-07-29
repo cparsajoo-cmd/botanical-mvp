@@ -110,6 +110,24 @@ None of these three limitations are resolved or worked around here —
 they are recorded as real, disclosed constraints on how strongly this
 case's Ground Truth should be read.
 
+PASS-BY-ABSENCE IS NOT EVIDENCE OF EQUIVALENCE (permanent principle,
+not specific to this one case)
+applicability_check.py's null-handling convention — an unspecified
+field on the reference side is treated as "covers the general
+category" and therefore PASSES that applicability dimension — is a
+structural default, not a scientific finding. This case's
+applicability_result.applicable == True for INDICATION_EVIDENCE holds
+because preparation and population were left unspecified on the
+reference, NOT because Infusion/water or "Adults" was verified against
+the governing review's pooled data. Any later stage of this validation
+program — the Execution Readiness Guard's DimensionAssessment values,
+a curator's engine-evidence scope-equivalence judgment, or a future
+reviewer reading this case's applicability=True result — must treat
+this pass as "no documented mismatch," never as "confirmed match."
+Concretely: this case's eventual ScopeEquivalence for preparation and
+population should be assessed as UNKNOWN, never EXACT, purely on the
+strength of this reference's applicability check having passed.
+
 WHAT THIS FILE DELIBERATELY DOES NOT DO (per explicit instruction)
 - Does not construct or infer any EngineEvidenceInput.
 - Does not call gold_case_execution.execute_gold_case_against_engine()
@@ -130,7 +148,7 @@ from assertion_vocabulary import (
     ExtractionConfidenceLevel, GoldCaseKind, TransformationType,
 )
 from field_provenance import FieldProvenance, VerificationStatus
-from gold_case import GoldCase, GoldCaseReference, RiskStratum
+from gold_case import GoldCase, GoldCaseReference
 from reference_claim import ExtractionConfidence, NormalizedEvidenceText, ReferenceClaim
 from reference_descriptor import ReferenceDescriptor
 from resolved_expected_outcome import resolve_expected_outcomes
@@ -300,12 +318,17 @@ def build_gold_case_refgrounded_003_matricaria_chamomilla_sleep() -> GoldCase:
     case = GoldCase(
         case_id="refgrounded_003_matricaria_chamomilla_sleep",
         validation_unit=unit,
-        # Mixed/partial finding in the governing source — see module
-        # docstring's CONDITIONAL explanation; CONFLICTING_EVIDENCE is
-        # the closest existing RiskStratum to a single source reporting
-        # an internally mixed result (not multiple sources disagreeing,
-        # but flagged the same way for downstream visibility).
-        risk_strata=[RiskStratum.CONFLICTING_EVIDENCE],
+        # NO RiskStratum applied. On review, none of the eleven
+        # existing values correctly describe "one source reports an
+        # internally mixed/partial finding" — CONFLICTING_EVIDENCE
+        # specifically denotes disagreement BETWEEN evidence/sources,
+        # not a single systematic review's own qualified conclusion
+        # (which is exactly what AssertionState.CONDITIONAL already
+        # exists to represent — see module docstring). Force-fitting
+        # CONFLICTING_EVIDENCE here would misclassify the case for
+        # anyone filtering/reporting by risk stratum later. Left empty
+        # deliberately, not omitted by oversight.
+        risk_strata=[],
         references=[gref],
         case_provenance=_build_case_provenance(),
         kind=GoldCaseKind.REFERENCE_GROUNDED,

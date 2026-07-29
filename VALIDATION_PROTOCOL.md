@@ -1,7 +1,7 @@
 # Validation Protocol — Reference-Grounded Validation Program
 
-Status: **DRAFT — pending Hamid's final confirmation of this revision** (Persian v0.1 content approved subject to the three corrections below; this is that corrected revision, translated to English)
-Version: v0.2 (Phase 3A.1)
+Status: **DRAFT — pending Hamid's final confirmation of this revision** (v0.3 adopts the Prospective Claim-to-Decision Mapping implementation into the protocol; see Section 14 and Section 15's Change History)
+Version: v0.3 (Phase 4 — Evaluation Layer)
 Track: `GoldCase` / Reference-Grounded Validation (v4). The `ValidationCaseProtocol`/`ExpertPanel` track is explicitly out of scope for this protocol — see Section 3.
 
 This document is written once and governs every future case (case 1 through case N). Case-specific decisions (which plant, which document) do not belong here — they are filled into `VALIDATION_CASE_TEMPLATE.md`, under the rules defined here.
@@ -129,13 +129,47 @@ The actual ranking table, taken directly from `reference_precedence.py`'s `_DOMA
 - **Construct validity of the metrics** — only two metrics are implemented (`decision_direction_agreement`, `safety_serious_false_negative_rate`); gate-level agreement, top-k inclusion, and GRADE calibration are not implemented. A case could appear "in agreement" on these two metrics while disagreeing on dimensions they don't capture — this must be disclosed, never hidden.
 - **Reactivity** — the very fact that this case is being built to demonstrate the pipeline works could unconsciously bias case selection toward a favorable outcome.
 
-## 14. Change History
+## 14. Prospective Claim-to-Decision Mapping
+
+Formally adopts the implementation in `agreement_eligibility.py` (Phases 1–2) and `evaluation_run.py` (Phase 3), built from the "Prospective Claim-to-Decision Mapping Proposal" design document and its accepted revisions. This section governs how `GoldCase.resolved_outcomes` (claim-level Ground Truth) may be compared against the engine's candidate-level output for the `decision_direction_agreement` metric — a question the original v0.2 protocol left open, and which Case 003 showed cannot be answered ad hoc without risking post-outcome specification.
+
+**14.1 Domain policy.** `ReferenceDomain.INDICATION_EVIDENCE` is presently the **only** domain eligible for whole-case `decision_direction_agreement` (`agreement_eligibility._ELIGIBLE_DOMAINS`). This is **current protocol policy, based on today's Engine semantics — specifically, that `minimum_evidence` and the overall opportunity score are the only parts of the current decision layer that reason about the kind of thing `INDICATION_EVIDENCE` claims describe — not a permanent architectural limit.** `SAFETY`, `IDENTITY_QUALITY`, and `REGULATORY_STATUS` map to their corresponding engine gates individually, not to the whole-case decision; `PREPARATION_SPEC` currently maps to nothing. If a future Engine version incorporates additional domains directly into candidate-level decisions, this policy may be revised without redesigning the mapping architecture itself.
+
+**14.2 AssertionState → DecisionDirection mapping** (`agreement_eligibility.map_assertion_state_to_direction()`):
+
+| AssertionState | Maps to | Basis |
+|---|---|---|
+| `PRESENT` | `DecisionDirection.POSITIVE` | Unconditional |
+| `ABSENT` | `DecisionDirection.NEGATIVE` | Unconditional |
+| `NOT_STATED` | *(none — not eligible)* | The source never addressed the question; nothing to map |
+| `INSUFFICIENT` | *(none — not eligible)* | Same reasoning as `NOT_STATED` |
+| `CONDITIONAL` | *(none — unresolved)* | **Deliberately unresolved under the currently adopted policy** (`ADOPTED_CONDITIONAL_POLICY = ConditionalMappingPolicy.UNRESOLVED`). Two other options (mapping to `HOLD`, or a case-specific override) remain implemented and available via an explicit override argument, but neither is adopted. This is an intentional, documented open question — not an oversight — kept open until more Reference-Grounded cases have been completed and there is empirical basis to decide among the three options. Do not resolve this by editing a single case; it is a protocol-level decision.
+
+**14.3 Eligibility requirements** (`agreement_eligibility.assess_agreement_eligibility()`), all four required:
+1. Exactly one `SELECTED` resolved outcome exists in a currently eligible domain (14.1). Zero such outcomes, or more than one (ambiguous), makes the case `NOT_ELIGIBLE`.
+2. That outcome's `AssertionState` maps to a `DecisionDirection` under 14.2.
+3. `GoldCase.expected_output.expected_decision_direction` is set (prospectively — see 14.6).
+4. That set value is **exactly equal** to the mapped direction from step 2.
+
+**14.4 Mapping mismatch.** If requirement 4 fails — a manually supplied `expected_decision_direction` disagrees with what the mapping in 14.2 produces from Ground Truth — the case is recorded `NOT_ELIGIBLE`, reason `EXPECTED_OUTPUT_MAPPING_MISMATCH`. **This must never be silently repaired (by overwriting either value) and never silently scored using the manually supplied value instead of the mapped one.** A mismatch is treated as a real inconsistency requiring curator attention, not an implementation detail to route around.
+
+**14.5 Derivation behavior** (`agreement_eligibility.derive_expected_output_from_resolved_outcomes()`), for populating `expected_decision_direction` from Ground Truth:
+- If the existing value is `None` and a direction is derivable (14.2/14.3): populate it, returning a new `ExpectedOutput`.
+- If the existing value already equals the derived direction: return the existing object **unchanged** — never a needless replacement.
+- If the existing value **conflicts** with the derived direction: raise `ExpectedOutputDirectionConflictError` explicitly. **Never silently overwrite an existing conflicting value, and never silently keep it while treating derivation as having succeeded.**
+
+**14.6 Prospective-order requirement.** `ExpectedOutput.expected_decision_direction` **must be set and frozen before `EngineEvidenceInput` is introduced for a case** — the same ordering discipline as Leakage Rule 9.1, extended to the expected-outcome side rather than only the evidence side. Defining or adjusting the expected direction after the engine's actual output has already been observed is post-outcome specification and invalidates any resulting agreement measurement, regardless of whether the eligibility checks in 14.3 otherwise pass. **The current implementation cannot verify this ordering programmatically** — nothing in the data model timestamps when a field was set, and adding such tracking was explicitly out of scope for this phase. This remains a **required curation/process control**, enforced the same way Leakage Rule 9.1 already is: by documented construction order and reviewer attention, not by a runtime check. A case that has Engine Evidence already attached when `expected_decision_direction` is first set or changed must be treated as ineligible for an unbiased `decision_direction_agreement` measurement, and this must be stated explicitly in that case's own documentation (see Case 003 as the working example of this exact situation).
+
+**14.7 Evaluation reporting.** `build_evaluation_run()` must compute and record an explicit `AgreementEligibilityResult` (`EvaluationRun.agreement_eligibility`, keyed by `case_id`) for **every** case that executes successfully — both `ELIGIBLE` and `NOT_ELIGIBLE`, each with its specific reason. **No executable case may be silently omitted from this record.** Only `ELIGIBLE` cases contribute to the `decision_direction_agreement` numerator/denominator; `NOT_ELIGIBLE` cases are excluded from that metric but still appear, by name and reason, in `agreement_eligibility`. This does not change `safety_serious_false_negative_rate`, which was never derived from `expected_output`/`DecisionDirection` and is unaffected by this section.
+
+## 15. Change History
 
 | Version | Date | Summary |
 |---|---|---|
 | v0.1 | 2026-07-29 | Initial draft (Persian) — objective, scope, ground truth/leakage rules, success/failure criteria, limitations, threats to validity |
 | v0.2 | 2026-07-29 | Added Definitions/Glossary (Section 1); added this Change History (Section 14); translated to English; no substantive rule changed from v0.1 |
+| v0.3 | 2026-07-29 | Added Section 14, Prospective Claim-to-Decision Mapping — formally adopts `agreement_eligibility.py`/`evaluation_run.py`'s domain policy, AssertionState mapping (CONDITIONAL left unresolved), eligibility requirements, mapping-mismatch handling, derivation behavior, the prospective-order requirement (documented as a process control, not programmatically enforced), and mandatory per-case eligibility reporting. No prior section's rules changed; Change History renumbered to Section 15. |
 
 ---
 
-**Status of this document:** draft, pending Hamid's confirmation of this specific revision. Sections 3 (track selection), 6 (source-selection rule), and 10/11 (success/failure criteria) are the ones most worth a final check before use in Phase 3B.
+**Status of this document:** draft, pending Hamid's confirmation of this specific revision. Sections 3 (track selection), 6 (source-selection rule), 10/11 (success/failure criteria), and 14 (Prospective Claim-to-Decision Mapping — newly adopted, especially the still-open CONDITIONAL question in 14.2) are the ones most worth a final check before use in Phase 4/Case 004.

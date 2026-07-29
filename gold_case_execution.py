@@ -190,3 +190,45 @@ def platform_output_for_gold_case(result_df: pd.DataFrame) -> dict:
         "grade_certainty": row.get("GRADE_Certainty"),
         "rd_opportunity_score": row.get("R&D_Opportunity_Score"),
     }
+
+
+def execute_gold_case_with_readiness_gate(
+    gold_case: GoldCase,
+    dimension_assessments: tuple = (),
+    evidence: list = None,
+    compound_name: str = "primary_compound",
+    compound_profiles_df: pd.DataFrame = None,
+    scientific_evidence_df: pd.DataFrame = None,
+    use_live_search: bool = False,
+):
+    """Phase 3C — the single orchestration point: assess_execution_
+    readiness() is called first; execute_gold_case_against_engine() is
+    only ever called if that result is READY. No new decision layer —
+    this function makes no readiness judgment of its own, it only
+    enforces the existing execution_readiness.ExecutionReadiness
+    decision. Not a redesign of either module.
+
+    Returns (ExecutionReadinessResult, result_df_or_None). result_df is
+    None whenever decision != READY — the engine is never instantiated
+    or run in that case.
+    """
+    from execution_readiness import (
+        ExecutionReadiness, ExecutionReadinessInput, assess_execution_readiness,
+    )
+
+    readiness = assess_execution_readiness(
+        ExecutionReadinessInput(gold_case=gold_case, dimension_assessments=dimension_assessments)
+    )
+
+    if readiness.decision != ExecutionReadiness.READY:
+        return readiness, None
+
+    result_df = execute_gold_case_against_engine(
+        gold_case,
+        evidence=evidence,
+        compound_name=compound_name,
+        compound_profiles_df=compound_profiles_df,
+        scientific_evidence_df=scientific_evidence_df,
+        use_live_search=use_live_search,
+    )
+    return readiness, result_df

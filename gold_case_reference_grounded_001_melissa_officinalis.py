@@ -123,6 +123,21 @@ are resolved — resolving only one is not sufficient to proceed. The
 case is not failed, retired, locked, or approved for holdout
 execution; it is a curation-complete Reference-Grounded GoldCase
 awaiting execution preconditions.
+
+PHASE 3C UPDATE — 2026-07-29
+The Execution Readiness / Contamination Guard (execution_readiness.py)
+is now implemented, tested, and integrated at the single orchestration
+point gold_case_execution.execute_gold_case_with_readiness_gate().
+Running this case through that gate (no dimension_assessments supplied
+yet — condition 1 above is still unresolved) produced:
+    decision: DEFER
+    reasons: NO_ENGINE_EVIDENCE, DIMENSION_UNKNOWN (x3 — preparation/
+              population/route not yet assessed, since no Engine
+              Evidence exists to assess)
+As expected, the engine was NOT instantiated or executed — the
+orchestration gate refused execution before reaching
+execute_gold_case_against_engine(). This confirms the deferred status
+above is now mechanically enforced, not just documented.
 """
 
 from __future__ import annotations

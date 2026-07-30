@@ -31,27 +31,69 @@ from supabase_client import get_supabase_client
 #      behave identically to every caller. No existing caller needs to
 #      change to tolerate either case.
 #
-#   2. WRITES require the five columns to already exist on the real
-#      Supabase table. This is not optional or best-effort.
-#      save_evidence_record()'s single insert() call either succeeds
-#      with every field in the dict (including the five new ones) or
-#      fails as one unit — there is no partial-column insert in
-#      PostgREST, so a missing column raises for the WHOLE row, not
-#      just the new fields.
+#   2. WRITES prefer all five columns when they exist. Against an older
+#      table, save_evidence_record() detects PostgREST PGRST204 missing-
+#      column errors and retries after removing only the unavailable
+#      optional applicability fields. Core evidence fields remain strict.
 #
-#   3. save_evidence_record() IS NOT BACKWARD-COMPATIBLE WITH AN
-#      UNMIGRATED PRODUCTION TABLE. Deploying this code against a
-#      evidence_records table that does not yet have the five new
-#      columns will make every new evidence save fail (raising, or
-#      surfacing as a per-record error — see the inline comment at the
-#      insert call site for exactly which callers catch it and which
-#      propagate it). The five columns MUST be added to the real
-#      Supabase table before or atomically with this code deploying —
-#      there is no safe order that avoids this, because this module
-#      does not create the columns itself, matching every other
-#      persistence module in this repository (no migration file exists
-#      anywhere in this codebase for any table).
+#   3. This makes evidence collection backward-compatible with an
+#      unmigrated production table while preserving the richer fields
+#      automatically once the columns are added.
 # ======================================================================
+
+
+
+
+_OPTIONAL_EVIDENCE_COLUMNS = {
+    "applicability_classification",
+    "applicability_rationale",
+    "applicability_evaluated_dimensions",
+    "applicability_missing_dimensions",
+    "applicability_detected_mismatches",
+}
+
+
+def _missing_postgrest_column(exc):
+    """Extract a missing column name from a PostgREST PGRST204 error."""
+    text = str(exc)
+    if "PGRST204" not in text and "schema cache" not in text:
+        return None
+
+    import re
+
+    match = re.search(r"Could not find the ['\"]([^'\"]+)['\"] column", text)
+    return match.group(1) if match else None
+
+
+def _insert_evidence_with_optional_schema_fallback(supabase, payload):
+    """Insert an evidence row while tolerating an older Supabase schema.
+
+    The five Task-10.2 applicability fields are valuable when present, but
+    older deployments may not yet have those columns. PostgREST rejects the
+    whole row when any one field is unknown, so we retry after removing only
+    the missing optional applicability field. All legacy/core evidence fields
+    remain mandatory and continue to raise on schema errors.
+    """
+    current = dict(payload)
+    removed = []
+
+    for _ in range(len(_OPTIONAL_EVIDENCE_COLUMNS) + 1):
+        try:
+            result = supabase.table("evidence_records").insert(current).execute()
+            if removed:
+                print(
+                    "[database] evidence_records schema is missing optional "
+                    f"columns; saved without: {', '.join(removed)}"
+                )
+            return result
+        except Exception as exc:
+            missing = _missing_postgrest_column(exc)
+            if missing not in _OPTIONAL_EVIDENCE_COLUMNS or missing not in current:
+                raise
+            current.pop(missing, None)
+            removed.append(missing)
+
+    raise RuntimeError("Unable to insert evidence record after schema fallback")
 
 
 def _safe_int(value, default=0):
@@ -138,7 +180,7 @@ def save_evidence_record(record):
         }).execute()
         source_id = source_result.data[0]["id"]
 
-    evidence_result = supabase.table("evidence_records").insert({
+    evidence_payload = {
         "plant_id": plant_id,
         "source_id": source_id,
 
@@ -212,7 +254,11 @@ def save_evidence_record(record):
         "applicability_evaluated_dimensions": record.get("Applicability_Evaluated_Dimensions", ""),
         "applicability_missing_dimensions": record.get("Applicability_Missing_Dimensions", ""),
         "applicability_detected_mismatches": record.get("Applicability_Detected_Mismatches", ""),
-    }).execute()
+    }
+
+    evidence_result = _insert_evidence_with_optional_schema_fallback(
+        supabase, evidence_payload
+    )
 
     return evidence_result.data[0]["id"]
 

@@ -79,44 +79,81 @@ def render_evidence_step(inputs):
         if discovered:
             st.caption("Newly discovered from literature: " + ", ".join(discovered))
 
-        diagnostics = research_output.get("candidate_discovery_diagnostics", {})
-        if diagnostics:
-            with st.expander("Candidate discovery diagnostics"):
-                st.write(
-                    f"Generic queries: {diagnostics.get('queries_attempted', 0)} | "
-                    f"Generic records: {diagnostics.get('records_retrieved', 0)} | "
-                    f"Unique records: {diagnostics.get('unique_records', 0)} | "
-                    f"Plant catalogue size: {diagnostics.get('catalogue_size', 0)}"
-                )
-                st.write(
-                    f"Candidate pool: {diagnostics.get('candidate_pool_size', 0)} | "
-                    f"Focused candidate queries: "
-                    f"{diagnostics.get('candidate_queries_attempted', 0)} | "
-                    f"Candidate validation records: "
-                    f"{diagnostics.get('candidate_validation_records', 0)} | "
-                    f"Validated candidates added: "
-                    f"{diagnostics.get('candidate_validated_count', 0)}"
-                )
-                st.write("**Therapeutic query terms:**")
-                st.write(", ".join(diagnostics.get("query_terms", [])))
+        diagnostics = research_output.get("candidate_discovery_diagnostics", {}) or {}
 
-                ranked_matches = diagnostics.get("ranked_matches", {})
-                if ranked_matches:
-                    rows = []
-                    for plant, meta in ranked_matches.items():
-                        rows.append({
-                            "Plant": plant,
-                            "Score": meta.get("score"),
-                            "Supporting records": meta.get("supporting_records"),
-                            "Title mentions": meta.get("title_supporting_records"),
-                            "Matched aliases": ", ".join(meta.get("matched_aliases", [])),
-                        })
-                    st.dataframe(pd.DataFrame(rows), width="stretch")
+        # Temporary always-visible panel.  It intentionally renders even when
+        # discovery returned an empty dictionary, because an absent diagnostic
+        # payload is itself useful evidence while debugging.
+        st.markdown("### 🧪 Candidate pipeline debug panel (temporary)")
+        requested = diagnostics.get("requested_candidate_count", quick_count)
+        seed_list = diagnostics.get("seed_plants_before_discovery", evidence_backed)
+        discovered_list = diagnostics.get("online_discovered_plants", discovered)
+        fallback_list = diagnostics.get("fallback_ranked_plants", [])
+        final_list = diagnostics.get("final_candidate_plants", candidate_plants)
+        shortfall = diagnostics.get(
+            "candidate_shortfall",
+            max(0, int(requested or 0) - len(final_list or [])),
+        )
 
-                connector_errors = diagnostics.get("connector_errors", [])
-                if connector_errors:
-                    st.warning("Some discovery queries failed.")
-                    st.write("\n".join(f"- {item}" for item in connector_errors))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Requested", int(requested or 0))
+        c2.metric("Evidence-backed seeds", len(seed_list or []))
+        c3.metric("Literature-discovered", len(discovered_list or []))
+        c4.metric("Final candidates", len(final_list or []))
+
+        if shortfall:
+            st.error(
+                f"Candidate shortfall: {shortfall}. The app requested "
+                f"{requested} plants but only {len(final_list or [])} reached "
+                "the evidence-collection loop."
+            )
+        else:
+            st.success("The requested candidate count reached the collection loop.")
+
+        st.write("**1. Evidence-backed seed plants**")
+        st.write(", ".join(seed_list) if seed_list else "None")
+        st.write("**2. Newly discovered from literature**")
+        st.write(", ".join(discovered_list) if discovered_list else "None")
+        st.write("**3. Ranked fallback candidates available**")
+        st.write(", ".join(fallback_list) if fallback_list else "None")
+        st.write("**4. Final plants sent to evidence collectors**")
+        st.write(", ".join(final_list) if final_list else "None")
+
+        st.write("**Discovery counters**")
+        st.json({
+            "generic_queries_attempted": diagnostics.get("queries_attempted", 0),
+            "generic_records_retrieved": diagnostics.get("records_retrieved", 0),
+            "unique_records": diagnostics.get("unique_records", 0),
+            "plant_catalogue_size": diagnostics.get("catalogue_size", 0),
+            "candidate_pool_size": diagnostics.get("candidate_pool_size", 0),
+            "focused_queries_attempted": diagnostics.get("candidate_queries_attempted", 0),
+            "candidate_validation_records": diagnostics.get("candidate_validation_records", 0),
+            "generic_discovery_count": diagnostics.get("generic_discovery_count", 0),
+            "validated_candidates_added": diagnostics.get("candidate_validated_count", 0),
+            "connector_error_count": len(diagnostics.get("connector_errors", []) or []),
+        })
+
+        connector_errors = diagnostics.get("connector_errors", []) or []
+        if connector_errors:
+            st.warning("Discovery connector errors")
+            st.code("\n".join(str(item) for item in connector_errors))
+
+        ranked_matches = diagnostics.get("ranked_matches", {}) or {}
+        if ranked_matches:
+            rows = []
+            for plant, meta in ranked_matches.items():
+                rows.append({
+                    "Plant": plant,
+                    "Score": meta.get("score"),
+                    "Supporting records": meta.get("supporting_records"),
+                    "Title mentions": meta.get("title_supporting_records"),
+                    "Matched aliases": ", ".join(meta.get("matched_aliases", [])),
+                })
+            st.write("**Ranked discovery matches**")
+            st.dataframe(pd.DataFrame(rows), width="stretch")
+
+        with st.expander("Raw candidate discovery diagnostics"):
+            st.json(diagnostics)
 
         if errors:
             st.warning("Some searches produced errors.")

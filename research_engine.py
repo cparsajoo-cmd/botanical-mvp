@@ -524,6 +524,7 @@ def run_research_engine(
     ) or []
 
     candidate_plants = list(dict.fromkeys(evidence_backed))
+    seed_plants_before_discovery = list(candidate_plants)
     discovered, discovery_diagnostics = _online_discovered_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,
@@ -542,6 +543,23 @@ def run_research_engine(
             break
 
     candidate_plants = candidate_plants[:global_candidate_count]
+
+    # Always expose a complete, UI-friendly pipeline trace.  This makes it
+    # possible to distinguish "discovery returned nothing" from "discovery
+    # worked but candidates were later removed or replaced by fallback rows".
+    discovery_diagnostics = dict(discovery_diagnostics or {})
+    discovery_diagnostics.update({
+        "requested_candidate_count": int(global_candidate_count),
+        "seed_plants_before_discovery": seed_plants_before_discovery,
+        "seed_plant_count": len(seed_plants_before_discovery),
+        "online_discovered_plants": list(discovered or []),
+        "online_discovered_count": len(discovered or []),
+        "fallback_ranked_plants": list(fallback_plants or []),
+        "fallback_ranked_count": len(fallback_plants or []),
+        "final_candidate_plants": list(candidate_plants),
+        "final_candidate_count": len(candidate_plants),
+        "candidate_shortfall": max(0, int(global_candidate_count) - len(candidate_plants)),
+    })
 
     all_saved_records = []
     all_errors = []

@@ -58,6 +58,7 @@ try:
         load_plant_compounds_df,
         load_compound_profiles_df,
         load_scientific_evidence_df,
+        load_evidence_records_df,
     )
 except Exception:
     def load_plant_compounds_df():
@@ -67,6 +68,9 @@ except Exception:
         return pd.DataFrame()
 
     def load_scientific_evidence_df():
+        return pd.DataFrame()
+
+    def load_evidence_records_df():
         return pd.DataFrame()
 
 try:
@@ -607,6 +611,7 @@ class BotanicalRDCandidateEngine:
         plant_compounds_df=None,
         compound_profiles_df=None,
         scientific_evidence_df=None,
+        evidence_records_df=None,
         data_source_reliable=True,
         scoring_config=None,
     ):
@@ -638,6 +643,9 @@ class BotanicalRDCandidateEngine:
         self.scientific_evidence_df, se_ok = self._load_supabase_df(
             scientific_evidence_df, load_scientific_evidence_df
         )
+        self.evidence_records_df, er_ok = self._load_supabase_df(
+            evidence_records_df, load_evidence_records_df
+        )
 
         # External review #17/#19: a "Go" recommendation must never
         # rest on data that may not have actually loaded. data_source_reliable
@@ -650,7 +658,9 @@ class BotanicalRDCandidateEngine:
         # that omits data_source_reliable entirely). See
         # structured_rationale.go_investigate_hold_no_go's
         # fallback_occurred parameter for where this is actually used.
-        self.data_source_reliable = bool(data_source_reliable) and pc_ok and cp_ok and se_ok
+        self.data_source_reliable = (
+            bool(data_source_reliable) and pc_ok and cp_ok and se_ok and er_ok
+        )
 
         if candidate_data is not None:
             self.candidate_data = candidate_data
@@ -2044,91 +2054,215 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(rows).head(max_reference_plants)
 
     def _reference_plants_from_supabase(self, problem, max_reference_plants):
-        """Reference plants AND their reference compounds, both selected
-        directly from the real plant_compounds table's own `indication`
-        column — not from the pre-aggregated, whole-plant candidate_data.
+        """Select reference plants from evidence-bearing tables first.
 
-        This matters because a single plant can have dozens of compound
-        rows spanning many unrelated conditions (e.g. one of Valeriana
-        officinalis's compounds is linked, through Dr. Duke's broad
-        activity->condition chain, to 90+ conditions from Cancer to
-        Wrinkles). Grouping by plant alone and using ALL of its known
-        compounds as "reference compounds" for whatever indication is
-        being queried would pull in compounds that have nothing to do
-        with that specific indication. Filtering the raw rows FIRST means
-        only compounds actually tagged for THIS indication become
-        reference compounds — exactly the "only the active compound
-        relevant to this specific disease" behavior the discovery
-        pipeline is meant to have.
+        Source priority:
+        1. ``scientific_evidence`` (source-linked scientific records),
+        2. ``evidence_records`` (structured extracted evidence),
+        3. curated/non-compilation rows in ``plant_compounds`` only as a
+           conservative fallback.
+
+        ``plant_compounds.indication`` is deliberately *not* treated as direct
+        evidence when the row is labelled as a broad phytochemical compilation
+        (for example ``Phytochemical literature compilation (not clinical)``).
+        Those rows often list dozens of conditions and previously caused nearly
+        the entire botanical catalogue to be returned for a single question.
         """
         problem_norm = self._norm(problem)
-
-        df = self.plant_compounds_df
-
-        if (
-            df is None or df.empty
-            or "indication" not in df.columns
-            or "scientific_name" not in df.columns
-            or "compound_name" not in df.columns
-        ):
-            return self._reference_plants_from_candidate_data(
-                problem, max_reference_plants
-            )
-
-        indication_norm = df["indication"].fillna("").map(self._norm)
-        match_scores = indication_norm.map(
-            lambda text: self._indication_match_score(problem_norm, text)
-        )
-        matched_rows = df[match_scores > 0].copy()
-        matched_rows["_indication_match_score"] = match_scores[match_scores > 0]
-
-        if matched_rows.empty:
+        if not problem_norm:
             return pd.DataFrame()
 
-        rows = []
-        for plant, group in matched_rows.groupby("scientific_name"):
-            compounds = self._unique_clean_list(group["compound_name"])
-            if not compounds:
-                continue
+        plant_scores = defaultdict(float)
+        plant_support = defaultdict(int)
+        plant_sources = defaultdict(set)
 
-            targets = []
-            if "target" in group.columns:
-                targets = self._unique_clean_list(
-                    self._split_series_terms(group["target"])
+        def add_score(plant, score, source):
+            plant = str(plant or "").strip()
+            if not plant or score <= 0:
+                return
+            plant_scores[plant] += float(score)
+            plant_support[plant] += 1
+            plant_sources[plant].add(source)
+
+        # 1) Scientific evidence: strongest retrieval signal.
+        se = self.scientific_evidence_df
+        if se is not None and not se.empty and "plant" in se.columns:
+            for _, row in se.iterrows():
+                indication_text = str(row.get("indication") or "")
+                match = self._semantic_indication_match_score(problem_norm, indication_text)
+                if match <= 0:
+                    continue
+                quality = self._safe_float(row.get("final_scientific_score"), 0.0)
+                if quality <= 0:
+                    quality = self._safe_float(row.get("overall_evidence_score"), 0.0)
+                if quality <= 0:
+                    quality = self._safe_float(row.get("evidence_score"), 0.0)
+                quality_bonus = min(max(quality, 0.0), 100.0) / 100.0
+                add_score(row.get("plant"), 10.0 * match + quality_bonus, "scientific_evidence")
+
+        # 2) Structured evidence records.  Search every indication field, but
+        # reward direct-for-product records and stronger evidence scores.
+        er = self.evidence_records_df
+        if er is not None and not er.empty:
+            indication_cols = [
+                c for c in (
+                    "target_indication", "extracted_indication",
+                    "detected_indications", "target_indication_detected",
+                ) if c in er.columns
+            ]
+            for _, row in er.iterrows():
+                best = 0.0
+                for col in indication_cols:
+                    best = max(
+                        best,
+                        self._semantic_indication_match_score(
+                            problem_norm, str(row.get(col) or "")
+                        ),
+                    )
+                if best <= 0:
+                    continue
+                plant = row.get("plant")
+                direct = str(row.get("direct_for_selected_product") or "").strip().lower()
+                direct_bonus = 1.0 if direct in {"true", "yes", "direct", "1"} else 0.0
+                evidence_bonus = min(
+                    max(self._safe_float(row.get("evidence_score"), 0.0), 0.0),
+                    100.0,
+                ) / 100.0
+                add_score(plant, 7.0 * best + direct_bonus + evidence_bonus, "evidence_records")
+
+        # 3) Conservative plant_compounds fallback.  Broad compilations are
+        # excluded because their semicolon lists are hypothesis-generating, not
+        # plant-level indication evidence.
+        pc = self.plant_compounds_df
+        if pc is not None and not pc.empty and {"scientific_name", "indication"}.issubset(pc.columns):
+            for _, row in pc.iterrows():
+                evidence_level = str(row.get("evidence_level") or "").lower()
+                source = str(row.get("source") or "").lower()
+                is_broad_compilation = (
+                    "not clinical" in evidence_level
+                    or "compilation" in evidence_level
+                    or "dr. duke" in source
+                    or "dr duke" in source
                 )
+                if is_broad_compilation:
+                    continue
+                match = self._semantic_indication_match_score(
+                    problem_norm, str(row.get("indication") or "")
+                )
+                if match <= 0:
+                    continue
+                confidence = self._safe_float(row.get("confidence_score"), 0.0)
+                confidence_bonus = min(max(confidence, 0.0), 100.0) / 200.0
+                add_score(row.get("scientific_name"), 2.0 * match + confidence_bonus, "plant_compounds")
 
+        if not plant_scores:
+            return self._reference_plants_from_candidate_data(problem, max_reference_plants)
+
+        ranked_plants = sorted(
+            plant_scores,
+            key=lambda plant: (
+                -plant_scores[plant],
+                -len(plant_sources[plant]),
+                -plant_support[plant],
+                plant.lower(),
+            ),
+        )[:max_reference_plants]
+
+        rows = []
+        for plant in ranked_plants:
+            group = pd.DataFrame()
+            if pc is not None and not pc.empty and "scientific_name" in pc.columns:
+                group = pc[
+                    pc["scientific_name"].fillna("").astype(str).str.strip() == plant
+                ]
+
+            compounds = []
+            targets = []
             plant_part = ""
-            if "plant_part" in group.columns:
-                plant_part = self._first_non_empty(group["plant_part"])
+            if not group.empty:
+                # Use a small, deterministic compound set.  This prevents one
+                # evidence-supported plant from fanning out through every common
+                # phytochemical ever reported for it.
+                ranked_group = group.copy()
+                if "confidence_score" in ranked_group.columns:
+                    ranked_group["_confidence"] = pd.to_numeric(
+                        ranked_group["confidence_score"], errors="coerce"
+                    ).fillna(0)
+                    ranked_group = ranked_group.sort_values("_confidence", ascending=False)
+                compounds = self._unique_clean_list(ranked_group.get("compound_name"))[:8]
+                if "target" in ranked_group.columns:
+                    targets = self._unique_clean_list(
+                        self._split_series_terms(ranked_group.get("target"))
+                    )[:12]
+                if "plant_part" in ranked_group.columns:
+                    plant_part = self._first_non_empty(ranked_group["plant_part"])
 
             rows.append({
                 "Scientific_Name": plant,
                 "Known_Active_Compounds": "; ".join(compounds),
                 "Known_Targets": "; ".join(targets),
                 "Plant_Part": plant_part,
-                # Retrieval relevance is primary.  Number of independent
-                # indication-matched compound rows is a positive support
-                # signal, not something to minimise.
-                "_indication_match_score": float(group["_indication_match_score"].max()),
-                "_num_matched_rows": len(group),
+                "Retrieval_Sources": "; ".join(sorted(plant_sources[plant])),
+                "Retrieval_Score": round(plant_scores[plant], 3),
             })
 
-        if not rows:
-            return pd.DataFrame()
+        return pd.DataFrame(rows)
 
-        rows.sort(
-            key=lambda r: (
-                -r["_indication_match_score"],
-                -r["_num_matched_rows"],
-                r["Scientific_Name"].lower(),
-            )
-        )
+    def _semantic_indication_match_score(self, query_norm, candidate_text):
+        """Conservative indication matching with a small domain synonym map.
 
-        for r in rows:
-            del r["_indication_match_score"]
-            del r["_num_matched_rows"]
+        Matching is performed against individual semicolon-separated concepts,
+        never against an enormous condition list as one undifferentiated string.
+        """
+        candidate_norm = self._norm(candidate_text)
+        if not query_norm or not candidate_norm:
+            return 0.0
 
-        return pd.DataFrame(rows[:max_reference_plants])
+        concept_groups = {
+            "metabolic blood sugar support": {
+                "diabetes", "type 2 diabetes", "blood sugar", "glucose",
+                "glycemic control", "glycaemic control", "hyperglycemia",
+                "hyperglycaemia", "insulin resistance", "metabolic syndrome",
+                "syndrome x",
+            },
+            "energy fatigue": {
+                "fatigue", "chronic fatigue syndrome", "tiredness",
+                "asthenia", "energy", "stamina", "anti fatigue",
+            },
+            "sleep": {
+                "sleep", "insomnia", "sleep disorder", "sleep quality",
+            },
+            "anxiety stress": {
+                "anxiety", "stress", "anxiety disorders",
+            },
+        }
+
+        query_key = query_norm.replace("/", " ")
+        query_terms = set()
+        for key, terms in concept_groups.items():
+            if key in query_key or any(term in query_key for term in terms):
+                query_terms.update(terms)
+        if not query_terms:
+            query_terms.add(query_norm)
+
+        concepts = [
+            self._norm(part)
+            for part in re.split(r"[;|\n]+", str(candidate_text))
+            if self._norm(part)
+        ]
+        best = 0.0
+        for concept in concepts:
+            if concept == query_norm:
+                best = max(best, 1.0)
+            for term in query_terms:
+                term_norm = self._norm(term)
+                if concept == term_norm:
+                    best = max(best, 0.95)
+                elif len(term_norm) >= 5 and term_norm in concept:
+                    best = max(best, 0.8)
+                elif len(concept) >= 5 and concept in term_norm:
+                    best = max(best, 0.7)
+        return best
 
     def _reference_plants_from_candidate_data(self, problem, max_reference_plants):
         """Fallback used only when the raw plant_compounds_df doesn't have
@@ -2194,6 +2328,15 @@ class BotanicalRDCandidateEngine:
             rows.append(row)
 
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def _safe_float(value, default=0.0):
+        try:
+            if value is None or str(value).strip().lower() in {"", "nan", "none", "null"}:
+                return float(default)
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
 
     @staticmethod
     def _load_supabase_df(explicit_df, loader):
@@ -4677,63 +4820,52 @@ class BotanicalRDCandidateEngine:
         return self._known_inventory_from_seed_data(indication_norm, columns)
 
     def _known_inventory_from_supabase(self, indication_norm, columns):
-        """Primary path: filter the real plant_compounds table (806
-        records) directly by its own `indication` column.
-        """
-        df = self.plant_compounds_df.copy()
+        """Build Step 3/4 inventory from evidence-selected plants.
 
-        if "indication" not in df.columns:
+        This avoids treating the broad ``plant_compounds.indication``
+        compilation lists as authoritative plant-level indication tags.
+        """
+        refs = self._reference_plants_from_supabase(indication_norm, 200)
+        if refs is None or refs.empty or "Scientific_Name" not in refs.columns:
             return pd.DataFrame(columns=columns)
 
-        df["_indication_norm"] = df["indication"].fillna("").map(self._norm)
-        df["_indication_match_score"] = df["_indication_norm"].map(
-            lambda text: self._indication_match_score(indication_norm, text)
-        )
+        selected = refs["Scientific_Name"].dropna().astype(str).tolist()
+        df = self.plant_compounds_df.copy()
+        if df.empty or "scientific_name" not in df.columns:
+            return pd.DataFrame(columns=columns)
 
-        # Reject loose one-word overlaps.  This prevents Step 3/4 from
-        # presenting most of the botanical catalogue as if it had been
-        # selected for the current R&D question.
-        matched = df[df["_indication_match_score"] > 0].copy()
-
+        matched = df[df["scientific_name"].fillna("").astype(str).isin(selected)].copy()
         if matched.empty:
             return pd.DataFrame(columns=columns)
 
+        score_map = dict(zip(refs["Scientific_Name"], refs.get("Retrieval_Score", 0)))
         rows = []
         for _, row in matched.iterrows():
-            known_plant = str(row.get("scientific_name") or "").strip()
-            known_compound = str(row.get("compound_name") or "").strip()
-
-            if not known_plant or not known_compound:
+            plant = str(row.get("scientific_name") or "").strip()
+            compound = str(row.get("compound_name") or "").strip()
+            if not plant or not compound:
                 continue
-
             rows.append({
-                "Known_Plant": known_plant,
-                "Known_Compound": known_compound,
+                "Known_Plant": plant,
+                "Known_Compound": compound,
                 "Chemical_Class": str(row.get("compound_class") or "").strip(),
                 "Known_Target": str(row.get("target") or "").strip(),
                 "Evidence_Level": str(row.get("evidence_level") or "").strip(),
                 "Typical_Extraction": str(row.get("extraction_method") or "").strip(),
+                "_retrieval_score": score_map.get(plant, 0),
             })
 
         if not rows:
             return pd.DataFrame(columns=columns)
 
-        result = pd.DataFrame(rows).drop_duplicates()
-        # Preserve scientific relevance order instead of alphabetic order.
-        # Alphabetic ordering was why Abelmoschus/Abies/Acacia appeared at
-        # the top for unrelated questions.
-        plant_scores = (
-            matched.groupby("scientific_name")["_indication_match_score"]
-            .max()
-            .to_dict()
-        )
-        result["_match_score"] = result["Known_Plant"].map(plant_scores).fillna(0)
         return (
-            result.sort_values(
-                ["_match_score", "Known_Plant", "Known_Compound"],
+            pd.DataFrame(rows)
+            .drop_duplicates()
+            .sort_values(
+                ["_retrieval_score", "Known_Plant", "Known_Compound"],
                 ascending=[False, True, True],
             )
-            .drop(columns=["_match_score"])
+            .drop(columns=["_retrieval_score"])
             .reset_index(drop=True)
         )
 

@@ -1,6 +1,6 @@
 """
 Loaders for the real Supabase tables that back the central engine:
-plant_compounds, compound_profiles, scientific_evidence.
+plant_compounds, compound_profiles, scientific_evidence, evidence_records.
 
 These are the primary data source for BotanicalRDCandidateEngine.
 Every loader is defensive: if Supabase is unreachable, misconfigured, or
@@ -102,4 +102,18 @@ def load_scientific_evidence_df():
         return _fetch_table_df("scientific_evidence")
     except Exception as exc:
         print(f"[supabase_data] load_scientific_evidence_df failed entirely: {exc}")
+        return pd.DataFrame()
+
+
+def load_evidence_records_df():
+    """Load structured evidence records used for indication-aware plant retrieval.
+
+    This table is intentionally kept separate from ``plant_compounds`` because
+    the latter may contain broad phytochemical compilation labels that are not
+    suitable as direct plant-indication evidence.
+    """
+    try:
+        return _fetch_table_df("evidence_records")
+    except Exception as exc:
+        print(f"[supabase_data] load_evidence_records_df failed entirely: {exc}")
         return pd.DataFrame()

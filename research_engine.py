@@ -5,21 +5,16 @@ from source_registry import PILOT_MAX_RESULTS
 
 
 def _richer_candidate_plants(indication, dosage_form, target_market, target_count):
-    """Primary candidate-plant source for live evidence search.
+    """Evidence-first candidate-plant source for live evidence search.
 
-    rank_global_candidates() only knows about the small, hand-tagged
-    GLOBAL_PLANT_CANDIDATES list (~37 plants total, most indications
-    covered by just 1-2 of them). After importing real data (e.g. Dr.
-    Duke's, 900+ plants) into Supabase's plant_compounds table, that
-    richer dataset has proper per-indication tagging that this step was
-    never wired to use — so live evidence search was silently searching
-    only 1-2 plants for many indications, even though Step 3-5 (which use
-    BotanicalRDCandidateEngine directly) had access to hundreds.
+    The central engine now prioritizes ``scientific_evidence`` and
+    ``evidence_records``.  Broad phytochemical compilation labels in
+    ``plant_compounds.indication`` are not accepted as direct
+    plant-indication evidence, preventing the live search from sampling an
+    alphabetic slice of nearly the whole catalogue.
 
-    This reuses that same engine's reference-plant lookup so evidence
-    search sees the same plant universe the rest of the app already does.
-    Returns None (not an empty list) on any failure, so the caller can
-    fall back to the older method cleanly.
+    Returns None (not an empty list) on any failure so the caller can fall
+    back to the small curated global candidate list.
     """
     try:
         engine = BotanicalRDCandidateEngine(use_live_search=False)
@@ -102,10 +97,9 @@ def run_research_engine(
             .tolist()
         )
 
-    # Prefer the Supabase-backed candidate list (hundreds of plants,
-    # properly tagged per indication) over the small hardcoded one above.
-    # Only fall back to the narrow list if the richer lookup finds nothing
-    # (e.g. Supabase isn't configured / offline dev environment).
+    # Prefer the evidence-first Supabase candidate list. Only fall back to
+    # the small curated global list if no evidence-backed plants are found
+    # or Supabase is unavailable.
     richer_candidates = _richer_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,

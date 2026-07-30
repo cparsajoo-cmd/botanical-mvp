@@ -81,10 +81,10 @@ def render_evidence_step(inputs):
 
         diagnostics = research_output.get("candidate_discovery_diagnostics", {}) or {}
 
-        # Temporary always-visible panel.  It intentionally renders even when
-        # discovery returned an empty dictionary, because an absent diagnostic
-        # payload is itself useful evidence while debugging.
-        st.markdown("### 🧪 Candidate pipeline debug panel (temporary)")
+        # Production-facing shortlist audit.  It shows how many candidates came
+        # from existing evidence versus live literature discovery and makes the
+        # final selection traceable without exposing raw implementation details.
+        st.markdown("### 🌿 Candidate shortlist audit")
         requested = diagnostics.get("requested_candidate_count", quick_count)
         seed_list = diagnostics.get("seed_plants_before_discovery", evidence_backed)
         discovered_list = diagnostics.get("online_discovered_plants", discovered)
@@ -119,7 +119,7 @@ def render_evidence_step(inputs):
         st.write("**4. Final plants sent to evidence collectors**")
         st.write(", ".join(final_list) if final_list else "None")
 
-        st.write("**Discovery counters**")
+        st.write("**Discovery and selection counters**")
         st.json({
             "generic_queries_attempted": diagnostics.get("queries_attempted", 0),
             "generic_records_retrieved": diagnostics.get("records_retrieved", 0),
@@ -128,8 +128,11 @@ def render_evidence_step(inputs):
             "candidate_pool_size": diagnostics.get("candidate_pool_size", 0),
             "focused_queries_attempted": diagnostics.get("candidate_queries_attempted", 0),
             "candidate_validation_records": diagnostics.get("candidate_validation_records", 0),
-            "generic_discovery_count": diagnostics.get("generic_discovery_count", 0),
-            "validated_candidates_added": diagnostics.get("candidate_validated_count", 0),
+            "generic_discovery_pool_count": diagnostics.get("generic_discovery_count", 0),
+            "focused_candidates_validated": diagnostics.get("candidate_validated_count", 0),
+            "combined_discovery_pool_count": diagnostics.get("discovery_candidate_pool_count", 0),
+            "selected_discovery_count": len(diagnostics.get("selected_discovery_candidates", []) or []),
+            "excluded_discovery_count": len(diagnostics.get("excluded_discovery_candidates", []) or []),
             "connector_error_count": len(diagnostics.get("connector_errors", []) or []),
         })
 
@@ -142,8 +145,10 @@ def render_evidence_step(inputs):
         if ranked_matches:
             rows = []
             for plant, meta in ranked_matches.items():
+                selected_discovery = set(diagnostics.get("selected_discovery_candidates", []) or [])
                 rows.append({
                     "Plant": plant,
+                    "Shortlist status": "Selected" if plant in selected_discovery else "Not selected",
                     "Quality-adjusted score": meta.get("score"),
                     "Supporting records": meta.get("supporting_records"),
                     "Human/clinical": meta.get("clinical_human_records", 0),
@@ -165,9 +170,10 @@ def render_evidence_step(inputs):
                     ascending=[False, False, False],
                 )
                 ranked_df.insert(0, "Rank", range(1, len(ranked_df) + 1))
-            st.write("**Quality-ranked literature discovery matches**")
+            st.write("**Quality-ranked discovery pool**")
             st.caption(
-                "This is a transparent discovery priority score, not a final efficacy claim. "
+                "Candidates are ranked before the requested shortlist is filled. This is a "
+                "transparent discovery-priority score, not a final efficacy claim. "
                 "Human/clinical and systematic-review signals receive more weight than "
                 "preclinical mentions; dosage-form fit and regulatory mentions also contribute."
             )

@@ -457,15 +457,16 @@ def _candidate_specific_literature_validation(
 
     validated = []
     validation_meta = {}
-    # Query only as many hypotheses as needed, with a modest oversampling
-    # allowance for plants that have no relevant literature.
-    max_hypotheses = min(len(pool), max(10, slots * 3))
+    # Validate a broader hypothesis pool and rank it afterwards.  The previous
+    # implementation stopped as soon as ``slots`` plants had any supporting
+    # record, which made selection depend on pool order rather than evidence
+    # quality.  Oversampling keeps API cost bounded while allowing stronger
+    # later candidates to displace weaker early matches.
+    max_hypotheses = min(len(pool), max(12, slots * 4))
     primary_terms = [t for t in indication_terms if t][:5]
     therapeutic_or = " OR ".join(f'"{term}"' for term in primary_terms)
 
     for plant in pool[:max_hypotheses]:
-        if len(validated) >= slots:
-            break
         query = f'"{plant}" AND ({therapeutic_or})'
         diagnostics["candidate_queries_attempted"] += 1
         records = []
@@ -551,6 +552,16 @@ def _candidate_specific_literature_validation(
                 f"Candidate validation [{plant}]: " + " | ".join(errors)
             )
 
+    validated = sorted(
+        validated,
+        key=lambda plant: (
+            float(validation_meta.get(plant, {}).get("score") or 0),
+            int(validation_meta.get(plant, {}).get("clinical_human_records") or 0),
+            int(validation_meta.get(plant, {}).get("systematic_review_records") or 0),
+            int(validation_meta.get(plant, {}).get("supporting_records") or 0),
+        ),
+        reverse=True,
+    )
     return validated, validation_meta
 
 
@@ -625,25 +636,45 @@ def _online_discovered_candidate_plants(
         existing = {_norm_text(p) for p in existing_list}
         ranked = [plant for plant in ranked if _norm_text(plant) not in existing]
         discovery_slots = max(0, int(target_count) - len(existing))
-        generic_selected = ranked[:discovery_slots]
 
-        remaining_slots = max(0, discovery_slots - len(generic_selected))
+        # Retain a wider generic discovery pool for comparison rather than
+        # accepting the first N matches.  Candidate-specific validation is run
+        # independently, then both routes compete on the same quality score.
+        generic_pool_limit = max(12, discovery_slots * 4)
+        generic_pool = ranked[:generic_pool_limit]
         validated, validation_meta = _candidate_specific_literature_validation(
             indication=indication,
             indication_terms=diagnostics["query_terms"],
             alias_catalog=alias_catalog,
-            existing_plants=existing_list + generic_selected,
-            slots=remaining_slots,
+            existing_plants=existing_list,
+            slots=max(1, discovery_slots),
             diagnostics=diagnostics,
         )
 
-        combined = list(dict.fromkeys(generic_selected + validated))
         merged_meta = dict(match_diagnostics)
         merged_meta.update(validation_meta)
+        candidate_pool = list(dict.fromkeys(generic_pool + validated))
+        candidate_pool = sorted(
+            candidate_pool,
+            key=lambda plant: (
+                float(merged_meta.get(plant, {}).get("score") or 0),
+                int(merged_meta.get(plant, {}).get("clinical_human_records") or 0),
+                int(merged_meta.get(plant, {}).get("systematic_review_records") or 0),
+                int(merged_meta.get(plant, {}).get("supporting_records") or 0),
+            ),
+            reverse=True,
+        )
+        selected = candidate_pool[:discovery_slots]
+        excluded = candidate_pool[discovery_slots:]
+
         diagnostics["ranked_matches"] = merged_meta
-        diagnostics["generic_discovery_count"] = len(generic_selected)
+        diagnostics["generic_discovery_count"] = len(generic_pool)
         diagnostics["candidate_validated_count"] = len(validated)
-        return combined[:discovery_slots], diagnostics
+        diagnostics["discovery_candidate_pool"] = candidate_pool
+        diagnostics["discovery_candidate_pool_count"] = len(candidate_pool)
+        diagnostics["selected_discovery_candidates"] = selected
+        diagnostics["excluded_discovery_candidates"] = excluded
+        return selected, diagnostics
     except Exception as exc:
         diagnostics["connector_errors"].append(
             f"Discovery pipeline: {type(exc).__name__}: {exc}"

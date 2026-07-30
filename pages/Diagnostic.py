@@ -261,3 +261,98 @@ if st.button("Run EMA pipeline diagnostic"):
         icon = "✅" if status == "OK" else ("⚠️" if status == "STILL WRONG" else "❌")
         st.markdown(f"{icon} **{step}** — `{status}`")
         st.code(detail)
+
+
+if st.button("Run EMA Monograph Connector diagnostic"):
+    mono_report = []
+
+    try:
+        import ema_monograph_registry as registry_mod
+        import importlib
+        importlib.reload(registry_mod)
+        mono_report.append((
+            "import ema_monograph_registry",
+            "OK",
+            f"module file: {registry_mod.__file__}, "
+            f"{len(registry_mod.STANDALONE_MONOGRAPHS)} standalone entries, "
+            f"{len(registry_mod.COMBINATION_MONOGRAPHS)} combination entries",
+        ))
+    except Exception as exc:
+        mono_report.append(("import ema_monograph_registry", "FAILED", repr(exc)))
+        registry_mod = None
+
+    try:
+        import ema_monograph_connector as mono_mod
+        importlib.reload(mono_mod)
+        mono_report.append((
+            "import ema_monograph_connector",
+            "OK",
+            f"module file: {mono_mod.__file__}",
+        ))
+    except Exception as exc:
+        mono_report.append(("import ema_monograph_connector", "FAILED", repr(exc)))
+        mono_mod = None
+
+    # This is the one path this connector's own tests could NOT cover —
+    # the live HTTP fetch against a real ema.europa.eu URL — since the
+    # sandbox it was built in has no network access to that domain.
+    # This is the first real end-to-end check of that path.
+    if mono_mod is not None:
+        try:
+            record = mono_mod.fetch_monograph_record("Melissa officinalis", "folium")
+            if record.get("Fetch_Error"):
+                mono_report.append((
+                    "fetch_monograph_record('Melissa officinalis', 'folium') — LIVE FETCH",
+                    "FAILED",
+                    record["Fetch_Error"],
+                ))
+            else:
+                mono_report.append((
+                    "fetch_monograph_record('Melissa officinalis', 'folium') — LIVE FETCH",
+                    "OK",
+                    f"Monograph_Reference_Number={record.get('Monograph_Reference_Number')!r}",
+                ))
+                mono_report.append((
+                    "  -> therapeutic_indications_TU populated",
+                    "OK" if record.get("therapeutic_indications_TU") else "STILL WRONG",
+                    repr(record.get("therapeutic_indications_TU"))[:300],
+                ))
+                mono_report.append((
+                    "  -> contraindications_WEU correctly WEU_NOT_APPLICABLE or flagged"
+                    " (real Melissa monograph has no well-established-use content)",
+                    "OK" if record.get("contraindications_WEU") in (
+                        mono_mod.WEU_NOT_APPLICABLE, mono_mod.NOT_RELIABLY_EXTRACTED,
+                    ) else "STILL WRONG",
+                    repr(record.get("contraindications_WEU")),
+                ))
+                mono_report.append((
+                    "  -> contraindications_raw_text available for human reading",
+                    "OK" if record.get("contraindications_raw_text") else "STILL WRONG",
+                    repr(record.get("contraindications_raw_text"))[:300],
+                ))
+        except Exception as exc:
+            mono_report.append((
+                "fetch_monograph_record('Melissa officinalis', 'folium') — LIVE FETCH",
+                "FAILED", repr(exc),
+            ))
+
+        # A plant NOT in the registry should report that plainly, not
+        # silently return nothing or raise.
+        try:
+            missing = mono_mod.fetch_monograph_record("Rosa canina", "flos")
+            mono_report.append((
+                "fetch_monograph_record('Rosa canina') — plant NOT in registry",
+                "OK" if missing.get("Found_In_Registry") is False else "STILL WRONG",
+                repr(missing.get("Notes"))[:300],
+            ))
+        except Exception as exc:
+            mono_report.append((
+                "fetch_monograph_record('Rosa canina') — plant NOT in registry",
+                "FAILED", repr(exc),
+            ))
+
+    st.markdown("### EMA Monograph Connector diagnostic results")
+    for step, status, detail in mono_report:
+        icon = "✅" if status == "OK" else ("⚠️" if status == "STILL WRONG" else "❌")
+        st.markdown(f"{icon} **{step}** — `{status}`")
+        st.code(detail)

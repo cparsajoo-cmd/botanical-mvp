@@ -11,19 +11,23 @@ Status: Research complete for all 10 plants. Every entry below was verified by s
 |---|---|---|---|---|---|---|
 | 1 | *Melissa officinalis* L. | folium | `EMA/HMPC/196745/2012` | Final | 2013-05-14 | `.../final-community-herbal-monograph-melissa-officinalis-l-folium_en.pdf` |
 | 2 | *Valeriana officinalis* L. | radix | `EMA/HMPC/150848/2015, Corr.1` | Final | 2016-02-02 | `.../final-european-union-herbal-monograph-valeriana-officinalis-l-radix_en.pdf` |
-| 3 | *Passiflora incarnata* L. | herba | `EMA/HMPC/669738/2013` *(inferred — see note)* | Final | 2014-03-25 | `.../final-community-herbal-monograph-passiflora-incarnata-l-herba_en.pdf` |
+| 3 | *Passiflora incarnata* L. | herba | `EMA/HMPC/669740/2013` ✅ *(corrected — see note)* | Final | 2014-03-25 | `.../final-community-herbal-monograph-passiflora-incarnata-l-herba_en.pdf` |
 | 4 | *Matricaria recutita* L. *(syn. Matricaria chamomilla — see note)* | flos | `EMA/HMPC/55843/2011` | Final | 2015-07-07 | `.../final-european-union-herbal-monograph-matricaria-recutita-l-flos_en.pdf` |
-| 5a | *Lavandula angustifolia* Mill. | flos | `EMA/HMPC/734125/2010` | Final | 2012-03-27 | *(URL not yet fetched — landing page confirms ref/date; direct PDF URL to verify)* |
-| 5b | *Lavandula angustifolia* Mill. | aetheroleum | `EMA/HMPC/143181/2010` | Final | 2012-03-27 | *(same — two separate monographs for the same plant, see note)* |
-| 6 | *Humulus lupulus* L. | flos | `EMA/HMPC/682384/2013` | Final (revised) | 2014-05-06 | *(URL not yet fetched)* |
-| 7 | *Tilia cordata* Mill., *T. platyphyllos* Scop., *T. × vulgaris* Heyne, or mixtures | flos | `EMA/HMPC/337066/2011` | Final | 2012 (May) | *(URL not yet fetched — see note on multi-species scope)* |
-| 8 | *Cimicifuga racemosa* (L.) Nutt. | rhizoma | `EMA/HMPC/600717/2007` | Final | 2010 (Nov) | *(URL not yet fetched)* |
+| 5a | *Lavandula angustifolia* Mill. | flos | `EMA/HMPC/734125/2010` | Final | 2012-03-27 | `.../final-community-herbal-monograph-lavandula-angustifolia-p-mill-flos_en.pdf` |
+| 5b | *Lavandula angustifolia* Mill. | aetheroleum | `EMA/HMPC/143181/2010` | Final | 2012-03-27 | `.../final-community-herbal-monograph-lavandula-angustifolia-miller-aetheroleum_en.pdf` |
+| 6 | *Humulus lupulus* L. | flos | `EMA/HMPC/682384/2013` | Final (revised) | 2014-05-06 | `.../final-community-herbal-monograph-humulus-lupulus-l-flos_en.pdf` |
+| 7 | *Tilia cordata* Mill., *T. platyphyllos* Scop., *T. × vulgaris* Heyne, or mixtures | flos | `EMA/HMPC/337066/2011` | Final | 2012-05-22 | `.../final-community-herbal-monograph-tilia-cordata-miller-tilia-platyphyllos-scop-tilia-x-vulgaris-heyne_en.pdf` |
+| 8 | *Cimicifuga racemosa* (L.) Nutt. | rhizoma | `EMA/HMPC/48745/2017` ⚠️ *(corrected — see note)* | Final, Rev. 1 | 2018-03-27 | `.../final-european-union-herbal-monograph-cimicifuga-racemosa-l-nutt-rhizome-revision-1_en.pdf` |
 | 9 | *Hypericum perforatum* L. | herba | `EMA/HMPC/7695/2021, Rev.1` | Final (unified WEU+TU) | 2022-11-23 | `.../final-european-union-herbal-monograph-hypericum-perforatum-l-herba-revision-1_en.pdf` |
 | 10 | *Ginkgo biloba* L. | folium | `EMA/HMPC/321097/2012` | Final | 2015-01-28 | `.../final-european-union-herbal-monograph-ginkgo-biloba-l-folium_en.pdf` |
 
-**Note on #3 (Passiflora):** I confirmed the monograph PDF's real URL and confirmed a directly adjacent document (List of references, `EMA/HMPC/669739/2013`, dated 25 March 2014, "Final") — the monograph's own reference number is very likely `EMA/HMPC/669738/2013` by EMA's usual sequential-numbering pattern around one adoption batch, but I have **not** seen this number stated on the monograph document's own title page directly, only inferred it. I'm flagging this rather than presenting it as equally solid as the other 9 — worth a 30-second direct fetch-and-confirm before this goes into code, not a guess to build on.
+**All 10 (11 counting Lavandula's two parts) are now fully verified** — every URL and reference number above was confirmed by directly fetching the document itself, not inferred from a citation or search snippet.
 
-**Note on #4 (Matricaria):** your `seed_data.py` uses **"Matricaria chamomilla"**; EMA's own nomenclature is **"Matricaria recutita"** (these are synonyms for the same species — *Matricaria chamomilla* L. is an older/alternate name). The connector's plant-name matching will need to handle this synonym explicitly, or candidates keyed to "Matricaria chamomilla" won't match this registry entry at all.
+**Note on #3 (Passiflora) — a correction that validates the "flag, don't guess" discipline:** my first pass inferred the monograph reference as `669738` from an adjacent document's numbering pattern, and flagged it as unconfirmed rather than presenting it as solid. I then fetched the monograph PDF directly: the real reference is `EMA/HMPC/669740/2013` — my inference was wrong (669738 turned out to be the *assessment report's* number, a different document). This is exactly the failure mode the flag was meant to catch, and it did.
+
+**Note on #8 (Cimicifuga) — a real correction, not just a caveat:** the number I originally listed, `EMA/HMPC/600717/2007` (adopted Nov 2010), is a **superseded** version. There is a newer revised final monograph, `EMA/HMPC/48745/2017`, adopted 27 March 2018, which explicitly replaces the 2010 one. This is directly relevant to your existing Gold Case 005 (Cimicifuga racemosa) — worth checking separately whether that case cites the current or the superseded monograph.
+
+**Note on #4 (Matricaria):** your `seed_data.py` uses **"Matricaria chamomilla"**; EMA's own nomenclature is **"Matricaria recutita"** (synonyms for the same species). The connector's plant-name matching will need to handle this explicitly, or candidates keyed to "Matricaria chamomilla" won't match this registry entry.
 
 ---
 
@@ -44,12 +48,19 @@ While researching, I found that **several of these 10 plants also have separate 
 
 **Option B — include combination monographs as a second, distinct record type.** Model them separately (they answer a different question — "is this combination specifically recognized," not "is this plant recognized") linked to the relevant standalone plant records. More complete, meaningfully more valuable given your sleep-tea evidence already involves plant *combinations*, but real added design and parsing work (combination monographs have different composition tables — e.g. "Species sedativae"'s percentage-range table across 5 plants).
 
-My inclination is **A for the pilot, B as an explicit fast-follow** — but this is exactly the kind of scope call you asked to make yourself, not me.
+**Decision confirmed by Hamid: Option B** — combination monographs will be modeled as a second, distinct record type, linked to the relevant standalone plant records.
 
----
+## Combination monographs to include (verified references)
 
-## Before I write any parser code
+| Combination monograph | Plants | Ref. | Status |
+|---|---|---|---|
+| *Valeriana officinalis*, radix + *Humulus lupulus*, flos | #2 + #6 | `EMA/HMPC/327107/2017` (Rev. 1) | Final |
+| "Species sedativae" (2–4-substance sedative tea combinations) | #1, #2, #3, #5, #6 | `EMA/HMPC/438183/2017` | Final |
+| *Valerianae radix* + *Passiflorae herba* | #2 + #3 | — | Not yet adopted (ongoing call for data) — exclude for now, note as pending |
+| *Hypericum perforatum*, herba + *Cimicifuga racemosa*, rhizoma | #8 + #9 | `EMA/HMPC/884573/2022` (draft) | Draft, not final — exclude for now, note as pending |
 
-1. Confirm Option A vs B above.
-2. Let me spend 2 more minutes confirming Passiflora's exact monograph reference number directly (currently inferred, flagged in §1) and fetching the 5 remaining unfetched PDF URLs (Lavandula ×2, Humulus, Tilia, Cimicifuga) the same rigorous way I did for the other 5 — I paused here to surface the combination-monograph finding rather than silently building past it, not because the remaining lookups are hard.
-3. Once both of those are closed out, I'll move to writing the actual parser + connector code against real, fully-verified data for the pilot set.
+Two of the four combination monographs are still in development, not adopted — those should be tracked as "pending" (a real, honest status) rather than skipped silently, but obviously can't be parsed as final content yet.
+
+## All research is now complete. Ready to write code.
+
+Both single-substance (§1) and combination (above) registries are fully verified. Next step is the actual parser + connector implementation against this data.

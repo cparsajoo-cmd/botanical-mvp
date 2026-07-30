@@ -8,12 +8,14 @@ from global_candidate_ranking_engine import rank_global_candidates
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pubmed_connector import search_and_fetch_pubmed
 from source_registry import PILOT_MAX_RESULTS
+from supabase_data import load_plants_df
 
 
 _DISCOVERY_QUERY_TERMS = {
-    "metabolic blood sugar support": [
+    "metabolic and blood sugar support": [
         "diabetes", "type 2 diabetes", "hyperglycemia", "blood glucose",
         "glycemic control", "insulin resistance", "metabolic syndrome",
+        "postprandial glucose", "HbA1c",
     ],
     "energy fatigue": [
         "fatigue", "chronic fatigue", "asthenia", "tiredness", "energy",
@@ -40,63 +42,73 @@ def _query_terms(indication):
     terms = [str(indication or "").strip()]
 
     for key, synonyms in _DISCOVERY_QUERY_TERMS.items():
-        if key in indication_norm or any(term in indication_norm for term in synonyms):
+        key_tokens = set(key.split())
+        indication_tokens = set(indication_norm.split())
+        if key in indication_norm or len(key_tokens & indication_tokens) >= 2:
             terms.extend(synonyms)
 
-    # Keep order deterministic while removing duplicates.
     return list(dict.fromkeys(term for term in terms if term))
 
 
-def _candidate_alias_catalog(engine):
-    """Return aliases that can map literature text back to scientific names.
+def _split_common_names(value):
+    raw = str(value or "")
+    return [part.strip() for part in re.split(r"[;,|/]", raw) if part.strip()]
 
-    The catalogue comes from the project's own Supabase-backed plant data. A
-    literature mention is therefore not accepted merely because it resembles a
-    Latin binomial; it must map to a plant already known to the platform.
+
+def _candidate_alias_catalog(engine=None):
+    """Map validated botanical aliases to canonical scientific names.
+
+    The canonical ``plants`` table is the preferred source.  The compound table
+    is added as a secondary catalogue source for deployments whose ``plants``
+    table is still incomplete.  No free-form Latin-looking phrase is accepted.
     """
     aliases = defaultdict(set)
-    pc = getattr(engine, "plant_compounds_df", None)
 
-    if pc is None or pc.empty or "scientific_name" not in pc.columns:
-        return aliases
+    frames = []
+    plants_df = load_plants_df()
+    if plants_df is not None and not plants_df.empty:
+        frames.append((plants_df, "scientific_name", "common_name"))
 
-    for _, row in pc.iterrows():
-        scientific_name = str(row.get("scientific_name") or "").strip()
-        if not scientific_name:
+    pc = getattr(engine, "plant_compounds_df", None) if engine is not None else None
+    if pc is not None and not pc.empty:
+        frames.append((pc, "scientific_name", "common_name"))
+
+    for frame, scientific_col, common_col in frames:
+        if scientific_col not in frame.columns:
             continue
+        for _, row in frame.iterrows():
+            scientific_name = str(row.get(scientific_col) or "").strip()
+            scientific_alias = _norm_text(scientific_name)
+            if not scientific_name or len(scientific_alias.split()) < 2:
+                continue
 
-        scientific_alias = _norm_text(scientific_name)
-        if len(scientific_alias) >= 5 and " " in scientific_alias:
             aliases[scientific_name].add((scientific_alias, "scientific"))
 
-        common_name = str(row.get("common_name") or "").strip()
-        common_alias = _norm_text(common_name)
-        if (
-            len(common_alias) >= 5
-            and common_alias not in _COMMON_NAME_STOPWORDS
-            and not common_alias.isdigit()
-        ):
-            aliases[scientific_name].add((common_alias, "common"))
+            if common_col in frame.columns:
+                for common_name in _split_common_names(row.get(common_col)):
+                    common_alias = _norm_text(common_name)
+                    if (
+                        len(common_alias) >= 5
+                        and common_alias not in _COMMON_NAME_STOPWORDS
+                        and not common_alias.isdigit()
+                    ):
+                        aliases[scientific_name].add((common_alias, "common"))
 
     return aliases
 
 
 def _fetch_europepmc_discovery_records(query, max_results=25):
-    """Broad literature discovery query used only to identify plant names."""
-    try:
-        response = requests.get(
-            "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-            params={
-                "query": query,
-                "format": "json",
-                "pageSize": max_results,
-                "resultType": "core",
-            },
-            timeout=25,
-        )
-        response.raise_for_status()
-    except Exception:
-        return []
+    response = requests.get(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+        params={
+            "query": query,
+            "format": "json",
+            "pageSize": max_results,
+            "resultType": "core",
+        },
+        timeout=25,
+    )
+    response.raise_for_status()
 
     records = []
     for item in response.json().get("resultList", {}).get("result", []):
@@ -104,8 +116,90 @@ def _fetch_europepmc_discovery_records(query, max_results=25):
             "Title": item.get("title", ""),
             "Abstract": item.get("abstractText", ""),
             "Source_Type": "Europe PMC discovery",
+            "Record_ID": item.get("id") or item.get("pmid") or item.get("doi"),
         })
     return records
+
+
+def _record_key(record):
+    return (
+        str(record.get("PMID") or record.get("Record_ID") or "").strip(),
+        _norm_text(record.get("Title") or record.get("Source_Title")),
+    )
+
+
+def _extract_catalogued_plants(records, alias_catalog, indication_terms):
+    """Extract and rank catalogue-validated plant entities from literature."""
+    scores = defaultdict(float)
+    supports = defaultdict(set)
+    title_supports = defaultdict(set)
+    matched_aliases = defaultdict(set)
+    indication_aliases = [_norm_text(term) for term in indication_terms if term]
+
+    for index, record in enumerate(records):
+        title = _norm_text(record.get("Title") or record.get("Source_Title"))
+        abstract = _norm_text(
+            record.get("Abstract") or record.get("Notes") or record.get("Raw_Text")
+        )
+        combined = f" {title} {abstract} "
+
+        # A returned record must still contain at least one therapeutic term;
+        # this protects against noisy connector results.
+        if indication_aliases and not any(
+            f" {term} " in combined or term in combined for term in indication_aliases
+        ):
+            continue
+
+        source = str(record.get("Source_Type") or "literature")
+        support_id = str(record.get("PMID") or record.get("Record_ID") or index)
+
+        for scientific_name, aliases in alias_catalog.items():
+            best_record_score = 0.0
+            best_alias = None
+            title_hit_for_plant = False
+            for alias, alias_type in aliases:
+                title_hit = f" {alias} " in f" {title} "
+                abstract_hit = f" {alias} " in f" {abstract} "
+                if not title_hit and not abstract_hit:
+                    continue
+
+                score = 6.0 if title_hit else 2.0
+                if alias_type == "scientific":
+                    score += 2.0
+                # Longer aliases are less likely to be ambiguous.
+                score += min(2.0, len(alias.split()) * 0.35)
+                if score > best_record_score:
+                    best_record_score = score
+                    best_alias = alias
+                    title_hit_for_plant = title_hit
+
+            if best_record_score > 0:
+                scores[scientific_name] += best_record_score
+                supports[scientific_name].add(f"{source}:{support_id}")
+                if title_hit_for_plant:
+                    title_supports[scientific_name].add(f"{source}:{support_id}")
+                if best_alias:
+                    matched_aliases[scientific_name].add(best_alias)
+
+    ranked = sorted(
+        scores,
+        key=lambda plant: (
+            -len(title_supports[plant]),
+            -len(supports[plant]),
+            -scores[plant],
+            plant.lower(),
+        ),
+    )
+    diagnostics = {
+        plant: {
+            "score": round(scores[plant], 2),
+            "supporting_records": len(supports[plant]),
+            "title_supporting_records": len(title_supports[plant]),
+            "matched_aliases": sorted(matched_aliases[plant]),
+        }
+        for plant in ranked
+    }
+    return ranked, diagnostics
 
 
 def _online_discovered_candidate_plants(
@@ -115,103 +209,78 @@ def _online_discovered_candidate_plants(
     target_count,
     seed_plants=None,
 ):
-    """Discover additional evidence-bearing plants from broad literature.
+    """Discover additional catalogue-validated, evidence-bearing plants."""
+    diagnostics = {
+        "query_terms": _query_terms(indication),
+        "queries_attempted": 0,
+        "records_retrieved": 0,
+        "unique_records": 0,
+        "catalogue_size": 0,
+        "connector_errors": [],
+        "ranked_matches": {},
+    }
 
-    This is a controlled expansion step, not a free-form botanical guesser:
-    - PubMed and Europe PMC are queried for the therapeutic area plus botanical
-      concepts.
-    - Plant names are extracted only when they match the platform's own plant
-      catalogue (scientific name, or a sufficiently specific common name).
-    - Title mentions score more than abstract mentions; scientific-name matches
-      score more than common-name matches.
-    - Existing evidence-backed seed plants are retained and not duplicated.
-
-    Returns an ordered list of newly discovered scientific names. Any network or
-    parsing failure returns an empty list so the existing workflow still runs.
-    """
     try:
         engine = BotanicalRDCandidateEngine(use_live_search=False)
         alias_catalog = _candidate_alias_catalog(engine)
+        diagnostics["catalogue_size"] = len(alias_catalog)
         if not alias_catalog:
-            return []
+            diagnostics["connector_errors"].append("Plant alias catalogue is empty")
+            return [], diagnostics
 
-        terms = _query_terms(indication)
-        quoted_terms = " OR ".join(f'"{term}"' for term in terms[:7])
-        query = (
-            f"({quoted_terms}) AND "
-            "(medicinal plant OR herbal medicine OR phytotherapy OR botanical)"
-        )
-
-        records = []
-        try:
-            records.extend(search_and_fetch_pubmed(query, max_results=25))
-        except Exception:
-            pass
-        records.extend(_fetch_europepmc_discovery_records(query, max_results=25))
-
-        if not records:
-            return []
-
-        scores = defaultdict(float)
-        supports = defaultdict(set)
-
-        for index, record in enumerate(records):
-            title = _norm_text(record.get("Title") or record.get("Source_Title"))
-            abstract = _norm_text(
-                record.get("Abstract") or record.get("Notes") or record.get("Raw_Text")
+        all_records = []
+        # Separate focused searches retrieve far more botanical names than one
+        # very broad OR query, while keeping each query interpretable.
+        for term in diagnostics["query_terms"][:9]:
+            query = (
+                f'("{term}") AND '
+                "(medicinal plant OR herbal medicine OR phytotherapy OR botanical)"
             )
-            source = str(record.get("Source_Type") or "literature")
+            diagnostics["queries_attempted"] += 1
 
-            for scientific_name, aliases in alias_catalog.items():
-                best_record_score = 0.0
-                for alias, alias_type in aliases:
-                    # Normalized aliases contain spaces, so padding both sides
-                    # prevents substring matches inside longer words.
-                    title_hit = f" {alias} " in f" {title} "
-                    abstract_hit = f" {alias} " in f" {abstract} "
-                    if not title_hit and not abstract_hit:
-                        continue
+            try:
+                all_records.extend(search_and_fetch_pubmed(query, max_results=20))
+            except Exception as exc:
+                diagnostics["connector_errors"].append(
+                    f"PubMed [{term}]: {type(exc).__name__}: {exc}"
+                )
+            try:
+                all_records.extend(_fetch_europepmc_discovery_records(query, max_results=20))
+            except Exception as exc:
+                diagnostics["connector_errors"].append(
+                    f"Europe PMC [{term}]: {type(exc).__name__}: {exc}"
+                )
 
-                    score = 4.0 if title_hit else 1.5
-                    if alias_type == "scientific":
-                        score += 1.0
-                    best_record_score = max(best_record_score, score)
+        diagnostics["records_retrieved"] = len(all_records)
+        unique_records = []
+        seen = set()
+        for record in all_records:
+            key = _record_key(record)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_records.append(record)
+        diagnostics["unique_records"] = len(unique_records)
 
-                if best_record_score > 0:
-                    scores[scientific_name] += best_record_score
-                    supports[scientific_name].add(f"{source}:{index}")
+        ranked, match_diagnostics = _extract_catalogued_plants(
+            unique_records,
+            alias_catalog,
+            diagnostics["query_terms"],
+        )
+        diagnostics["ranked_matches"] = match_diagnostics
 
         existing = {str(p).strip().lower() for p in (seed_plants or []) if p}
-        ranked = sorted(
-            (
-                plant for plant in scores
-                if plant.lower() not in existing
-            ),
-            key=lambda plant: (
-                -len(supports[plant]),
-                -scores[plant],
-                plant.lower(),
-            ),
+        ranked = [plant for plant in ranked if plant.lower() not in existing]
+        discovery_slots = max(0, int(target_count) - len(existing))
+        return ranked[:discovery_slots], diagnostics
+    except Exception as exc:
+        diagnostics["connector_errors"].append(
+            f"Discovery pipeline: {type(exc).__name__}: {exc}"
         )
-
-        # Discovery should broaden a focused shortlist, not flood Step 2.
-        discovery_slots = max(0, min(4, int(target_count) - len(existing)))
-        return ranked[:discovery_slots]
-    except Exception:
-        return []
+        return [], diagnostics
 
 
 def _richer_candidate_plants(indication, dosage_form, target_market, target_count):
-    """Evidence-first candidate-plant source for live evidence search.
-
-    The central engine prioritizes ``scientific_evidence`` and
-    ``evidence_records``. Broad phytochemical compilation labels in
-    ``plant_compounds.indication`` are not accepted as direct
-    plant-indication evidence.
-
-    Returns None (not an empty list) on any failure so the caller can fall
-    back to the small curated global candidate list.
-    """
     try:
         engine = BotanicalRDCandidateEngine(use_live_search=False)
         refs = engine._get_reference_plants(
@@ -222,13 +291,8 @@ def _richer_candidate_plants(indication, dosage_form, target_market, target_coun
         )
         if refs is None or refs.empty or "Scientific_Name" not in refs.columns:
             return None
-
         plants = (
-            refs["Scientific_Name"]
-            .dropna()
-            .astype(str)
-            .drop_duplicates()
-            .tolist()
+            refs["Scientific_Name"].dropna().astype(str).drop_duplicates().tolist()
         )
         return plants or None
     except Exception:
@@ -246,16 +310,6 @@ def run_research_engine(
     global_candidate_count=8,
     pilot_mode=False,
 ):
-    """Collect and save live evidence for a focused candidate shortlist.
-
-    Candidate selection is now hybrid:
-    1. evidence-backed plants already present in Supabase;
-    2. additional plants discovered from broad PubMed/Europe PMC literature,
-       validated against the platform plant catalogue;
-    3. the curated global candidate ranking only as a fallback/fill source.
-
-    The total number searched remains capped by ``global_candidate_count``.
-    """
     global_candidates = rank_global_candidates(
         indication=indication,
         dosage_form=dosage_form,
@@ -267,10 +321,7 @@ def run_research_engine(
     else:
         fallback_plants = (
             global_candidates["Scientific_Name"]
-            .dropna()
-            .astype(str)
-            .drop_duplicates()
-            .tolist()
+            .dropna().astype(str).drop_duplicates().tolist()
         )
 
     evidence_backed = _richer_candidate_plants(
@@ -281,8 +332,7 @@ def run_research_engine(
     ) or []
 
     candidate_plants = list(dict.fromkeys(evidence_backed))
-
-    discovered = _online_discovered_candidate_plants(
+    discovered, discovery_diagnostics = _online_discovered_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,
         target_market=target_market,
@@ -293,9 +343,6 @@ def run_research_engine(
         plant for plant in discovered if plant not in candidate_plants
     )
 
-    # Fill any remaining slots from the curated ranking. This preserves
-    # coverage when literature discovery is unavailable or returns too few
-    # catalogue-mapped plant names.
     for plant in fallback_plants:
         if plant not in candidate_plants:
             candidate_plants.append(plant)
@@ -326,6 +373,7 @@ def run_research_engine(
         "candidate_plants": candidate_plants,
         "evidence_backed_plants": evidence_backed,
         "online_discovered_plants": discovered,
+        "candidate_discovery_diagnostics": discovery_diagnostics,
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),

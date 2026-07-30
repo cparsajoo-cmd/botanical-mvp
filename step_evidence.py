@@ -72,6 +72,43 @@ def render_evidence_step(inputs):
             st.write("**Candidate plants searched:**")
             st.write(", ".join(candidate_plants))
 
+        evidence_backed = research_output.get("evidence_backed_plants", [])
+        discovered = research_output.get("online_discovered_plants", [])
+        if evidence_backed:
+            st.caption("Evidence-backed seeds: " + ", ".join(evidence_backed))
+        if discovered:
+            st.caption("Newly discovered from literature: " + ", ".join(discovered))
+
+        diagnostics = research_output.get("candidate_discovery_diagnostics", {})
+        if diagnostics:
+            with st.expander("Candidate discovery diagnostics"):
+                st.write(
+                    f"Queries attempted: {diagnostics.get('queries_attempted', 0)} | "
+                    f"Records retrieved: {diagnostics.get('records_retrieved', 0)} | "
+                    f"Unique records: {diagnostics.get('unique_records', 0)} | "
+                    f"Plant catalogue size: {diagnostics.get('catalogue_size', 0)}"
+                )
+                st.write("**Therapeutic query terms:**")
+                st.write(", ".join(diagnostics.get("query_terms", [])))
+
+                ranked_matches = diagnostics.get("ranked_matches", {})
+                if ranked_matches:
+                    rows = []
+                    for plant, meta in ranked_matches.items():
+                        rows.append({
+                            "Plant": plant,
+                            "Score": meta.get("score"),
+                            "Supporting records": meta.get("supporting_records"),
+                            "Title mentions": meta.get("title_supporting_records"),
+                            "Matched aliases": ", ".join(meta.get("matched_aliases", [])),
+                        })
+                    st.dataframe(pd.DataFrame(rows), width="stretch")
+
+                connector_errors = diagnostics.get("connector_errors", [])
+                if connector_errors:
+                    st.warning("Some discovery queries failed.")
+                    st.write("\n".join(f"- {item}" for item in connector_errors))
+
         if errors:
             st.warning("Some searches produced errors.")
             st.dataframe(pd.DataFrame(errors), width="stretch")

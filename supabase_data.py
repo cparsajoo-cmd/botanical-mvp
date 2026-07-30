@@ -117,3 +117,17 @@ def load_evidence_records_df():
     except Exception as exc:
         print(f"[supabase_data] load_evidence_records_df failed entirely: {exc}")
         return pd.DataFrame()
+
+
+def load_plants_df():
+    """Load the canonical plant catalogue (scientific and common names).
+
+    This table is intentionally small and identity-focused.  It is used by
+    literature discovery to validate extracted botanical names before they are
+    admitted to the candidate shortlist.
+    """
+    try:
+        return _fetch_table_df("plants")
+    except Exception as exc:
+        print(f"[supabase_data] load_plants_df failed entirely: {exc}")
+        return pd.DataFrame()

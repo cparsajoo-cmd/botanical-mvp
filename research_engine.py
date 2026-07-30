@@ -11,7 +11,7 @@ from source_registry import PILOT_MAX_RESULTS
 
 
 _DISCOVERY_QUERY_TERMS = {
-    "metabolic and blood sugar support": [
+    "metabolic blood sugar support": [
         "diabetes", "type 2 diabetes", "hyperglycemia", "blood glucose",
         "glycemic control", "insulin resistance", "metabolic syndrome",
     ],
@@ -21,38 +21,6 @@ _DISCOVERY_QUERY_TERMS = {
     "sleep": ["sleep", "insomnia", "sleep quality", "sleep disorder"],
     "anxiety stress": ["anxiety", "stress", "anxiolytic"],
 }
-
-_THERAPEUTIC_DISCOVERY_SEEDS = {
-    "metabolic and blood sugar support": [
-        "Gymnema sylvestre",
-        "Morus alba",
-        "Olea europaea",
-        "Camellia sinensis",
-        "Salacia reticulata",
-        "Syzygium cumini",
-        "Vaccinium myrtillus",
-        "Galega officinalis",
-    ],
-    "energy fatigue": [
-        "Rhodiola rosea",
-        "Panax ginseng",
-        "Eleutherococcus senticosus",
-        "Withania somnifera",
-    ],
-    "sleep": [
-        "Valeriana officinalis",
-        "Melissa officinalis",
-        "Passiflora incarnata",
-        "Humulus lupulus",
-    ],
-    "anxiety stress": [
-        "Melissa officinalis",
-        "Passiflora incarnata",
-        "Lavandula angustifolia",
-        "Withania somnifera",
-    ],
-}
-
 
 _COMMON_NAME_STOPWORDS = {
     "plant", "herb", "herbal", "tea", "root", "leaf", "leaves", "seed",
@@ -147,64 +115,46 @@ def _online_discovered_candidate_plants(
     target_count,
     seed_plants=None,
 ):
-    """Discover additional plants from PubMed/Europe PMC with diagnostics.
+    """Discover additional evidence-bearing plants from broad literature.
 
-    Broad discovery is intentionally separated from evidence collection. The
-    function searches several smaller indication-specific queries, maps plant
-    mentions back to the platform catalogue, and returns a deterministic
-    literature-prior fallback only when live discovery cannot fill the shortlist.
+    This is a controlled expansion step, not a free-form botanical guesser:
+    - PubMed and Europe PMC are queried for the therapeutic area plus botanical
+      concepts.
+    - Plant names are extracted only when they match the platform's own plant
+      catalogue (scientific name, or a sufficiently specific common name).
+    - Title mentions score more than abstract mentions; scientific-name matches
+      score more than common-name matches.
+    - Existing evidence-backed seed plants are retained and not duplicated.
+
+    Returns an ordered list of newly discovered scientific names. Any network or
+    parsing failure returns an empty list so the existing workflow still runs.
     """
-    diagnostics = {
-        "queries": [],
-        "records_retrieved": 0,
-        "catalogue_aliases": 0,
-        "live_matches": 0,
-        "fallback_added": 0,
-        "errors": [],
-    }
-
     try:
         engine = BotanicalRDCandidateEngine(use_live_search=False)
         alias_catalog = _candidate_alias_catalog(engine)
-        diagnostics["catalogue_aliases"] = sum(len(v) for v in alias_catalog.values())
         if not alias_catalog:
-            diagnostics["errors"].append("Plant alias catalogue was empty.")
-            return [], diagnostics
+            return []
+
+        terms = _query_terms(indication)
+        quoted_terms = " OR ".join(f'"{term}"' for term in terms[:7])
+        query = (
+            f"({quoted_terms}) AND "
+            "(medicinal plant OR herbal medicine OR phytotherapy OR botanical)"
+        )
 
         records = []
-        for term in _query_terms(indication)[:7]:
-            query = (
-                f'("{term}") AND '
-                '(medicinal plant OR herbal medicine OR phytotherapy OR botanical)'
-            )
-            diagnostics["queries"].append(query)
-            try:
-                records.extend(search_and_fetch_pubmed(query, max_results=12))
-            except Exception as exc:
-                diagnostics["errors"].append(f"PubMed: {type(exc).__name__}")
-            try:
-                records.extend(_fetch_europepmc_discovery_records(query, max_results=12))
-            except Exception as exc:
-                diagnostics["errors"].append(f"Europe PMC: {type(exc).__name__}")
+        try:
+            records.extend(search_and_fetch_pubmed(query, max_results=25))
+        except Exception:
+            pass
+        records.extend(_fetch_europepmc_discovery_records(query, max_results=25))
 
-        # Deduplicate literature records before scanning the plant catalogue.
-        unique_records = []
-        seen_records = set()
-        for record in records:
-            key = _norm_text(
-                record.get("Title")
-                or record.get("Source_Title")
-                or record.get("Raw_Text")
-            )
-            if not key or key in seen_records:
-                continue
-            seen_records.add(key)
-            unique_records.append(record)
-        records = unique_records
-        diagnostics["records_retrieved"] = len(records)
+        if not records:
+            return []
 
         scores = defaultdict(float)
         supports = defaultdict(set)
+
         for index, record in enumerate(records):
             title = _norm_text(record.get("Title") or record.get("Source_Title"))
             abstract = _norm_text(
@@ -215,51 +165,41 @@ def _online_discovered_candidate_plants(
             for scientific_name, aliases in alias_catalog.items():
                 best_record_score = 0.0
                 for alias, alias_type in aliases:
+                    # Normalized aliases contain spaces, so padding both sides
+                    # prevents substring matches inside longer words.
                     title_hit = f" {alias} " in f" {title} "
                     abstract_hit = f" {alias} " in f" {abstract} "
                     if not title_hit and not abstract_hit:
                         continue
+
                     score = 4.0 if title_hit else 1.5
                     if alias_type == "scientific":
                         score += 1.0
                     best_record_score = max(best_record_score, score)
+
                 if best_record_score > 0:
                     scores[scientific_name] += best_record_score
                     supports[scientific_name].add(f"{source}:{index}")
 
         existing = {str(p).strip().lower() for p in (seed_plants or []) if p}
         ranked = sorted(
-            (plant for plant in scores if plant.lower() not in existing),
-            key=lambda plant: (-len(supports[plant]), -scores[plant], plant.lower()),
+            (
+                plant for plant in scores
+                if plant.lower() not in existing
+            ),
+            key=lambda plant: (
+                -len(supports[plant]),
+                -scores[plant],
+                plant.lower(),
+            ),
         )
-        diagnostics["live_matches"] = len(ranked)
 
-        slots = max(0, min(5, int(target_count) - len(existing)))
-        selected = ranked[:slots]
+        # Discovery should broaden a focused shortlist, not flood Step 2.
+        discovery_slots = max(0, min(4, int(target_count) - len(existing)))
+        return ranked[:discovery_slots]
+    except Exception:
+        return []
 
-        # Controlled fallback: these are transparent literature-prior seeds,
-        # never treated as saved evidence. They only make Step 2 search them.
-        indication_norm = _norm_text(indication)
-        fallback_pool = []
-        for key, plants in _THERAPEUTIC_DISCOVERY_SEEDS.items():
-            if key in indication_norm or indication_norm in key:
-                fallback_pool.extend(plants)
-
-        catalogue_names = {name.lower(): name for name in alias_catalog}
-        for proposed in fallback_pool:
-            canonical = catalogue_names.get(proposed.lower())
-            if not canonical or canonical.lower() in existing:
-                continue
-            if canonical not in selected:
-                selected.append(canonical)
-                diagnostics["fallback_added"] += 1
-            if len(selected) >= slots:
-                break
-
-        return selected[:slots], diagnostics
-    except Exception as exc:
-        diagnostics["errors"].append(f"Discovery failed: {type(exc).__name__}: {exc}")
-        return [], diagnostics
 
 def _richer_candidate_plants(indication, dosage_form, target_market, target_count):
     """Evidence-first candidate-plant source for live evidence search.
@@ -342,7 +282,7 @@ def run_research_engine(
 
     candidate_plants = list(dict.fromkeys(evidence_backed))
 
-    discovered, discovery_diagnostics = _online_discovered_candidate_plants(
+    discovered = _online_discovered_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,
         target_market=target_market,
@@ -386,7 +326,6 @@ def run_research_engine(
         "candidate_plants": candidate_plants,
         "evidence_backed_plants": evidence_backed,
         "online_discovered_plants": discovered,
-        "discovery_diagnostics": discovery_diagnostics,
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),

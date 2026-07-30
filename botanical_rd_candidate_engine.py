@@ -2237,10 +2237,20 @@ class BotanicalRDCandidateEngine:
             },
         }
 
-        query_key = query_norm.replace("/", " ")
+        # Canonicalise separators/connectors before selecting a synonym group.
+        # Without this, a UI label such as ``Metabolic & blood sugar support``
+        # normalises to ``metabolic & blood sugar support`` and fails to match
+        # the concept-group key ``metabolic blood sugar support``.
+        query_key = re.sub(r"[^a-z0-9]+", " ", query_norm)
+        query_key = re.sub(r"\b(and|support|health)\b", " ", query_key)
+        query_key = re.sub(r"\s+", " ", query_key).strip()
+
         query_terms = set()
         for key, terms in concept_groups.items():
-            if key in query_key or any(term in query_key for term in terms):
+            key_norm = re.sub(r"[^a-z0-9]+", " ", key)
+            key_norm = re.sub(r"\b(and|support|health)\b", " ", key_norm)
+            key_norm = re.sub(r"\s+", " ", key_norm).strip()
+            if key_norm in query_key or any(self._norm(term) in query_norm for term in terms):
                 query_terms.update(terms)
         if not query_terms:
             query_terms.add(query_norm)
@@ -2254,14 +2264,32 @@ class BotanicalRDCandidateEngine:
         for concept in concepts:
             if concept == query_norm:
                 best = max(best, 1.0)
+
+            matched_terms = set()
+            reverse_matches = set()
             for term in query_terms:
                 term_norm = self._norm(term)
                 if concept == term_norm:
                     best = max(best, 0.95)
+                    matched_terms.add(term_norm)
                 elif len(term_norm) >= 5 and term_norm in concept:
-                    best = max(best, 0.8)
+                    matched_terms.add(term_norm)
                 elif len(concept) >= 5 and concept in term_norm:
-                    best = max(best, 0.7)
+                    reverse_matches.add(term_norm)
+
+            # Reward concepts that express more than one relevant idea.  This
+            # keeps ``Energy fatigue`` above a noisy phrase such as
+            # ``unrelated fatigue marker`` instead of resolving the tie
+            # alphabetically.
+            if len(matched_terms) >= 2:
+                best = max(best, 0.90)
+            # A single synonym occurring inside a longer phrase is too weak
+            # for a multi-concept therapeutic-area query. Exact single-term
+            # concepts (for example ``fatigue`` or ``diabetes``) were already
+            # accepted above at 0.95; noisy phrases such as ``unrelated fatigue
+            # marker`` are rejected here instead of entering the inventory.
+            elif reverse_matches and len(self._meaningful_tokens(concept)) <= 2:
+                best = max(best, 0.70)
         return best
 
     def _reference_plants_from_candidate_data(self, problem, max_reference_plants):

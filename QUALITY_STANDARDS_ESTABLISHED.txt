@@ -1,0 +1,282 @@
+================================================================================
+QUALITY STANDARDS FOR BOTANICAL GOLD CASE IMPLEMENTATION
+================================================================================
+
+Established: Case 009 (Melissa officinalis L.)
+Codified: Case 010 (Passiflora incarnata L.)
+Effective: Henceforth all Gold Cases
+
+================================================================================
+REQUIREMENT 1: BIBLIOGRAPHIC METADATA COMPLETENESS
+================================================================================
+
+Every Gold Case must include complete bibliographic data for each reference:
+
+Required fields (when available):
+  ✓ Full author list
+  ✓ Publication year (exact date if available)
+  ✓ Journal or publication name
+  ✓ Volume and issue numbers
+  ✓ Page range
+  ✓ DOI or PMID/PubMed identifier
+  ✓ Document type (RCT, review, meta-analysis, pharmacology study, etc.)
+  ✓ Jurisdiction (if regulatory document)
+
+Reference ID format:
+  [FirstAuthor]_[Year]_[TaxonShortName]_[Domain]
+
+Example (Case 010):
+  Aslanargun_2012_passiflora_anxiety
+  → Authors: Aslanargun P, et al.
+  → Year: 2012
+  → Taxon: Passiflora incarnata
+  → Domain: anxiety (indication)
+
+Validation:
+  ✓ Must be traceable to published literature or regulatory database
+  ✓ Must not be vague or approximate
+  ✓ Must enable exact location of source material
+
+================================================================================
+REQUIREMENT 2: EVIDENCE QUOTE TRACEABILITY
+================================================================================
+
+Every evidence quote must be traceable to its source with complete attribution:
+
+Evidence quote format:
+  {
+    "quote_text": "...",           // Text of the claim
+    "source_id": "...",             // Reference ID
+    "locator": "...",               // Exact location (page, section, etc.)
+    "transformation_type": "..."    // VERBATIM or PARAPHRASED
+  }
+
+Source locator examples:
+  ACCEPTABLE:
+    "Journal of Anesthesia 26(1):39-44, DOI: 10.1007/s00540-011-1250-1"
+    "Phytotherapy Research 29(12):1940-1950, PMID: 21986843"
+    "Page 595, Results section"
+    "EMA/HMPC Assessment Report, section 'Well-established use'"
+
+  NOT ACCEPTABLE:
+    "Sleep and anxiety clinical trials 2010-2022" (too vague)
+    "Clinical literature" (not specific)
+    "Page 100" (without document reference)
+
+Transformation types:
+  VERBATIM: Direct quote from source (rare, only for exact matches)
+  PARAPHRASED: Synthesized or reformulated from source (preferred)
+
+Validation rule:
+  Every claim in evidence_text must be traceable to a specific page/section
+  of the cited reference with page numbers or section names.
+
+================================================================================
+REQUIREMENT 3: INDICATION EVIDENCE ACCURACY
+================================================================================
+
+No claim shall be strengthened, weakened, or generalized beyond what the cited
+source actually supports.
+
+Three-tier accuracy check:
+
+Tier 1 — Source review:
+  Q: Does the cited publication actually discuss this indication?
+  Q: Are the same claims/evidence presented in the publication?
+  Q: Is the evidence presented at the same confidence level?
+
+Tier 2 — No overgeneralization:
+  ✗ WRONG: Publication says "Study showed improvement in sleep onset"
+           Case says "Improves total sleep duration" (not in source)
+  ✓ RIGHT: Publication says "Study showed improvement in sleep onset"
+           Case says "Supports sleep quality improvement" (supported)
+
+Tier 3 — Evidence domain matching:
+  ✗ WRONG: Source is pharmacology paper → Case claims RCT efficacy
+  ✓ RIGHT: Source is RCT → Case claims clinical efficacy
+  ✓ RIGHT: Source is pharmacology paper → Case claims mechanism
+
+Validation:
+  ✓ All claims must be defensible from source material
+  ✓ Specificity in evidence must match source specificity
+  ✓ No claims about populations not studied in source
+  ✓ No claims about routes not tested in source
+
+================================================================================
+REQUIREMENT 4: CONFIDENCE LEVEL CALIBRATION
+================================================================================
+
+Confidence levels must realistically reflect the strength of evidence:
+
+Confidence level mapping:
+
+HIGH confidence appropriate for:
+  - Systematic reviews with meta-analysis
+  - Multiple large RCTs with consistent results
+  - Regulatory approval based on strong evidence
+  - Effect sizes that are large and clinically meaningful
+
+MEDIUM confidence appropriate for:
+  - Single well-designed RCT with adequate sample size
+  - Pharmacological studies with mechanistic evidence
+  - Consistent results across moderate evidence base
+  - Effect sizes that are moderate to large
+  - Specialized populations (not necessarily generalizable)
+
+LOW confidence appropriate for:
+  - Small pilot studies
+  - In vitro or animal studies only
+  - Observational studies without controls
+  - Single case reports
+  - Inconsistent evidence across studies
+
+Confidence basis must explicitly state:
+  ✓ Type of study (RCT, review, pharmacology, observational, etc.)
+  ✓ Sample size (if available)
+  ✓ Outcome measures used
+  ✓ Quality indicators (randomization, blinding, etc.)
+
+Example (Case 010):
+  Confidence: MEDIUM
+  Basis: "Randomized controlled trial in clinical setting with anxiety outcome 
+          measures"
+  Note: MEDIUM is appropriate because:
+    - Single RCT (not meta-analysis) → not HIGH
+    - Well-designed with clear outcomes → not LOW
+    - Specialized population (preoperative) → generalizability limited
+
+================================================================================
+REQUIREMENT 5: PHASE 1 VALIDATION EXECUTION
+================================================================================
+
+Every Gold Case must execute successfully through the complete Phase 1 pipeline:
+
+Pipeline execution:
+
+1. Load case:
+   python3 gold_case_reference_grounded_NNN_*.py
+   → Must load without import errors
+   → Must resolve 1 or more outcomes
+
+2. Run full validation:
+   python3 run_validation.py --output-dir ./validation_output
+   
+   Suites executed:
+   ✓ SUITE 1: Baseline integration tests (8/8)
+   ✓ SUITE 2: Regression tests (7/7 for Case 007)
+   ✓ SUITE 3: Mutation testing (6/6 killed, 100% detection)
+   ✓ SUITE 4: State machine validation (gates enforced)
+
+3. Exit code requirement:
+   Exit code: 0 (success)
+   → Any non-zero exit code = FAILURE
+
+4. Artifacts verification:
+   8 artifacts must be generated:
+   ✓ baseline_results.txt
+   ✓ regression_results.txt
+   ✓ mutation_results.txt
+   ✓ state_transition_results.txt
+   ✓ execution_report.json
+   ✓ execution_trace.json
+   ✓ sha256_manifest.txt
+   ✓ dependency_manifest.txt
+
+5. Clean environment test:
+   Case must pass validation in a clean environment:
+   - Fresh extraction from ZIP
+   - No local dependencies
+   - No prior state
+   - Exit code 0 required
+
+================================================================================
+IMPLEMENTATION CHECKLIST
+================================================================================
+
+Before submission, every new Gold Case must satisfy:
+
+BIBLIOGRAPHIC COMPLETENESS:
+  ☐ Author names specified
+  ☐ Journal name specified
+  ☐ Publication year specified (exact date if available)
+  ☐ Volume and issue specified
+  ☐ Page range or DOI specified
+  ☐ PMID or other identifier if available
+  ☐ Document type specified
+  ☐ Reference ID follows [Author]_[Year]_[Taxon]_[Indicator] pattern
+
+EVIDENCE TRACEABILITY:
+  ☐ Every claim has source_id
+  ☐ Every claim has specific locator (page number, section name, etc.)
+  ☐ Transformation type specified (VERBATIM or PARAPHRASED)
+  ☐ DOI or PMID included in source_locator when available
+  ☐ No vague references like "clinical trials 2010-2022"
+
+INDICATION ACCURACY:
+  ☐ All claims verified against source material
+  ☐ No overgeneralization of source claims
+  ☐ No claims about populations not studied
+  ☐ No claims about routes not tested
+  ☐ Evidence domain matches source domain
+
+CONFIDENCE CALIBRATION:
+  ☐ Confidence level realistic for evidence type
+  ☐ Basis explicitly states type of study
+  ☐ Basis includes sample size or outcome measures
+  ☐ Level justification documented if non-obvious
+
+VALIDATION PIPELINE:
+  ☐ Case loads successfully (no import errors)
+  ☐ Case resolves 1+ outcomes
+  ☐ All 4 test suites pass
+  ☐ Mutation detection rate = 100%
+  ☐ Exit code = 0
+  ☐ Exit code = 0 in clean environment
+  ☐ All 8 artifacts generated
+  ☐ Phase 1 integrity maintained (no code modifications)
+
+================================================================================
+GOVERNANCE
+================================================================================
+
+Standards enforcement:
+  - Every case failing any requirement is REJECTED
+  - Defects must be identified and corrected before submission
+  - Self-audit (like Case 009) is recommended for complex cases
+  - Clean environment testing is mandatory
+
+Standards evolution:
+  - These standards may be strengthened based on experience
+  - Standards may not be weakened
+  - All cases must meet or exceed current standards
+
+Cases submitted:
+  Case 007: Preparation specification (baseline)
+  Case 008: Ginkgo biloba - approved (retrospective audit recommended)
+  Case 009: Melissa officinalis - approved (self-audit performed)
+  Case 010: Passiflora incarnata - approved (standards implemented)
+  Case 011+: Must meet all five standards
+
+================================================================================
+STANDARDS CODIFICATION CERTIFICATION
+================================================================================
+
+These five quality standards are now MANDATORY for all new Gold Case
+implementations going forward.
+
+Effective date: 2026-07-30 (after Case 009 audit)
+
+Codified standards:
+  1. ✅ Bibliographic metadata completeness
+  2. ✅ Evidence quote traceability
+  3. ✅ Indication evidence accuracy (no overgeneralization)
+  4. ✅ Confidence level calibration
+  5. ✅ Phase 1 validation execution (exit code 0)
+
+Cases must comply with ALL FIVE standards to be approved for inclusion
+in the production botanical evidence repository.
+
+Authority: Automated validation pipeline + curator oversight
+Status: ACTIVE AND ENFORCED
+
+================================================================================

@@ -2076,30 +2076,11 @@ class BotanicalRDCandidateEngine:
             )
 
         indication_norm = df["indication"].fillna("").map(self._norm)
-
-        mask = indication_norm.apply(
-            lambda text: bool(text)
-            and (problem_norm in text or text in problem_norm)
+        match_scores = indication_norm.map(
+            lambda text: self._indication_match_score(problem_norm, text)
         )
-
-        # Always ALSO compute the token-overlap mask and OR it in, rather
-        # than only falling back to it when the exact/substring mask found
-        # literally nothing. A single old/narrow row whose indication text
-        # happens to substring-match the query (e.g. one legacy row tagged
-        # exactly "Menstrual / PMS support") was enough to make mask.any()
-        # True, which silently discarded hundreds of better token-matched
-        # rows that would otherwise have been found — collapsing 991
-        # matched plants down to just the 1 behind that narrow match.
-        problem_tokens = self._meaningful_tokens(problem_norm)
-        token_mask = indication_norm.apply(
-            lambda text: bool(text)
-            and self._tokens_overlap(
-                problem_tokens, self._meaningful_tokens(text)
-            )
-        )
-        mask = mask | token_mask
-
-        matched_rows = df[mask]
+        matched_rows = df[match_scores > 0].copy()
+        matched_rows["_indication_match_score"] = match_scores[match_scores > 0]
 
         if matched_rows.empty:
             return pd.DataFrame()
@@ -2125,18 +2106,26 @@ class BotanicalRDCandidateEngine:
                 "Known_Active_Compounds": "; ".join(compounds),
                 "Known_Targets": "; ".join(targets),
                 "Plant_Part": plant_part,
-                # Specificity proxy: how many indication-matched compound
-                # rows this plant has for THIS query — used only as a
-                # tiebreaker below, smaller/more-focused first.
+                # Retrieval relevance is primary.  Number of independent
+                # indication-matched compound rows is a positive support
+                # signal, not something to minimise.
+                "_indication_match_score": float(group["_indication_match_score"].max()),
                 "_num_matched_rows": len(group),
             })
 
         if not rows:
             return pd.DataFrame()
 
-        rows.sort(key=lambda r: r["_num_matched_rows"])
+        rows.sort(
+            key=lambda r: (
+                -r["_indication_match_score"],
+                -r["_num_matched_rows"],
+                r["Scientific_Name"].lower(),
+            )
+        )
 
         for r in rows:
+            del r["_indication_match_score"]
             del r["_num_matched_rows"]
 
         return pd.DataFrame(rows[:max_reference_plants])
@@ -4503,23 +4492,60 @@ class BotanicalRDCandidateEngine:
 
     @staticmethod
     def _tokens_overlap(tokens_a, tokens_b):
-        """True on exact token overlap OR when one token is a substring
-        of another (both >=5 chars, to avoid noisy short-string false
-        positives). Plain set intersection alone misses real matches like
-        "menstrual" vs "premenstrual" — same underlying condition, just a
-        prefixed spelling — which silently starved indications of any
-        Supabase-backed match and fell back to a single old manually
-        curated plant instead of the real, much richer dataset.
+        """Conservative token overlap used only as a fallback.
+
+        A previous implementation returned True when *any one* token
+        overlapped.  For multi-concept questions such as
+        ``Energy / fatigue`` or ``Metabolic & blood sugar support`` this
+        admitted hundreds of rows that matched one generic word and made
+        the candidate universe effectively the whole database.
+
+        The fallback is now strict:
+        - one-token queries may match that token (including a safe
+          prefix/suffix variant such as menstrual/premenstrual);
+        - multi-token queries require every query token to be represented.
+
+        Exact/phrase matches are still handled before this helper, so this
+        only prevents broad one-word fan-out; it does not replace exact
+        indication matching.
         """
         if not tokens_a or not tokens_b:
             return False
-        if tokens_a & tokens_b:
-            return True
-        for a in tokens_a:
-            for b in tokens_b:
-                if len(a) >= 5 and len(b) >= 5 and (a in b or b in a):
-                    return True
-        return False
+
+        def represented(query_token):
+            if query_token in tokens_b:
+                return True
+            return any(
+                len(query_token) >= 5
+                and len(candidate_token) >= 5
+                and (query_token in candidate_token or candidate_token in query_token)
+                for candidate_token in tokens_b
+            )
+
+        return all(represented(token) for token in tokens_a)
+
+    @classmethod
+    def _indication_match_score(cls, query_text, candidate_text):
+        """Return a transparent indication-relevance score (0 = reject).
+
+        This is intentionally a retrieval score, not an R&D score.  It is
+        used only to construct the reference-plant universe before the
+        decision engine fans out through shared compounds.
+        """
+        query_norm = cls._norm(query_text)
+        candidate_norm = cls._norm(candidate_text)
+        if not query_norm or not candidate_norm:
+            return 0
+        if query_norm == candidate_norm:
+            return 100
+        if query_norm in candidate_norm or candidate_norm in query_norm:
+            return 90
+
+        query_tokens = cls._meaningful_tokens(query_norm)
+        candidate_tokens = cls._meaningful_tokens(candidate_norm)
+        if cls._tokens_overlap(query_tokens, candidate_tokens):
+            return 75
+        return 0
 
     @staticmethod
     def _norm(value):
@@ -4660,22 +4686,14 @@ class BotanicalRDCandidateEngine:
             return pd.DataFrame(columns=columns)
 
         df["_indication_norm"] = df["indication"].fillna("").map(self._norm)
-
-        mask = df["_indication_norm"].apply(
-            lambda text: bool(text)
-            and (indication_norm in text or text in indication_norm)
+        df["_indication_match_score"] = df["_indication_norm"].map(
+            lambda text: self._indication_match_score(indication_norm, text)
         )
 
-        indication_tokens = self._meaningful_tokens(indication_norm)
-        token_mask = df["_indication_norm"].apply(
-            lambda text: bool(text)
-            and self._tokens_overlap(
-                indication_tokens, self._meaningful_tokens(text)
-            )
-        )
-        mask = mask | token_mask
-
-        matched = df[mask]
+        # Reject loose one-word overlaps.  This prevents Step 3/4 from
+        # presenting most of the botanical catalogue as if it had been
+        # selected for the current R&D question.
+        matched = df[df["_indication_match_score"] > 0].copy()
 
         if matched.empty:
             return pd.DataFrame(columns=columns)
@@ -4700,10 +4718,22 @@ class BotanicalRDCandidateEngine:
         if not rows:
             return pd.DataFrame(columns=columns)
 
+        result = pd.DataFrame(rows).drop_duplicates()
+        # Preserve scientific relevance order instead of alphabetic order.
+        # Alphabetic ordering was why Abelmoschus/Abies/Acacia appeared at
+        # the top for unrelated questions.
+        plant_scores = (
+            matched.groupby("scientific_name")["_indication_match_score"]
+            .max()
+            .to_dict()
+        )
+        result["_match_score"] = result["Known_Plant"].map(plant_scores).fillna(0)
         return (
-            pd.DataFrame(rows)
-            .drop_duplicates()
-            .sort_values(["Known_Plant", "Known_Compound"])
+            result.sort_values(
+                ["_match_score", "Known_Plant", "Known_Compound"],
+                ascending=[False, True, True],
+            )
+            .drop(columns=["_match_score"])
             .reset_index(drop=True)
         )
 

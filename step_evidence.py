@@ -83,10 +83,19 @@ def render_evidence_step(inputs):
         if diagnostics:
             with st.expander("Candidate discovery diagnostics"):
                 st.write(
-                    f"Queries attempted: {diagnostics.get('queries_attempted', 0)} | "
-                    f"Records retrieved: {diagnostics.get('records_retrieved', 0)} | "
+                    f"Generic queries: {diagnostics.get('queries_attempted', 0)} | "
+                    f"Generic records: {diagnostics.get('records_retrieved', 0)} | "
                     f"Unique records: {diagnostics.get('unique_records', 0)} | "
                     f"Plant catalogue size: {diagnostics.get('catalogue_size', 0)}"
+                )
+                st.write(
+                    f"Candidate pool: {diagnostics.get('candidate_pool_size', 0)} | "
+                    f"Focused candidate queries: "
+                    f"{diagnostics.get('candidate_queries_attempted', 0)} | "
+                    f"Candidate validation records: "
+                    f"{diagnostics.get('candidate_validation_records', 0)} | "
+                    f"Validated candidates added: "
+                    f"{diagnostics.get('candidate_validated_count', 0)}"
                 )
                 st.write("**Therapeutic query terms:**")
                 st.write(", ".join(diagnostics.get("query_terms", [])))

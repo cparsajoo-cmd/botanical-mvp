@@ -3,45 +3,78 @@ import time
 
 import requests
 
-# Unauthenticated Semantic Scholar API traffic shares one very small
-# global rate-limit pool -- this is what was producing 429 (Too Many
-# Requests) errors during bulk evidence collection across thousands of
-# plants. A free API key raises this limit substantially. Register (free,
-# instant) at: https://www.semanticscholar.org/product/api
-#
-# Set it via an environment variable so it isn't hardcoded in source:
-#     export SEMANTIC_SCHOLAR_API_KEY="your-key-here"
-# Falls back to unauthenticated requests (with retry/backoff) if not set.
-SEMANTIC_SCHOLAR_API_KEY = os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
+from rate_limit_guard import (
+    ProcessRateLimitGuard,
+    RateLimitUnavailable,
+    retry_after_seconds,
+)
 
-MAX_RETRIES = 2
+
+def _optional_streamlit_secret(name: str) -> str:
+    """Read a Streamlit secret when available without requiring Streamlit."""
+    try:
+        import streamlit as st
+        value = st.secrets.get(name, "")
+        return str(value).strip() if value else ""
+    except Exception:
+        return ""
+
+
+SEMANTIC_SCHOLAR_API_KEY = (
+    os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
+    or _optional_streamlit_secret("SEMANTIC_SCHOLAR_API_KEY")
+)
+
+MAX_RETRIES = 3
+_SEMANTIC_SCHOLAR_GUARD = ProcessRateLimitGuard(
+    "Semantic Scholar", default_cooldown_seconds=90
+)
 
 
 def _get_with_retry(url, params, headers, timeout=20):
     last_exc = None
+    last_rate_limit_wait = 0.0
+
+    _SEMANTIC_SCHOLAR_GUARD.ensure_available()
 
     for attempt in range(MAX_RETRIES):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=timeout)
 
             if r.status_code == 429:
-                retry_after = r.headers.get("Retry-After")
-                wait = min(5.0, float(retry_after)) if retry_after else (attempt + 1) * 2
-                time.sleep(wait)
-                continue
+                wait = retry_after_seconds(
+                    r.headers,
+                    fallback_seconds=3 * (2 ** attempt),
+                    maximum_seconds=35,
+                )
+                last_rate_limit_wait = wait
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(wait)
+                    continue
+
+                _SEMANTIC_SCHOLAR_GUARD.block(max(90.0, wait))
+                raise RateLimitUnavailable(
+                    "Semantic Scholar temporarily unavailable due to rate limit "
+                    f"(HTTP 429) after {MAX_RETRIES} attempts."
+                )
 
             r.raise_for_status()
             return r
 
+        except RateLimitUnavailable:
+            raise
         except requests.exceptions.RequestException as exc:
             last_exc = exc
             if attempt < MAX_RETRIES - 1:
-                time.sleep(1.5)
+                time.sleep(min(8.0, 1.5 * (attempt + 1)))
 
     if last_exc:
         raise last_exc
 
-    raise RuntimeError(f"Semantic Scholar request failed after {MAX_RETRIES} attempts.")
+    raise RateLimitUnavailable(
+        "Semantic Scholar temporarily unavailable due to rate limit "
+        f"(HTTP 429); last retry delay was {last_rate_limit_wait:.1f}s."
+    )
 
 
 def search_semantic_scholar(scientific_name, indication, dosage_form="", market="European Union", max_results=5):
@@ -79,41 +112,33 @@ def search_semantic_scholar(scientific_name, indication, dosage_form="", market=
             "Dosage_Form": dosage_form,
             "Target_Indication": indication,
             "Target_Market": market,
-
             "Source_Type": "Semantic Scholar",
             "Source_Organization": "Semantic Scholar",
             "Source_Title": title,
             "Source_URL": p.get("url", ""),
             "Source_Year": str(year),
-
             "Notes": raw_text,
-
             "Publication_Type": pub_types or "Scholarly literature",
             "Evidence_Type": pub_types or "Review",
             "Study_Type": pub_types or "Review",
             "Study_Model": "Unknown",
             "Evidence_Level": "Low",
-
             "EMA_Status": "",
             "WHO_Status": "",
             "ESCOP_Status": "",
-
             "Clinical_Level": "To classify",
             "Clinical_RCT_Count": 0,
             "Meta_Level": "To classify",
             "Meta_Count": 0,
-
             "Detected_Dosage_Forms": dosage_form,
             "Detected_Indications": indication,
             "Dosage_Form_Relevance": "Unknown",
-
             "Safety_Level": "Unknown",
             "Safety_Signal": "",
             "Drug_Interaction_Level": "Unknown",
             "Commercial_Level": "Unknown",
             "Regulatory_Status": "",
             "Novel_Food_Status": "To verify",
-
             "Population": "",
             "Sample_Size": "",
             "Comparator": "",

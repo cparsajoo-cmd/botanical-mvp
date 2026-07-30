@@ -61,6 +61,9 @@ def render_evidence_step(inputs):
         errors = research_output.get("errors", [])
         sources_checked = research_output.get("sources_checked", [])
         candidate_plants = research_output.get("candidate_plants", [])
+        evidence_backed_plants = research_output.get("evidence_backed_plants", [])
+        online_discovered_plants = research_output.get("online_discovered_plants", [])
+        discovery_diagnostics = research_output.get("discovery_diagnostics", {})
 
         st.success(f"{len(saved_records)} online evidence records saved.")
 
@@ -71,6 +74,20 @@ def render_evidence_step(inputs):
         if candidate_plants:
             st.write("**Candidate plants searched:**")
             st.write(", ".join(candidate_plants))
+
+        if evidence_backed_plants:
+            st.caption(
+                "Evidence-backed seeds: " + ", ".join(evidence_backed_plants)
+            )
+        if online_discovered_plants:
+            st.caption(
+                "Additional discovery candidates: "
+                + ", ".join(online_discovered_plants)
+            )
+
+        if discovery_diagnostics:
+            with st.expander("Candidate discovery diagnostics"):
+                st.json(discovery_diagnostics)
 
         if errors:
             st.warning("Some searches produced errors.")

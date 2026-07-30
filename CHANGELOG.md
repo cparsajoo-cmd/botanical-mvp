@@ -1,0 +1,60 @@
+# Changelog — Botanical R&D Decision Intelligence Platform
+
+This changelog reconstructs significant repository evolution from what is documented inside the repository itself. **No `.git` history exists in this snapshot** (verified — no `.git` directory present), so almost no entry below has an independently-verifiable calendar date. Where a date is stated inside a document, it is quoted as such and attributed. Where only relative/phase ordering is known (not a calendar date), that is stated explicitly as "UNKNOWN date." Do not add invented dates to this file in future edits — add "UNKNOWN date" instead and note the phase/sprint/task label if one exists.
+
+---
+
+## Production Platform — Phase/Sprint/Task History (dates UNKNOWN unless noted)
+
+Ordering below follows the phase/sprint/task numbering used inside `ARCHITECTURE.md` itself, which is presented there in roughly chronological narrative order but without calendar dates.
+
+- **Phase 1 / early phases** — Original Step-based architecture established; original legacy-file audit snapshot produced (later found to have gone stale — see Phase 7 entry below).
+- **Phase 2** — Step 0–6 consolidation into the current single-flow architecture; duplicate parallel scoring system (`decision_engine.py`+friends running from Step 2) removed because nothing downstream read its output. `BotanicalRDCandidateEngine` established as the one central engine.
+- **Phase 4** — `concentration_normalizer.py`, `evidence_hierarchy_classifier.py`, `negative_evidence_classifier.py` added.
+- **Phase 5** — Regulatory intelligence groundwork (see Sprint 5 below, which builds on Phase 5's `enrich_candidates_with_market_landscape()`); `_market_status()`'s "Search not performed" default behavior established.
+- **Phase 6** — `evidence_confidence.py`, `decision_class_ah.py` added.
+- **Sprint 3** — `scoring_sensitivity_report.py`: `fragility_report()` (distance to a Decision_Class boundary) and `build_robustness_analysis()` (rank-stability under leave-one-dimension-out). Post-processing only, never mutates scores.
+- **Sprint 4** — Evidence Conflict & Consistency Intelligence, added to `structured_rationale.py` rather than as new engine files. Verified via a dedicated regression test not to change scoring or ranking.
+- **Sprint 5, Phase A** — Bug fix: `_market_status()`'s `EMA_Status == "Yes"` string comparison never matched the real EMA connector's actual descriptive output, only a legacy fabricated stub's literal `"Yes"`. Fixed via `BotanicalRDCandidateEngine._ema_listed()`. The fabricated stub itself (`regulatory_connector.py`'s `REGULATORY_DB`) was disabled (`_LEGACY_STUB_ENABLED = False`), not deleted, per standing instruction against deleting files.
+- **Sprint 5, Phase B** — Regulatory Intelligence reporting layer, reusing Phase 5's already-cached market-landscape enrichment; only EMA/HMPC reported as populated, all other authorities explicitly "not available."
+- **Sprint 6A.1** — Session-scoped Connector Observability (`connector_session_observability.py`) — in-memory only, no persistence, no new network calls, describes only the current Step 2 session.
+- **Sprint 6A.2** — Persistent Connector Telemetry (`telemetry_persistence.py`) — one row per connector outcome per session, best-effort/never-fatal writes, strictly separate from `evidence_records`.
+- **Tasks 10–13** — Evidence & Explainability Pipeline: `standard_evidence_builder.py`'s applicability classification (10.2) and typed `ScientificEvidence` (11.1); `decision_record_persistence.py`'s historical snapshot (12.1); report-time filtered lookup and presentation-safe payload (13.2A/13.2B); `pharma_report_generator.py` (13.2C).
+- **Phase 7 ("repository cleanup," the phase `ARCHITECTURE.md` currently self-labels as its own "last updated" state)** —
+  - Original claim that "67 legacy files were moved to `archive/`" identified as false — written aspirationally/future-tense, never actually executed. Corrected in `ARCHITECTURE.md` to state plainly that `archive/` does not exist yet.
+  - Critical near-miss found and fixed: the original static legacy-file list included `question_understanding_engine.py`, which a later session had wired into live production (`step_inputs.py`). Had the archive workflow run against the stale list, it would have broken the app.
+  - `repo_dependency_audit.py` (reusable audit tool) and `test_production_dependency_integrity.py` (pytest-enforced regression check) added to close this gap structurally.
+  - `archive-legacy.yml` updated to validate the legacy list against a freshly computed dependency graph as its first step, before touching any file. (Note: an older, unvalidated copy of this workflow remains at repository root, distinct from the current `.github/workflows/archive-legacy.yml` — see `REPOSITORY_STRUCTURE.md` §6.)
+  - 65–66 files (count not reconciled between `ARCHITECTURE.md`'s prose and `.github/legacy-files.txt`'s line count — see `NEXT_ACTIONS.md` NA-003) confirmed unreachable from production; archival itself not yet triggered as of this snapshot.
+  - `data_contracts.py`, previously a third standalone exception alongside `scoring_sensitivity_report.py` and `repo_dependency_audit.py`, reclassified as production-active after a later session wired it into `candidate_output_adapter.py` (which `step_rd_candidates.py` imports).
+
+## Validation Program — Version History
+
+Reconstructed directly from `VALIDATION_PROTOCOL.md` §15 (its own Change History table — the only part of this repository with real, stated calendar dates):
+
+| Version | Date | Summary |
+|---|---|---|
+| v0.1 | 2026-07-29 | Initial draft (Persian) — objective, scope, ground truth/leakage rules, success/failure criteria, limitations, threats to validity |
+| v0.2 | 2026-07-29 | Added Definitions/Glossary (Section 1); added Change History; translated to English; no substantive rule changed from v0.1 |
+| v0.3 | 2026-07-29 | Added Section 14, Prospective Claim-to-Decision Mapping — formally adopted `agreement_eligibility.py`/`evaluation_run.py`'s domain policy, AssertionState mapping (CONDITIONAL left unresolved), eligibility requirements, mapping-mismatch handling, derivation behavior, the prospective-order requirement, and mandatory per-case eligibility reporting. Clarification pass (same version): corrected Section 10's success criteria; corrected Section 14.6's Case 003 framing; simplified 14.1's rationale. |
+
+**Note on dates above:** all three versions are dated the same calendar day, 2026-07-29, inside the source document itself. This documentation pass reproduces that fact as stated rather than assuming it is an error — but it is worth independent confirmation if precise chronological sequencing ever matters (e.g., for an audit trail), since same-day version bumps for three revisions with described substantive content differences would be unusual if not deliberate (e.g., a single working session).
+
+## Gold Case Construction Order (relative order known; calendar dates UNKNOWN)
+
+Based on each case file's own self-description ("first," "second," "third," etc. real Reference-Grounded case) and phase/sprint labels found in each file's docstring:
+
+1. Case 001 (Melissa officinalis) — "The first REAL (kind=GoldCaseKind.REFERENCE_GROUNDED) case."
+2. Case 002 (Passiflora) — attempted, abandoned ("Access-Blocked"); no file exists.
+3. Case 003 (Matricaria chamomilla) — "The second real... case." Its `CONDITIONAL` outcome later motivated the Prospective Claim-to-Decision Mapping Proposal.
+4. Case 004 (Ginkgo biloba) — "The third real... case." Surfaced TD-001.
+5. Case 005 (Cimicifuga racemosa) — "The fourth real... case."
+6. Case 006 (Hypericum perforatum) — "Phase 6, Case 006... The fifth real... case, and the FIRST case in this program in ReferenceDomain.SAFETY." Preceded by a documented, supervisor-approved two-pass source-suitability screening.
+7. Case 007 (Valeriana officinalis) — first `PREPARATION_SPEC`-domain case. Its exact relative position versus Case 006 (before/after) was not independently re-verified against internal cross-references in this pass — recorded here in file-number order, not confirmed construction order.
+
+## Documentation Additions — This Pass
+
+**UNKNOWN date** (this documentation pass itself; record the actual date manually when known):
+- Created `PROJECT_STATUS.md`, `DECISIONS.md`, `NEXT_ACTIONS.md`, `BENCHMARK_PROGRESS.md`, `ARCHITECTURE_OVERVIEW.md`, `REPOSITORY_STRUCTURE.md`, `CHANGELOG.md` (this file).
+- No existing markdown files (`ARCHITECTURE.md`, `VALIDATION_PROTOCOL.md`, `TECHNICAL_DEBT.md`, `VALIDATION_CASE_TEMPLATE.md`, `Prospective_Claim_to_Decision_Mapping_Proposal.md`, `case_006_source_suitability_screening.md`) were modified in this pass — all cross-referenced only.
+- No production code was modified in this pass.

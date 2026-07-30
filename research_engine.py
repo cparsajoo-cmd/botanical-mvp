@@ -1,3 +1,4 @@
+import math
 import re
 from collections import defaultdict
 
@@ -516,14 +517,31 @@ def run_research_engine(
             .dropna().astype(str).drop_duplicates().tolist()
         )
 
+    # Do not allow the seed/reference inventory to consume every requested
+    # slot.  The previous implementation requested ``global_candidate_count``
+    # evidence-backed plants up front, so ``_online_discovered_candidate_plants``
+    # calculated zero available discovery slots and could never contribute a
+    # new species.  Reserve roughly half of the shortlist for live literature
+    # discovery while keeping at least three strong seeds for stability.
+    requested_count = max(1, int(global_candidate_count))
+    if requested_count >= 5:
+        seed_target_count = max(3, int(math.ceil(requested_count * 0.5)))
+        seed_target_count = min(seed_target_count, requested_count - 2)
+    else:
+        seed_target_count = requested_count
+
     evidence_backed = _richer_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,
         target_market=target_market,
-        target_count=global_candidate_count,
+        target_count=seed_target_count,
     ) or []
 
-    candidate_plants = list(dict.fromkeys(evidence_backed))
+    # Defensive cap: a backend may ignore max_reference_plants and return more
+    # rows than requested.  Preserve ranking order and enforce the reserved
+    # discovery budget here.
+    evidence_backed = list(dict.fromkeys(evidence_backed))[:seed_target_count]
+    candidate_plants = list(evidence_backed)
     seed_plants_before_discovery = list(candidate_plants)
     discovered, discovery_diagnostics = _online_discovered_candidate_plants(
         indication=indication,
@@ -550,6 +568,10 @@ def run_research_engine(
     discovery_diagnostics = dict(discovery_diagnostics or {})
     discovery_diagnostics.update({
         "requested_candidate_count": int(global_candidate_count),
+        "reserved_seed_target_count": int(seed_target_count),
+        "reserved_discovery_slot_count": max(
+            0, int(global_candidate_count) - int(seed_target_count)
+        ),
         "seed_plants_before_discovery": seed_plants_before_discovery,
         "seed_plant_count": len(seed_plants_before_discovery),
         "online_discovered_plants": list(discovered or []),

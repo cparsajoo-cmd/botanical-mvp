@@ -16,9 +16,7 @@ output checked by a human — this test is not a substitute for that.
 
 from ema_monograph_connector import (
     _split_clinical_sections,
-    _split_weu_tu,
-    WEU_NOT_APPLICABLE,
-    NOT_RELIABLY_EXTRACTED,
+    _detect_weu_status,
 )
 
 # Verbatim text of the real Melissa officinalis monograph's clinical
@@ -104,44 +102,40 @@ def test_section_5_boundary_excludes_pharmacological_properties():
     print("PASS: section 4.9 does not bleed into section 5 content")
 
 
-def test_weu_not_applicable_detected_for_header_only_section():
+def test_populated_section_reports_present_see_raw_text():
     # Section 4.3 (Contraindications) in the real Melissa monograph has
     # NO well-established-use content — extraction leaves only the
     # "Well-established use Traditional use" header line followed by
     # the single (traditional-use-only) sentence. Confirm this doesn't
-    # get misclassified.
+    # get misclassified as "confirmed_absent" just because it's short.
     sections = _split_clinical_sections(MELISSA_MONOGRAPH_FIXTURE)
     contraindications_text = sections["4.3"]
     print(f"4.3 raw text: {contraindications_text!r}")
-    # This section is NOT header-only (it has real TU content after the
-    # header), so the current conservative splitter should report
-    # NOT_RELIABLY_EXTRACTED, not WEU_NOT_APPLICABLE — confirming the
-    # splitter doesn't over-claim a clean split it can't actually do.
-    weu, tu = _split_weu_tu(contraindications_text)
-    assert weu == NOT_RELIABLY_EXTRACTED, (
-        f"Expected NOT_RELIABLY_EXTRACTED for a section with real "
-        f"content after the header, got: {weu!r}"
+    status = _detect_weu_status(contraindications_text)
+    assert status == "present_see_raw_text", (
+        f"Expected 'present_see_raw_text' for a section with real "
+        f"content after the header, got: {status!r}"
     )
     print(
-        "PASS: section with real content after the WEU/TU header "
-        "correctly reports NOT_RELIABLY_EXTRACTED rather than "
-        "guessing a split"
+        "PASS: a section with real content after the WEU/TU header "
+        "correctly reports 'present_see_raw_text' — no split is "
+        "attempted, matching the confirmed design decision"
     )
 
 
-def test_empty_section_after_header_reports_weu_not_applicable():
+def test_empty_section_after_header_reports_confirmed_absent():
     header_only = "Well-established use Traditional use"
-    weu, tu = _split_weu_tu(header_only)
-    assert weu == WEU_NOT_APPLICABLE and tu == WEU_NOT_APPLICABLE, (
-        f"Expected WEU_NOT_APPLICABLE for a header with no content "
-        f"after it, got: ({weu!r}, {tu!r})"
+    status = _detect_weu_status(header_only)
+    assert status == "confirmed_absent", (
+        f"Expected 'confirmed_absent' for a header with no content "
+        f"after it, got: {status!r}"
     )
-    print("PASS: a truly empty section (header only, no content) is correctly reported as WEU_NOT_APPLICABLE")
+    print("PASS: a truly empty WEU column (header only, no content) is correctly reported as 'confirmed_absent'")
 
 
 if __name__ == "__main__":
     test_all_nine_clinical_sections_found()
     test_section_5_boundary_excludes_pharmacological_properties()
-    test_weu_not_applicable_detected_for_header_only_section()
-    test_empty_section_after_header_reports_weu_not_applicable()
+    test_populated_section_reports_present_see_raw_text()
+    test_empty_section_after_header_reports_confirmed_absent()
     print("\nAll parsing tests passed against the real Melissa officinalis fixture.")

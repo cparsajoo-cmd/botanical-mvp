@@ -47,15 +47,28 @@ not assumed):
 - The "Well-established use" column is frequently ENTIRELY EMPTY (e.g.
   Melissa officinalis has no well-established-use content in any
   clinical section — it's a pure traditional-use monograph). This is a
-  common case, not an edge case, and is represented explicitly below
-  as WEU_NOT_APPLICABLE rather than being confused with a parsing
-  failure.
+  common case, not an edge case. This connector reliably detects that
+  case (weu_status="confirmed_absent") since it corresponds to a real,
+  cleanly-recognizable text pattern in the extracted PDF.
+- DECISION, confirmed after live end-to-end testing against the real
+  deployed Melissa officinalis fetch: when the WEU column has real
+  content alongside TU content, this connector does NOT attempt to
+  split the two apart. An earlier version tried, but PDF text
+  extraction collapses the two-column table with no reliable
+  delimiter, and every populated section tested came back unsplittable
+  — the split machinery was firing 100% of the time it mattered and
+  telling the caller nothing beyond "read the raw text yourself,"
+  which is exactly what the raw text field is for. Per-section
+  `{field}_raw_text` is therefore the SOURCE OF TRUTH for content; a
+  human reads WEU vs. TU off that text directly, the same way
+  ema_regulatory_connector.py already asks a human to read the
+  inventory PDF's columns directly rather than trust a guess.
 - Some monographs (e.g. Valeriana officinalis, radix) have a THIRD
   usage context within Traditional Use itself — e.g. "oral use" vs.
   "use as bath additive" — each with its own posology and
-  contraindications. This parser captures that as sub-context text
-  within the TU field rather than silently merging or discarding it;
-  a future revision could split it further if a consumer needs to.
+  contraindications. Since sections are returned as raw text, this
+  sub-context is preserved automatically (nothing is stripped or
+  merged away) — it's just up to the reader to notice it in the text.
 - Section numbers are not perfectly uniform across all monographs (a
   few multi-part-substance monographs shift numbering slightly for
   composition tables). The section regex below is anchored on the
@@ -72,8 +85,8 @@ import requests
 
 from ema_monograph_registry import STANDALONE_MONOGRAPHS, COMBINATION_MONOGRAPHS
 
-WEU_NOT_APPLICABLE = "WEU_NOT_APPLICABLE"  # confirmed absent, not a parse failure
-NOT_RELIABLY_EXTRACTED = "NOT_RELIABLY_EXTRACTED"  # present but split not recoverable
+WEU_NOT_APPLICABLE = "WEU_NOT_APPLICABLE"  # kept for backward compat; unused as of the raw-text-primary redesign
+NOT_RELIABLY_EXTRACTED = "NOT_RELIABLY_EXTRACTED"  # kept for backward compat; unused as of the raw-text-primary redesign
 
 # Section headers, in the order they appear in a standard HMPC
 # monograph. Each tuple is (section_number, canonical_field_name).
@@ -143,47 +156,41 @@ def _split_clinical_sections(full_text):
     return sections
 
 
-def _split_weu_tu(section_text):
-    """Split a section's text into (well_established_use, traditional_use).
+def _detect_weu_status(section_text):
+    """Detect whether a section's Well-established-use column is
+    CONFIRMED EMPTY — the one WEU/TU fact this parser can reliably
+    establish from linear PDF text. It does NOT attempt to split WEU
+    text from TU text when both are genuinely present: after this was
+    tried and tested (see project history), sections with real content
+    in both columns could not be split reliably from PDF-extracted
+    linear text, and guessing risked mislabeling a Traditional-use
+    statement as Well-established-use or vice versa — the same
+    "wrong is worse than absent" principle ema_regulatory_connector.py
+    already applies to the inventory PDF's columns.
 
-    HMPC monographs render this as a two-column table; PDF text
-    extraction collapses it to linear text with no reliable delimiter
-    between columns. This function looks for the literal heading
-    pattern "Well-established use" / "Traditional use" appearing on
-    their own or as a lead-in — when it can't find a clean split point,
-    it returns the whole text under WEU with TU set to
-    NOT_RELIABLY_EXTRACTED, rather than guessing where the boundary is.
-
-    IMPORTANT — confirmed real-world case: when a monograph has NO
-    well-established-use content, the extracted text often just starts
-    directly with the traditional-use text (no "Well-established use"
-    heading line to find at all, since the column was empty in the
-    source table). This function treats "no WEU heading found AND no
-    'Not applicable' marker found" as WEU_NOT_APPLICABLE, not as a
-    failed split — this was confirmed against the real Melissa
-    officinalis monograph, which has this exact shape.
+    DECISION (confirmed with Hamid after live-testing against the real
+    Melissa officinalis monograph): rather than return a
+    NOT_RELIABLY_EXTRACTED placeholder for every populated section,
+    this connector no longer attempts a WEU/TU split at all for
+    populated sections. The full section text is always available
+    under f"{field_name}_raw_text" — that field is the source of
+    truth; a human (or a future, more capable parser) reads WEU vs. TU
+    off the raw text directly. This function only ever returns one of:
+      - "confirmed_absent"   — WEU column is empty (real, useful fact)
+      - "present_see_raw_text" — WEU has content; read raw_text
     """
     stripped = section_text.strip()
     if not stripped:
-        return WEU_NOT_APPLICABLE, WEU_NOT_APPLICABLE
+        return "confirmed_absent"
 
-    # A lone "Well-established use Traditional use" run-together header
-    # (common after PDF extraction collapses the two-column table
-    # header into one line) — if that's ALL that's left after removing
-    # the header, both columns were empty.
     header_only_re = re.compile(
         r"^(well[\s-]*established\s+use)\s*(traditional\s+use)\s*$",
         re.IGNORECASE,
     )
     if header_only_re.match(stripped):
-        return WEU_NOT_APPLICABLE, WEU_NOT_APPLICABLE
+        return "confirmed_absent"
 
-    # No reliable heuristic exists yet to split WEU text from TU text
-    # when both are genuinely present and run together after PDF
-    # extraction (this is the same class of problem the inventory
-    # connector's docstring describes for column-based tables) — flag
-    # rather than guess.
-    return NOT_RELIABLY_EXTRACTED, NOT_RELIABLY_EXTRACTED
+    return "present_see_raw_text"
 
 
 def fetch_monograph_record(scientific_name, plant_part):
@@ -245,24 +252,21 @@ def fetch_monograph_record(scientific_name, plant_part):
     for section_number, field_name in _CLINICAL_SECTIONS:
         section_text = sections_raw.get(section_number, "")
         if not section_text:
-            base_record[f"{field_name}_WEU"] = None
-            base_record[f"{field_name}_TU"] = None
+            base_record[f"{field_name}_raw_text"] = None
+            base_record[f"{field_name}_weu_status"] = None
             base_record[f"{field_name}_extraction_note"] = (
                 "Section not found in extracted text."
             )
             continue
 
-        weu, tu = _split_weu_tu(section_text)
-        base_record[f"{field_name}_WEU"] = weu
-        base_record[f"{field_name}_TU"] = tu
-        # Keep the raw combined text too, since — per this module's own
-        # documented limitation — WEU/TU splitting is not yet reliable
-        # for sections where both columns are genuinely populated. A
-        # consumer needing the real content today should read this
-        # field and split it by eye, exactly as ema_regulatory_
-        # connector.py asks a human to read the inventory PDF directly
-        # for columns it won't guess at.
+        # raw_text is the SOURCE OF TRUTH — read it directly for the
+        # real content (WEU and TU together, exactly as the monograph
+        # states it). weu_status only tells you whether the
+        # well-established-use column is confirmed empty; it does not
+        # attempt to extract WEU text separately from TU text. See
+        # _detect_weu_status()'s docstring for why.
         base_record[f"{field_name}_raw_text"] = section_text
+        base_record[f"{field_name}_weu_status"] = _detect_weu_status(section_text)
 
     return base_record
 

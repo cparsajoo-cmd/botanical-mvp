@@ -1,6 +1,7 @@
 import math
 import re
 from collections import defaultdict
+from datetime import datetime
 
 import requests
 
@@ -179,34 +180,130 @@ def _record_key(record):
     )
 
 
-def _extract_catalogued_plants(records, alias_catalog, indication_terms):
-    """Extract and rank catalogue-validated plant entities from literature."""
+def _literature_quality_signals(title, abstract, source_type="", year=None):
+    """Return transparent quality signals for one literature record.
+
+    These are deliberately conservative text signals, not claims that a paper
+    has been fully critically appraised. They improve discovery ranking by
+    favouring human/clinical and synthesis evidence over purely mechanistic or
+    ambiguous mentions while keeping every component visible in diagnostics.
+    """
+    text = _norm_text(f"{title} {abstract}")
+    source = _norm_text(source_type)
+
+    systematic_terms = (
+        "systematic review", "meta analysis", "meta-analysis", "umbrella review"
+    )
+    clinical_terms = (
+        "randomized", "randomised", "double blind", "placebo controlled",
+        "clinical trial", "controlled trial", "patients", "participants",
+        "human study", "type 2 diabetes patients"
+    )
+    observational_terms = (
+        "cohort", "case control", "cross sectional", "observational study"
+    )
+    preclinical_terms = (
+        "in vitro", "cell line", "mice", "mouse", "rats", "rat model",
+        "animal model", "streptozotocin", "alloxan"
+    )
+    regulatory_terms = (
+        "ema", "hmpc", "escop", "world health organization monograph",
+        "who monograph", "community herbal monograph"
+    )
+    safety_terms = (
+        "toxicity", "toxic", "hepatotoxic", "nephrotoxic", "adverse event",
+        "adverse effect", "contraindication", "drug interaction"
+    )
+
+    systematic = int(any(term in text for term in systematic_terms))
+    clinical = int(any(term in text for term in clinical_terms))
+    observational = int(any(term in text for term in observational_terms))
+    preclinical = int(any(term in text for term in preclinical_terms))
+    regulatory = int(any(term in text or term in source for term in regulatory_terms))
+    safety = int(any(term in text for term in safety_terms))
+
+    recency = 0.0
+    try:
+        record_year = int(str(year)[:4])
+        age = max(0, datetime.utcnow().year - record_year)
+        recency = max(0.0, 1.5 - min(age, 15) * 0.1)
+    except Exception:
+        pass
+
+    quality_bonus = (
+        systematic * 6.0
+        + clinical * 4.0
+        + observational * 1.5
+        + regulatory * 3.0
+        + recency
+    )
+    # Preclinical evidence remains useful for discovery, but should not outrank
+    # human evidence merely because many animal papers mention the plant.
+    evidence_penalty = preclinical * 0.75
+
+    return {
+        "systematic_review": systematic,
+        "clinical_human": clinical,
+        "observational": observational,
+        "preclinical": preclinical,
+        "regulatory": regulatory,
+        "safety_signal": safety,
+        "recency_bonus": round(recency, 2),
+        "quality_bonus": round(quality_bonus, 2),
+        "evidence_penalty": round(evidence_penalty, 2),
+    }
+
+
+def _extract_catalogued_plants(records, alias_catalog, indication_terms, dosage_form=""):
+    """Extract and quality-rank catalogue-validated plant entities.
+
+    Ranking combines entity confidence, independent supporting records,
+    title mentions, human/synthesis evidence, regulatory signals, recency and
+    dosage-form relevance. All components are returned for auditability.
+    """
     scores = defaultdict(float)
     supports = defaultdict(set)
     title_supports = defaultdict(set)
     matched_aliases = defaultdict(set)
+    exact_scientific_hits = defaultdict(int)
+    clinical_supports = defaultdict(set)
+    systematic_supports = defaultdict(set)
+    preclinical_supports = defaultdict(set)
+    regulatory_supports = defaultdict(set)
+    safety_supports = defaultdict(set)
+    dosage_supports = defaultdict(set)
     indication_aliases = [_norm_text(term) for term in indication_terms if term]
+    dosage_norm = _norm_text(dosage_form)
+    dosage_terms = []
+    if "infusion" in dosage_norm or "tea" in dosage_norm:
+        dosage_terms = ["infusion", "herbal tea", "aqueous extract", "water extract", "decoction"]
+    elif "extract" in dosage_norm:
+        dosage_terms = ["extract", "standardized extract", "standardised extract", "hydroalcoholic"]
+    elif "essential oil" in dosage_norm:
+        dosage_terms = ["essential oil", "volatile oil", "distillation"]
 
     for index, record in enumerate(records):
-        title = _norm_text(record.get("Title") or record.get("Source_Title"))
-        abstract = _norm_text(
-            record.get("Abstract") or record.get("Notes") or record.get("Raw_Text")
-        )
+        raw_title = record.get("Title") or record.get("Source_Title") or ""
+        raw_abstract = record.get("Abstract") or record.get("Notes") or record.get("Raw_Text") or ""
+        title = _norm_text(raw_title)
+        abstract = _norm_text(raw_abstract)
         combined = f" {title} {abstract} "
 
-        # A returned record must still contain at least one therapeutic term;
-        # this protects against noisy connector results.
-        if indication_aliases and not any(
-            f" {term} " in combined or term in combined for term in indication_aliases
-        ):
+        if indication_aliases and not any(term in combined for term in indication_aliases):
             continue
 
-        source = str(record.get("Source_Type") or "literature")
-        support_id = str(record.get("PMID") or record.get("Record_ID") or index)
+        source = str(record.get("Source_Type") or record.get("Source") or "literature")
+        support_id = str(record.get("PMID") or record.get("Record_ID") or record.get("DOI") or index)
+        support_key = f"{source}:{support_id}"
+        quality = _literature_quality_signals(
+            title, abstract, source, record.get("Year") or record.get("Publication_Year")
+        )
+        dosage_hit = bool(dosage_terms and any(term in combined for term in dosage_terms))
 
         for scientific_name, aliases in alias_catalog.items():
             best_record_score = 0.0
             best_alias = None
+            best_alias_type = None
             title_hit_for_plant = False
             for alias, alias_type in aliases:
                 title_hit = f" {alias} " in f" {title} "
@@ -216,37 +313,88 @@ def _extract_catalogued_plants(records, alias_catalog, indication_terms):
 
                 score = 6.0 if title_hit else 2.0
                 if alias_type == "scientific":
-                    score += 2.0
-                # Longer aliases are less likely to be ambiguous.
+                    score += 2.5
+                else:
+                    # Common names can be ambiguous (e.g. olive, potato).
+                    score -= 0.5
                 score += min(2.0, len(alias.split()) * 0.35)
                 if score > best_record_score:
                     best_record_score = score
                     best_alias = alias
+                    best_alias_type = alias_type
                     title_hit_for_plant = title_hit
 
-            if best_record_score > 0:
-                scores[scientific_name] += best_record_score
-                supports[scientific_name].add(f"{source}:{support_id}")
-                if title_hit_for_plant:
-                    title_supports[scientific_name].add(f"{source}:{support_id}")
-                if best_alias:
-                    matched_aliases[scientific_name].add(best_alias)
+            if best_record_score <= 0:
+                continue
+
+            record_score = best_record_score + quality["quality_bonus"] - quality["evidence_penalty"]
+            if dosage_hit:
+                record_score += 2.0
+            scores[scientific_name] += max(0.5, record_score)
+            supports[scientific_name].add(support_key)
+            if title_hit_for_plant:
+                title_supports[scientific_name].add(support_key)
+            if best_alias:
+                matched_aliases[scientific_name].add(best_alias)
+            if best_alias_type == "scientific":
+                exact_scientific_hits[scientific_name] += 1
+            if quality["clinical_human"]:
+                clinical_supports[scientific_name].add(support_key)
+            if quality["systematic_review"]:
+                systematic_supports[scientific_name].add(support_key)
+            if quality["preclinical"]:
+                preclinical_supports[scientific_name].add(support_key)
+            if quality["regulatory"]:
+                regulatory_supports[scientific_name].add(support_key)
+            if quality["safety_signal"]:
+                safety_supports[scientific_name].add(support_key)
+            if dosage_hit:
+                dosage_supports[scientific_name].add(support_key)
+
+    # Independent-record breadth receives a capped bonus, preventing one plant
+    # with many near-duplicate papers from dominating purely by volume.
+    final_scores = {}
+    for plant in scores:
+        breadth_bonus = min(12.0, len(supports[plant]) * 1.2)
+        title_bonus = min(10.0, len(title_supports[plant]) * 2.0)
+        human_bonus = min(15.0, len(clinical_supports[plant]) * 3.0)
+        synthesis_bonus = min(12.0, len(systematic_supports[plant]) * 4.0)
+        regulatory_bonus = min(6.0, len(regulatory_supports[plant]) * 2.0)
+        dosage_bonus = min(8.0, len(dosage_supports[plant]) * 2.0)
+        ambiguity_penalty = 0.0 if exact_scientific_hits[plant] else 3.0
+        safety_penalty = min(8.0, len(safety_supports[plant]) * 1.5)
+        final_scores[plant] = (
+            scores[plant] + breadth_bonus + title_bonus + human_bonus
+            + synthesis_bonus + regulatory_bonus + dosage_bonus
+            - ambiguity_penalty - safety_penalty
+        )
 
     ranked = sorted(
-        scores,
+        final_scores,
         key=lambda plant: (
+            -len(systematic_supports[plant]),
+            -len(clinical_supports[plant]),
             -len(title_supports[plant]),
+            -final_scores[plant],
             -len(supports[plant]),
-            -scores[plant],
             plant.lower(),
         ),
     )
     diagnostics = {
         plant: {
-            "score": round(scores[plant], 2),
+            "score": round(final_scores[plant], 2),
+            "entity_score": round(scores[plant], 2),
             "supporting_records": len(supports[plant]),
             "title_supporting_records": len(title_supports[plant]),
+            "clinical_human_records": len(clinical_supports[plant]),
+            "systematic_review_records": len(systematic_supports[plant]),
+            "preclinical_records": len(preclinical_supports[plant]),
+            "regulatory_records": len(regulatory_supports[plant]),
+            "dosage_form_records": len(dosage_supports[plant]),
+            "safety_signal_records": len(safety_supports[plant]),
+            "exact_scientific_mentions": exact_scientific_hits[plant],
             "matched_aliases": sorted(matched_aliases[plant]),
+            "ranking_basis": "literature quality + entity confidence + dosage-form relevance",
         }
         for plant in ranked
     }
@@ -360,12 +508,41 @@ def _candidate_specific_literature_validation(
 
         if supporting:
             validated.append(plant)
+            qualities = [
+                _literature_quality_signals(
+                    _norm_text(r.get("Title") or r.get("Source_Title")),
+                    _norm_text(r.get("Abstract") or r.get("Raw_Text") or r.get("Notes")),
+                    r.get("Source_Type") or "literature",
+                    r.get("Year") or r.get("Publication_Year"),
+                )
+                for r in supporting
+            ]
+            clinical_count = sum(q["clinical_human"] for q in qualities)
+            systematic_count = sum(q["systematic_review"] for q in qualities)
+            preclinical_count = sum(q["preclinical"] for q in qualities)
+            regulatory_count = sum(q["regulatory"] for q in qualities)
+            safety_count = sum(q["safety_signal"] for q in qualities)
+            score = (
+                len(supporting) * 3 + title_hits * 2
+                + clinical_count * 4 + systematic_count * 6
+                + regulatory_count * 3 - preclinical_count * 0.75
+                - safety_count * 1.5
+            )
             validation_meta[plant] = {
-                "score": round(len(supporting) * 3 + title_hits * 2, 2),
+                "score": round(score, 2),
+                "entity_score": round(len(supporting) * 3 + title_hits * 2, 2),
                 "supporting_records": len(supporting),
                 "title_supporting_records": title_hits,
+                "clinical_human_records": clinical_count,
+                "systematic_review_records": systematic_count,
+                "preclinical_records": preclinical_count,
+                "regulatory_records": regulatory_count,
+                "dosage_form_records": 0,
+                "safety_signal_records": safety_count,
+                "exact_scientific_mentions": len(supporting),
                 "matched_aliases": [plant_norm],
                 "validation_route": "candidate-specific literature query",
+                "ranking_basis": "focused literature quality validation",
                 "query": query,
                 "errors": errors,
             }
@@ -441,6 +618,7 @@ def _online_discovered_candidate_plants(
             unique_records,
             alias_catalog,
             diagnostics["query_terms"],
+            dosage_form=dosage_form,
         )
 
         existing_list = [str(p).strip() for p in (seed_plants or []) if p]

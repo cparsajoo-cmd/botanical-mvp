@@ -144,13 +144,34 @@ def render_evidence_step(inputs):
             for plant, meta in ranked_matches.items():
                 rows.append({
                     "Plant": plant,
-                    "Score": meta.get("score"),
+                    "Quality-adjusted score": meta.get("score"),
                     "Supporting records": meta.get("supporting_records"),
+                    "Human/clinical": meta.get("clinical_human_records", 0),
+                    "Systematic reviews": meta.get("systematic_review_records", 0),
                     "Title mentions": meta.get("title_supporting_records"),
+                    "Dosage-form support": meta.get("dosage_form_records", 0),
+                    "Regulatory mentions": meta.get("regulatory_records", 0),
+                    "Preclinical": meta.get("preclinical_records", 0),
+                    "Safety signals": meta.get("safety_signal_records", 0),
                     "Matched aliases": ", ".join(meta.get("matched_aliases", [])),
                 })
-            st.write("**Ranked discovery matches**")
-            st.dataframe(pd.DataFrame(rows), width="stretch")
+            ranked_df = pd.DataFrame(rows)
+            if not ranked_df.empty and "Quality-adjusted score" in ranked_df.columns:
+                ranked_df["Quality-adjusted score"] = pd.to_numeric(
+                    ranked_df["Quality-adjusted score"], errors="coerce"
+                ).fillna(0)
+                ranked_df = ranked_df.sort_values(
+                    ["Quality-adjusted score", "Human/clinical", "Systematic reviews"],
+                    ascending=[False, False, False],
+                )
+                ranked_df.insert(0, "Rank", range(1, len(ranked_df) + 1))
+            st.write("**Quality-ranked literature discovery matches**")
+            st.caption(
+                "This is a transparent discovery priority score, not a final efficacy claim. "
+                "Human/clinical and systematic-review signals receive more weight than "
+                "preclinical mentions; dosage-form fit and regulatory mentions also contribute."
+            )
+            st.dataframe(ranked_df, width="stretch")
 
         with st.expander("Raw candidate discovery diagnostics"):
             st.json(diagnostics)

@@ -313,17 +313,17 @@ if st.button("Run EMA Monograph Connector diagnostic"):
                     f"Monograph_Reference_Number={record.get('Monograph_Reference_Number')!r}",
                 ))
                 mono_report.append((
-                    "  -> therapeutic_indications_TU populated",
-                    "OK" if record.get("therapeutic_indications_TU") else "STILL WRONG",
-                    repr(record.get("therapeutic_indications_TU"))[:300],
+                    "  -> therapeutic_indications_raw_text populated",
+                    "OK" if record.get("therapeutic_indications_raw_text") else "STILL WRONG",
+                    repr(record.get("therapeutic_indications_raw_text"))[:300],
                 ))
                 mono_report.append((
-                    "  -> contraindications_WEU correctly WEU_NOT_APPLICABLE or flagged"
-                    " (real Melissa monograph has no well-established-use content)",
-                    "OK" if record.get("contraindications_WEU") in (
-                        mono_mod.WEU_NOT_APPLICABLE, mono_mod.NOT_RELIABLY_EXTRACTED,
-                    ) else "STILL WRONG",
-                    repr(record.get("contraindications_WEU")),
+                    "  -> contraindications_weu_status correctly detects "
+                    "confirmed-empty WEU (real Melissa monograph has no "
+                    "well-established-use content)",
+                    "OK" if record.get("contraindications_weu_status") == "confirmed_absent"
+                    else "STILL WRONG",
+                    repr(record.get("contraindications_weu_status")),
                 ))
                 mono_report.append((
                     "  -> contraindications_raw_text available for human reading",

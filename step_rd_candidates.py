@@ -34,6 +34,40 @@ def _get_evidence_df():
     return None
 
 
+def _get_step2_candidate_shortlist():
+    """Return the final candidate shortlist produced by Step 2.
+
+    Step 3 must analyse the same candidates that were actually sent through
+    the Step 2 evidence-collection loop.  Older code rebuilt a fresh, broad
+    indication inventory here, which could replace an 8-plant shortlist with
+    dozens of unrelated catalogue plants.
+
+    The research output is the authoritative source.  The evidence dataframe
+    is only a compatibility fallback for sessions created by older versions.
+    """
+    research_output = st.session_state.get("research_output")
+    if isinstance(research_output, dict):
+        candidates = _unique_nonempty(research_output.get("candidate_plants", []))
+        if candidates:
+            return candidates, "Step 2 final shortlist"
+
+        diagnostics = research_output.get("candidate_discovery_diagnostics") or {}
+        if isinstance(diagnostics, dict):
+            candidates = _unique_nonempty(diagnostics.get("final_candidate_plants", []))
+            if candidates:
+                return candidates, "Step 2 diagnostic shortlist"
+
+    evidence_df = _get_evidence_df()
+    if isinstance(evidence_df, pd.DataFrame) and not evidence_df.empty:
+        for column in ("plant", "Plant", "scientific_name", "Scientific_Name"):
+            if column in evidence_df.columns:
+                candidates = _unique_nonempty(evidence_df[column].tolist())
+                if candidates:
+                    return candidates, "Step 2 evidence records"
+
+    return [], "unavailable"
+
+
 def _collect_evidence_record_ids(result_df):
     """Task 13.2C — the union of every candidate row's own
     Applicability_Summary.evidence_record_ids (Task 10.2), deduplicated,
@@ -267,45 +301,57 @@ def render_rd_candidates_step(inputs):
 
     if st.button("Run Market Analysis", type="primary", key="run_step1_market"):
         try:
-            with st.spinner("Loading known plant inventory..."):
+            shortlist, shortlist_source = _get_step2_candidate_shortlist()
+
+            # Keep the broad indication inventory only as secondary context.
+            # It is useful for Step 4/5 and for showing the size of the wider
+            # landscape, but it must not replace the Step 2 shortlist used for
+            # the main market analysis.
+            with st.spinner("Loading broader indication inventory..."):
                 offline_engine = _offline_engine()
                 inventory_df = offline_engine.known_inventory_df(indication)
 
-            known_plants = (
+            broader_plants = (
                 _unique_nonempty(inventory_df.get("Known_Plant", []))
-                if not inventory_df.empty
+                if isinstance(inventory_df, pd.DataFrame) and not inventory_df.empty
                 else []
             )
 
             st.session_state["rd_inventory_df_internal"] = inventory_df
-            st.session_state["rd_known_plants"] = known_plants
-            st.session_state["rd_known_plants_total"] = len(known_plants)
+            st.session_state["rd_broader_market_context_plants"] = broader_plants
+            st.session_state["rd_broader_market_context_total"] = len(broader_plants)
 
-            if not known_plants:
+            if shortlist:
+                market_plants = shortlist[:_MAX_MARKET_CHECK_PLANTS]
+                source_label = shortlist_source
+            else:
+                # Compatibility fallback for users who enter Step 3 without
+                # running Step 2 in the current session.  It is explicit in the
+                # UI so a broad inventory can never silently masquerade as the
+                # Step 2 shortlist.
+                market_plants = broader_plants[:_MAX_MARKET_CHECK_PLANTS]
+                source_label = "broader indication inventory fallback"
+
+            st.session_state["rd_known_plants"] = market_plants
+            st.session_state["rd_known_plants_total"] = len(market_plants)
+            st.session_state["rd_market_input_source"] = source_label
+
+            if not market_plants:
                 st.session_state["rd_market_landscape_df"] = pd.DataFrame()
                 st.warning(
-                    f"No known plant inventory found for '{indication}'. "
-                    "Add seed data before running market analysis."
+                    "No Step 2 candidate shortlist or broader indication inventory "
+                    "was available. Run Step 2 first, then retry Market Analysis."
                 )
             else:
-                # Cap how many plants actually get probed for market status.
-                # known_plants (session state) still keeps the FULL list for
-                # Step 4/5 to use — only this market-landscape loop is capped.
-                capped_plants = known_plants[:_MAX_MARKET_CHECK_PLANTS]
-
-                # Reuse the already-loaded cached tables; only the
-                # use_live_search flag differs from the offline engine, so
-                # there's no new network fetch here even though this is a
-                # second engine instance.
                 market_engine = _build_engine(
                     _get_evidence_df(), use_live_search=live_market
                 )
 
                 with st.spinner(
                     f"Checking market and competitive landscape for "
-                    f"{len(capped_plants)} plant(s)..."
+                    f"{len(market_plants)} shortlisted plant(s)..."
                 ):
-                    landscape_df = market_engine.market_landscape_df(capped_plants)
+                    landscape_df = market_engine.market_landscape_df(market_plants)
 
                 st.session_state["rd_market_landscape_df"] = landscape_df
                 st.success("✅ Market analysis completed.")
@@ -315,21 +361,50 @@ def render_rd_candidates_step(inputs):
 
     known_plants = st.session_state.get("rd_known_plants", [])
     known_plants_total = st.session_state.get("rd_known_plants_total", len(known_plants))
+    market_input_source = st.session_state.get("rd_market_input_source", "")
+    broader_plants = st.session_state.get("rd_broader_market_context_plants", [])
+    broader_total = st.session_state.get(
+        "rd_broader_market_context_total", len(broader_plants)
+    )
     landscape_df = st.session_state.get("rd_market_landscape_df")
 
     if known_plants:
-        shown = known_plants[:_MAX_MARKET_CHECK_PLANTS]
-        st.write(
-            f"**Known plants used for market check** "
-            f"(showing {len(shown)} of {known_plants_total} found):"
-        )
-        st.write(", ".join(shown))
-        if known_plants_total > len(shown):
-            st.caption(
-                f"+{known_plants_total - len(shown)} more plant(s) known for this "
-                "indication, not probed for market status to keep this step fast. "
-                "They're still available in Step 4 and Step 5."
+        if "fallback" in str(market_input_source).lower():
+            st.warning(
+                "Step 2 shortlist was unavailable, so this run used the broader "
+                "indication inventory. Run Step 2 and rerun Market Analysis for "
+                "shortlist-aligned results."
             )
+
+        st.write(
+            f"**Step 2 candidates used for primary market analysis** "
+            f"({len(known_plants)} plant(s); source: {market_input_source}):"
+        )
+        st.write(", ".join(known_plants))
+
+    if broader_plants:
+        shortlist_keys = {str(x).strip().lower() for x in known_plants}
+        context_only = [
+            plant for plant in broader_plants
+            if str(plant).strip().lower() not in shortlist_keys
+        ]
+        with st.expander(
+            f"Broader market context — {broader_total} indication-linked plant(s)",
+            expanded=False,
+        ):
+            st.caption(
+                "Context only: these plants are not included in the primary market "
+                "analysis unless they were also selected in Step 2."
+            )
+            if context_only:
+                preview = context_only[:_MAX_MARKET_CHECK_PLANTS]
+                st.write(", ".join(preview))
+                if len(context_only) > len(preview):
+                    st.caption(
+                        f"+{len(context_only) - len(preview)} additional context plant(s)."
+                    )
+            else:
+                st.write("All broader-context plants are already in the Step 2 shortlist.")
 
     if isinstance(landscape_df, pd.DataFrame) and not landscape_df.empty:
         st.dataframe(landscape_df, width="stretch")

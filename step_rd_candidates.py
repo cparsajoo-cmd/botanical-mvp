@@ -423,29 +423,10 @@ def render_rd_candidates_step(inputs):
             "Compact regulatory view. EMA/HMPC wording is summarized for readability; "
             "the source wording remains available below."
         )
-        st.dataframe(landscape_df[compact_columns], width="stretch")
 
-        detail_columns = [
-            "Plant",
-            "EMA_HMPC_Detail",
-            "EMA_Source",
-            "WHO_Status",
-            "WHO_Source",
-            "ESCOP_Status",
-            "ESCOP_Source",
-            "Regulatory_Source",
-            "Patent_Detail",
-            "Retail_Products_Detail",
-        ]
-        detail_columns = [c for c in detail_columns if c in landscape_df.columns]
-        if detail_columns:
-            with st.expander("Regulatory and market-source details", expanded=False):
-                st.dataframe(landscape_df[detail_columns], width="stretch")
-
-        # Export the complete Step 3 dataset, not only the compact dataframe
-        # currently visible in the Streamlit table.  The dataframe toolbar
-        # exports only displayed columns, which previously omitted regulatory
-        # detail/source fields.
+        # Build the complete export before rendering the compact table.  This
+        # places the explicit full-export button above the dataframe toolbar,
+        # whose built-in CSV icon exports only the visible compact columns.
         preferred_export_columns = [
             "Plant",
             "Region_of_Origin",
@@ -475,17 +456,42 @@ def render_rd_candidates_step(inputs):
         market_export_df = landscape_df.loc[:, export_columns].copy()
 
         st.download_button(
-            "Download full market analysis (CSV)",
+            "⬇️ Download FULL market analysis (all columns)",
             data=market_export_df.to_csv(index=False).encode("utf-8-sig"),
             file_name="step3_market_competitive_landscape_full.csv",
             mime="text/csv",
             key="rd_download_full_market_csv",
             help=(
-                "Exports the complete Step 3 dataset, including EMA detail and "
-                "all EMA/WHO/ESCOP source columns. The table toolbar exports "
-                "only the columns currently displayed."
+                "Use this button for the complete export. The small download icon "
+                "inside the table exports only the columns visible in the compact view."
             ),
+            type="primary",
         )
+        st.caption(
+            "Use the red FULL export button above. The small download icon inside "
+            "the table exports only the visible compact columns."
+        )
+
+        st.dataframe(landscape_df[compact_columns], width="stretch")
+
+        detail_columns = [
+            "Plant",
+            "EMA_HMPC_Detail",
+            "EMA_Source",
+            "WHO_Status",
+            "WHO_Source",
+            "ESCOP_Status",
+            "ESCOP_Source",
+            "Regulatory_Source",
+            "Patent_Detail",
+            "Retail_Products_Detail",
+        ]
+        detail_columns = [c for c in detail_columns if c in landscape_df.columns]
+        if detail_columns:
+            with st.expander("Regulatory and market-source details", expanded=False):
+                st.dataframe(landscape_df[detail_columns], width="stretch")
+
+
 
     st.markdown("---")
     st.markdown("## Step 4 — Existing Scientific Knowledge")

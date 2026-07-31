@@ -65,8 +65,8 @@ def _explain_gap(top_row: pd.Series, this_row: pd.Series) -> str:
         # than producing a nonsensical negative gap if it ever does).
         return f"Tied with {top_plant} on R&D_Opportunity_Score; both are top candidates for this reference."
 
-    top_components = _parse_score_breakdown(str(top_row.get("Score_Breakdown", "")))
-    this_components = _parse_score_breakdown(str(this_row.get("Score_Breakdown", "")))
+    top_components = _parse_score_breakdown(top_row.get("Score_Breakdown", ""))
+    this_components = _parse_score_breakdown(this_row.get("Score_Breakdown", ""))
 
     all_names = set(top_components) | set(this_components)
     diffs = {
@@ -377,8 +377,8 @@ def _pair_comparison_object(
     candidate_score = float(candidate_row.get("R&D_Opportunity_Score", 0) or 0)
     score_gap = round(winner_score - candidate_score, 2)
 
-    winner_components = _parse_score_breakdown(str(winner_row.get("Score_Breakdown", "")))
-    candidate_components = _parse_score_breakdown(str(candidate_row.get("Score_Breakdown", "")))
+    winner_components = _parse_score_breakdown(winner_row.get("Score_Breakdown", ""))
+    candidate_components = _parse_score_breakdown(candidate_row.get("Score_Breakdown", ""))
 
     entries = _dimension_comparison_entries(winner_components, candidate_components)
     winner_advantages = sorted(

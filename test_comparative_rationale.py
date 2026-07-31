@@ -66,6 +66,68 @@ def test_comparison_is_scoped_per_reference_group_not_global():
     assert "Top-ranked candidate" in rationale.iloc[2]
 
 
+# Regression: _explain_gap() and build_comparative_rationale_structured() used
+# to call _parse_score_breakdown(str(row.get("Score_Breakdown", ""))). For
+# indication-centric rows, Score_Breakdown is a dict, and str(dict) produces
+# "{'Direct indication evidence': 35, ...}" — a string the parser cannot read
+# (no "; " separators, stray braces/quotes) — silently returning {} even
+# though the shared parser itself handles dicts correctly. Both call sites now
+# pass the raw value through untouched.
+def test_dict_shaped_indication_breakdown_is_not_destroyed_by_str_wrapping():
+    df = pd.DataFrame([
+        _row("Indication-centric discovery", "Not used as candidate gate", "Winner", 90, {
+            "Direct indication evidence": 30, "Traceability": 10,
+            "Mechanistic plausibility": 10, "Preparation applicability": 8,
+            "Compound support (non-gating; max 5)": 5, "Baseline development potential": 10,
+        }),
+        _row("Indication-centric discovery", "Not used as candidate gate", "Loser", 55, {
+            "Direct indication evidence": 10, "Traceability": 8,
+            "Mechanistic plausibility": 10, "Preparation applicability": 4,
+            "Compound support (non-gating; max 5)": 3, "Baseline development potential": 10,
+        }),
+    ])
+    rationale = build_comparative_rationale(df)
+    explanation = rationale.iloc[1]
+    # Must identify the real largest differing component (Direct indication
+    # evidence: 30 - 10 = 20, the biggest gap), not fall back to "no single
+    # component explains the gap" — the fallback is exactly what an empty
+    # {} from a destroyed breakdown would have produced.
+    assert "Direct indication evidence" in explanation
+    assert "no single component explains the gap" not in explanation
+
+
+def test_dict_shaped_indication_breakdown_works_in_structured_comparison_too():
+    df = pd.DataFrame([
+        _row("Indication-centric discovery", "Not used as candidate gate", "Winner", 90, {
+            "Direct indication evidence": 30, "Traceability": 10,
+            "Mechanistic plausibility": 10, "Preparation applicability": 8,
+            "Compound support (non-gating; max 5)": 5, "Baseline development potential": 10,
+        }),
+        _row("Indication-centric discovery", "Not used as candidate gate", "Loser", 55, {
+            "Direct indication evidence": 10, "Traceability": 8,
+            "Mechanistic plausibility": 10, "Preparation applicability": 4,
+            "Compound support (non-gating; max 5)": 3, "Baseline development potential": 10,
+        }),
+    ])
+    structured = build_comparative_rationale_structured(df)
+    obj = structured.iloc[1]
+    winner_advantage_names = [e["dimension"] for e in obj["winner_advantages"]]
+    assert "Direct indication evidence" in winner_advantage_names
+
+
+def test_legacy_string_breakdown_still_works_after_the_fix():
+    # The fix removed str() wrapping; confirm the legacy string shape
+    # (which str() on a string leaves unchanged) still parses correctly.
+    df = pd.DataFrame([
+        _row("Ref", "C", "AltHigh", 90, "Evidence quality: +24.0"),
+        _row("Ref", "C", "AltLow", 40, "Evidence quality: +7.0"),
+    ])
+    rationale = build_comparative_rationale(df)
+    explanation = rationale.iloc[1]
+    assert "50.0 points below AltHigh" in explanation
+    assert "Evidence quality" in explanation
+
+
 def test_identifies_the_correct_dominant_component_even_when_multiple_differ():
     df = pd.DataFrame([
         _row("Ref", "C", "AltHigh", 90,

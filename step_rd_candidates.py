@@ -13,6 +13,12 @@ from standard_evidence_builder import (
 )
 
 
+# Bump this value whenever BotanicalRDCandidateEngine output semantics change.
+# Streamlit cache_resource can otherwise reuse an engine instance created from
+# the previous deployed class, even after the source file is replaced.
+_ENGINE_CACHE_VERSION = "2026-07-31-ema-market-v3"
+
+
 def _unique_nonempty(values):
     seen = set()
     out = []
@@ -179,7 +185,8 @@ def _evidence_fingerprint(evidence_df):
 
 
 @st.cache_resource(ttl=120, show_spinner=False)
-def _cached_engine(use_live_search: bool, evidence_fingerprint, _evidence_df=None):
+def _cached_engine(use_live_search: bool, evidence_fingerprint, engine_cache_version, _evidence_df=None):
+    _ = engine_cache_version  # explicit cache-key component
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
     scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
@@ -200,7 +207,9 @@ def _cached_engine(use_live_search: bool, evidence_fingerprint, _evidence_df=Non
 
 def _build_engine(evidence_df, use_live_search):
     fingerprint = _evidence_fingerprint(evidence_df)
-    return _cached_engine(use_live_search, fingerprint, _evidence_df=evidence_df)
+    return _cached_engine(
+        use_live_search, fingerprint, _ENGINE_CACHE_VERSION, _evidence_df=evidence_df
+    )
 
 
 def _offline_engine():

@@ -5,7 +5,7 @@ from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
-from candidate_shortlisting import build_plant_candidate_shortlist
+from candidate_shortlisting import build_plant_candidate_shortlist, merge_authoritative_scores
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from standard_evidence_builder import (
@@ -288,7 +288,56 @@ def _offline_engine():
 _MAX_MARKET_CHECK_PLANTS = 30
 
 
-def _recommendation_block(result_df):
+def _recommendation_block(result_df, report_ready_df=None):
+    # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
+    # one-row-per-plant frame (merge_authoritative_scores()'s output) so
+    # this block's picks can never disagree with the Step 5 shortlist or
+    # the downloaded report about which plant is recommended. Falls back
+    # to the pre-Phase-3 raw-row behavior only if no report-ready frame is
+    # available yet (e.g. a session that ran Step 5 before this change).
+    if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
+        df = report_ready_df.copy()
+        plant_col = "Alternative_Plant" if "Alternative_Plant" in df.columns else df.columns[0]
+        call_col = "Go_Investigate_Hold_NoGo" if "Go_Investigate_Hold_NoGo" in df.columns else None
+
+        best_rows = df  # already one row per plant, already sorted by Overall_Score
+
+        recommended = best_rows
+        if call_col:
+            recommended = best_rows[best_rows[call_col].isin(["Go", "Investigate"])]
+            if recommended.empty:
+                recommended = best_rows.head(5)
+
+        display_cols = [
+            col for col in [
+                "Alternative_Plant",
+                "Target_or_Mechanism",
+                "R&D_Opportunity_Score",
+                "Decision_Class_AH",
+                "Go_Investigate_Hold_NoGo",
+                "Safety_Flags",
+                "Market_Status",
+                "Novelty_Status",
+                "Rationale",
+            ] if col in recommended.columns
+        ]
+
+        st.markdown("### ✅ Recommended / worth validating")
+        st.caption(
+            "\"Recommended\" means worth a human researcher's time to check, based "
+            "on the one authoritative R&D_Opportunity_Score — it is not a "
+            "certification of efficacy. See `Decision_Class_AH` and `Evidence_Confidence` "
+            "in each row for how strong the underlying basis actually is."
+        )
+        st.dataframe(recommended[display_cols].head(10), width="stretch")
+
+        if call_col:
+            weak = best_rows[best_rows[call_col].isin(["Hold", "No-Go"])]
+            if not weak.empty:
+                st.markdown("### 🔴 Weak / not recommended")
+                st.dataframe(weak[display_cols].head(10), width="stretch")
+        return
+
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:
         st.warning("Run Step 5 first, then generate the final recommendation.")
         return
@@ -766,6 +815,14 @@ def render_rd_candidates_step(inputs):
                 )
                 st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
                 st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+                # Phase 3 (IMPLEMENTATION_PLAN.md) — the single authoritative,
+                # report-ready frame. Both the recommendation block and the
+                # downloaded report are built from THIS, not from result_df
+                # directly, so they can never disagree with the shortlist
+                # above about which plant is the top candidate.
+                st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
+                    result_df, plant_summary_df
+                )
 
                 counts = (
                     plant_summary_df["Scientific_Triage_Status"].value_counts()
@@ -835,6 +892,13 @@ def render_rd_candidates_step(inputs):
             )
             st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
             st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+            st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
+                result_df, plant_summary_df
+            )
+        report_ready_df = st.session_state.get("rd_report_ready_df")
+        if not isinstance(report_ready_df, pd.DataFrame):
+            report_ready_df = merge_authoritative_scores(result_df, plant_summary_df)
+            st.session_state["rd_report_ready_df"] = report_ready_df
 
         st.info(
             "📊 **Scientific triage:** the main view shows only plant-level results. "
@@ -1093,8 +1157,14 @@ def render_rd_candidates_step(inputs):
             scientific_evidence_by_id
         )
 
+        report_ready_df = st.session_state.get("rd_report_ready_df")
+        report_source_df = (
+            report_ready_df
+            if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty
+            else result_df
+        )
         report_markdown = generate_pharma_report(
-            result_df, indication=indication, dosage_form=dosage_form, market=market,
+            report_source_df, indication=indication, dosage_form=dosage_form, market=market,
             standardized_project=inputs.get("standardized_project"),
             decision_record_id=st.session_state.get("rd_last_decision_record_id"),
             scientific_evidence_payload=scientific_evidence_payload,
@@ -1123,4 +1193,4 @@ def render_rd_candidates_step(inputs):
         st.session_state["show_final_recommendation"] = True
 
     if st.session_state.get("show_final_recommendation"):
-        _recommendation_block(result_df)
+        _recommendation_block(result_df, st.session_state.get("rd_report_ready_df"))

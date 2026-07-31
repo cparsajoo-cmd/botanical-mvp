@@ -125,7 +125,17 @@ import pandas as pd
 from score_breakdown_schema import (
     CANONICAL_SECTIONS as _CANONICAL_SECTIONS,
     INDICATION_CANONICAL_SECTIONS as _INDICATION_CANONICAL_SECTIONS,
+    AUTHORITATIVE_CANONICAL_SECTIONS as _AUTHORITATIVE_CANONICAL_SECTIONS,
     parse_score_breakdown as _parse_score_breakdown,
+)
+
+# Every known Score_Breakdown schema, checked in this order. Generalized to
+# a tuple + loop (Phase 3) instead of one hand-written if-check per schema —
+# adding a schema here is the only place it needs registering, avoiding the
+# exact drift Phase 1 was created to close (a schema's section names
+# changing, or a new schema appearing, without every consumer being updated).
+_KNOWN_CANONICAL_SCHEMAS = (
+    _CANONICAL_SECTIONS, _INDICATION_CANONICAL_SECTIONS, _AUTHORITATIVE_CANONICAL_SECTIONS,
 )
 
 # Must match _decision_class()'s own thresholds in
@@ -353,15 +363,10 @@ def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):
     except (TypeError, ValueError):
         return "unparseable", components
 
-    missing_sections = _CANONICAL_SECTIONS - set(components.keys())
-    if missing_sections:
-        # Not the legacy compound-substitution schema at all — check
-        # whether it's a complete indication-centric breakdown instead
-        # of assuming "incomplete" just because it doesn't match the
-        # other engine's section names.
-        missing_indication_sections = _INDICATION_CANONICAL_SECTIONS - set(components.keys())
-        if not missing_indication_sections:
-            missing_sections = missing_indication_sections
+    missing_sections = min(
+        (schema - set(components.keys()) for schema in _KNOWN_CANONICAL_SCHEMAS),
+        key=len,
+    )
     if missing_sections:
         return "incomplete", components
 

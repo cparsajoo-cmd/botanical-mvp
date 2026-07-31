@@ -725,6 +725,61 @@ def _format_breakdown(components: list[tuple[str, float, int]]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 (IMPLEMENTATION_PLAN.md) — Overall_Score becomes the ONE
+# authoritative plant-level score. It stays decomposed into three SEPARATE,
+# non-collapsed outputs rather than one opaque number:
+#   - Evidence_Confidence   — how strong is the SCIENTIFIC evidence itself
+#     (Indication Relevance + Evidence Quality only — the two components
+#     that are directly about evidence, not opportunity/commercial fit).
+#   - R&D_Opportunity_Score — the full Overall_Score (all six components):
+#     the OPPORTUNITY question, which legitimately includes commercial/
+#     novelty/market signal alongside the science.
+#   - Decision_Class_AH / Go_Investigate_Hold_NoGo — the categorical CALL,
+#     derived from Scientific_Triage_Status + Overall_Score, not
+#     re-derived independently.
+# These three answer three different questions and are kept as three
+# separate fields for exactly that reason — collapsing them into one
+# number would hide which one is doing the work in any given case.
+#
+# The 78-point "Strong/Go" threshold reuses the exact cut point already
+# documented in decision_class_ah.py / scoring_sensitivity_report.py for
+# the legacy row-level score, instead of inventing a new one.
+_STRONG_SCORE_THRESHOLD = 78.0
+
+# Evidence_Confidence's own ceiling: Indication Relevance + Evidence
+# Quality's combined maximum in the current weighting (kept as a constant,
+# not a hardcoded 55, so it stays correct if either weight ever changes).
+_EVIDENCE_CONFIDENCE_MAX_POINTS = 65.0  # Indication Relevance(35) + Evidence Quality(30)
+
+
+def _derive_evidence_confidence(indication_points: float, evq_points: float) -> float:
+    raw = indication_points + evq_points
+    return round(min(100.0, max(0.0, raw / _EVIDENCE_CONFIDENCE_MAX_POINTS * 100.0)), 1)
+
+
+def _derive_go_call(status: str, overall_score: float, reason: str = "") -> str:
+    if status == "Excluded":
+        return "No-Go" if "safety" in _norm(reason) else "Hold"
+    if status == "Exploratory":
+        return "Investigate — verify before proceeding"
+    return "Go" if overall_score >= _STRONG_SCORE_THRESHOLD else "Investigate"
+
+
+def _derive_decision_class_ah(status: str, overall_score: float, reason: str = "") -> str:
+    # Reuses the same A-H label vocabulary already established in
+    # decision_class_ah.py, but computed here from the one authoritative
+    # plant-level score rather than that module's row-level match_quality/
+    # same_plant signals, which do not have a plant-level equivalent.
+    if status == "Excluded":
+        return "H — No-go / safety concern" if "safety" in _norm(reason) else "G — Hold / insufficient evidence"
+    if status == "Exploratory":
+        return "F — Exploratory hypothesis"
+    if overall_score >= _STRONG_SCORE_THRESHOLD:
+        return "B — Established scientific candidate"
+    return "C — Alternative-source R&D candidate"
+
+
 def _explain_candidate(
     status: str,
     components: dict[str, tuple[float, str]],
@@ -799,8 +854,16 @@ def _prune_near_duplicate_congeners(summary: pd.DataFrame) -> pd.DataFrame:
         )
         winner = str(ranked.iloc[0]["Alternative_Plant"])
         for i, row in ranked.iloc[1:].iterrows():
+            capped_score = min(float(row["Overall_Score"]), 74.0)
             summary.loc[i, "Scientific_Triage_Status"] = "Exploratory"
-            summary.loc[i, "Overall_Score"] = min(float(row["Overall_Score"]), 74.0)
+            summary.loc[i, "Overall_Score"] = capped_score
+            # Phase 3 — Overall_Score is authoritative, so every field derived
+            # from it (the R&D_Opportunity_Score alias, and the status/score
+            # derived Go/Decision-Class outputs) must be refreshed here too,
+            # not left pointing at the pre-demotion values.
+            summary.loc[i, "R&D_Opportunity_Score"] = capped_score
+            summary.loc[i, "Go_Investigate_Hold_NoGo"] = _derive_go_call("Exploratory", capped_score)
+            summary.loc[i, "Decision_Class_AH"] = _derive_decision_class_ah("Exploratory", capped_score)
             note = (
                 f"near-duplicate congener of the stronger representative '{winner}' "
                 f"within genus {genus.capitalize()}"
@@ -1001,7 +1064,23 @@ def build_plant_candidate_shortlist(
             "safety": (safety_reg_points, safety_reg_tier),
             "novelty": (novelty_points, novelty_tier),
         }
-        score_breakdown = _format_breakdown([
+        # Phase 3 (IMPLEMENTATION_PLAN.md) — Score_Breakdown is now a plain
+        # {name: value} dict (score_breakdown_schema.AUTHORITATIVE_CANONICAL_SECTIONS),
+        # the same machine-parseable convention already used for the
+        # indication-centric raw schema, so it round-trips through
+        # score_breakdown_schema.parse_score_breakdown() and reconstructs
+        # Overall_Score exactly. The dot-leader display string moves to its
+        # own field for UI/report rendering, since that format was never
+        # meant to be machine-parsed.
+        score_breakdown = {
+            "Indication Relevance": indication_points,
+            "Evidence Quality": evq_points,
+            "Compound Support": cq_points,
+            "Mechanism Support": mech_points,
+            "Safety & Regulatory": safety_reg_points,
+            "Novelty & Market": novelty_points,
+        }
+        score_breakdown_display = _format_breakdown([
             ("Indication Relevance", indication_points, 35),
             ("Evidence Quality", evq_points, 30),
             ("Compound Support", cq_points, 5),
@@ -1020,12 +1099,26 @@ def build_plant_candidate_shortlist(
             plant_status, score_components, len(distinctive_compounds), explanation_reason
         )
 
+        # Phase 3 — the three separate, non-collapsed authoritative outputs.
+        # R&D_Opportunity_Score is a backward-compatible ALIAS for
+        # Overall_Score (same value, legacy field name every existing
+        # report/UI/test already reads) — not a second, independently
+        # computed number.
+        evidence_confidence = _derive_evidence_confidence(indication_points, evq_points)
+        go_call = _derive_go_call(plant_status, overall_score, explanation_reason)
+        decision_class_ah = _derive_decision_class_ah(plant_status, overall_score, explanation_reason)
+
         rows.append({
             "Alternative_Plant": plant,
             "Scientific_Triage_Status": plant_status,
             "Scientific_Triage_Score": round(triage_score, 1),
             "Overall_Score": overall_score,
+            "R&D_Opportunity_Score": overall_score,
             "Score_Breakdown": score_breakdown,
+            "Score_Breakdown_Display": score_breakdown_display,
+            "Evidence_Confidence": evidence_confidence,
+            "Decision_Class_AH": decision_class_ah,
+            "Go_Investigate_Hold_NoGo": go_call,
             "Indication_Relevance": indication_tier,
             "Indication_Relevance_Score": indication_points,
             "Indication_Evidence_Mode": indication_mode,
@@ -1091,3 +1184,95 @@ def build_plant_candidate_shortlist(
         summary = pd.concat([primary, excluded], ignore_index=True)
 
     return summary, audit
+
+
+def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame) -> pd.DataFrame:
+    """Phase 3 (IMPLEMENTATION_PLAN.md) — the ONE report-ready,
+    one-row-per-plant frame that both the final recommendation block and
+    the downloaded R&D report are built from.
+
+    WHY THIS EXISTS
+    Before Phase 3, three different places independently decided "what is
+    this plant's score/ranking": the raw engine's row-level
+    R&D_Opportunity_Score (compound-substitution or indication-centric,
+    whichever produced raw_df), candidate_shortlisting's own plant-level
+    Overall_Score, and step_rd_candidates.py's recommendation block doing
+    its own drop_duplicates() over the raw rows sorted by the raw score.
+    These could disagree — the report and the on-screen shortlist could
+    show different top candidates for the exact same run. This function is
+    the single reconciliation point: Overall_Score (plant_summary) is
+    authoritative; every raw row's OWN score/classification fields are
+    superseded by it here, once, rather than trusted wherever they
+    happen to be read downstream.
+
+    WHAT IS KEPT VS. OVERWRITTEN
+    For each included (non-Excluded) plant, the richest available raw row
+    (by its OWN pre-Phase-3 score, purely as a tie-breaker for which row
+    has the most complete narrative fields — never re-scored) supplies
+    every narrative field the raw engine computes that plant_summary does
+    NOT (Rationale, Evidence_Strengths, Evidence_Weaknesses,
+    Next_Experiment_Suggestion, Gate_Results, Recommendation_Confidence_Statement,
+    Competitive_Positioning, etc.). Only the score/classification fields
+    are overwritten: R&D_Opportunity_Score, Overall_Score, Score_Breakdown,
+    Evidence_Confidence, Decision_Class_AH, Go_Investigate_Hold_NoGo,
+    Scientific_Triage_Status. Excluded plants are dropped entirely — an
+    excluded plant must never appear in a final recommendation or report.
+    """
+    empty = pd.DataFrame()
+    if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+        return empty
+    if not isinstance(plant_summary, pd.DataFrame) or plant_summary.empty:
+        return empty
+
+    plant_col = "Alternative_Plant"
+    if plant_col not in raw_df.columns or plant_col not in plant_summary.columns:
+        return empty
+
+    included = plant_summary[plant_summary["Scientific_Triage_Status"] != "Excluded"]
+    if included.empty:
+        return empty
+
+    raw_indexed = raw_df.copy()
+    raw_indexed["_raw_rank"] = pd.to_numeric(
+        raw_indexed.get("R&D_Opportunity_Score", pd.Series([0] * len(raw_indexed), index=raw_indexed.index)),
+        errors="coerce",
+    ).fillna(0)
+    best_raw_rows = (
+        raw_indexed.sort_values("_raw_rank", ascending=False)
+        .drop_duplicates(subset=[plant_col], keep="first")
+        .drop(columns=["_raw_rank"])
+        .set_index(plant_col, drop=False)
+    )
+
+    authoritative_fields = (
+        "Overall_Score", "Score_Breakdown", "Score_Breakdown_Display",
+        "Evidence_Confidence", "Decision_Class_AH", "Go_Investigate_Hold_NoGo",
+        "Scientific_Triage_Status",
+    )
+
+    merged_rows = []
+    for _, plant_row in included.iterrows():
+        plant = plant_row[plant_col]
+        if plant in best_raw_rows.index:
+            base = best_raw_rows.loc[plant]
+            if isinstance(base, pd.DataFrame):
+                base = base.iloc[0]
+            merged = base.to_dict()
+        else:
+            # No matching raw row (should not normally happen — every
+            # plant_summary row is aggregated FROM raw_df) — build a
+            # minimal row rather than fabricating narrative content that
+            # was never actually computed for this plant.
+            merged = {plant_col: plant}
+
+        for field in authoritative_fields:
+            if field in plant_row.index:
+                merged[field] = plant_row[field]
+        # Backward-compatible alias — same value as Overall_Score, not a
+        # second computation.
+        merged["R&D_Opportunity_Score"] = plant_row["Overall_Score"]
+        merged_rows.append(merged)
+
+    result = pd.DataFrame(merged_rows)
+    result = result.sort_values("Overall_Score", ascending=False).reset_index(drop=True)
+    return result

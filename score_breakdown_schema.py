@@ -43,9 +43,22 @@ INDICATION_CANONICAL_SECTIONS = {
     "Baseline development potential",
 }
 
-# Maps every known Score_Breakdown component name (both schemas) onto the
+# Sections candidate_shortlisting.py's authoritative Overall_Score (Phase 3,
+# IMPLEMENTATION_PLAN.md) always emits. This is now the ONE score that
+# drives shortlist status, report ranking, and the final recommendation —
+# see candidate_shortlisting.py's merge_authoritative_scores(). The legacy
+# CANONICAL_SECTIONS (compound-substitution) and INDICATION_CANONICAL_SECTIONS
+# (indication-centric) schemas above may still appear on raw, pre-merge rows
+# used for internal/diagnostic purposes, but never on the final,
+# user-facing R&D_Opportunity_Score/Score_Breakdown after Phase 3.
+AUTHORITATIVE_CANONICAL_SECTIONS = {
+    "Indication Relevance", "Evidence Quality", "Compound Support",
+    "Mechanism Support", "Safety & Regulatory", "Novelty & Market",
+}
+
+# Maps every known Score_Breakdown component name (all three schemas) onto the
 # card dimension(s) it contributes to (Scientific / Clinical / Commercial /
-# Safety). "Regulatory" is deliberately never a value here: neither engine
+# Safety). "Regulatory" is deliberately never a value here: no engine
 # computes an independent regulatory score contribution — see
 # NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE in structured_rationale.py.
 COMPONENT_TO_DIMENSIONS = {
@@ -64,6 +77,13 @@ COMPONENT_TO_DIMENSIONS = {
     "Preparation applicability": ["Commercial"],
     "Compound support (non-gating; max 5)": ["Scientific"],
     "Baseline development potential": ["Commercial"],
+    # Authoritative plant-level schema (Phase 3)
+    "Indication Relevance": ["Clinical"],
+    "Evidence Quality": ["Clinical"],
+    "Compound Support": ["Scientific"],
+    "Mechanism Support": ["Scientific"],
+    "Safety & Regulatory": ["Safety"],
+    "Novelty & Market": ["Commercial"],
 }
 
 

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from candidate_shortlisting import build_plant_candidate_shortlist
+from candidate_shortlisting import build_plant_candidate_shortlist, merge_authoritative_scores
 
 
 def _row(**overrides):
@@ -361,3 +361,146 @@ def test_replicated_mechanistic_evidence_can_support_rd_shortlist():
         dosage_form="Infusion",
     )
     assert summary.iloc[0]["Scientific_Triage_Status"] == "Shortlist"
+
+
+# =====================================================================
+# Phase 3 (IMPLEMENTATION_PLAN.md) — Overall_Score reconciliation.
+# =====================================================================
+
+def test_rd_opportunity_score_is_an_alias_for_overall_score():
+    df = pd.DataFrame([_row()])
+    summary, _ = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    row = summary.iloc[0]
+    assert row["R&D_Opportunity_Score"] == row["Overall_Score"]
+
+
+def test_score_breakdown_is_a_parseable_dict_that_reconstructs_overall_score():
+    from score_breakdown_schema import parse_score_breakdown, AUTHORITATIVE_CANONICAL_SECTIONS
+    df = pd.DataFrame([_row()])
+    summary, _ = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    row = summary.iloc[0]
+    assert isinstance(row["Score_Breakdown"], dict)
+    components = parse_score_breakdown(row["Score_Breakdown"])
+    assert set(components.keys()) == AUTHORITATIVE_CANONICAL_SECTIONS
+    assert round(sum(components.values()), 1) == row["Overall_Score"]
+
+
+def test_three_separate_outputs_are_not_collapsed_into_one_number():
+    # Evidence_Confidence, R&D_Opportunity_Score (Overall_Score), and
+    # Decision_Class_AH/Go_Investigate_Hold_NoGo must all be present and
+    # independently readable — not merged into a single field.
+    df = pd.DataFrame([_row()])
+    summary, _ = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    row = summary.iloc[0]
+    for field in ("Evidence_Confidence", "R&D_Opportunity_Score", "Decision_Class_AH", "Go_Investigate_Hold_NoGo"):
+        assert field in row.index
+    # Evidence_Confidence is not simply a copy of the full Overall_Score —
+    # it's the narrower evidence-only sub-combination.
+    assert row["Evidence_Confidence"] != row["Overall_Score"] or row["Evidence_Confidence"] == 0
+
+
+def test_excluded_plant_gets_a_hold_or_nogo_call_never_go():
+    df = pd.DataFrame([_row(
+        Scientific_Rationale="", Target_or_Mechanism="unrelated pathway",
+        Applicability_Summary="",
+    )])
+    summary, _ = build_plant_candidate_shortlist(df, indication="anxiety", dosage_form="Infusion")
+    row = summary.iloc[0]
+    if row["Scientific_Triage_Status"] == "Excluded":
+        assert row["Go_Investigate_Hold_NoGo"] in ("Hold", "No-Go")
+        assert row["Decision_Class_AH"].startswith("G") or row["Decision_Class_AH"].startswith("H")
+
+
+def _authoritative_row(plant, status, score, breakdown=None, **extra):
+    row = {
+        "Alternative_Plant": plant,
+        "Scientific_Triage_Status": status,
+        "Overall_Score": score,
+        "Score_Breakdown": breakdown or {"Indication Relevance": score},
+        "Score_Breakdown_Display": f"Indication Relevance .... {score}/35",
+        "Evidence_Confidence": min(100.0, score),
+        "Decision_Class_AH": "B — Established scientific candidate",
+        "Go_Investigate_Hold_NoGo": "Go" if score >= 78 else "Investigate",
+    }
+    row.update(extra)
+    return row
+
+
+def test_merge_drops_excluded_plants():
+    raw_df = pd.DataFrame([
+        {"Alternative_Plant": "Plant A", "Rationale": "narrative A", "R&D_Opportunity_Score": 40},
+        {"Alternative_Plant": "Plant B", "Rationale": "narrative B", "R&D_Opportunity_Score": 90},
+    ])
+    plant_summary = pd.DataFrame([
+        _authoritative_row("Plant A", "Excluded", 20.0),
+        _authoritative_row("Plant B", "Shortlist", 85.0),
+    ])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert list(merged["Alternative_Plant"]) == ["Plant B"]
+
+
+def test_merge_preserves_raw_narrative_fields_not_covered_by_the_authoritative_score():
+    raw_df = pd.DataFrame([
+        {"Alternative_Plant": "Plant A", "Rationale": "rich narrative text",
+         "Next_Experiment_Suggestion": "run assay X", "R&D_Opportunity_Score": 40},
+    ])
+    plant_summary = pd.DataFrame([_authoritative_row("Plant A", "Shortlist", 85.0)])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert merged.iloc[0]["Rationale"] == "rich narrative text"
+    assert merged.iloc[0]["Next_Experiment_Suggestion"] == "run assay X"
+
+
+def test_merge_overwrites_score_fields_with_the_authoritative_values():
+    # The raw row's OWN (pre-Phase-3) score must not survive the merge —
+    # the plant_summary (Overall_Score-derived) value always wins.
+    raw_df = pd.DataFrame([
+        {"Alternative_Plant": "Plant A", "R&D_Opportunity_Score": 12,
+         "Decision_Class_AH": "G — Hold / insufficient evidence",
+         "Go_Investigate_Hold_NoGo": "Hold"},
+    ])
+    plant_summary = pd.DataFrame([_authoritative_row("Plant A", "Shortlist", 91.0)])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    row = merged.iloc[0]
+    assert row["R&D_Opportunity_Score"] == 91.0
+    assert row["Overall_Score"] == 91.0
+    assert row["Decision_Class_AH"] == "B — Established scientific candidate"
+    assert row["Go_Investigate_Hold_NoGo"] == "Go"
+
+
+def test_merge_result_is_one_row_per_plant_sorted_by_overall_score_descending():
+    raw_df = pd.DataFrame([
+        {"Alternative_Plant": "Weak plant", "R&D_Opportunity_Score": 10},
+        {"Alternative_Plant": "Strong plant", "R&D_Opportunity_Score": 10},
+    ])
+    plant_summary = pd.DataFrame([
+        _authoritative_row("Weak plant", "Exploratory", 40.0),
+        _authoritative_row("Strong plant", "Shortlist", 92.0),
+    ])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert list(merged["Alternative_Plant"]) == ["Strong plant", "Weak plant"]
+    assert list(merged["Overall_Score"]) == [92.0, 40.0]
+
+
+def test_merge_picks_richest_raw_row_when_a_plant_has_several():
+    raw_df = pd.DataFrame([
+        {"Alternative_Plant": "Plant A", "Rationale": "thin row", "R&D_Opportunity_Score": 5},
+        {"Alternative_Plant": "Plant A", "Rationale": "richest row", "R&D_Opportunity_Score": 60},
+    ])
+    plant_summary = pd.DataFrame([_authoritative_row("Plant A", "Shortlist", 88.0)])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert merged.iloc[0]["Rationale"] == "richest row"
+    # Even the "richest" row's own score is still overwritten.
+    assert merged.iloc[0]["R&D_Opportunity_Score"] == 88.0
+
+
+def test_merge_empty_inputs_return_empty_dataframe_not_a_crash():
+    assert merge_authoritative_scores(pd.DataFrame(), pd.DataFrame()).empty
+    assert merge_authoritative_scores(None, pd.DataFrame([_authoritative_row("A", "Shortlist", 80.0)])).empty
+    assert merge_authoritative_scores(pd.DataFrame([{"Alternative_Plant": "A"}]), pd.DataFrame()).empty
+
+
+def test_merge_all_excluded_returns_empty_dataframe():
+    raw_df = pd.DataFrame([{"Alternative_Plant": "Plant A", "R&D_Opportunity_Score": 10}])
+    plant_summary = pd.DataFrame([_authoritative_row("Plant A", "Excluded", 5.0)])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert merged.empty

@@ -300,3 +300,64 @@ def test_hard_stop_overrides_high_scientific_scores():
         dosage_form="Infusion",
     )
     assert summary.iloc[0]["Scientific_Triage_Status"] == "Excluded"
+
+
+def test_single_no_go_row_does_not_exclude_multirow_candidate_with_clean_support():
+    risky = _row(
+        Alternative_Plant="Balanced candidate",
+        Scientific_Rationale="mechanistic evidence for insulin sensitivity",
+        Target_or_Mechanism="AMPK and insulin sensitivity",
+        Source_Record_IDs="PMID:201",
+        Decision_Class="No-Go / safety concern",
+        Go_Investigate_Hold_NoGo="No-Go",
+    )
+    clean = _row(
+        Alternative_Plant="Balanced candidate",
+        Scientific_Rationale="preclinical evidence for improved insulin sensitivity",
+        Target_or_Mechanism="AMPK and insulin sensitivity",
+        Source_Record_IDs="PMID:202",
+        Decision_Class="Investigate",
+        Go_Investigate_Hold_NoGo="Investigate",
+    )
+    clean2 = _row(
+        Alternative_Plant="Balanced candidate",
+        Scientific_Rationale="preclinical glucose uptake evidence",
+        Target_or_Mechanism="GLUT4 glucose uptake",
+        Source_Record_IDs="PMID:203",
+        Decision_Class="Investigate",
+        Go_Investigate_Hold_NoGo="Investigate",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([risky, clean, clean2]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    assert summary.iloc[0]["Scientific_Triage_Status"] != "Excluded"
+    assert summary.iloc[0]["Safety_Regulatory_Score"] > 0
+
+
+def test_replicated_mechanistic_evidence_can_support_rd_shortlist():
+    rows = [
+        _row(
+            Alternative_Plant="Mechanistic candidate",
+            Scientific_Rationale="candidate-specific AMPK activation and insulin sensitivity",
+            Target_or_Mechanism="AMPK; insulin sensitivity",
+            Evidence_Level="Preclinical / mechanistic evidence",
+            Evidence_Hierarchy_Detail="Validated in vivo",
+            Source_Record_IDs="PMID:301",
+        ),
+        _row(
+            Alternative_Plant="Mechanistic candidate",
+            Scientific_Rationale="candidate-specific GLUT4 glucose uptake",
+            Target_or_Mechanism="GLUT4; glucose uptake",
+            Evidence_Level="Preclinical / mechanistic evidence",
+            Evidence_Hierarchy_Detail="Validated in vivo",
+            Source_Record_IDs="PMID:302",
+        ),
+    ]
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame(rows),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    assert summary.iloc[0]["Scientific_Triage_Status"] == "Shortlist"

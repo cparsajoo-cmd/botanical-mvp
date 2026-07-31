@@ -658,18 +658,50 @@ def _mechanism_support(group: pd.DataFrame) -> tuple[float, str]:
     return total, tier
 
 
+def _critical_plant_stop(group: pd.DataFrame) -> bool:
+    """Return True only for a plant-level stop supported across the group.
+
+    A single raw association marked No-Go must not automatically exclude the
+    entire botanical candidate: one plant can have many compounds and mixed
+    evidence rows.  We reserve plant-level exclusion for an explicit regulatory
+    prohibition/contraindication or for repeated hard-stop rows that dominate
+    the candidate record.
+    """
+    regulatory_text = " | ".join(
+        _norm(v) for v in group.get("Regulatory_Barriers", pd.Series(dtype=object)).dropna().tolist()
+    )
+    if any(term in regulatory_text for term in (
+        "prohibited", "prohibition", "banned", "regulatory ban", "contraindicated",
+    )):
+        return True
+
+    hard_count = int(group["Hard_Stop_Present"].sum())
+    row_count = max(1, len(group))
+    if row_count == 1 and hard_count == 1:
+        return True
+    return hard_count >= 2 and (hard_count / row_count) >= 0.5
+
+
 def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
+    if _critical_plant_stop(group):
+        return 0.0, "Plant-level hard stop"
+
+    # Mixed row-level safety signals reduce confidence but do not erase a
+    # scientifically relevant candidate unless they meet the plant-level rule.
     if group["Hard_Stop_Present"].any():
-        return 0.0, "Hard stop present"
-    safety_points = 6.0
+        safety_points = 3.0
+        safety_tier = "Mixed safety signals"
+    else:
+        safety_points = 6.0
+        safety_tier = "Clean"
+
     barriers = _norm(_join(group.get("Regulatory_Barriers", []), 5))
     if not barriers or barriers in _MISSING_MARKERS or "none identified" in barriers:
         reg_points = 4.0
-        tier = "Clean"
     else:
         reg_points = 1.0
-        tier = "Barriers flagged"
-    return round(safety_points + reg_points, 1), tier
+        safety_tier = "Regulatory review needed"
+    return round(safety_points + reg_points, 1), safety_tier
 
 
 def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
@@ -910,48 +942,50 @@ def build_plant_candidate_shortlist(
         indication_requested = bool(_norm(indication))
         reasons_note = None
         base_plant_status = plant_status
-        hard_stop_present = bool(group["Hard_Stop_Present"].any())
+        plant_hard_stop = _critical_plant_stop(group)
         empirical_rows = int(group.apply(_row_has_candidate_specific_empirical_support, axis=1).sum())
         traceable_count = len(set(map(_norm, sources)))
 
-        if base_plant_status == "Excluded":
+        if plant_hard_stop:
             plant_status = "Excluded"
-            reasons_note = _join(group.get("Scientific_Triage_Reasons", []), 10)
+            reasons_note = "a repeated or explicit plant-level safety/regulatory stop is present"
         elif not indication_requested:
             plant_status = base_plant_status
-        elif hard_stop_present:
-            plant_status = "Excluded"
-            reasons_note = "a hard safety or regulatory stop is present"
         elif indication_points == 0.0:
             plant_status = "Excluded"
             reasons_note = "no candidate-specific evidence was found for the requested indication"
-        elif indication_requested and indication_mode.startswith("Mechanistic"):
+        elif indication_mode == "Direct human/clinical":
+            if evq_points >= 12.0 and empirical_rows >= 1 and traceable_count >= 1:
+                plant_status = "Shortlist"
+            else:
+                plant_status = "Exploratory"
+                reasons_note = "direct human relevance is present, but traceability or evidence quality is still limited"
+        elif indication_mode in {"Direct preclinical", "Direct but limited", "Direct candidate-specific"}:
+            if indication_points >= 22.0 and evq_points >= 10.0 and empirical_rows >= 1 and traceable_count >= 2:
+                plant_status = "Shortlist"
+            else:
+                plant_status = "Exploratory"
+                reasons_note = "direct indication relevance is present, but the evidence base is not yet sufficient"
+        elif indication_mode == "Mechanistic empirical":
+            # A strong, replicated mechanism can justify R&D prioritisation, but
+            # only when it is candidate-specific and backed by multiple records.
+            if (
+                indication_points >= 18.0
+                and evq_points >= 18.0
+                and empirical_rows >= 2
+                and traceable_count >= 2
+            ):
+                plant_status = "Shortlist"
+            else:
+                plant_status = "Exploratory"
+                reasons_note = "the indication link is mechanistic and does not yet meet the replicated-evidence gate"
+        else:
             plant_status = "Exploratory"
-            reasons_note = (
-                "the indication link is mechanistic only; direct candidate-specific "
-                "indication evidence is required for Shortlist"
-            )
-        elif indication_requested and indication_points < 22.0:
-            plant_status = "Exploratory"
-            reasons_note = "only weak or indirect indication relevance was found"
-        elif (
-            evq_points < 15.0
-            or empirical_rows < 1
-            or (
-                indication_mode != "Direct human/clinical"
-                and traceable_count < 2
-            )
-        ):
-            plant_status = "Exploratory"
-            reasons_note = (
-                "indication relevance is present, but evidence quality or independent "
-                "traceability is insufficient for Shortlist"
-            )
-        elif safety_reg_points <= 0.0:
+            reasons_note = "only weak, indirect, or inferred indication relevance was found"
+
+        if safety_reg_points <= 0.0:
             plant_status = "Excluded"
-            reasons_note = "safety/regulatory screening did not pass"
-        elif plant_status != "Excluded":
-            plant_status = "Shortlist"
+            reasons_note = "safety/regulatory screening did not pass at plant level"
 
         overall_score = round(
             indication_points + evq_points + cq_points + mech_points

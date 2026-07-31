@@ -12,12 +12,39 @@ import re
 from typing import Iterable
 import pandas as pd
 
+# Other modules (report generator, UI) detect an indication-centric row by
+# these exact sentinel values rather than re-deriving the discovery mode, so
+# they are named constants instead of repeated string literals.
+INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
+COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 
+# Curated term sets exist only for the platform's named flagship indications
+# (Requirement: "for example type 2 diabetes, metabolic syndrome, sleep,
+# Alzheimer's disease, skin aging"). Any indication that does not match a
+# trigger falls back to _terms()'s generic tokenizer below — candidates are
+# still discovered, just without a curated mechanistic vocabulary. This is a
+# deliberate scope limit, not an oversight: adding a family is a small,
+# reviewable dictionary edit, never a new inference layer.
 DISEASE_FAMILIES = {
     "metabolic": {
         "triggers": ("diabetes", "blood sugar", "glycemic", "glycaemic", "metabolic", "insulin resistance", "hypergly"),
         "direct": ("type 2 diabetes", "diabetes mellitus", "diabetic", "hyperglycemia", "hyperglycaemia", "blood glucose", "fasting glucose", "postprandial glucose", "hba1c", "glycemic control", "glycaemic control", "insulin resistance"),
         "mechanistic": ("ampk", "glut4", "ppar", "alpha glucosidase", "α-glucosidase", "dpp-4", "insulin secretion", "insulin sensitivity", "glucose uptake", "hepatic gluconeogenesis"),
+    },
+    "sleep": {
+        "triggers": ("sleep", "insomnia"),
+        "direct": ("insomnia", "sleep disturbance", "sleep quality", "sleep latency", "sleep disorder", "difficulty falling asleep", "poor sleep", "sleep onset"),
+        "mechanistic": ("gaba", "gabaa receptor", "melatonin", "benzodiazepine receptor", "sedative", "hypnotic", "sleep onset latency", "adenosine receptor"),
+    },
+    "cognitive": {
+        "triggers": ("alzheimer", "dementia", "cognitive decline", "neurodegeneration", "memory loss", "memory impairment"),
+        "direct": ("alzheimer's disease", "alzheimer disease", "dementia", "cognitive decline", "mild cognitive impairment", "memory impairment"),
+        "mechanistic": ("acetylcholinesterase", "amyloid beta", "amyloid-beta", "tau protein", "neuroinflammation", "nmda receptor", "cholinergic"),
+    },
+    "skin_aging": {
+        "triggers": ("skin aging", "skin ageing", "photoaging", "photoageing", "wrinkle", "skin elasticity"),
+        "direct": ("skin aging", "skin ageing", "photoaging", "photoageing", "wrinkle reduction", "skin elasticity", "fine lines", "collagen loss"),
+        "mechanistic": ("collagen synthesis", "mmp-1", "matrix metalloproteinase", "elastin", "uv induced damage", "antioxidant", "fibroblast"),
     },
 }
 
@@ -109,9 +136,9 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
         row = {col: "" for col in OUTPUT_COLUMNS}
         row.update({
-            "Reference_Plant": "Indication-centric discovery",
+            "Reference_Plant": INDICATION_CENTRIC_REFERENCE_LABEL,
             "Reference_Plant_Part": "",
-            "Reference_Compound": "Not used as candidate gate",
+            "Reference_Compound": COMPOUND_NOT_GATING_LABEL,
             "Alternative_Plant": plant,
             "Alternative_Plant_Part": engine._pick(item, ["Plant_Part", "plant_part"]),
             "Shared_or_Similar_Compound": "; ".join(compounds[:8]),

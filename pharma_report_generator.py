@@ -58,6 +58,20 @@ from structured_rationale import (
 )
 from regulatory_frameworks import get_us_uk_status
 from scoring_sensitivity_report import build_robustness_analysis
+from indication_candidate_discovery import (
+    INDICATION_CENTRIC_REFERENCE_LABEL,
+    COMPOUND_NOT_GATING_LABEL,
+)
+
+
+def _is_indication_centric_row(row: pd.Series) -> bool:
+    """True for rows produced by discover_indication_candidates() (Reports
+    must support both discovery modes without assuming Reference_Plant /
+    Reference_Compound / Matched compound are meaningful)."""
+    return (
+        row.get("Reference_Plant") == INDICATION_CENTRIC_REFERENCE_LABEL
+        or row.get("Reference_Compound") == COMPOUND_NOT_GATING_LABEL
+    )
 
 GO_CALL_ORDER = [
     "Go",
@@ -425,11 +439,22 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None,
     """
     card = build_recommendation_card(row)
 
+    if _is_indication_centric_row(row):
+        mechanism = row.get("Target_or_Mechanism", "")
+        reference_line = "**Discovery basis:** Indication-specific evidence (no reference plant/compound match used)  "
+        compound_line = (
+            f"**Supporting mechanism/target:** {mechanism}  " if mechanism
+            else "**Supporting mechanism/target:** Not yet classified  "
+        )
+    else:
+        reference_line = f"**Reference:** {row.get('Reference_Plant', '')} / {row.get('Reference_Compound', '')}  "
+        compound_line = f"**Matched compound:** {row.get('Shared_or_Similar_Compound', '')}  "
+
     lines = [
         f"### {rank}. {card['botanical']} — {card['final_recommendation']}",
         "",
-        f"**Reference:** {row.get('Reference_Plant', '')} / {row.get('Reference_Compound', '')}  ",
-        f"**Matched compound:** {row.get('Shared_or_Similar_Compound', '')}  ",
+        reference_line,
+        compound_line,
         f"**R&D Opportunity Score:** {row.get('R&D_Opportunity_Score', '')} | "
         f"**Evidence Confidence:** {row.get('Evidence_Confidence', '')}  ",
         f"**Decision class:** {row.get('Decision_Class_AH', '')}",
@@ -715,14 +740,24 @@ def generate_pharma_report(
     if not remainder.empty:
         lines.append(f"## Remaining Candidates ({len(remainder)})")
         lines.append("")
-        lines.append("| Plant | Compound | Score | Confidence | Call |")
-        lines.append("|---|---|---|---|---|")
-        for _, row in remainder.iterrows():
-            lines.append(
-                f"| {row.get('Alternative_Plant', '')} | {row.get('Shared_or_Similar_Compound', '')} | "
-                f"{row.get('R&D_Opportunity_Score', '')} | {row.get('Evidence_Confidence', '')} | "
-                f"{row.get('Go_Investigate_Hold_NoGo', '')} |"
-            )
+        if remainder.apply(_is_indication_centric_row, axis=1).all():
+            lines.append("| Plant | Supporting mechanism/target | Score | Confidence | Call |")
+            lines.append("|---|---|---|---|---|")
+            for _, row in remainder.iterrows():
+                lines.append(
+                    f"| {row.get('Alternative_Plant', '')} | {row.get('Target_or_Mechanism', '')} | "
+                    f"{row.get('R&D_Opportunity_Score', '')} | {row.get('Evidence_Confidence', '')} | "
+                    f"{row.get('Go_Investigate_Hold_NoGo', '')} |"
+                )
+        else:
+            lines.append("| Plant | Compound | Score | Confidence | Call |")
+            lines.append("|---|---|---|---|---|")
+            for _, row in remainder.iterrows():
+                lines.append(
+                    f"| {row.get('Alternative_Plant', '')} | {row.get('Shared_or_Similar_Compound', '')} | "
+                    f"{row.get('R&D_Opportunity_Score', '')} | {row.get('Evidence_Confidence', '')} | "
+                    f"{row.get('Go_Investigate_Hold_NoGo', '')} |"
+                )
         lines.append("")
 
     return "\n".join(lines)

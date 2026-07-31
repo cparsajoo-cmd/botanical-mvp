@@ -50,6 +50,44 @@ def _make_row(**overrides):
     return base
 
 
+def test_indication_centric_row_does_not_show_reference_or_matched_compound_labels():
+    row = _make_row(
+        Reference_Plant="Indication-centric discovery",
+        Reference_Compound="Not used as candidate gate",
+        Target_or_Mechanism="GABAA receptor modulation",
+    )
+    result = pd.DataFrame([row])
+    report = generate_pharma_report(result, indication="insomnia", dosage_form="Y", market="Z")
+    assert "**Discovery basis:** Indication-specific evidence" in report
+    assert "**Supporting mechanism/target:** GABAA receptor modulation" in report
+    assert "**Reference:**" not in report
+    assert "**Matched compound:**" not in report
+
+
+def test_compound_substitution_row_keeps_legacy_reference_and_compound_labels():
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "**Reference:** RefPlant / RefCompound" in report
+    assert "**Matched compound:** AltCompound" in report
+    assert "**Discovery basis:**" not in report
+
+
+def test_remainder_table_uses_mechanism_column_for_indication_centric_candidates():
+    rows = [
+        _make_row(
+            Alternative_Plant=f"Plant {i}",
+            Reference_Plant="Indication-centric discovery",
+            Reference_Compound="Not used as candidate gate",
+            Target_or_Mechanism=f"Mechanism {i}",
+        )
+        for i in range(1, 25)  # more than top_n so a remainder table is built
+    ]
+    result = pd.DataFrame(rows)
+    report = generate_pharma_report(result, indication="insomnia", dosage_form="Y", market="Z", top_n=3)
+    assert "| Plant | Supporting mechanism/target | Score | Confidence | Call |" in report
+    assert "| Plant | Compound | Score | Confidence | Call |" not in report
+
+
 def test_cso_reasoning_statements_appear_in_the_writeup():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")

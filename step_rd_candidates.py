@@ -5,6 +5,7 @@ from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
+from candidate_shortlisting import build_plant_candidate_shortlist
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from standard_evidence_builder import (
@@ -735,8 +736,31 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_candidates_df"] = result_df
 
             if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-                st.success(f"✅ {len(result_df)} candidate rows generated.")
+                plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
+                    result_df,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    max_candidates=50,
+                )
+                st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
+                st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+
+                counts = (
+                    plant_summary_df["Scientific_Triage_Status"].value_counts()
+                    if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty
+                    else pd.Series(dtype=int)
+                )
+                shortlisted = int(counts.get("Shortlist", 0))
+                exploratory = int(counts.get("Exploratory", 0))
+                excluded = int(counts.get("Excluded", 0))
+                st.success(
+                    f"✅ {len(result_df)} raw plant–compound associations generated; "
+                    f"aggregated into {shortlisted + exploratory + excluded} plant candidates "
+                    f"({shortlisted} shortlisted, {exploratory} exploratory, {excluded} excluded)."
+                )
             else:
+                st.session_state.pop("rd_candidate_plant_summary_df", None)
+                st.session_state.pop("rd_candidate_triage_audit_df", None)
                 st.warning("No R&D candidates found.")
 
         except Exception as e:
@@ -769,20 +793,103 @@ def render_rd_candidates_step(inputs):
                     "tagging (Source Ingestion / Bulk Evidence Collection) "
                     "before treating this as a comprehensive result."
                 )
+        plant_summary_df = st.session_state.get("rd_candidate_plant_summary_df")
+        triage_audit_df = st.session_state.get("rd_candidate_triage_audit_df")
+        if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
+            plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
+                result_df,
+                indication=indication,
+                dosage_form=dosage_form,
+                max_candidates=50,
+            )
+            st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
+            st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+
         st.info(
-            "📊 **How to read this table:** `R&D_Opportunity_Score` ranks rows by "
-            "how worth investigating they are — it is a triage/priority number, "
-            "not a claim of scientific validity. A shared compound name (even a "
-            "rare, specific one) only means two plants share a chemical hypothesis; "
-            "it says nothing about concentration, bioavailability, or proven "
-            "effect. The column that actually reflects confidence is "
-            "`Decision_Class`, together with `Evidence_Level` — only rows backed "
-            "by real clinical or regulatory evidence can reach \"Strong R&D "
-            "candidate\". Treat every row as a lead to verify, not a conclusion."
+            "📊 **Scientific triage view:** the raw chemical-association network is "
+            "kept for audit, but the primary table is one row per alternative plant. "
+            "A plant enters `Shortlist` only when at least one row has traceable "
+            "alternative-plant evidence, a supported target/mechanism, a "
+            "non-generic chemical signal, no hard safety/regulatory stop, and no "
+            "documented dosage-form mismatch. `Exploratory` means a plausible but "
+            "incomplete hypothesis; `Excluded` means it failed a non-compensatory "
+            "gate. `Scientific_Triage_Score` is transparent triage, not an efficacy claim."
         )
-        st.dataframe(result_df.head(500), width="stretch")
-        if len(result_df) > 500:
-            st.caption(f"Showing first 500 of {len(result_df)} rows in this preview.")
+
+        if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty:
+            primary_df = plant_summary_df[
+                plant_summary_df["Scientific_Triage_Status"].isin(["Shortlist", "Exploratory"])
+            ].copy()
+            excluded_df = plant_summary_df[
+                plant_summary_df["Scientific_Triage_Status"] == "Excluded"
+            ].copy()
+
+            st.markdown("### Plant-centric candidate shortlist")
+            if primary_df.empty:
+                st.warning(
+                    "No plant passed the current scientific shortlisting gates. "
+                    "Review the excluded-row audit rather than treating raw compound matches as candidates."
+                )
+            else:
+                st.dataframe(primary_df.head(50), width="stretch", hide_index=True)
+
+            st.download_button(
+                "Download plant-centric scientific shortlist (CSV)",
+                data=plant_summary_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="step5_plant_centric_scientific_shortlist.csv",
+                mime="text/csv",
+                key="rd_download_plant_shortlist_csv",
+            )
+
+            with st.expander(f"Excluded plant candidates — {len(excluded_df)}", expanded=False):
+                st.caption(
+                    "These plants remain visible for audit; the reason is shown in "
+                    "Why_Selected_or_Rejected."
+                )
+                if not excluded_df.empty:
+                    st.dataframe(excluded_df.head(200), width="stretch", hide_index=True)
+
+        with st.expander(
+            f"Raw plant–compound association network — {len(result_df)} row(s)",
+            expanded=False,
+        ):
+            st.warning(
+                "Exploratory network only. Each row is a chemical/evidence association, "
+                "not an independently validated botanical candidate."
+            )
+            st.dataframe(result_df.head(500), width="stretch")
+            if len(result_df) > 500:
+                st.caption(f"Showing first 500 of {len(result_df)} raw rows in this preview.")
+            st.download_button(
+                "Download raw association network (CSV)",
+                data=result_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="step5_raw_candidate_association_network.csv",
+                mime="text/csv",
+                key="rd_download_raw_candidate_network_csv",
+            )
+
+        if isinstance(triage_audit_df, pd.DataFrame) and not triage_audit_df.empty:
+            with st.expander("Scientific gate audit — every raw row", expanded=False):
+                st.caption(
+                    "Shows exactly which generic gates each raw row passed or failed."
+                )
+                audit_cols = [c for c in [
+                    "Reference_Plant", "Alternative_Plant",
+                    "Shared_or_Similar_Compound", "Target_or_Mechanism",
+                    "Scientific_Triage_Status", "Scientific_Triage_Reasons",
+                    "Direct_Evidence_Present", "Supported_Target_or_Mechanism",
+                    "Generic_Compound_Only", "Dosage_Form_Compatibility",
+                    "Hard_Stop_Present", "Negative_Evidence_Present",
+                    "Evidence_Level", "Evidence_Source", "Source_Record_IDs",
+                ] if c in triage_audit_df.columns]
+                st.dataframe(triage_audit_df[audit_cols].head(500), width="stretch")
+                st.download_button(
+                    "Download full scientific gate audit (CSV)",
+                    data=triage_audit_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="step5_scientific_gate_audit.csv",
+                    mime="text/csv",
+                    key="rd_download_triage_audit_csv",
+                )
 
         with st.expander("🌍 Enrich with market/patent landscape (optional, per-candidate)"):
             st.caption(

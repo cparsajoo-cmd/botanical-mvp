@@ -4959,36 +4959,43 @@ class BotanicalRDCandidateEngine:
         return _SLEEP_TEA_EVIDENCE_NORM_MAP.get(self._norm(plant))
 
     @staticmethod
-    def _honest_external_status(value):
-        """Normalize legacy placeholders without upgrading evidence.
+    def _compact_ema_status(value):
+        """Return a short, non-inflated EMA/HMPC label for tables and exports.
 
-        WHO and ESCOP must only be shown as verified when they come from a
-        separately curated, source-specific record. EMA inventory text is not
-        an acceptable proxy for either authority.
+        The full source wording is preserved separately in EMA_HMPC_Detail.
+        This function deliberately does not upgrade an inventory match into a
+        monograph claim unless the source text explicitly says monograph.
         """
         text = str(value or "").strip()
-        if not text:
-            return "Not independently verified"
         low = text.lower()
-        if (
-            "see source pdf" in low
-            or "not yet verified" in low
-            or "column not reliably" in low
-        ):
-            return "Not independently verified"
-        return text
+        if not text:
+            return "Not verified"
+        if "not found" in low or "not listed" in low or "no match" in low:
+            return "Not found in HMPC inventory"
+        if "monograph" in low and "available" in low:
+            return "HMPC monograph available"
+        if "assessment report" in low and "available" in low:
+            return "HMPC assessment available"
+        if "listed in hmpc inventory" in low or "hmpc inventory" in low:
+            return "Listed in HMPC inventory"
+        if "not yet verified" in low or "not evaluated" in low:
+            return "Not verified"
+        return text if len(text) <= 80 else "EMA/HMPC information available"
 
     def _eu_regulatory_status(self, plant):
         curated = self._curated_evidence_for(plant)
         if curated:
+            ema_detail = curated.get("ema_status", "Not evaluated")
+            source = "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified"
             return {
-                "EMA_HMPC_Status": curated.get("ema_status", "Not evaluated"),
-                "WHO_Status": self._honest_external_status(curated.get("who_status")),
-                "ESCOP_Status": self._honest_external_status(curated.get("escop_status")),
-                "EMA_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE",
-                "WHO_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE — manually verified",
-                "ESCOP_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE — manually verified",
-                "Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
+                "EMA_HMPC_Status": self._compact_ema_status(ema_detail),
+                "EMA_HMPC_Detail": ema_detail,
+                "EMA_Source": source,
+                "WHO_Status": curated.get("who_status", "Not independently verified"),
+                "WHO_Source": source,
+                "ESCOP_Status": curated.get("escop_status", "Not independently verified"),
+                "ESCOP_Source": source,
+                "Source": source,  # backwards compatibility
             }
 
         try:
@@ -4996,52 +5003,37 @@ class BotanicalRDCandidateEngine:
             records = search_regulatory_sources_real(plant)
             if records:
                 r = records[0]
+                ema_detail = r.get("EMA_Status", "Not yet verified")
+                ema_source = r.get("Source_URL", "") or r.get("Notes", "")
+                who_status = r.get("WHO_Status", "Not independently verified")
+                escop_status = r.get("ESCOP_Status", "Not independently verified")
                 return {
-                    "EMA_HMPC_Status": r.get("EMA_Status", "Not yet verified"),
-                    "WHO_Status": "Not independently verified",
-                    "ESCOP_Status": "Not independently verified",
-                    "EMA_Source": r.get("Source_URL", ""),
-                    "WHO_Source": "No independent WHO source connected for this plant",
-                    "ESCOP_Source": "No independent ESCOP source connected for this plant",
+                    "EMA_HMPC_Status": self._compact_ema_status(ema_detail),
+                    "EMA_HMPC_Detail": ema_detail,
+                    "EMA_Source": ema_source,
+                    "WHO_Status": who_status,
+                    "WHO_Source": r.get("WHO_Source", "No independent WHO lookup configured"),
+                    "ESCOP_Status": escop_status,
+                    "ESCOP_Source": r.get("ESCOP_Source", "No independent ESCOP lookup configured"),
                     "Source": r.get("Notes", "") + f" ({r.get('Source_URL', '')})",
                 }
         except Exception:
             pass
 
+        source = (
+            "No EMA HMPC bulk API exists (browse-only site) — needs manual "
+            "lookup at ema.europa.eu and curation."
+        )
         return {
-            "EMA_HMPC_Status": "Not yet verified",
+            "EMA_HMPC_Status": "Not verified",
+            "EMA_HMPC_Detail": "Not yet verified",
+            "EMA_Source": source,
             "WHO_Status": "Not independently verified",
+            "WHO_Source": "No independent WHO lookup configured",
             "ESCOP_Status": "Not independently verified",
-            "EMA_Source": "EMA lookup unavailable",
-            "WHO_Source": "No independent WHO source connected for this plant",
-            "ESCOP_Source": "No independent ESCOP source connected for this plant",
-            "Source": "EMA lookup unavailable; WHO and ESCOP require separate source-specific verification.",
+            "ESCOP_Source": "No independent ESCOP lookup configured",
+            "Source": source,  # backwards compatibility
         }
-
-    @staticmethod
-    def _summarize_ema_hmpc_status(value):
-        """Convert verbose EMA inventory text into a compact UI label.
-
-        This is a presentation summary only.  The original wording remains in
-        EMA_HMPC_Detail and no stronger regulatory claim is inferred.
-        """
-        text = str(value or "").strip()
-        low = text.lower()
-        if not text or low in {"not yet verified", "not evaluated", "unknown"}:
-            return "Not verified"
-        if "not listed" in low or "no hmpc" in low or "no ema" in low:
-            return "Not found in HMPC inventory"
-        if "listed in hmpc inventory" in low:
-            return "Listed in HMPC inventory"
-        if "community herbal monograph" in low or "union herbal monograph" in low:
-            return "HMPC monograph available"
-        if "assessment report" in low:
-            return "HMPC assessment available"
-        if "traditional use" in low:
-            return "Traditional-use status recorded"
-        if "well-established use" in low:
-            return "Well-established-use status recorded"
-        return "EMA/HMPC record available"
 
     def _search_patents(self, query, max_results=5):
         """
@@ -5132,16 +5124,14 @@ class BotanicalRDCandidateEngine:
             rows.append({
                 "Plant": snap["plant"],
                 "Region_of_Origin": snap["region"],
-                "EMA_HMPC_Status": self._summarize_ema_hmpc_status(
-                    reg["EMA_HMPC_Status"]
-                ),
-                "EMA_HMPC_Detail": reg["EMA_HMPC_Status"],
-                "WHO_Status": reg["WHO_Status"],
-                "ESCOP_Status": reg["ESCOP_Status"],
-                "Regulatory_Source": reg["Source"],
+                "EMA_HMPC_Status": reg["EMA_HMPC_Status"],
+                "EMA_HMPC_Detail": reg.get("EMA_HMPC_Detail", reg["EMA_HMPC_Status"]),
                 "EMA_Source": reg.get("EMA_Source", reg.get("Source", "")),
-                "WHO_Source": reg.get("WHO_Source", "No independent WHO source connected"),
-                "ESCOP_Source": reg.get("ESCOP_Source", "No independent ESCOP source connected"),
+                "WHO_Status": reg["WHO_Status"],
+                "WHO_Source": reg.get("WHO_Source", ""),
+                "ESCOP_Status": reg["ESCOP_Status"],
+                "ESCOP_Source": reg.get("ESCOP_Source", ""),
+                "Regulatory_Source": reg["Source"],
                 "US_Status": us_uk.get(
                     "us_status", "Not yet catalogued for this plant"
                 ),
@@ -5206,9 +5196,6 @@ class BotanicalRDCandidateEngine:
             "WHO_Status": "Market_Landscape_WHO_Status",
             "ESCOP_Status": "Market_Landscape_ESCOP_Status",
             "Regulatory_Source": "Market_Landscape_Regulatory_Source",
-            "EMA_Source": "Market_Landscape_EMA_Source",
-            "WHO_Source": "Market_Landscape_WHO_Source",
-            "ESCOP_Source": "Market_Landscape_ESCOP_Source",
             "US_Status": "Market_Landscape_US_Status",
             "UK_Status": "Market_Landscape_UK_Status",
             "Patent_Search_Status": "Market_Landscape_Patent_Search_Status",

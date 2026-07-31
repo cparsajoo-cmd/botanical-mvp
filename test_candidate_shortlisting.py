@@ -64,3 +64,64 @@ def test_explicit_dosage_mismatch_is_excluded_but_zero_count_is_not():
     statuses = dict(zip(summary["Alternative_Plant"], summary["Scientific_Triage_Status"]))
     assert statuses["Candidate plant"] == "Excluded"
     assert statuses["Second candidate"] == "Shortlist"
+
+
+def test_plant_with_no_indication_specific_evidence_is_excluded():
+    # Passes every generic gate (direct evidence, supported target, specific
+    # compound) but nothing in the text mentions the requested indication.
+    df = pd.DataFrame([_row(Target_or_Mechanism="AMPK activation, general metabolic pathway")])
+    summary, audit = build_plant_candidate_shortlist(
+        df, indication="wound healing", dosage_form="Infusion"
+    )
+    assert summary.iloc[0]["Scientific_Triage_Status"] == "Excluded"
+    assert summary.iloc[0]["Indication_Relevance"] == "No relevance"
+
+
+def test_indication_specific_evidence_is_shortlisted_and_scored():
+    df = pd.DataFrame([_row(
+        Scientific_Rationale="supports wound healing via collagen synthesis",
+        Applicability_Summary='{"critical_mismatches":[],"evidence_items":[]}',
+    )])
+    summary, audit = build_plant_candidate_shortlist(
+        df, indication="wound healing", dosage_form="Infusion"
+    )
+    row = summary.iloc[0]
+    assert row["Scientific_Triage_Status"] == "Shortlist"
+    assert row["Indication_Relevance"] == "High relevance"
+    assert 0 <= row["Overall_Score"] <= 100
+    assert "Indication Relevance" in row["Score_Breakdown"]
+    assert row["Why_Selected_or_Rejected"].startswith("Selected because")
+
+
+def test_no_indication_supplied_preserves_legacy_behaviour():
+    # No indication string -> the new gate must stay neutral (as before this
+    # requirement existed) rather than excluding every candidate.
+    df = pd.DataFrame([_row()])
+    summary, _ = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    assert summary.iloc[0]["Scientific_Triage_Status"] == "Shortlist"
+    assert summary.iloc[0]["Indication_Relevance"].startswith("Not evaluated")
+
+
+def test_near_duplicate_congener_is_demoted_without_independent_evidence():
+    strong = _row(
+        Alternative_Plant="Scutellaria baicalensis",
+        Target_or_Mechanism="GABA modulation relevant to anxiety",
+        Scientific_Rationale="anxiety reduction via GABA modulation",
+        Source_Record_IDs="PMID:1",
+    )
+    weak_congener = _row(
+        Alternative_Plant="Scutellaria sp.",
+        Target_or_Mechanism="general antioxidant activity, unrelated pathway",
+        Scientific_Rationale="antioxidant capacity assay",
+        Source_Record_IDs="PMID:2",
+        Candidate_Evidence_Strength_Tier="Weak",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([strong, weak_congener]), indication="anxiety", dosage_form="Infusion"
+    )
+    statuses = dict(zip(summary["Alternative_Plant"], summary["Scientific_Triage_Status"]))
+    # The weak congener has zero indication-specific text, so it is excluded
+    # by the indication gate before duplicate-pruning even runs — the
+    # stronger species remains the sole shortlisted representative of the genus.
+    assert statuses["Scutellaria baicalensis"] == "Shortlist"
+    assert statuses["Scutellaria sp."] == "Excluded"

@@ -251,6 +251,221 @@ def _evidence_points(group: pd.DataFrame) -> float:
     return 0.0
 
 
+# ---------------------------------------------------------------------------
+# Transparent weighted scoring (Requirement 8).
+#
+# Overall_Score (0-100) is the explicit sum of six independently computed,
+# independently capped components. Weights were chosen from what the raw
+# association rows can actually support (see accompanying explanation), not
+# fitted or hidden:
+#
+#   Indication Relevance ........ 30 pts   (Target_or_Mechanism, Evidence_Source,
+#                                            Applicability_Summary, *_Rationale text)
+#   Evidence Quality ............ 25 pts   (Evidence_Level/Hierarchy/GRADE,
+#                                            Source_Record_IDs, Reference_Plant)
+#   Compound Quality ............ 15 pts   (non-generic Shared_or_Similar_Compound,
+#                                            bonus when linked to a supported target)
+#   Mechanism/Target Support .... 10 pts   (Supported_Target_or_Mechanism rows)
+#   Safety & Regulatory .......... 10 pts   (Hard_Stop_Present, Regulatory_Barriers)
+#   Novelty & Market ............. 10 pts   (Novelty_Status, Market_Status)
+#                                 -------
+#                                 100 pts
+#
+# Every component returns (points, short_tier_label) so the breakdown and the
+# explanation text are generated from the same numbers that drive the rank —
+# nothing is scored twice and nothing is invented.
+# ---------------------------------------------------------------------------
+
+_INDICATION_STOPWORDS = {
+    "the", "and", "for", "with", "a", "an", "of", "in", "to", "or", "on",
+    "related", "disorder", "disorders", "condition", "conditions", "syndrome",
+}
+
+_INDICATION_TEXT_COLUMNS = (
+    "Target_or_Mechanism", "Evidence_Source", "Applicability_Summary",
+    "Scientific_Rationale", "Clinical_Rationale", "Regulatory_Rationale",
+    "Commercial_Regulatory_Rationale", "Comparative_Rationale", "Rationale",
+    "Confidence_Note", "Next_Experiment_Suggestion",
+)
+
+_NOVELTY_HIGH_TERMS = ("novel", "underexplored", "under-explored", "emerging", "white space", "white-space")
+_NOVELTY_LOW_TERMS = ("common", "saturated", "well-known", "well known", "widely used", "generic")
+
+
+def _indication_tokens(indication: str) -> list[str]:
+    words = re.findall(r"[a-zA-Z]{3,}", _norm(indication))
+    return [w for w in words if w not in _INDICATION_STOPWORDS]
+
+
+def _indication_relevance(group: pd.DataFrame, indication: str) -> tuple[float, str]:
+    """Score how much of the collected evidence is specific to the requested
+    indication, using only text already collected in earlier steps (no
+    external calls). This directly implements Requirement 1."""
+    indication_norm = _norm(indication)
+    if not indication_norm:
+        return 15.0, "Not evaluated (no indication specified)"
+
+    tokens = _indication_tokens(indication)
+    if not tokens:
+        return 15.0, "Not evaluated (indication text too short to match)"
+
+    blob = " | ".join(
+        str(v).lower()
+        for col in _INDICATION_TEXT_COLUMNS
+        if col in group.columns
+        for v in group[col].dropna().tolist()
+    )
+    if not blob.strip():
+        return 0.0, "No relevance"
+
+    phrase_hit = indication_norm in blob
+    token_hits = sum(1 for t in tokens if t in blob)
+    hit_ratio = token_hits / len(tokens)
+
+    if phrase_hit or hit_ratio >= 0.75:
+        return 30.0, "High relevance"
+    if hit_ratio >= 0.4:
+        return 20.0, "Medium relevance"
+    if token_hits > 0:
+        return 10.0, "Low relevance"
+    return 0.0, "No relevance"
+
+
+def _evidence_quality(group: pd.DataFrame, sources: list[str], references: list[str]) -> tuple[float, str]:
+    level_points = _evidence_points(group) / 30.0 * 15.0
+    source_points = min(7.0, 1.4 * len(sources))
+    reference_points = min(3.0, 1.5 * len(references))
+    total = round(level_points + source_points + reference_points, 1)
+    tier = "Strong" if total >= 18 else "Moderate" if total >= 10 else "Weak" if total > 0 else "None"
+    return total, tier
+
+
+def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
+    if not distinctive_compounds:
+        return 0.0, "Generic overlap only"
+    base = min(10.0, 2.5 * len(distinctive_compounds))
+    # A distinctive compound that is also tied to a supported target/mechanism
+    # on the same row is genuinely bioactive evidence, not just a name match —
+    # so it earns an explicit bonus rather than counting the same as any other
+    # shared compound (Requirement 2).
+    linked_rows = group[
+        group["Supported_Target_or_Mechanism"]
+        & ~group["Generic_Compound_Only"]
+    ]
+    bonus = min(5.0, 1.25 * linked_rows["Shared_or_Similar_Compound"].nunique())
+    total = round(min(15.0, base + bonus), 1)
+    tier = "High" if total >= 11 else "Moderate" if total >= 5 else "Low"
+    return total, tier
+
+
+def _mechanism_support(group: pd.DataFrame) -> tuple[float, str]:
+    supported = int(group["Supported_Target_or_Mechanism"].sum())
+    total = min(10.0, 2.5 * supported)
+    tier = "Strong" if total >= 7.5 else "Some" if total > 0 else "None"
+    return total, tier
+
+
+def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
+    if group["Hard_Stop_Present"].any():
+        return 0.0, "Hard stop present"
+    safety_points = 6.0
+    barriers = _norm(_join(group.get("Regulatory_Barriers", []), 5))
+    if not barriers or barriers in _MISSING_MARKERS or "none identified" in barriers:
+        reg_points = 4.0
+        tier = "Clean"
+    else:
+        reg_points = 1.0
+        tier = "Barriers flagged"
+    return round(safety_points + reg_points, 1), tier
+
+
+def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
+    novelty_text = _norm(_join(group.get("Novelty_Status", []), 5))
+    market_text = _norm(_join(group.get("Market_Status", []), 5))
+    combined = f"{novelty_text} {market_text}"
+    if any(t in combined for t in _NOVELTY_HIGH_TERMS):
+        return 10.0, "Novel / white-space"
+    if any(t in combined for t in _NOVELTY_LOW_TERMS):
+        return 2.0, "Saturated / common"
+    if combined.strip():
+        return 6.0, "Moderate"
+    return 5.0, "Not reported"
+
+
+def _format_breakdown(components: list[tuple[str, float, int]]) -> str:
+    lines = []
+    for label, points, max_points in components:
+        dots = "." * max(3, 26 - len(label))
+        lines.append(f"{label} {dots} {points:g}/{max_points}")
+    return "\n".join(lines)
+
+
+def _explain_selected(components: dict[str, tuple[float, str]], distinctive_count: int) -> str:
+    bullets = []
+    if components["indication"][0] >= 20:
+        bullets.append(f"{components['indication'][1].lower()}")
+    if components["mechanism"][0] >= 5:
+        bullets.append("supported target/mechanism evidence")
+    if components["evidence"][0] >= 10:
+        bullets.append(f"{components['evidence'][1].lower()} evidence base")
+    if distinctive_count:
+        bullets.append(f"{distinctive_count} distinctive (non-generic) shared compound(s)")
+    if components["safety"][1] == "Clean":
+        bullets.append("clean safety/regulatory profile")
+    if components["novelty"][1] == "Novel / white-space":
+        bullets.append("novel / white-space opportunity")
+    if not bullets:
+        bullets.append("passed scientific triage gates on marginal evidence")
+    return "Selected because: " + "; ".join(bullets)
+
+
+def _genus(plant_name: str) -> str:
+    first = re.split(r"\s+", str(plant_name or "").strip())[0]
+    return _norm(first)
+
+
+def _prune_near_duplicate_congeners(summary: pd.DataFrame) -> pd.DataFrame:
+    """Requirement 3: within the same genus, keep the best-scoring species and
+    demote near-identical congeners (e.g. multiple ``Scutellaria`` species) to
+    Exploratory unless they carry their own strong (High) indication-specific
+    evidence — a simple, transparent stand-in for "strong scientific
+    justification" that needs no new data source."""
+    if summary.empty or "Alternative_Plant" not in summary.columns:
+        return summary
+
+    summary = summary.copy()
+    summary["_genus"] = summary["Alternative_Plant"].map(_genus)
+    demote_notes = {}
+
+    for genus, idx in summary.groupby("_genus").groups.items():
+        rows_in_genus = summary.loc[idx]
+        shortlisted = rows_in_genus[rows_in_genus["Scientific_Triage_Status"] == "Shortlist"]
+        if len(shortlisted) <= 1 or not genus:
+            continue
+        ranked = shortlisted.sort_values("Overall_Score", ascending=False)
+        top_plant = ranked.iloc[0]["Alternative_Plant"]
+        for i, row in ranked.iloc[1:].iterrows():
+            has_independent_case = row.get("Indication_Relevance") == "High relevance"
+            if not has_independent_case:
+                demote_notes[i] = (
+                    f"Near-duplicate of higher-ranked congener '{top_plant}' within "
+                    f"genus {genus.capitalize()}; kept as exploratory rather than "
+                    "dropped, since the raw association is preserved."
+                )
+
+    if not demote_notes:
+        return summary.drop(columns=["_genus"])
+
+    for i, note in demote_notes.items():
+        summary.loc[i, "Scientific_Triage_Status"] = "Exploratory"
+        summary.loc[i, "Overall_Score"] = min(summary.loc[i, "Overall_Score"], 74.0)
+        summary.loc[i, "Why_Selected_or_Rejected"] = (
+            note + " | " + str(summary.loc[i, "Why_Selected_or_Rejected"])
+        )
+
+    return summary.drop(columns=["_genus"])
+
+
 def build_plant_candidate_shortlist(
     raw_df: pd.DataFrame,
     *,
@@ -357,10 +572,67 @@ def build_plant_candidate_shortlist(
             # accumulating many weak associations.
             triage_score = min(74.0, round(triage_score * 0.75, 1))
 
+        # --- Requirement 8: transparent weighted score (0-100) -------------
+        indication_points, indication_tier = _indication_relevance(group, indication)
+        evq_points, evq_tier = _evidence_quality(group, sources, references)
+        cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
+        mech_points, mech_tier = _mechanism_support(group)
+        safety_reg_points, safety_reg_tier = _safety_regulatory(group)
+        novelty_points, novelty_tier = _novelty_market(group)
+
+        # An indication was requested but nothing in the collected evidence is
+        # specific to it: this candidate is a chemical-similarity artifact for
+        # this indication and must not surface as a recommendation, even if it
+        # passed the generic per-row gates (Requirement 1 / Requirement 8).
+        indication_requested = bool(_norm(indication))
+        if indication_requested and indication_points == 0.0 and plant_status != "Excluded":
+            plant_status = "Excluded"
+            reasons_note = "No indication-specific evidence found for the requested indication"
+        else:
+            reasons_note = None
+
+        overall_score = round(
+            indication_points + evq_points + cq_points + mech_points
+            + safety_reg_points + novelty_points,
+            1,
+        )
+
+        score_components = {
+            "indication": (indication_points, indication_tier),
+            "evidence": (evq_points, evq_tier),
+            "compound": (cq_points, cq_tier),
+            "mechanism": (mech_points, mech_tier),
+            "safety": (safety_reg_points, safety_reg_tier),
+            "novelty": (novelty_points, novelty_tier),
+        }
+        score_breakdown = _format_breakdown([
+            ("Indication Relevance", indication_points, 30),
+            ("Evidence Quality", evq_points, 25),
+            ("Compound Quality", cq_points, 15),
+            ("Mechanism Support", mech_points, 10),
+            ("Safety & Regulatory", safety_reg_points, 10),
+            ("Novelty & Market", novelty_points, 10),
+        ])
+
+        if plant_status == "Excluded":
+            why_text = reasons_note or _join(group.get("Scientific_Triage_Reasons", []), 10)
+            why_text = "Rejected: " + why_text
+        else:
+            why_text = _explain_selected(score_components, len(distinctive_compounds))
+
         rows.append({
             "Alternative_Plant": plant,
             "Scientific_Triage_Status": plant_status,
             "Scientific_Triage_Score": round(triage_score, 1),
+            "Overall_Score": overall_score,
+            "Score_Breakdown": score_breakdown,
+            "Indication_Relevance": indication_tier,
+            "Indication_Relevance_Score": indication_points,
+            "Evidence_Quality_Score": evq_points,
+            "Compound_Quality_Score": cq_points,
+            "Mechanism_Support_Score": mech_points,
+            "Safety_Regulatory_Score": safety_reg_points,
+            "Novelty_Market_Score": novelty_points,
             "Reference_Plants": _join(usable.get("Reference_Plant", []), 8),
             "Reference_Plant_Count": len(references),
             "Distinctive_Shared_Compounds": "; ".join(distinctive_compounds[:10]),
@@ -384,7 +656,8 @@ def build_plant_candidate_shortlist(
             "Shortlist_Row_Count": statuses_count["Shortlist"],
             "Exploratory_Row_Count": statuses_count["Exploratory"],
             "Excluded_Row_Count": statuses_count["Excluded"],
-            "Why_Selected_or_Rejected": _join(group.get("Scientific_Triage_Reasons", []), 10),
+            "Why_Selected_or_Rejected": why_text,
+            "Row_Level_Reasons": _join(group.get("Scientific_Triage_Reasons", []), 10),
             "Selected_Indication": indication,
             "Selected_Dosage_Form": dosage_form,
         })
@@ -393,13 +666,15 @@ def build_plant_candidate_shortlist(
     if summary.empty:
         return summary, audit
 
+    summary = _prune_near_duplicate_congeners(summary)
+
     status_order = pd.Categorical(
         summary["Scientific_Triage_Status"],
         categories=["Shortlist", "Exploratory", "Excluded"],
         ordered=True,
     )
     summary = summary.assign(_status_order=status_order).sort_values(
-        ["_status_order", "Scientific_Triage_Score", "Traceable_Source_Count", "Distinctive_Compound_Count"],
+        ["_status_order", "Overall_Score", "Traceable_Source_Count", "Distinctive_Compound_Count"],
         ascending=[True, False, False, False],
     ).drop(columns=["_status_order"]).reset_index(drop=True)
 

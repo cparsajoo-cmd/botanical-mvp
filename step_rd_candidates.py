@@ -407,7 +407,40 @@ def render_rd_candidates_step(inputs):
                 st.write("All broader-context plants are already in the Step 2 shortlist.")
 
     if isinstance(landscape_df, pd.DataFrame) and not landscape_df.empty:
-        st.dataframe(landscape_df, width="stretch")
+        compact_columns = [
+            "Plant",
+            "Region_of_Origin",
+            "EMA_HMPC_Status",
+            "WHO_Status",
+            "ESCOP_Status",
+            "US_Status",
+            "UK_Status",
+            "Patent_Search_Status",
+            "Retail_Products_Status",
+        ]
+        compact_columns = [c for c in compact_columns if c in landscape_df.columns]
+        st.caption(
+            "Compact regulatory view. EMA/HMPC wording is summarized for readability; "
+            "the source wording remains available below."
+        )
+        st.dataframe(landscape_df[compact_columns], width="stretch")
+
+        detail_columns = [
+            "Plant",
+            "EMA_HMPC_Detail",
+            "EMA_Source",
+            "WHO_Status",
+            "WHO_Source",
+            "ESCOP_Status",
+            "ESCOP_Source",
+            "Regulatory_Source",
+            "Patent_Detail",
+            "Retail_Products_Detail",
+        ]
+        detail_columns = [c for c in detail_columns if c in landscape_df.columns]
+        if detail_columns:
+            with st.expander("Regulatory and market-source details", expanded=False):
+                st.dataframe(landscape_df[detail_columns], width="stretch")
 
     st.markdown("---")
     st.markdown("## Step 4 — Existing Scientific Knowledge")

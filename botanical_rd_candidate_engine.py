@@ -5018,6 +5018,31 @@ class BotanicalRDCandidateEngine:
             "Source": "EMA lookup unavailable; WHO and ESCOP require separate source-specific verification.",
         }
 
+    @staticmethod
+    def _summarize_ema_hmpc_status(value):
+        """Convert verbose EMA inventory text into a compact UI label.
+
+        This is a presentation summary only.  The original wording remains in
+        EMA_HMPC_Detail and no stronger regulatory claim is inferred.
+        """
+        text = str(value or "").strip()
+        low = text.lower()
+        if not text or low in {"not yet verified", "not evaluated", "unknown"}:
+            return "Not verified"
+        if "not listed" in low or "no hmpc" in low or "no ema" in low:
+            return "Not found in HMPC inventory"
+        if "listed in hmpc inventory" in low:
+            return "Listed in HMPC inventory"
+        if "community herbal monograph" in low or "union herbal monograph" in low:
+            return "HMPC monograph available"
+        if "assessment report" in low:
+            return "HMPC assessment available"
+        if "traditional use" in low:
+            return "Traditional-use status recorded"
+        if "well-established use" in low:
+            return "Well-established-use status recorded"
+        return "EMA/HMPC record available"
+
     def _search_patents(self, query, max_results=5):
         """
         EPO Open Patent Services (OPS) — real free API, needs registration:
@@ -5107,7 +5132,10 @@ class BotanicalRDCandidateEngine:
             rows.append({
                 "Plant": snap["plant"],
                 "Region_of_Origin": snap["region"],
-                "EMA_HMPC_Status": reg["EMA_HMPC_Status"],
+                "EMA_HMPC_Status": self._summarize_ema_hmpc_status(
+                    reg["EMA_HMPC_Status"]
+                ),
+                "EMA_HMPC_Detail": reg["EMA_HMPC_Status"],
                 "WHO_Status": reg["WHO_Status"],
                 "ESCOP_Status": reg["ESCOP_Status"],
                 "Regulatory_Source": reg["Source"],

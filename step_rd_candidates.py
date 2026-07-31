@@ -13,12 +13,6 @@ from standard_evidence_builder import (
 )
 
 
-# Bump this value whenever BotanicalRDCandidateEngine output semantics change.
-# Streamlit cache_resource can otherwise reuse an engine instance created from
-# the previous deployed class, even after the source file is replaced.
-_ENGINE_CACHE_VERSION = "2026-07-31-ema-market-v3"
-
-
 def _unique_nonempty(values):
     seen = set()
     out = []
@@ -185,8 +179,7 @@ def _evidence_fingerprint(evidence_df):
 
 
 @st.cache_resource(ttl=120, show_spinner=False)
-def _cached_engine(use_live_search: bool, evidence_fingerprint, engine_cache_version, _evidence_df=None):
-    _ = engine_cache_version  # explicit cache-key component
+def _cached_engine(use_live_search: bool, evidence_fingerprint, _evidence_df=None):
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
     scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
@@ -207,9 +200,7 @@ def _cached_engine(use_live_search: bool, evidence_fingerprint, engine_cache_ver
 
 def _build_engine(evidence_df, use_live_search):
     fingerprint = _evidence_fingerprint(evidence_df)
-    return _cached_engine(
-        use_live_search, fingerprint, _ENGINE_CACHE_VERSION, _evidence_df=evidence_df
-    )
+    return _cached_engine(use_live_search, fingerprint, _evidence_df=evidence_df)
 
 
 def _offline_engine():
@@ -450,6 +441,51 @@ def render_rd_candidates_step(inputs):
         if detail_columns:
             with st.expander("Regulatory and market-source details", expanded=False):
                 st.dataframe(landscape_df[detail_columns], width="stretch")
+
+        # Export the complete Step 3 dataset, not only the compact dataframe
+        # currently visible in the Streamlit table.  The dataframe toolbar
+        # exports only displayed columns, which previously omitted regulatory
+        # detail/source fields.
+        preferred_export_columns = [
+            "Plant",
+            "Region_of_Origin",
+            "EMA_HMPC_Status",
+            "EMA_HMPC_Detail",
+            "EMA_Source",
+            "WHO_Status",
+            "WHO_Source",
+            "ESCOP_Status",
+            "ESCOP_Source",
+            "Regulatory_Source",
+            "US_Status",
+            "UK_Status",
+            "Patent_Search_Status",
+            "Patent_Detail",
+            "Retail_Products_Status",
+            "Retail_Products_Detail",
+        ]
+        export_columns = [
+            column for column in preferred_export_columns
+            if column in landscape_df.columns
+        ]
+        export_columns.extend(
+            column for column in landscape_df.columns
+            if column not in export_columns
+        )
+        market_export_df = landscape_df.loc[:, export_columns].copy()
+
+        st.download_button(
+            "Download full market analysis (CSV)",
+            data=market_export_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="step3_market_competitive_landscape_full.csv",
+            mime="text/csv",
+            key="rd_download_full_market_csv",
+            help=(
+                "Exports the complete Step 3 dataset, including EMA detail and "
+                "all EMA/WHO/ESCOP source columns. The table toolbar exports "
+                "only the columns currently displayed."
+            ),
+        )
 
     st.markdown("---")
     st.markdown("## Step 4 — Existing Scientific Knowledge")

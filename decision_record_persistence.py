@@ -268,9 +268,24 @@ def persist_decision_record(
             "detail": "No validated records to persist.",
         }
 
+    # Post-Phase-4-review correction: when decision_metadata is supplied,
+    # its decision_timestamp becomes this row's created_at instead of an
+    # independently-generated timestamp — otherwise the report (which
+    # renders decision_metadata["decision_timestamp"] verbatim) and the
+    # persisted record could describe two different instants for what is
+    # supposed to be the same decision. No new column is added: created_at
+    # already means exactly this (see migrations/0004's own note on why
+    # decision_timestamp was deliberately not given a separate column).
+    # Backward compatible: a caller without decision_metadata (every
+    # pre-Phase-4 call site) still gets an automatically generated
+    # created_at, unchanged from before.
+    created_at = (
+        decision_metadata.get("decision_timestamp") if decision_metadata else None
+    ) or datetime.now(timezone.utc).isoformat()
+
     row = {
         "analysis_id": resolved_analysis_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
         "scoring_config_version": _resolve_scoring_config_version(records),
         "indication": indication,
         "project_id": project_id,

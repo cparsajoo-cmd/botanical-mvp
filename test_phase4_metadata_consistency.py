@@ -138,6 +138,31 @@ def test_report_and_persisted_record_use_the_identical_metadata_values():
     assert persisted_row["dosage_form"] == decision_metadata["dosage_form"] == "Infusion"
     assert persisted_row["market"] == decision_metadata["market"] == "EU"
 
+    # --- Post-Phase-4-review correction: timestamp consistency ----------
+    # The report renders decision_metadata["decision_timestamp"] verbatim;
+    # the persisted row's created_at must be that EXACT same value, not an
+    # independently-generated one a few milliseconds apart.
+    timestamp = decision_metadata["decision_timestamp"]
+    assert timestamp in repro_section
+    assert persisted_row["created_at"] == timestamp
+    # No separate decision_timestamp column/key was introduced — created_at
+    # is reused, not duplicated.
+    assert "decision_timestamp" not in persisted_row
+
+
+def test_caller_without_decision_metadata_still_gets_an_auto_generated_created_at():
+    # Backward compatibility (post-Phase-4-review correction): every
+    # pre-Phase-4 call site never passes decision_metadata at all — this
+    # must keep working exactly as before, with a real, non-null,
+    # freshly-generated created_at, not None and not a crash.
+    client = _FakeSupabaseClient()
+    persist_decision_record(
+        [_sample_candidate_assessment()], indication="sleep", supabase_client=client,
+    )
+    persisted_row = client.store[DECISION_RECORD_TABLE_NAME][0]
+    assert persisted_row["created_at"]
+    assert "decision_timestamp" not in persisted_row
+
 
 def test_missing_evidence_snapshot_is_reported_as_unavailable_in_both_places():
     # No Source_Record_IDs anywhere -> honestly "unavailable" in both the

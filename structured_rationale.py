@@ -47,6 +47,11 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from score_breakdown_schema import (
+    parse_score_breakdown as _score_breakdown_schema_parse,
+    COMPONENT_TO_DIMENSIONS as _SHARED_COMPONENT_TO_DIMENSIONS,
+)
+
 
 def go_investigate_hold_no_go(decision_class_ah: str, fallback_occurred: bool = False) -> str:
     """Explicit Go/Investigate/Hold/No-Go call, mapped from
@@ -877,51 +882,23 @@ def build_evidence_conflict_structured(
 # pre-Sprint-1 state (verified byte-identical). Everything below is
 # self-contained within this file, which IS Sprint 1's correct home —
 # it only assembles OTHER functions already defined in this same file.
-# The cost of this: _local_parse_score_breakdown() below duplicates
-# ~15 lines already present in comparative_rationale.py. That
-# duplication is intentional and accepted here specifically to avoid
-# crossing sprint boundaries, not an oversight.
-# =====================================================================
+# Score_Breakdown parsing and the component->dimension mapping now live in
+# score_breakdown_schema.py (single source of truth — see
+# IMPLEMENTATION_PLAN.md Phase 1). The names below are kept as the local
+# aliases every function in this module already calls, now bound to the
+# shared implementation instead of a local copy.
 
 def _local_parse_score_breakdown(breakdown) -> dict:
-    """Self-contained copy of the Score_Breakdown parser (see
-    comparative_rationale.py's _parse_score_breakdown — intentionally
-    NOT imported from there; see the scope note above). Reverses
-    _format_score_breakdown()'s "Name: +12.3; Other: -4.0" format back
-    into a dict.
-
-    Score_Breakdown has two legitimate shapes: the legacy compound-
-    substitution engine's formatted string, and the indication-centric
-    engine's (indication_candidate_discovery.py) plain {name: value}
-    dict, which is stored as-is and never goes through
-    _format_score_breakdown(). Both are handled here — this function is
-    called for every candidate row via build_recommendation_card(), so
-    silently assuming the string shape crashed report generation
-    outright for every indication-mode row."""
-    if not breakdown or breakdown == "No breakdown available":
-        return {}
-    if isinstance(breakdown, dict):
-        components = {}
-        for name, value in breakdown.items():
-            try:
-                components[str(name).strip()] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return components
-    components = {}
-    for part in breakdown.split("; "):
-        if ":" not in part:
-            continue
-        name, _, value_str = part.rpartition(":")
-        try:
-            components[name.strip()] = float(value_str.strip())
-        except ValueError:
-            continue
-    return components
+    """Thin alias for score_breakdown_schema.parse_score_breakdown() — kept
+    under this module's existing name so every call site here is unchanged.
+    See that module's docstring for the two Score_Breakdown shapes handled."""
+    return _score_breakdown_schema_parse(breakdown)
 
 
-# Maps botanical_rd_candidate_engine.py's actual Score_Breakdown
-# component names onto the dimensions this card reports on.
+# Maps botanical_rd_candidate_engine.py's and indication_candidate_discovery.py's
+# Score_Breakdown component names onto the dimensions this card reports on —
+# defined once in score_breakdown_schema.py, aliased here under this
+# module's existing name.
 #
 # CORRECTION (review point 2): an earlier version mapped "Market
 # signal" to BOTH Commercial and Regulatory. That was wrong — market
@@ -933,25 +910,7 @@ def _local_parse_score_breakdown(breakdown) -> dict:
 # "Regulatory" is deliberately NOT a value anywhere in this mapping;
 # regulatory_top_contributor() below always returns the honest
 # unavailable message rather than ever attributing a score to it.
-_COMPONENT_TO_DIMENSIONS = {
-    "Chemical/mechanistic link": ["Scientific"],
-    "Novelty": ["Scientific"],
-    "Multi-compound match bonus": ["Scientific"],
-    "Evidence quality": ["Clinical"],
-    "Product-development fit": ["Commercial"],
-    "Market signal": ["Commercial"],
-    "Safety/interaction/self-row penalty": ["Safety"],
-    # Indication-centric schema (indication_candidate_discovery.py). Kept in
-    # the same dict rather than a parallel one because the lookup below is a
-    # plain name -> dimension mapping and the two schemas never share a key
-    # name, so there is nothing to disambiguate.
-    "Direct indication evidence": ["Clinical"],
-    "Mechanistic plausibility": ["Scientific"],
-    "Traceability": ["Clinical"],
-    "Preparation applicability": ["Commercial"],
-    "Compound support (non-gating)": ["Scientific"],
-    "Baseline development potential": ["Commercial"],
-}
+_COMPONENT_TO_DIMENSIONS = _SHARED_COMPONENT_TO_DIMENSIONS
 
 NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE = (
     "No independent regulatory score contribution is available in the current "

@@ -122,6 +122,12 @@ from __future__ import annotations
 
 import pandas as pd
 
+from score_breakdown_schema import (
+    CANONICAL_SECTIONS as _CANONICAL_SECTIONS,
+    INDICATION_CANONICAL_SECTIONS as _INDICATION_CANONICAL_SECTIONS,
+    parse_score_breakdown as _parse_score_breakdown,
+)
+
 # Must match _decision_class()'s own thresholds in
 # botanical_rd_candidate_engine.py exactly — kept as a named constant
 # here (not re-derived or guessed) so this module breaks loudly (KeyError
@@ -268,26 +274,10 @@ def boundary_fragility_series(result: pd.DataFrame, margin: float = DEFAULT_MARG
 # R&D_Opportunity_Score — nothing is recomputed from raw evidence.
 # =====================================================================
 
-# Sections _format_score_breakdown() always emits (Multi-compound match
-# bonus is conditional — only present on merged rows — so it's
-# deliberately excluded from this "always expected" set).
-_CANONICAL_SECTIONS = {
-    "Chemical/mechanistic link", "Evidence quality", "Product-development fit",
-    "Novelty", "Market signal", "Safety/interaction/self-row penalty",
-}
-
-# Sections discover_indication_candidates() always emits on every row
-# (indication_candidate_discovery.py's Score_Breakdown dict). This is a
-# structurally different, non-compound-gated schema — Score_Breakdown is
-# stored there as a dict, not the legacy formatted string — so it needs its
-# own canonical set rather than being forced through the compound-
-# substitution one, which would otherwise mark every indication-mode row as
-# permanently "incomplete" and silently skip its sensitivity analysis.
-_INDICATION_CANONICAL_SECTIONS = {
-    "Direct indication evidence", "Traceability", "Mechanistic plausibility",
-    "Preparation applicability", "Compound support (non-gating)",
-    "Baseline development potential",
-}
+# Canonical section-name sets and the Score_Breakdown parser now live in
+# score_breakdown_schema.py (single source of truth — see IMPLEMENTATION_PLAN.md
+# Phase 1) and are imported above as _CANONICAL_SECTIONS /
+# _INDICATION_CANONICAL_SECTIONS / _parse_score_breakdown.
 
 # Documented rounding tolerance: each section is stored as round(x, 1),
 # and the final score is separately round()ed after summing — across
@@ -318,45 +308,6 @@ _SAFE_RECONSTRUCTION_STATUSES = {"exact", "rounding_consistent"}
 # (are the two FINAL scores themselves indistinguishable, not whether
 # Score_Breakdown reconstructs them).
 RANK_STABILITY_TIE_TOLERANCE = 0.1
-
-
-def _parse_score_breakdown(breakdown) -> dict:
-    """Local, self-contained copy of the Score_Breakdown parser (also
-    present in comparative_rationale.py and structured_rationale.py) —
-    intentionally NOT imported from either, per this Sprint's explicit
-    instruction to avoid new coupling to comparative_rationale.py and
-    the existing frozen state of structured_rationale.py. Same
-    accepted-duplication tradeoff already used between those two
-    modules; documented there and here rather than silently repeated.
-
-    Score_Breakdown has two legitimate shapes in this codebase: the
-    legacy compound-substitution engine stores a formatted string
-    ("Name: +12.3; Name2: -4.5" via _format_score_breakdown()); the
-    indication-centric engine (indication_candidate_discovery.py)
-    stores a plain {name: value} dict directly, since it never goes
-    through that formatter. Both are handled here rather than assuming
-    the legacy string shape and silently failing to parse the other.
-    """
-    if not breakdown or breakdown == "No breakdown available":
-        return {}
-    if isinstance(breakdown, dict):
-        components = {}
-        for name, value in breakdown.items():
-            try:
-                components[str(name).strip()] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return components
-    components = {}
-    for part in str(breakdown).split("; "):
-        if ":" not in part:
-            continue
-        name, _, value_str = part.rpartition(":")
-        try:
-            components[name.strip()] = float(value_str.strip())
-        except ValueError:
-            continue
-    return components
 
 
 def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):

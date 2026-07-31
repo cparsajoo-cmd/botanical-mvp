@@ -43,34 +43,15 @@ from __future__ import annotations
 
 import pandas as pd
 
+from score_breakdown_schema import parse_score_breakdown as _score_breakdown_schema_parse
+
 
 def _parse_score_breakdown(breakdown) -> dict:
-    """Reverses _format_score_breakdown()'s "Name: +12.3; Other: -4.0"
-    format back into a dict. Tolerant of the "; Multi-compound match
-    bonus: +N.0" suffix _merge_multi_compound_matches appends, and of
-    "No breakdown available" (returns {}). Also accepts a plain
-    {name: value} dict directly, since indication_candidate_discovery.py
-    stores Score_Breakdown that way instead of as a formatted string."""
-    if not breakdown or breakdown == "No breakdown available":
-        return {}
-    if isinstance(breakdown, dict):
-        components = {}
-        for name, value in breakdown.items():
-            try:
-                components[str(name).strip()] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return components
-    components = {}
-    for part in breakdown.split("; "):
-        if ":" not in part:
-            continue
-        name, _, value_str = part.rpartition(":")
-        try:
-            components[name.strip()] = float(value_str.strip())
-        except ValueError:
-            continue
-    return components
+    """Thin alias for score_breakdown_schema.parse_score_breakdown() —
+    kept under this module's existing name (test_comparative_rationale.py
+    imports it directly) and single source of truth now lives in that
+    shared module (IMPLEMENTATION_PLAN.md Phase 1)."""
+    return _score_breakdown_schema_parse(breakdown)
 
 
 def _explain_gap(top_row: pd.Series, this_row: pd.Series) -> str:

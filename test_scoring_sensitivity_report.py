@@ -106,7 +106,7 @@ _INDICATION_BREAKDOWN = {
     "Traceability": 10,
     "Mechanistic plausibility": 10,
     "Preparation applicability": 8,
-    "Compound support (non-gating)": 5,
+    "Compound support (non-gating; max 5)": 5,
     "Baseline development potential": 10,
 }  # sums to 78
 

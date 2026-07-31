@@ -488,7 +488,7 @@ def test_recommendation_card_handles_indication_centric_dict_score_breakdown():
         "Traceability": 10,
         "Mechanistic plausibility": 10,
         "Preparation applicability": 8,
-        "Compound support (non-gating)": 5,
+        "Compound support (non-gating; max 5)": 5,
         "Baseline development potential": 10,
     })
     card = build_recommendation_card(row)

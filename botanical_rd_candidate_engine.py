@@ -4824,6 +4824,10 @@ class BotanicalRDCandidateEngine:
     # ------------------------------------------------------------------ #
 
     def known_inventory_df(self, indication):
+        # Step 4 scientific-knowledge contract.  Keep the original six
+        # columns for backwards compatibility and append fields that already
+        # exist in plant_compounds so the UI can truthfully show mechanisms,
+        # safety, plant part, provenance and extraction context.
         columns = [
             "Known_Plant",
             "Known_Compound",
@@ -4831,6 +4835,18 @@ class BotanicalRDCandidateEngine:
             "Known_Target",
             "Evidence_Level",
             "Typical_Extraction",
+            "Known_Plant_Part",
+            "Known_Mechanism",
+            "Extraction_Solvent",
+            "Dosage_Form",
+            "Bioavailability",
+            "Toxicity",
+            "Safety_Note",
+            "Confidence_Score",
+            "Reference_Title",
+            "Reference_URL",
+            "Evidence_Source",
+            "Source_Year",
         ]
 
         indication_norm = self._norm(indication)
@@ -4880,13 +4896,25 @@ class BotanicalRDCandidateEngine:
                 "Known_Target": str(row.get("target") or "").strip(),
                 "Evidence_Level": str(row.get("evidence_level") or "").strip(),
                 "Typical_Extraction": str(row.get("extraction_method") or "").strip(),
+                "Known_Plant_Part": str(row.get("plant_part") or "").strip(),
+                "Known_Mechanism": str(row.get("mechanism") or "").strip(),
+                "Extraction_Solvent": str(row.get("solvent") or "").strip(),
+                "Dosage_Form": str(row.get("dosage_form") or "").strip(),
+                "Bioavailability": str(row.get("bioavailability") or "").strip(),
+                "Toxicity": str(row.get("toxicity") or "").strip(),
+                "Safety_Note": str(row.get("safety_note") or "").strip(),
+                "Confidence_Score": row.get("confidence_score"),
+                "Reference_Title": str(row.get("reference_title") or "").strip(),
+                "Reference_URL": str(row.get("reference_url") or "").strip(),
+                "Evidence_Source": str(row.get("source") or "").strip(),
+                "Source_Year": str(row.get("source_year") or "").strip(),
                 "_retrieval_score": score_map.get(plant, 0),
             })
 
         if not rows:
             return pd.DataFrame(columns=columns)
 
-        return (
+        result = (
             pd.DataFrame(rows)
             .drop_duplicates()
             .sort_values(
@@ -4896,6 +4924,7 @@ class BotanicalRDCandidateEngine:
             .drop(columns=["_retrieval_score"])
             .reset_index(drop=True)
         )
+        return result.reindex(columns=columns)
 
     def _known_inventory_from_seed_data(self, indication_norm, columns):
         """Fallback path used only when Supabase data is unavailable:
@@ -4940,12 +4969,13 @@ class BotanicalRDCandidateEngine:
         if not rows:
             return pd.DataFrame(columns=columns)
 
-        return (
+        result = (
             pd.DataFrame(rows)
             .drop_duplicates()
             .sort_values(["Known_Plant", "Known_Compound"])
             .reset_index(drop=True)
         )
+        return result.reindex(columns=columns)
 
     # ------------------------------------------------------------------ #
     # Market landscape: EU regulatory status, patents, retail products.

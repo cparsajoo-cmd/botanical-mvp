@@ -27,6 +27,64 @@ def _unique_nonempty(values):
     return out
 
 
+def _join_unique(values, limit=8):
+    """Compact, deterministic aggregation for Step 4 plant summaries."""
+    items = _unique_nonempty(values)
+    if not items:
+        return ""
+    shown = items[:limit]
+    suffix = f" (+{len(items) - limit} more)" if len(items) > limit else ""
+    return "; ".join(shown) + suffix
+
+
+def _build_scientific_plant_summary(inventory_df, regulatory_df=None):
+    """Create one truthful summary row per plant without discarding detail.
+
+    The detailed plant-compound table remains available separately and is the
+    source for the full CSV export.  This summary only aggregates values that
+    are already present in the inventory; it does not infer efficacy.
+    """
+    if not isinstance(inventory_df, pd.DataFrame) or inventory_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for plant, group in inventory_df.groupby("Known_Plant", sort=False):
+        compound_values = _unique_nonempty(group.get("Known_Compound", []))
+        target_values = _unique_nonempty(group.get("Known_Target", []))
+        mechanism_values = _unique_nonempty(group.get("Known_Mechanism", []))
+        reference_values = _unique_nonempty(group.get("Reference_URL", []))
+        rows.append({
+            "Plant": plant,
+            "Compound_Count": len(compound_values),
+            "Known_Compounds": _join_unique(compound_values, 6),
+            "Target_Count": len(target_values),
+            "Known_Targets": _join_unique(target_values, 6),
+            "Known_Mechanisms": _join_unique(mechanism_values, 6),
+            "Evidence_Levels": _join_unique(group.get("Evidence_Level", []), 5),
+            "Plant_Parts": _join_unique(group.get("Known_Plant_Part", []), 5),
+            "Extraction_Methods": _join_unique(group.get("Typical_Extraction", []), 5),
+            "Dosage_Forms": _join_unique(group.get("Dosage_Form", []), 5),
+            "Safety_Notes": _join_unique(group.get("Safety_Note", []), 4),
+            "Toxicity_Notes": _join_unique(group.get("Toxicity", []), 4),
+            "Reference_Count": len(reference_values),
+        })
+
+    summary_df = pd.DataFrame(rows)
+
+    if isinstance(regulatory_df, pd.DataFrame) and not regulatory_df.empty and "Plant" in regulatory_df.columns:
+        regulatory_cols = [
+            c for c in [
+                "Plant", "EMA_HMPC_Status", "WHO_Status", "ESCOP_Status",
+                "US_Status", "UK_Status"
+            ] if c in regulatory_df.columns
+        ]
+        if len(regulatory_cols) > 1:
+            reg = regulatory_df[regulatory_cols].drop_duplicates(subset=["Plant"])
+            summary_df = summary_df.merge(reg, on="Plant", how="left")
+
+    return summary_df
+
+
 def _get_evidence_df():
     evidence_df = st.session_state.get("evidence_df")
     if isinstance(evidence_df, pd.DataFrame):
@@ -497,55 +555,123 @@ def render_rd_candidates_step(inputs):
     st.markdown("## Step 4 — Existing Scientific Knowledge")
 
     st.caption(
-        "Show current scientific knowledge: known plants, compounds, targets, mechanisms, "
-        "evidence level, extraction information, safety notes, and regulatory notes."
+        "Review the current scientific inventory for the Step 2 shortlist: "
+        "plants, compounds, targets, mechanisms, evidence level, extraction, "
+        "safety and source provenance. This is a knowledge map, not a claim of efficacy."
     )
 
     if st.button("Run Scientific Knowledge Analysis", type="primary", key="run_step2_science"):
         try:
-            with st.spinner("Looking up known plants, compounds, and targets..."):
+            with st.spinner("Looking up known plants, compounds, mechanisms, safety and sources..."):
                 offline_engine = _offline_engine()
-                inventory_df = offline_engine.known_inventory_df(indication)
-            st.session_state["rd_inventory_df"] = inventory_df
+                broad_inventory_df = offline_engine.known_inventory_df(indication)
 
-            if isinstance(inventory_df, pd.DataFrame) and not inventory_df.empty:
+            shortlist, shortlist_source = _get_step2_candidate_shortlist()
+            if shortlist and isinstance(broad_inventory_df, pd.DataFrame):
+                shortlist_keys = {str(x).strip().lower() for x in shortlist}
+                primary_inventory_df = broad_inventory_df[
+                    broad_inventory_df["Known_Plant"].fillna("").astype(str).str.strip().str.lower().isin(shortlist_keys)
+                ].copy()
+            else:
+                primary_inventory_df = broad_inventory_df.copy()
+                shortlist_source = "broader indication inventory fallback"
+
+            st.session_state["rd_inventory_df"] = primary_inventory_df
+            st.session_state["rd_inventory_df_broader"] = broad_inventory_df
+            st.session_state["rd_science_input_source"] = shortlist_source
+
+            if isinstance(primary_inventory_df, pd.DataFrame) and not primary_inventory_df.empty:
                 st.success("✅ Scientific knowledge analysis completed.")
             else:
                 st.warning(
-                    f"No scientific inventory found for '{indication}' in the seed database."
+                    "No scientific inventory rows were found for the selected Step 2 candidates. "
+                    "The broader indication inventory is still available below for context."
                 )
 
         except Exception as e:
             st.error(f"Scientific knowledge analysis failed: {e}")
 
     inventory_df = st.session_state.get("rd_inventory_df")
+    broader_inventory_df = st.session_state.get("rd_inventory_df_broader")
+    science_input_source = st.session_state.get("rd_science_input_source", "unavailable")
 
     if isinstance(inventory_df, pd.DataFrame) and not inventory_df.empty:
-        if "Known_Plant" in inventory_df.columns and "Known_Compound" in inventory_df.columns:
-            n_known_plants = inventory_df["Known_Plant"].nunique()
-            st.caption(
-                f"{n_known_plants} known plant(s), "
-                f"{inventory_df['Known_Compound'].nunique()} known compound(s) catalogued."
-            )
-            if n_known_plants <= 3:
-                st.warning(
-                    f"⚠️ **Narrow reference base:** only {n_known_plants} plant(s) in "
-                    f"the database are tagged with an `indication` matching '{indication}'. "
-                    "Step 5's alternative-candidate search fans out from these few "
-                    "plants' known compounds to the whole database — so every "
-                    "downstream candidate ultimately traces back to just this "
-                    "handful of starting points, not a broad scientific base for "
-                    "this indication. This isn't a scoring error; it reflects how "
-                    "much indication-tagged data exists yet. Consider adding more "
-                    "plants for this indication via Source Ingestion or Bulk "
-                    "Evidence Collection before treating Step 6's results as "
-                    "comprehensive."
-                )
-        st.dataframe(inventory_df.head(500), width="stretch")
+        n_known_plants = inventory_df["Known_Plant"].nunique() if "Known_Plant" in inventory_df.columns else 0
+        n_known_compounds = inventory_df["Known_Compound"].nunique() if "Known_Compound" in inventory_df.columns else 0
+        n_mechanisms = (
+            inventory_df["Known_Mechanism"].replace("", pd.NA).dropna().nunique()
+            if "Known_Mechanism" in inventory_df.columns else 0
+        )
+        n_sources = (
+            inventory_df["Reference_URL"].replace("", pd.NA).dropna().nunique()
+            if "Reference_URL" in inventory_df.columns else 0
+        )
+
+        st.caption(
+            f"{n_known_plants} shortlisted plant(s), {n_known_compounds} known compound(s), "
+            f"{n_mechanisms} mechanism statement(s), {n_sources} linked reference(s) "
+            f"(source: {science_input_source})."
+        )
+
+        regulatory_df = st.session_state.get("rd_market_landscape_df")
+        summary_df = _build_scientific_plant_summary(inventory_df, regulatory_df)
+
+        st.markdown("### Plant-level scientific knowledge summary")
+        st.dataframe(summary_df, width="stretch", hide_index=True)
+
+        st.download_button(
+            "⬇️ Download plant-level scientific summary (CSV)",
+            data=summary_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="step4_scientific_knowledge_summary.csv",
+            mime="text/csv",
+            key="download_step4_summary_csv",
+        )
+
+        st.markdown("### Detailed plant–compound evidence inventory")
+        st.caption(
+            "Each row is one plant–compound record. Empty fields mean the source database "
+            "does not currently contain that information; they are not filled by inference."
+        )
+        st.dataframe(inventory_df.head(500), width="stretch", hide_index=True)
+
+        st.download_button(
+            "⬇️ Download FULL scientific knowledge inventory (all columns)",
+            data=inventory_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="step4_scientific_knowledge_full.csv",
+            mime="text/csv",
+            key="download_step4_full_csv",
+        )
+
         if len(inventory_df) > 500:
             st.caption(
-                f"Showing first 500 of {len(inventory_df)} rows. "
-                "Use the CSV download in Step 5 for the full result set."
+                f"Showing first 500 of {len(inventory_df)} detailed rows; "
+                "the FULL CSV contains every row."
+            )
+
+    if isinstance(broader_inventory_df, pd.DataFrame) and not broader_inventory_df.empty:
+        primary_plants = set(
+            inventory_df["Known_Plant"].dropna().astype(str)
+            if isinstance(inventory_df, pd.DataFrame) and "Known_Plant" in inventory_df.columns
+            else []
+        )
+        broader_only = broader_inventory_df[
+            ~broader_inventory_df["Known_Plant"].fillna("").astype(str).isin(primary_plants)
+        ].copy()
+        broader_count = broader_inventory_df["Known_Plant"].nunique()
+        with st.expander(
+            f"Broader scientific context — {broader_count} indication-linked plant(s)",
+            expanded=False,
+        ):
+            st.caption(
+                "Context only. These rows are not part of the primary Step 2 shortlist analysis."
+            )
+            st.dataframe(broader_only.head(300), width="stretch", hide_index=True)
+            st.download_button(
+                "Download broader scientific context (CSV)",
+                data=broader_inventory_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="step4_broader_scientific_context.csv",
+                mime="text/csv",
+                key="download_step4_broader_csv",
             )
 
     st.markdown("---")

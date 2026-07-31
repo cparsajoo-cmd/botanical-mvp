@@ -1,60 +1,118 @@
-from Bio import Entrez
+import os
+import xml.etree.ElementTree as ET
+from typing import Dict, List
+
+import requests
 
 
-Entrez.email = "hamidbabaeiulg@gmail.com"
+NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+DEFAULT_TIMEOUT = float(os.getenv("PUBMED_TIMEOUT_SECONDS", "10"))
+DEFAULT_EMAIL = os.getenv("NCBI_EMAIL", "hamidbabaeiulg@gmail.com")
+API_KEY = os.getenv("NCBI_API_KEY", "").strip()
 
 
-def search_pubmed(query, max_results=20):
-    handle = Entrez.esearch(
-        db="pubmed",
-        term=query,
-        retmax=max_results,
-        sort="relevance"
+def _params(**kwargs):
+    params = {"email": DEFAULT_EMAIL, **kwargs}
+    if API_KEY:
+        params["api_key"] = API_KEY
+    return params
+
+
+def search_pubmed(query: str, max_results: int = 20, timeout: float = DEFAULT_TIMEOUT) -> List[str]:
+    response = requests.get(
+        f"{NCBI_BASE}/esearch.fcgi",
+        params=_params(
+            db="pubmed",
+            term=query,
+            retmax=max(0, int(max_results)),
+            sort="relevance",
+            retmode="json",
+        ),
+        timeout=timeout,
     )
-    record = Entrez.read(handle)
-    return record.get("IdList", [])
+    response.raise_for_status()
+    return response.json().get("esearchresult", {}).get("idlist", [])
 
 
-def fetch_pubmed_article(pmid):
-    handle = Entrez.efetch(
-        db="pubmed",
-        id=pmid,
-        rettype="abstract",
-        retmode="xml"
-    )
-    record = Entrez.read(handle)
-
-    article = record["PubmedArticle"][0]
-    citation = article["MedlineCitation"]
-    article_data = citation["Article"]
-
-    title = str(article_data.get("ArticleTitle", ""))
-
-    abstract_parts = article_data.get("Abstract", {}).get("AbstractText", [])
-    abstract = " ".join([str(x) for x in abstract_parts])
-
-    journal = str(article_data.get("Journal", {}).get("Title", ""))
-
-    return {
-        "PMID": pmid,
-        "Title": title,
-        "Abstract": abstract,
-        "Journal": journal,
-        "Source_Type": "PubMed",
-        "Source_Organization": "NCBI PubMed",
-        "Source_URL": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-        "Raw_Text": title + "\n\n" + abstract,
-    }
+def _node_text(node) -> str:
+    if node is None:
+        return ""
+    return "".join(node.itertext()).strip()
 
 
-def search_and_fetch_pubmed(query, max_results=10):
-    pmids = search_pubmed(query, max_results=max_results)
-    articles = []
+def _parse_pubmed_xml(xml_text: str) -> List[Dict]:
+    root = ET.fromstring(xml_text)
+    articles: List[Dict] = []
 
-    for pmid in pmids:
-        try:
-            articles.append(fetch_pubmed_article(pmid))
-        except Exception:
+    for pubmed_article in root.findall(".//PubmedArticle"):
+        citation = pubmed_article.find("MedlineCitation")
+        if citation is None:
+            continue
+        pmid = _node_text(citation.find("PMID"))
+        article = citation.find("Article")
+        if article is None:
             continue
 
+        title = _node_text(article.find("ArticleTitle"))
+        abstract_parts = [
+            _node_text(node)
+            for node in article.findall("./Abstract/AbstractText")
+            if _node_text(node)
+        ]
+        abstract = " ".join(abstract_parts)
+        journal = _node_text(article.find("./Journal/Title"))
+
+        articles.append({
+            "PMID": pmid,
+            "Title": title,
+            "Abstract": abstract,
+            "Journal": journal,
+            "Source_Type": "PubMed",
+            "Source_Organization": "NCBI PubMed",
+            "Source_URL": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "",
+            "Raw_Text": f"{title}\n\n{abstract}".strip(),
+        })
+
     return articles
+
+
+def fetch_pubmed_articles(pmids: List[str], timeout: float = DEFAULT_TIMEOUT) -> List[Dict]:
+    ids = [str(pmid).strip() for pmid in pmids if str(pmid).strip()]
+    if not ids:
+        return []
+
+    response = requests.get(
+        f"{NCBI_BASE}/efetch.fcgi",
+        params=_params(
+            db="pubmed",
+            id=",".join(ids),
+            rettype="abstract",
+            retmode="xml",
+        ),
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return _parse_pubmed_xml(response.text)
+
+
+def fetch_pubmed_article(pmid: str, timeout: float = DEFAULT_TIMEOUT) -> Dict:
+    articles = fetch_pubmed_articles([pmid], timeout=timeout)
+    if not articles:
+        raise ValueError(f"No PubMed article returned for PMID {pmid}")
+    return articles[0]
+
+
+def search_and_fetch_pubmed(
+    query: str,
+    max_results: int = 10,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> List[Dict]:
+    """Search PubMed and fetch matching abstracts in one bounded batch.
+
+    The previous Biopython implementation performed one unbounded network call
+    per PMID. A discovery pass could therefore block Streamlit for many
+    minutes. This implementation uses two HTTP calls total and applies an
+    explicit timeout to both.
+    """
+    pmids = search_pubmed(query, max_results=max_results, timeout=timeout)
+    return fetch_pubmed_articles(pmids, timeout=timeout)

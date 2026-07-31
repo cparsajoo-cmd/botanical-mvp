@@ -160,7 +160,7 @@ def _fetch_europepmc_discovery_records(query, max_results=25):
             "pageSize": max_results,
             "resultType": "core",
         },
-        timeout=25,
+        timeout=8,
     )
     response.raise_for_status()
 
@@ -464,7 +464,7 @@ def _candidate_specific_literature_validation(
     # record, which made selection depend on pool order rather than evidence
     # quality.  Oversampling keeps API cost bounded while allowing stronger
     # later candidates to displace weaker early matches.
-    max_hypotheses = min(len(pool), max(12, slots * 4))
+    max_hypotheses = min(len(pool), max(8, slots * 2))
     primary_terms = [t for t in indication_terms if t][:5]
     therapeutic_or = " OR ".join(f'"{term}"' for term in primary_terms)
 
@@ -474,7 +474,7 @@ def _candidate_specific_literature_validation(
         records = []
         errors = []
         try:
-            records.extend(search_and_fetch_pubmed(query, max_results=3))
+            records.extend(search_and_fetch_pubmed(query, max_results=3, timeout=8))
         except Exception as exc:
             errors.append(f"PubMed: {type(exc).__name__}: {exc}")
         try:
@@ -596,7 +596,7 @@ def _online_discovered_candidate_plants(
         all_records = []
         # Separate focused searches retrieve far more botanical names than one
         # very broad OR query, while keeping each query interpretable.
-        for term in diagnostics["query_terms"][:9]:
+        for term in diagnostics["query_terms"][:4]:
             query = (
                 f'("{term}") AND '
                 "(medicinal plant OR herbal medicine OR phytotherapy OR botanical)"
@@ -604,7 +604,7 @@ def _online_discovered_candidate_plants(
             diagnostics["queries_attempted"] += 1
 
             try:
-                all_records.extend(search_and_fetch_pubmed(query, max_results=20))
+                all_records.extend(search_and_fetch_pubmed(query, max_results=12, timeout=8))
             except Exception as exc:
                 diagnostics["connector_errors"].append(
                     f"PubMed [{term}]: {type(exc).__name__}: {exc}"

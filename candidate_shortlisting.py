@@ -293,15 +293,15 @@ def _evidence_points(group: pd.DataFrame) -> float:
 # association rows can actually support (see accompanying explanation), not
 # fitted or hidden:
 #
-#   Indication Relevance ........ 30 pts   (Target_or_Mechanism, Evidence_Source,
-#                                            Applicability_Summary, *_Rationale text)
-#   Evidence Quality ............ 25 pts   (Evidence_Level/Hierarchy/GRADE,
-#                                            Source_Record_IDs, Reference_Plant)
-#   Compound Quality ............ 15 pts   (non-generic Shared_or_Similar_Compound,
-#                                            bonus when linked to a supported target)
-#   Mechanism/Target Support .... 10 pts   (Supported_Target_or_Mechanism rows)
-#   Safety & Regulatory .......... 10 pts   (Hard_Stop_Present, Regulatory_Barriers)
-#   Novelty & Market ............. 10 pts   (Novelty_Status, Market_Status)
+#   Indication Relevance ........ 35 pts   (candidate-specific direct or
+#                                            mechanistically relevant evidence)
+#   Evidence Quality ............ 30 pts   (evidence hierarchy, independent
+#                                            traceable sources, evidence provenance)
+#   Compound Quality ............ 12 pts   (specificity-weighted overlap only)
+#   Mechanism/Target Support ..... 8 pts   (supporting role; cannot create a
+#                                            shortlist recommendation by itself)
+#   Safety & Regulatory .......... 10 pts   (hard stops and explicit barriers)
+#   Novelty & Market .............. 5 pts   (secondary opportunity signal)
 #                                 -------
 #                                 100 pts
 #
@@ -426,9 +426,57 @@ def _evidence_context(group: pd.DataFrame) -> tuple[bool, bool]:
         if col in group.columns
         for v in group[col].dropna().tolist()
     )
-    human = any(term in text for term in ("human", "clinical", "random", "meta-analysis", "systematic review"))
-    preclinical = human or any(term in text for term in ("animal", "in vivo", "in vitro", "cell", "preclinical"))
+    human = any(term in text for term in (
+        "human", "clinical trial", "randomized", "randomised",
+        "meta-analysis", "systematic review",
+    ))
+    preclinical = human or any(term in text for term in (
+        "animal", "in vivo", "in vitro", "cell", "preclinical",
+        "ex vivo", "validated",
+    ))
     return human, preclinical
+
+
+def _row_has_traceable_source(row: pd.Series) -> bool:
+    return not _is_missing(row.get("Source_Record_IDs", ""))
+
+
+def _row_is_inferred_or_generic(row: pd.Series) -> bool:
+    """Identify rows that do not provide candidate-specific efficacy evidence."""
+    text = " | ".join(
+        _norm(row.get(col, ""))
+        for col in (
+            "Scientific_Rationale", "Clinical_Rationale", "Evidence_Level",
+            "Evidence_Hierarchy_Detail", "Evidence_Source", "Target_Provenance",
+        )
+    )
+    return any(term in text for term in (
+        "hardcoded knowledge base",
+        "not a specific study",
+        "seed candidate database",
+        "general literature signal",
+        "occurrence / analytical chemistry only",
+        "no direct evidence",
+        "no independent source identified",
+        "class-only",
+    ))
+
+
+def _row_has_candidate_specific_empirical_support(row: pd.Series) -> bool:
+    if not _row_has_traceable_source(row) or _row_is_inferred_or_generic(row):
+        return False
+    text = " | ".join(
+        _norm(row.get(col, ""))
+        for col in (
+            "Evidence_Level", "Evidence_Hierarchy_Detail",
+            "Scientific_Rationale", "Clinical_Rationale",
+        )
+    )
+    return any(term in text for term in (
+        "human", "clinical", "random", "systematic review", "meta-analysis",
+        "animal", "in vivo", "in vitro", "ex vivo", "cell", "preclinical",
+        "validated",
+    ))
 
 
 def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
@@ -442,58 +490,134 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
     return best
 
 
-def _indication_relevance(group: pd.DataFrame, indication: str) -> tuple[float, str]:
-    """Conservatively score candidate-specific indication evidence.
+def _indication_relevance_detail(
+    group: pd.DataFrame,
+    indication: str,
+) -> tuple[float, str, str, int]:
+    """Return points, tier, evidence mode, and supporting source count.
 
-    Generated narrative fields are excluded, the user-entered indication is
-    stripped before matching, and generic antioxidant/anti-inflammatory text
-    alone can never establish relevance.
+    Direct indication language must be supported by candidate-specific evidence.
+    Mechanism-only links are deliberately capped and cannot, by themselves,
+    create a final Shortlist recommendation.
     """
     if not _norm(indication):
-        return 15.0, "Not evaluated (no indication specified)"
-
-    blob = _candidate_specific_blob(group, indication)
-    if not blob:
-        return 0.0, "No relevance"
+        return 17.5, "Not evaluated (no indication specified)", "Not evaluated", 0
 
     family = _concept_family(indication)
+    if not family:
+        blob = _candidate_specific_blob(group, indication)
+        tokens = _indication_tokens(indication)
+        hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
+        supported_rows = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
+        source_count = len(_split_values(supported_rows.get("Source_Record_IDs", [])))
+        if len(hits) >= 2 and source_count >= 2:
+            return 25.0, "Medium relevance", "Direct candidate-specific", source_count
+        if len(hits) == 1 and source_count >= 1:
+            return 10.0, "Low relevance", "Indirect candidate-specific", source_count
+        return 0.0, "No relevance", "None", 0
+
+    direct_source_ids: list[str] = []
+    mechanism_source_ids: list[str] = []
+    direct_hits_all: set[str] = set()
+    mechanism_hits_all: set[str] = set()
+    inferred_mechanism_hits: set[str] = set()
+
+    for _, row in group.iterrows():
+        row_blob = _candidate_specific_blob(pd.DataFrame([row]), indication)
+        direct_hits = set(_matched_terms(row_blob, family["direct"]))
+        mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
+        traceable = _row_has_traceable_source(row)
+        empirical = _row_has_candidate_specific_empirical_support(row)
+
+        if direct_hits and traceable and not _row_is_inferred_or_generic(row):
+            direct_hits_all.update(direct_hits)
+            direct_source_ids.extend(_split_values([row.get("Source_Record_IDs", "")]))
+        if mechanism_hits:
+            if empirical:
+                mechanism_hits_all.update(mechanism_hits)
+                mechanism_source_ids.extend(_split_values([row.get("Source_Record_IDs", "")]))
+            else:
+                inferred_mechanism_hits.update(mechanism_hits)
+
+    direct_sources = len(set(map(_norm, direct_source_ids)))
+    mechanism_sources = len(set(map(_norm, mechanism_source_ids)))
     human, preclinical = _evidence_context(group)
 
-    if family:
-        direct_hits = _matched_terms(blob, family["direct"])
-        mechanism_hits = _matched_terms(blob, family["mechanistic"])
-        if direct_hits:
-            # High requires a direct indication concept plus human evidence, or
-            # multiple direct concepts with at least preclinical support.
-            if human or (preclinical and len(direct_hits) >= 2):
-                return 30.0, "High relevance"
-            return 20.0, "Medium relevance"
-        if len(mechanism_hits) >= 2:
-            return 20.0, "Medium relevance"
-        if len(mechanism_hits) == 1:
-            return 10.0, "Low relevance"
-        return 0.0, "No relevance"
+    if direct_hits_all:
+        if human and direct_sources >= 1:
+            return 35.0, "High relevance", "Direct human/clinical", direct_sources
+        if preclinical and (direct_sources >= 2 or len(direct_hits_all) >= 2):
+            return 27.0, "Medium relevance", "Direct preclinical", direct_sources
+        return 22.0, "Medium relevance", "Direct but limited", direct_sources
 
-    # Generic fallback for indications not covered by the small lexicon. Require
-    # meaningful multi-token overlap; one broad token is only Low relevance.
-    tokens = _indication_tokens(indication)
-    hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
-    if any(term in blob for term in _GENERIC_MECHANISM_ONLY) and not hits:
-        return 0.0, "No relevance"
-    if len(hits) >= max(2, len(tokens)) and human:
-        return 30.0, "High relevance"
-    if len(hits) >= 2:
-        return 20.0, "Medium relevance"
-    if len(hits) == 1:
-        return 10.0, "Low relevance"
-    return 0.0, "No relevance"
+    if mechanism_hits_all:
+        if len(mechanism_hits_all) >= 2 and mechanism_sources >= 2:
+            return 18.0, "Low relevance", "Mechanistic empirical", mechanism_sources
+        return 12.0, "Low relevance", "Mechanistic empirical", mechanism_sources
 
-def _evidence_quality(group: pd.DataFrame, sources: list[str], references: list[str]) -> tuple[float, str]:
-    level_points = _evidence_points(group) / 30.0 * 15.0
-    source_points = min(7.0, 1.4 * len(sources))
-    reference_points = min(3.0, 1.5 * len(references))
-    total = round(level_points + source_points + reference_points, 1)
-    tier = "Strong" if total >= 18 else "Moderate" if total >= 10 else "Weak" if total > 0 else "None"
+    if inferred_mechanism_hits:
+        return 6.0, "Low relevance", "Mechanistic inference only", 0
+
+    return 0.0, "No relevance", "None", 0
+
+
+def _indication_relevance(group: pd.DataFrame, indication: str) -> tuple[float, str]:
+    points, tier, _, _ = _indication_relevance_detail(group, indication)
+    return points, tier
+
+
+def _evidence_quality(
+    group: pd.DataFrame,
+    sources: list[str],
+    references: list[str],
+) -> tuple[float, str]:
+    """Score evidence quality, down-weighting inferred and non-specific rows."""
+    empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
+    traceable = group[group.apply(_row_has_traceable_source, axis=1)]
+    evidence_group = empirical if not empirical.empty else traceable
+
+    if evidence_group.empty:
+        return 0.0, "None"
+
+    hierarchy_text = " | ".join(
+        _norm(v)
+        for col in (
+            "Evidence_Level", "Evidence_Hierarchy_Detail",
+            "Candidate_Evidence_Strength_Tier", "GRADE_Certainty",
+        )
+        if col in evidence_group.columns
+        for v in evidence_group[col].dropna().tolist()
+    )
+    if "systematic review" in hierarchy_text or "meta-analysis" in hierarchy_text:
+        hierarchy_points = 20.0
+    elif any(t in hierarchy_text for t in ("randomized", "randomised", "clinical trial", "human evidence")):
+        hierarchy_points = 17.0
+    elif any(t in hierarchy_text for t in ("in vivo", "animal", "validated ex vivo")):
+        hierarchy_points = 12.0
+    elif any(t in hierarchy_text for t in ("in vitro", "cell", "preclinical", "mechanistic")):
+        hierarchy_points = 8.0
+    elif "analytical chemistry" in hierarchy_text or "occurrence" in hierarchy_text:
+        hierarchy_points = 3.0
+    else:
+        hierarchy_points = 4.0
+
+    empirical_sources = _split_values(empirical.get("Source_Record_IDs", []))
+    all_sources = _split_values(traceable.get("Source_Record_IDs", []))
+    independent_count = len(set(map(_norm, empirical_sources or all_sources)))
+    source_points = min(8.0, 2.5 * independent_count)
+
+    direct_rows = int(empirical.shape[0])
+    consistency_points = min(2.0, 0.5 * max(0, direct_rows - 1))
+    total = round(min(30.0, hierarchy_points + source_points + consistency_points), 1)
+
+    if total >= 23:
+        tier = "Strong"
+    elif total >= 15:
+        tier = "Moderate"
+    elif total > 0:
+        tier = "Weak"
+    else:
+        tier = "None"
     return total, tier
 
 
@@ -520,17 +644,17 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
     if weighted_sum <= 0:
         return 0.0, "Non-informative overlap only"
 
-    base = min(11.0, 3.0 * weighted_sum)
-    bonus = min(4.0, 0.8 * linked_weight)
-    total = round(min(15.0, base + bonus), 1)
-    tier = "High" if total >= 11 else "Moderate" if total >= 5 else "Low"
+    base = min(9.0, 2.4 * weighted_sum)
+    bonus = min(3.0, 0.5 * linked_weight)
+    total = round(min(12.0, base + bonus), 1)
+    tier = "High" if total >= 9 else "Moderate" if total >= 4 else "Low"
     return total, tier
 
 
 def _mechanism_support(group: pd.DataFrame) -> tuple[float, str]:
     supported = int(group["Supported_Target_or_Mechanism"].sum())
-    total = min(10.0, 2.5 * supported)
-    tier = "Strong" if total >= 7.5 else "Some" if total > 0 else "None"
+    total = min(8.0, 1.5 * supported)
+    tier = "Strong" if total >= 6 else "Some" if total > 0 else "None"
     return total, tier
 
 
@@ -553,12 +677,12 @@ def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
     market_text = _norm(_join(group.get("Market_Status", []), 5))
     combined = f"{novelty_text} {market_text}"
     if any(t in combined for t in _NOVELTY_HIGH_TERMS):
-        return 10.0, "Novel / white-space"
+        return 5.0, "Novel / white-space"
     if any(t in combined for t in _NOVELTY_LOW_TERMS):
-        return 2.0, "Saturated / common"
+        return 1.0, "Saturated / common"
     if combined.strip():
-        return 6.0, "Moderate"
-    return 5.0, "Not reported"
+        return 3.0, "Moderate"
+    return 2.5, "Not reported"
 
 
 def _format_breakdown(components: list[tuple[str, float, int]]) -> str:
@@ -767,30 +891,67 @@ def build_plant_candidate_shortlist(
             triage_score = min(74.0, round(triage_score * 0.75, 1))
 
         # --- Requirement 8: transparent weighted score (0-100) -------------
-        indication_points, indication_tier = _indication_relevance(group, indication)
+        (
+            indication_points,
+            indication_tier,
+            indication_mode,
+            indication_source_count,
+        ) = _indication_relevance_detail(group, indication)
         evq_points, evq_tier = _evidence_quality(group, sources, references)
         cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
         mech_points, mech_tier = _mechanism_support(group)
         safety_reg_points, safety_reg_tier = _safety_regulatory(group)
         novelty_points, novelty_tier = _novelty_market(group)
 
-        # An indication was requested but nothing in the collected evidence is
-        # specific to it: this candidate is a chemical-similarity artifact for
-        # this indication and must not surface as a recommendation, even if it
-        # passed the generic per-row gates (Requirement 1 / Requirement 8).
+        # Final plant-level decision gates. Mechanism similarity is supporting
+        # evidence only: it cannot create a Shortlist recommendation without
+        # direct candidate-specific indication evidence and adequate evidence
+        # quality/traceability.
         indication_requested = bool(_norm(indication))
         reasons_note = None
-        if indication_requested and plant_status != "Excluded":
-            if indication_points == 0.0:
-                plant_status = "Excluded"
-                reasons_note = "no candidate-specific evidence was found for the requested indication"
-            elif indication_points == 10.0:
-                plant_status = "Exploratory"
-                reasons_note = "only indirect indication-related mechanistic evidence was found"
-            elif indication_points >= 20.0 and plant_status == "Exploratory":
-                # Relevance cannot repair missing traceability/target gates, but
-                # it may keep the candidate exploratory rather than excluded.
-                plant_status = "Exploratory"
+        base_plant_status = plant_status
+        hard_stop_present = bool(group["Hard_Stop_Present"].any())
+        empirical_rows = int(group.apply(_row_has_candidate_specific_empirical_support, axis=1).sum())
+        traceable_count = len(set(map(_norm, sources)))
+
+        if base_plant_status == "Excluded":
+            plant_status = "Excluded"
+            reasons_note = _join(group.get("Scientific_Triage_Reasons", []), 10)
+        elif not indication_requested:
+            plant_status = base_plant_status
+        elif hard_stop_present:
+            plant_status = "Excluded"
+            reasons_note = "a hard safety or regulatory stop is present"
+        elif indication_points == 0.0:
+            plant_status = "Excluded"
+            reasons_note = "no candidate-specific evidence was found for the requested indication"
+        elif indication_requested and indication_mode.startswith("Mechanistic"):
+            plant_status = "Exploratory"
+            reasons_note = (
+                "the indication link is mechanistic only; direct candidate-specific "
+                "indication evidence is required for Shortlist"
+            )
+        elif indication_requested and indication_points < 22.0:
+            plant_status = "Exploratory"
+            reasons_note = "only weak or indirect indication relevance was found"
+        elif (
+            evq_points < 15.0
+            or empirical_rows < 1
+            or (
+                indication_mode != "Direct human/clinical"
+                and traceable_count < 2
+            )
+        ):
+            plant_status = "Exploratory"
+            reasons_note = (
+                "indication relevance is present, but evidence quality or independent "
+                "traceability is insufficient for Shortlist"
+            )
+        elif safety_reg_points <= 0.0:
+            plant_status = "Excluded"
+            reasons_note = "safety/regulatory screening did not pass"
+        elif plant_status != "Excluded":
+            plant_status = "Shortlist"
 
         overall_score = round(
             indication_points + evq_points + cq_points + mech_points
@@ -807,12 +968,12 @@ def build_plant_candidate_shortlist(
             "novelty": (novelty_points, novelty_tier),
         }
         score_breakdown = _format_breakdown([
-            ("Indication Relevance", indication_points, 30),
-            ("Evidence Quality", evq_points, 25),
-            ("Compound Quality", cq_points, 15),
-            ("Mechanism Support", mech_points, 10),
+            ("Indication Relevance", indication_points, 35),
+            ("Evidence Quality", evq_points, 30),
+            ("Compound Quality", cq_points, 12),
+            ("Mechanism Support", mech_points, 8),
             ("Safety & Regulatory", safety_reg_points, 10),
-            ("Novelty & Market", novelty_points, 10),
+            ("Novelty & Market", novelty_points, 5),
         ])
 
         if plant_status == "Excluded":
@@ -833,6 +994,9 @@ def build_plant_candidate_shortlist(
             "Score_Breakdown": score_breakdown,
             "Indication_Relevance": indication_tier,
             "Indication_Relevance_Score": indication_points,
+            "Indication_Evidence_Mode": indication_mode,
+            "Indication_Supporting_Source_Count": indication_source_count,
+            "Candidate_Specific_Empirical_Row_Count": empirical_rows,
             "Evidence_Quality_Score": evq_points,
             "Compound_Quality_Score": cq_points,
             "Mechanism_Support_Score": mech_points,

@@ -226,3 +226,77 @@ def test_mixed_candidates_are_not_all_high_relevance():
         pd.DataFrame(rows), indication="Metabolic & blood sugar support", dosage_form="Infusion"
     )
     assert set(summary["Indication_Relevance"]) != {"High relevance"}
+
+
+def test_mechanism_only_inferred_link_cannot_enter_shortlist():
+    row = _row(
+        Target_or_Mechanism="Aldose-Reductase-Inhibitor; AMPK",
+        Scientific_Rationale=(
+            "Shares a validated biological target with the reference compound "
+            "(seed_data.COMPOUND_TARGETS hardcoded knowledge base, not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:999",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    result = summary.iloc[0]
+    assert result["Scientific_Triage_Status"] == "Exploratory"
+    assert result["Indication_Evidence_Mode"] == "Mechanistic inference only"
+
+
+def test_direct_preclinical_evidence_needs_independent_traceability():
+    row = _row(
+        Scientific_Rationale="reduced fasting glucose and improved insulin sensitivity in vivo",
+        Evidence_Level="Preclinical / mechanistic evidence",
+        Evidence_Hierarchy_Detail="Validated in vivo",
+        Source_Record_IDs="PMID:100",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    result = summary.iloc[0]
+    assert result["Scientific_Triage_Status"] == "Exploratory"
+    assert result["Indication_Evidence_Mode"] in {"Direct preclinical", "Direct but limited"}
+
+
+def test_direct_human_evidence_can_shortlist_with_one_traceable_source():
+    row = _row(
+        Scientific_Rationale="clinical evidence of reduced fasting glucose",
+        Clinical_Rationale="human clinical trial reported improved HbA1c",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Clinical trial",
+        Source_Record_IDs="PMID:101",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    result = summary.iloc[0]
+    assert result["Scientific_Triage_Status"] == "Shortlist"
+    assert result["Indication_Evidence_Mode"] == "Direct human/clinical"
+
+
+def test_hard_stop_overrides_high_scientific_scores():
+    row = _row(
+        Scientific_Rationale="clinical evidence of reduced fasting glucose",
+        Clinical_Rationale="human clinical trial reported improved HbA1c",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Clinical trial",
+        Source_Record_IDs="PMID:102",
+        Decision_Class="No-Go / safety concern",
+        Go_Investigate_Hold_NoGo="No-Go",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    assert summary.iloc[0]["Scientific_Triage_Status"] == "Excluded"

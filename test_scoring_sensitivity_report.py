@@ -101,6 +101,35 @@ _FULL_BREAKDOWN_B = (
     "Safety/interaction/self-row penalty: +0.0"
 )  # sums to 51.0
 
+_INDICATION_BREAKDOWN = {
+    "Direct indication evidence": 35,
+    "Traceability": 10,
+    "Mechanistic plausibility": 10,
+    "Preparation applicability": 8,
+    "Compound support (non-gating)": 5,
+    "Baseline development potential": 10,
+}  # sums to 78
+
+
+# Indication-centric rows (indication_candidate_discovery.py) store
+# Score_Breakdown as a dict with a different section schema than the
+# legacy compound-substitution engine's formatted string. Both must
+# reconstruct correctly instead of the dict shape being silently
+# unparseable and the different section names being reported "incomplete".
+def test_baseline_reconstruction_handles_indication_centric_dict_breakdown():
+    status, components = classify_baseline_reconstruction(
+        _INDICATION_BREAKDOWN, sum(_INDICATION_BREAKDOWN.values())
+    )
+    assert status == "exact"
+    assert components["Direct indication evidence"] == 35.0
+
+
+def test_baseline_reconstruction_indication_dict_missing_a_section_is_incomplete():
+    partial = dict(_INDICATION_BREAKDOWN)
+    del partial["Traceability"]
+    status, _ = classify_baseline_reconstruction(partial, sum(partial.values()))
+    assert status == "incomplete"
+
 
 # 4. Exact baseline reconstruction.
 def test_baseline_reconstruction_exact():

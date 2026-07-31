@@ -479,6 +479,25 @@ def test_market_signal_never_attributed_to_regulatory_even_when_present():
     assert card["top_regulatory_contributor"] == NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE
 
 
+def test_recommendation_card_handles_indication_centric_dict_score_breakdown():
+    # indication_candidate_discovery.py stores Score_Breakdown as a dict,
+    # not the legacy formatted string. This previously crashed with
+    # AttributeError: 'dict' object has no attribute 'split'.
+    row = _full_row(Score_Breakdown={
+        "Direct indication evidence": 35,
+        "Traceability": 10,
+        "Mechanistic plausibility": 10,
+        "Preparation applicability": 8,
+        "Compound support (non-gating)": 5,
+        "Baseline development potential": 10,
+    })
+    card = build_recommendation_card(row)
+    assert "Mechanistic plausibility" in card["top_scientific_contributor"]
+    assert "Direct indication evidence" in card["top_clinical_contributor"]
+    assert "Baseline development potential" in card["top_commercial_contributor"]
+    assert card["top_regulatory_contributor"] == NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE
+
+
 # ---------------------------------------------------------------------
 # 2. Market search not performed
 # ---------------------------------------------------------------------

@@ -276,6 +276,19 @@ _CANONICAL_SECTIONS = {
     "Novelty", "Market signal", "Safety/interaction/self-row penalty",
 }
 
+# Sections discover_indication_candidates() always emits on every row
+# (indication_candidate_discovery.py's Score_Breakdown dict). This is a
+# structurally different, non-compound-gated schema — Score_Breakdown is
+# stored there as a dict, not the legacy formatted string — so it needs its
+# own canonical set rather than being forced through the compound-
+# substitution one, which would otherwise mark every indication-mode row as
+# permanently "incomplete" and silently skip its sensitivity analysis.
+_INDICATION_CANONICAL_SECTIONS = {
+    "Direct indication evidence", "Traceability", "Mechanistic plausibility",
+    "Preparation applicability", "Compound support (non-gating)",
+    "Baseline development potential",
+}
+
 # Documented rounding tolerance: each section is stored as round(x, 1),
 # and the final score is separately round()ed after summing — across
 # up to 7 components (6 sections + the optional merge bonus), the
@@ -314,9 +327,26 @@ def _parse_score_breakdown(breakdown) -> dict:
     instruction to avoid new coupling to comparative_rationale.py and
     the existing frozen state of structured_rationale.py. Same
     accepted-duplication tradeoff already used between those two
-    modules; documented there and here rather than silently repeated."""
+    modules; documented there and here rather than silently repeated.
+
+    Score_Breakdown has two legitimate shapes in this codebase: the
+    legacy compound-substitution engine stores a formatted string
+    ("Name: +12.3; Name2: -4.5" via _format_score_breakdown()); the
+    indication-centric engine (indication_candidate_discovery.py)
+    stores a plain {name: value} dict directly, since it never goes
+    through that formatter. Both are handled here rather than assuming
+    the legacy string shape and silently failing to parse the other.
+    """
     if not breakdown or breakdown == "No breakdown available":
         return {}
+    if isinstance(breakdown, dict):
+        components = {}
+        for name, value in breakdown.items():
+            try:
+                components[str(name).strip()] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return components
     components = {}
     for part in str(breakdown).split("; "):
         if ":" not in part:
@@ -373,6 +403,14 @@ def classify_baseline_reconstruction(score_breakdown, rd_opportunity_score):
         return "unparseable", components
 
     missing_sections = _CANONICAL_SECTIONS - set(components.keys())
+    if missing_sections:
+        # Not the legacy compound-substitution schema at all — check
+        # whether it's a complete indication-centric breakdown instead
+        # of assuming "incomplete" just because it doesn't match the
+        # other engine's section names.
+        missing_indication_sections = _INDICATION_CANONICAL_SECTIONS - set(components.keys())
+        if not missing_indication_sections:
+            missing_sections = missing_indication_sections
     if missing_sections:
         return "incomplete", components
 

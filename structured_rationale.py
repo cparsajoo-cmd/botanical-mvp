@@ -883,14 +883,31 @@ def build_evidence_conflict_structured(
 # crossing sprint boundaries, not an oversight.
 # =====================================================================
 
-def _local_parse_score_breakdown(breakdown: Optional[str]) -> dict:
+def _local_parse_score_breakdown(breakdown) -> dict:
     """Self-contained copy of the Score_Breakdown parser (see
     comparative_rationale.py's _parse_score_breakdown — intentionally
     NOT imported from there; see the scope note above). Reverses
     _format_score_breakdown()'s "Name: +12.3; Other: -4.0" format back
-    into a dict."""
+    into a dict.
+
+    Score_Breakdown has two legitimate shapes: the legacy compound-
+    substitution engine's formatted string, and the indication-centric
+    engine's (indication_candidate_discovery.py) plain {name: value}
+    dict, which is stored as-is and never goes through
+    _format_score_breakdown(). Both are handled here — this function is
+    called for every candidate row via build_recommendation_card(), so
+    silently assuming the string shape crashed report generation
+    outright for every indication-mode row."""
     if not breakdown or breakdown == "No breakdown available":
         return {}
+    if isinstance(breakdown, dict):
+        components = {}
+        for name, value in breakdown.items():
+            try:
+                components[str(name).strip()] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return components
     components = {}
     for part in breakdown.split("; "):
         if ":" not in part:
@@ -924,6 +941,16 @@ _COMPONENT_TO_DIMENSIONS = {
     "Product-development fit": ["Commercial"],
     "Market signal": ["Commercial"],
     "Safety/interaction/self-row penalty": ["Safety"],
+    # Indication-centric schema (indication_candidate_discovery.py). Kept in
+    # the same dict rather than a parallel one because the lookup below is a
+    # plain name -> dimension mapping and the two schemas never share a key
+    # name, so there is nothing to disambiguate.
+    "Direct indication evidence": ["Clinical"],
+    "Mechanistic plausibility": ["Scientific"],
+    "Traceability": ["Clinical"],
+    "Preparation applicability": ["Commercial"],
+    "Compound support (non-gating)": ["Scientific"],
+    "Baseline development potential": ["Commercial"],
 }
 
 NO_REGULATORY_SCORE_CONTRIBUTION_MESSAGE = (

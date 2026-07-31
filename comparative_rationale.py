@@ -44,13 +44,23 @@ from __future__ import annotations
 import pandas as pd
 
 
-def _parse_score_breakdown(breakdown: str) -> dict:
+def _parse_score_breakdown(breakdown) -> dict:
     """Reverses _format_score_breakdown()'s "Name: +12.3; Other: -4.0"
     format back into a dict. Tolerant of the "; Multi-compound match
     bonus: +N.0" suffix _merge_multi_compound_matches appends, and of
-    "No breakdown available" (returns {})."""
+    "No breakdown available" (returns {}). Also accepts a plain
+    {name: value} dict directly, since indication_candidate_discovery.py
+    stores Score_Breakdown that way instead of as a formatted string."""
     if not breakdown or breakdown == "No breakdown available":
         return {}
+    if isinstance(breakdown, dict):
+        components = {}
+        for name, value in breakdown.items():
+            try:
+                components[str(name).strip()] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return components
     components = {}
     for part in breakdown.split("; "):
         if ":" not in part:

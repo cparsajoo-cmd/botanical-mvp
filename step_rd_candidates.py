@@ -8,6 +8,7 @@ from candidate_output_adapter import validate_result_df
 from candidate_shortlisting import build_plant_candidate_shortlist, merge_authoritative_scores
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
+from decision_metadata import build_decision_metadata
 from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
     get_scientific_evidence_by_ids,
@@ -286,6 +287,23 @@ def _offline_engine():
 # the first N is enough to be useful; nothing below silently drops data,
 # it only limits what's displayed/probed by these two exploratory steps.
 _MAX_MARKET_CHECK_PLANTS = 30
+
+
+def _detect_discovery_mode(result_df) -> str:
+    """Single source of truth for "which discovery mode produced this
+    result_df" — used by both the success-branch and the fallback-rebuild
+    branch below so decision_metadata.build_decision_metadata() and the
+    UI's own indication-mode banner never disagree about which mode ran."""
+    if not isinstance(result_df, pd.DataFrame) or result_df.empty:
+        return "unknown"
+    is_indication_mode = (
+        "Scoring_Config_Version" in result_df.columns
+        and result_df["Scoring_Config_Version"].astype(str).str.startswith("2.").any()
+    ) or (
+        "Reference_Plant" in result_df.columns
+        and result_df["Reference_Plant"].astype(str).eq("Indication-centric discovery").all()
+    )
+    return "indication" if is_indication_mode else "compound_substitution"
 
 
 def _recommendation_block(result_df, report_ready_df=None):
@@ -845,6 +863,16 @@ def render_rd_candidates_step(inputs):
                 st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
                     result_df, plant_summary_df
                 )
+                # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
+                # decision run, from the same report_ready_df just built.
+                # Both the downloaded report and the persisted decision
+                # record read this exact dict — see build_decision_metadata()'s
+                # own docstring.
+                st.session_state["rd_decision_metadata"] = build_decision_metadata(
+                    st.session_state["rd_report_ready_df"],
+                    indication=indication, dosage_form=dosage_form, market=market,
+                    discovery_mode=_detect_discovery_mode(result_df),
+                )
 
                 counts = (
                     plant_summary_df["Scientific_Triage_Status"].value_counts()
@@ -881,13 +909,7 @@ def render_rd_candidates_step(inputs):
     # full raw audit export below.
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        is_indication_mode = (
-            "Scoring_Config_Version" in result_df.columns
-            and result_df["Scoring_Config_Version"].astype(str).str.startswith("2.").any()
-        ) or (
-            "Reference_Plant" in result_df.columns
-            and result_df["Reference_Plant"].astype(str).eq("Indication-centric discovery").all()
-        )
+        is_indication_mode = _detect_discovery_mode(result_df) == "indication"
         if is_indication_mode:
             st.info(
                 "🔎 **Indication-centric discovery:** candidates enter through "
@@ -917,10 +939,22 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
                 result_df, plant_summary_df
             )
+            st.session_state["rd_decision_metadata"] = build_decision_metadata(
+                st.session_state["rd_report_ready_df"],
+                indication=indication, dosage_form=dosage_form, market=market,
+                discovery_mode=_detect_discovery_mode(result_df),
+            )
         report_ready_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(report_ready_df, pd.DataFrame):
             report_ready_df = merge_authoritative_scores(result_df, plant_summary_df)
             st.session_state["rd_report_ready_df"] = report_ready_df
+        decision_metadata = st.session_state.get("rd_decision_metadata")
+        if not decision_metadata:
+            decision_metadata = build_decision_metadata(
+                report_ready_df, indication=indication, dosage_form=dosage_form,
+                market=market, discovery_mode=_detect_discovery_mode(result_df),
+            )
+            st.session_state["rd_decision_metadata"] = decision_metadata
 
         st.info(
             "📊 **Scientific triage:** the main view shows only plant-level results. "
@@ -1109,6 +1143,7 @@ def render_rd_candidates_step(inputs):
                 if errors_df.empty and records:
                     decision_record_summary = persist_decision_record(
                         records, indication=indication, project_id=f"{indication}-{market}",
+                        decision_metadata=st.session_state.get("rd_decision_metadata"),
                     )
                     if decision_record_summary["status"] == "persisted":
                         st.session_state["rd_last_decision_record_id"] = decision_record_summary["analysis_id"]
@@ -1190,6 +1225,7 @@ def render_rd_candidates_step(inputs):
             standardized_project=inputs.get("standardized_project"),
             decision_record_id=st.session_state.get("rd_last_decision_record_id"),
             scientific_evidence_payload=scientific_evidence_payload,
+            decision_metadata=st.session_state.get("rd_decision_metadata"),
         )
         st.download_button(
             "Download R&D report (Markdown)",

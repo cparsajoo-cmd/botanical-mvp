@@ -111,7 +111,20 @@ import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 
+from database import _missing_postgrest_column
+
 DECISION_RECORD_TABLE_NAME = "decision_records"
+
+# Phase 4 (IMPLEMENTATION_PLAN.md) — reproducibility metadata columns added
+# by migrations/0004_add_decision_metadata.sql. Same optional-column
+# fallback pattern as database.py's _OPTIONAL_EVIDENCE_COLUMNS (Task 10.2 /
+# Phase 2 precedent): an unmigrated decision_records table must not make
+# this insert fail outright, only degrade to omitting these columns.
+_OPTIONAL_METADATA_COLUMNS = {
+    "scoring_model_version", "evidence_snapshot_id", "evidence_snapshot_status",
+    "normalization_version", "validation_version", "discovery_mode",
+    "dosage_form", "market", "candidate_set_fingerprint",
+}
 
 # Fields persisted per CandidateAssessment record — kept as an
 # explicit allowlist (not "every dataclass field") so a future field
@@ -189,12 +202,34 @@ def _resolve_scoring_config_version(records: list):
     return None
 
 
+def _insert_decision_record_with_optional_schema_fallback(supabase_client, row: dict):
+    """Same pattern as database.py's _insert_evidence_with_optional_schema_fallback
+    (Task 10.2 / Phase 2 precedent), reused here for decision_records' Phase 4
+    metadata columns instead of duplicating the retry logic. Core fields
+    (analysis_id, created_at, scoring_config_version, indication, project_id,
+    candidate_count, records) are never removed — only the Phase 4 optional
+    metadata columns are dropped, one at a time, if the table doesn't have
+    them yet.
+    """
+    current = dict(row)
+    for _ in range(len(_OPTIONAL_METADATA_COLUMNS) + 1):
+        try:
+            return supabase_client.table(DECISION_RECORD_TABLE_NAME).insert(current).execute()
+        except Exception as exc:
+            missing = _missing_postgrest_column(exc)
+            if missing not in _OPTIONAL_METADATA_COLUMNS or missing not in current:
+                raise
+            current.pop(missing, None)
+    raise RuntimeError("Unable to insert decision record after schema fallback")
+
+
 def persist_decision_record(
     records: list,
     indication: str,
     project_id: str = "unspecified-run",
     analysis_id: str = None,
     supabase_client=None,
+    decision_metadata: dict = None,
 ) -> dict:
     """The ONE write function this module exists to provide.
 
@@ -202,6 +237,17 @@ def persist_decision_record(
     records (candidate_output_adapter.validate_result_df()'s output)
     as ONE row in the dedicated `decision_records` table. Never raises.
     Append-only — see module docstring's LOCK SEMANTICS section.
+
+    decision_metadata (Phase 4, optional): the EXACT dict
+    decision_metadata.build_decision_metadata() returned for this same
+    decision run — passed straight through and only ever read here, never
+    recomputed. This is what makes "the final report and the persisted
+    decision record use the same metadata object" true: both this
+    function and pharma_report_generator.generate_pharma_report() are
+    given the identical dict by their shared caller (step_rd_candidates.py),
+    not two independently-built ones. When None (every pre-Phase-4 caller,
+    unchanged), the Phase 4 metadata columns are simply omitted from the
+    row — no fabricated version strings, no guessed snapshot id.
 
     Returns:
       {
@@ -231,6 +277,10 @@ def persist_decision_record(
         "candidate_count": len(records),
         "records": json.dumps([_serialize_record(r) for r in records], default=str),
     }
+    if decision_metadata:
+        for field in _OPTIONAL_METADATA_COLUMNS:
+            if field in decision_metadata:
+                row[field] = decision_metadata[field]
 
     try:
         if supabase_client is None:
@@ -240,7 +290,7 @@ def persist_decision_record(
         # Append-only: always insert, never update/upsert — see LOCK
         # SEMANTICS above. Two calls with the same analysis_id produce
         # two rows, never an overwrite of an existing one.
-        supabase_client.table(DECISION_RECORD_TABLE_NAME).insert(row).execute()
+        _insert_decision_record_with_optional_schema_fallback(supabase_client, row)
 
         return {
             "status": "persisted",

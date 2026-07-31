@@ -592,6 +592,7 @@ def generate_pharma_report(
     standardized_project: dict = None,
     decision_record_id: str = None,
     scientific_evidence_payload: dict = None,
+    decision_metadata: dict = None,
 ) -> str:
     """Builds the full Markdown report. Returns a short, explicit
     "no candidates" report (not an empty string, not an exception) if
@@ -623,6 +624,19 @@ def generate_pharma_report(
     other optional parameter here. When None (the default — every
     existing caller that doesn't pass it), no per-item evidence detail
     section appears anywhere in the report; every other section is
+    unaffected.
+
+    decision_metadata (Phase 4, optional): the EXACT dict
+    decision_metadata.build_decision_metadata() returned for this same
+    decision run — passed straight through, matching this function's
+    existing convention for every other optional parameter above. This
+    is what makes "the final report and the persisted decision record
+    use the same metadata object" true: the caller
+    (step_rd_candidates.py) computes it once and passes the identical
+    dict here AND to persist_decision_record(). Nothing in this
+    function recomputes, re-derives, or second-guesses any of its ten
+    fields. When None (every pre-Phase-4 caller, unchanged), no
+    Reproducibility section appears — the rest of the report is
     unaffected.
     """
     lines = [
@@ -679,6 +693,31 @@ def generate_pharma_report(
             "run contract validation to create one."
         )
     lines.append("")
+
+    # Phase 4 (IMPLEMENTATION_PLAN.md) — Reproducibility section. Every
+    # value below is read as-is from the caller-supplied decision_metadata
+    # dict, never recomputed here — see this function's own docstring.
+    if decision_metadata:
+        lines.append("## Reproducibility")
+        lines.append("")
+        lines.append(f"- Scoring model version: {decision_metadata.get('scoring_model_version', 'unknown')}")
+        lines.append(f"- Normalization version: {decision_metadata.get('normalization_version', 'unknown')}")
+        lines.append(f"- Validation version: {decision_metadata.get('validation_version', 'unknown')}")
+        lines.append(f"- Discovery mode: {decision_metadata.get('discovery_mode', 'unknown')}")
+        lines.append(f"- Decision timestamp (UTC): {decision_metadata.get('decision_timestamp', 'unknown')}")
+        snapshot_status = decision_metadata.get("evidence_snapshot_status")
+        snapshot_id = decision_metadata.get("evidence_snapshot_id")
+        if snapshot_status == "computed" and snapshot_id:
+            lines.append(f"- Evidence snapshot ID: `{snapshot_id}`")
+        else:
+            lines.append(
+                "- Evidence snapshot ID: **unavailable** — no traceable evidence "
+                "identifiers (Source_Record_IDs) were found on any candidate row "
+                "in this run; not fabricated."
+            )
+        fingerprint = decision_metadata.get("candidate_set_fingerprint")
+        lines.append(f"- Candidate set fingerprint: {f'`{fingerprint}`' if fingerprint else 'unavailable'}")
+        lines.append("")
 
     # Executive summary: counts by Go/Investigate/Hold/No-Go.
     lines.append("## Executive Summary")

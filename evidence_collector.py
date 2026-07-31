@@ -41,6 +41,12 @@ def collect_pubmed_evidence(
         extracted["Source_Organization"] = "NCBI PubMed"
         extracted["Source_URL"] = article["Source_URL"]
         extracted["Notes"] = article["Raw_Text"]
+        # Phase 2 (IMPLEMENTATION_PLAN.md) — search_and_fetch_pubmed()
+        # already returns the PMID (used to build Source_URL above, and
+        # already carried separately in this function's own return value
+        # as item["pmid"]); persisting it on the record itself too so it
+        # reaches save_evidence_record() instead of only the caller summary.
+        extracted["PMID"] = article.get("PMID", "")
 
         standardized = standardize_extracted_record(
             extracted=extracted,

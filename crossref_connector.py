@@ -42,6 +42,11 @@ def search_crossref(scientific_name, indication, dosage_form="", market="Europea
             "Source_URL": url_out,
             "Source_Year": str(year),
 
+            # Phase 2 (IMPLEMENTATION_PLAN.md) — CrossRef's own response
+            # already provides the DOI (used just above to build
+            # Source_URL); persisting it instead of discarding it.
+            "DOI": doi,
+
             "Notes": raw_text,
 
             "Publication_Type": "Scholarly literature",

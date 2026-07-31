@@ -285,7 +285,16 @@ def build_standard_evidence(record):
         "Dosage_Form_Detected": detected_form,
         "Target_Indication_Detected": detected_indication,
         "Population": record.get("LLM_Population", ""),
-        "Sample_Size": record.get("LLM_Sample_Size", ""),
+        # Phase 2 (IMPLEMENTATION_PLAN.md) — previously this always took
+        # LLM_Sample_Size, even when a connector (ClinicalTrials.gov's
+        # enrollment count, hand-copied through by
+        # evidence_standardizer.py) already provided a real Sample_Size
+        # on `record`. That unconditionally overwrote the connector's own
+        # value with an empty string whenever no LLM ran. The
+        # connector-provided value — more literal, not inferred — now
+        # takes precedence; LLM_Sample_Size is only used when nothing
+        # else has already set it.
+        "Sample_Size": record.get("Sample_Size") or record.get("LLM_Sample_Size", ""),
         "Comparator": record.get("LLM_Comparator", ""),
         "Primary_Outcome": record.get("LLM_Main_Outcome", ""),
         "Result_Direction": record.get("LLM_Result_Direction", ""),

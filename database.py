@@ -44,12 +44,45 @@ from supabase_client import get_supabase_client
 
 
 
+# ======================================================================
+# IMPLEMENTATION_PLAN.md Phase 2 — additive evidence_records extension.
+# See migrations/0002_extend_evidence_records.sql for the SQL (run by
+# hand — same no-migration-runner situation as Task 10.2 above).
+#
+# save_evidence_record() now writes 14 additional nullable columns:
+#   pmid, doi, nct_id                          TEXT  — identifiers the
+#     PubMed / Europe PMC / CrossRef / ClinicalTrials.gov connectors
+#     already fetch but previously discarded before persistence (see
+#     each connector file's own comment at its PMID/DOI/NCT_ID line).
+#   mechanism, target, administration_route,
+#   plant_part, extraction_method, duration    TEXT  — schema-ready,
+#     NOT populated by any connector in Phase 2 (none currently extracts
+#     these reliably without risking inference/fabrication — left null).
+#   effect_size, p_value,
+#   adverse_events, interactions_structured    JSONB — same as above;
+#     JSONB (not a bare number) because e.g. an effect size without its
+#     type/unit/CI/timepoint is not scientifically meaningful on its own.
+#   data_quality_score                         NUMERIC — schema-ready,
+#     not populated in Phase 2 (a composite score is a scoring-engine
+#     decision, out of Phase 2's scope).
+#
+# All 14 follow the SAME optional-column fallback as the five Task 10.2
+# fields below — added to _OPTIONAL_EVIDENCE_COLUMNS, not a new mechanism.
+# ======================================================================
+
+
 _OPTIONAL_EVIDENCE_COLUMNS = {
     "applicability_classification",
     "applicability_rationale",
     "applicability_evaluated_dimensions",
     "applicability_missing_dimensions",
     "applicability_detected_mismatches",
+    # Phase 2
+    "pmid", "doi", "nct_id",
+    "mechanism", "target", "administration_route",
+    "plant_part", "extraction_method", "duration",
+    "effect_size", "p_value", "adverse_events", "interactions_structured",
+    "data_quality_score",
 }
 
 
@@ -254,6 +287,27 @@ def save_evidence_record(record):
         "applicability_evaluated_dimensions": record.get("Applicability_Evaluated_Dimensions", ""),
         "applicability_missing_dimensions": record.get("Applicability_Missing_Dimensions", ""),
         "applicability_detected_mismatches": record.get("Applicability_Detected_Mismatches", ""),
+
+        # Phase 2 (IMPLEMENTATION_PLAN.md). Deliberately `.get(key) or None`,
+        # not `.get(key, "")` like the legacy TEXT fields above: an empty
+        # string would misrepresent "we have no value" as "the value is the
+        # empty string" for these newer, more structured fields. None here
+        # means exactly one thing — this connector/record did not provide
+        # this field — never an inferred or guessed value.
+        "pmid": record.get("PMID") or None,
+        "doi": record.get("DOI") or None,
+        "nct_id": record.get("NCT_ID") or None,
+        "mechanism": record.get("Mechanism") or None,
+        "target": record.get("Target") or None,
+        "administration_route": record.get("Administration_Route") or None,
+        "plant_part": record.get("Plant_Part") or None,
+        "extraction_method": record.get("Extraction_Method") or None,
+        "duration": record.get("Duration") or None,
+        "effect_size": record.get("Effect_Size") or None,
+        "p_value": record.get("P_Value") or None,
+        "adverse_events": record.get("Adverse_Events") or None,
+        "interactions_structured": record.get("Interactions_Structured") or None,
+        "data_quality_score": record.get("Data_Quality_Score") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -358,6 +412,27 @@ def load_evidence_records():
             "Applicability_Evaluated_Dimensions": item.get("applicability_evaluated_dimensions", ""),
             "Applicability_Missing_Dimensions": item.get("applicability_missing_dimensions", ""),
             "Applicability_Detected_Mismatches": item.get("applicability_detected_mismatches", ""),
+
+            # Phase 2 (IMPLEMENTATION_PLAN.md). item.get(<new key>) returns
+            # None both when the column doesn't exist yet (unmigrated
+            # table) and when it exists but is genuinely null — same
+            # degrade-safely behavior as the Task 10.2 fields above, kept
+            # as None (not "") on the way out too, so a caller can tell
+            # "no value was ever recorded" apart from "recorded as empty".
+            "PMID": item.get("pmid"),
+            "DOI": item.get("doi"),
+            "NCT_ID": item.get("nct_id"),
+            "Mechanism": item.get("mechanism"),
+            "Target": item.get("target"),
+            "Administration_Route": item.get("administration_route"),
+            "Plant_Part": item.get("plant_part"),
+            "Extraction_Method": item.get("extraction_method"),
+            "Duration": item.get("duration"),
+            "Effect_Size": item.get("effect_size"),
+            "P_Value": item.get("p_value"),
+            "Adverse_Events": item.get("adverse_events"),
+            "Interactions_Structured": item.get("interactions_structured"),
+            "Data_Quality_Score": item.get("data_quality_score"),
 
             # Task 10.2 — previously discarded on read (id was selected
             # implicitly via "*" but never mapped into the returned row

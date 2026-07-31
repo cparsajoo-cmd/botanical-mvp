@@ -38,6 +38,19 @@ def standardize_extracted_record(extracted, source_metadata):
     if already_has_reliable_evidence_level:
         normalized["Evidence_Level"] = record["Evidence_Level"]
 
+    # Phase 2 (IMPLEMENTATION_PLAN.md) — normalize_source_record's
+    # STANDARD_FIELDS allowlist (source_ingestion_engine.py) does not
+    # include PMID/DOI/NCT_ID/Sample_Size either, for the same reason
+    # Evidence_Level needed the hand-copy above: connectors that already
+    # fetched these values (europepmc_connector.py, crossref_connector.py,
+    # clinicaltrials_connector.py, evidence_collector.py's PubMed path)
+    # would otherwise have them silently dropped here before storage.
+    # Copied back only when the connector actually set a non-empty value —
+    # never defaulted or guessed for a source that didn't provide one.
+    for _identifier_field in ("PMID", "DOI", "NCT_ID", "Sample_Size"):
+        if record.get(_identifier_field):
+            normalized[_identifier_field] = record[_identifier_field]
+
     if extract_evidence_with_llm is not None and not already_has_reliable_evidence_level:
         try:
             llm = extract_evidence_with_llm(

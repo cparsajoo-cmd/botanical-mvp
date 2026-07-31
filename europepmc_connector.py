@@ -47,6 +47,13 @@ def search_europepmc(scientific_name, indication, dosage_form="", market="Europe
             "Source_URL": url_out,
             "Source_Year": str(year),
 
+            # Phase 2 (IMPLEMENTATION_PLAN.md) — Europe PMC's own search
+            # response already provides these two identifiers (used just
+            # above to build Source_URL); persisting them as their own
+            # fields instead of discarding them after the URL is built.
+            "PMID": pmid,
+            "DOI": doi,
+
             "Notes": raw_text,
 
             "Publication_Type": item.get("pubType", "Scholarly literature"),

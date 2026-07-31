@@ -78,6 +78,11 @@ def search_clinicaltrials(
             "Source_URL": f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else "",
             "Source_Year": "",
 
+            # Phase 2 (IMPLEMENTATION_PLAN.md) — the registry API response
+            # already provides this identifier (used just above to build
+            # Source_URL); persisting it instead of discarding it.
+            "NCT_ID": nct_id,
+
             "Notes": raw_text,
 
             "Publication_Type": "Clinical Trial Registry",

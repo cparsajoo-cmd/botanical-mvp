@@ -297,16 +297,32 @@ def _recommendation_block(result_df, report_ready_df=None):
     # available yet (e.g. a session that ran Step 5 before this change).
     if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
         df = report_ready_df.copy()
-        plant_col = "Alternative_Plant" if "Alternative_Plant" in df.columns else df.columns[0]
         call_col = "Go_Investigate_Hold_NoGo" if "Go_Investigate_Hold_NoGo" in df.columns else None
 
         best_rows = df  # already one row per plant, already sorted by Overall_Score
 
+        # Post-Phase-3-review fix (Issue 1): classify by normalized PREFIX,
+        # not exact match. Exploratory candidates carry the value
+        # "Investigate — verify before proceeding" (see
+        # candidate_shortlisting._derive_go_call), which starts with
+        # "Investigate" but is not equal to the bare string "Investigate" —
+        # an exact-match .isin(["Go", "Investigate"]) silently dropped
+        # every exploratory candidate from both sections entirely.
         recommended = best_rows
+        weak = best_rows.iloc[0:0]
         if call_col:
-            recommended = best_rows[best_rows[call_col].isin(["Go", "Investigate"])]
+            call_series = best_rows[call_col].fillna("").astype(str).str.strip()
+            recommended = best_rows[
+                call_series.str.startswith("Go") | call_series.str.startswith("Investigate")
+            ]
+            weak = best_rows[
+                call_series.str.startswith("Hold") | call_series.str.startswith("No-Go")
+            ]
             if recommended.empty:
-                recommended = best_rows.head(5)
+                # Never fall back into rows already classified as weak —
+                # an all-Hold/No-Go result set must not be relabeled
+                # "recommended" just because nothing matched Go/Investigate.
+                recommended = best_rows.drop(weak.index).head(5)
 
         display_cols = [
             col for col in [
@@ -321,6 +337,10 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Rationale",
             ] if col in recommended.columns
         ]
+        weak_display_cols = [
+            col for col in display_cols + ["Why_Selected_or_Rejected"]
+            if col in weak.columns
+        ]
 
         st.markdown("### ✅ Recommended / worth validating")
         st.caption(
@@ -331,11 +351,13 @@ def _recommendation_block(result_df, report_ready_df=None):
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
 
-        if call_col:
-            weak = best_rows[best_rows[call_col].isin(["Hold", "No-Go"])]
-            if not weak.empty:
-                st.markdown("### 🔴 Weak / not recommended")
-                st.dataframe(weak[display_cols].head(10), width="stretch")
+        if not weak.empty:
+            st.markdown("### 🔴 Weak / not recommended")
+            st.caption(
+                "Retained here (not deleted) so the rejection reason stays visible — "
+                "see `Why_Selected_or_Rejected` / `Decision_Class_AH`."
+            )
+            st.dataframe(weak[weak_display_cols].head(10), width="stretch")
         return
 
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:

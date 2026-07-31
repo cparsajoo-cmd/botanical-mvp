@@ -1206,7 +1206,8 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
     happen to be read downstream.
 
     WHAT IS KEPT VS. OVERWRITTEN
-    For each included (non-Excluded) plant, the richest available raw row
+    For EVERY plant in plant_summary — including Excluded ones, per the
+    post-Phase-3-review correction below — the richest available raw row
     (by its OWN pre-Phase-3 score, purely as a tie-breaker for which row
     has the most complete narrative fields — never re-scored) supplies
     every narrative field the raw engine computes that plant_summary does
@@ -1215,8 +1216,18 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
     Competitive_Positioning, etc.). Only the score/classification fields
     are overwritten: R&D_Opportunity_Score, Overall_Score, Score_Breakdown,
     Evidence_Confidence, Decision_Class_AH, Go_Investigate_Hold_NoGo,
-    Scientific_Triage_Status. Excluded plants are dropped entirely — an
-    excluded plant must never appear in a final recommendation or report.
+    Scientific_Triage_Status, Why_Selected_or_Rejected.
+
+    EXCLUDED PLANTS ARE KEPT, NOT DROPPED (post-Phase-3-review correction)
+    An earlier version of this function dropped every Excluded plant
+    entirely — but a plant that was screened out and rejected is exactly
+    what a reviewer needs to see the reason for, in the same report as
+    everything else. Excluded plants stay in this frame, carrying their
+    Scientific_Triage_Status="Excluded", a Hold/No-Go call, and their
+    Why_Selected_or_Rejected explanation intact. It is the CALLER's job
+    (step_rd_candidates.py's recommendation block) to bucket them into a
+    "weak / not recommended" section — not this function's job to erase
+    them from existence.
     """
     empty = pd.DataFrame()
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
@@ -1228,8 +1239,8 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
     if plant_col not in raw_df.columns or plant_col not in plant_summary.columns:
         return empty
 
-    included = plant_summary[plant_summary["Scientific_Triage_Status"] != "Excluded"]
-    if included.empty:
+    all_plants = plant_summary
+    if all_plants.empty:
         return empty
 
     raw_indexed = raw_df.copy()
@@ -1247,11 +1258,11 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
     authoritative_fields = (
         "Overall_Score", "Score_Breakdown", "Score_Breakdown_Display",
         "Evidence_Confidence", "Decision_Class_AH", "Go_Investigate_Hold_NoGo",
-        "Scientific_Triage_Status",
+        "Scientific_Triage_Status", "Why_Selected_or_Rejected",
     )
 
     merged_rows = []
-    for _, plant_row in included.iterrows():
+    for _, plant_row in all_plants.iterrows():
         plant = plant_row[plant_col]
         if plant in best_raw_rows.index:
             base = best_raw_rows.loc[plant]

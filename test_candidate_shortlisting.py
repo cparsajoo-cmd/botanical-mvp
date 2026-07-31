@@ -426,17 +426,34 @@ def _authoritative_row(plant, status, score, breakdown=None, **extra):
     return row
 
 
-def test_merge_drops_excluded_plants():
+def test_merge_keeps_excluded_plants_with_their_rejection_reason():
+    # Post-Phase-3-review correction: Excluded plants must NOT be dropped —
+    # the platform needs to be able to explain why a plant was rejected,
+    # which requires it still being present in the report-ready frame.
     raw_df = pd.DataFrame([
         {"Alternative_Plant": "Plant A", "Rationale": "narrative A", "R&D_Opportunity_Score": 40},
         {"Alternative_Plant": "Plant B", "Rationale": "narrative B", "R&D_Opportunity_Score": 90},
     ])
     plant_summary = pd.DataFrame([
-        _authoritative_row("Plant A", "Excluded", 20.0),
+        _authoritative_row("Plant A", "Excluded", 20.0, Why_Selected_or_Rejected="Rejected: no safety data"),
         _authoritative_row("Plant B", "Shortlist", 85.0),
     ])
     merged = merge_authoritative_scores(raw_df, plant_summary)
-    assert list(merged["Alternative_Plant"]) == ["Plant B"]
+    assert set(merged["Alternative_Plant"]) == {"Plant A", "Plant B"}
+    excluded_row = merged[merged["Alternative_Plant"] == "Plant A"].iloc[0]
+    assert excluded_row["Scientific_Triage_Status"] == "Excluded"
+    assert excluded_row["Why_Selected_or_Rejected"] == "Rejected: no safety data"
+
+
+def test_merge_all_excluded_still_returns_the_rows_not_empty():
+    raw_df = pd.DataFrame([{"Alternative_Plant": "Plant A", "R&D_Opportunity_Score": 10}])
+    plant_summary = pd.DataFrame([
+        _authoritative_row("Plant A", "Excluded", 5.0, Why_Selected_or_Rejected="Rejected: safety concern"),
+    ])
+    merged = merge_authoritative_scores(raw_df, plant_summary)
+    assert len(merged) == 1
+    assert merged.iloc[0]["Scientific_Triage_Status"] == "Excluded"
+    assert merged.iloc[0]["Why_Selected_or_Rejected"] == "Rejected: safety concern"
 
 
 def test_merge_preserves_raw_narrative_fields_not_covered_by_the_authoritative_score():
@@ -500,7 +517,12 @@ def test_merge_empty_inputs_return_empty_dataframe_not_a_crash():
 
 
 def test_merge_all_excluded_returns_empty_dataframe():
+    # Superseded by test_merge_all_excluded_still_returns_the_rows_not_empty
+    # above (post-Phase-3-review correction) — kept here only as an explicit
+    # marker that the old "drop everything" behavior was intentionally
+    # reversed, not silently changed.
     raw_df = pd.DataFrame([{"Alternative_Plant": "Plant A", "R&D_Opportunity_Score": 10}])
     plant_summary = pd.DataFrame([_authoritative_row("Plant A", "Excluded", 5.0)])
     merged = merge_authoritative_scores(raw_df, plant_summary)
-    assert merged.empty
+    assert not merged.empty
+    assert merged.iloc[0]["Scientific_Triage_Status"] == "Excluded"

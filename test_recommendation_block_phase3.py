@@ -76,3 +76,61 @@ def test_no_data_at_all_shows_a_warning_not_a_crash():
     with mock.patch.object(src, "st") as mock_st:
         src._recommendation_block(None, None)
     assert mock_st.warning.called
+
+
+# --- Post-Phase-3-review correction (Issue 1) -----------------------------
+# "Investigate — verify before proceeding" (the exact Exploratory call —
+# see candidate_shortlisting._derive_go_call) starts with "Investigate" but
+# is not equal to the bare string "Investigate". An exact .isin() match
+# silently dropped every exploratory candidate from BOTH the recommended
+# and the weak section. These tests prove every Investigate-prefixed call
+# is classified as recommended/worth-validating and never disappears.
+
+def test_investigate_verify_before_proceeding_appears_in_recommended_section():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Exploratory plant", "Investigate — verify before proceeding", 55.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    recommended_frame = dataframe_calls[0]
+    assert "Exploratory plant" in list(recommended_frame["Alternative_Plant"])
+
+
+def test_investigate_verify_before_proceeding_never_appears_in_weak_section():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Exploratory plant", "Investigate — verify before proceeding", 55.0),
+        _report_ready_row("Rejected plant", "No-Go", 10.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    assert len(dataframe_calls) == 2
+    _recommended_frame, weak_frame = dataframe_calls
+    assert "Exploratory plant" not in list(weak_frame["Alternative_Plant"])
+    assert "Rejected plant" in list(weak_frame["Alternative_Plant"])
+
+
+def test_all_go_investigate_variants_are_present_somewhere_none_vanish():
+    # Every plant fed in must appear in exactly one of the two sections —
+    # never silently disappear because its exact call string wasn't in a
+    # hardcoded exact-match list.
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Go plant", "Go", 95.0),
+        _report_ready_row("Plain investigate plant", "Investigate", 70.0),
+        _report_ready_row("Verify plant", "Investigate — verify before proceeding", 55.0),
+        _report_ready_row("Hold plant", "Hold", 30.0),
+        _report_ready_row("No-go plant", "No-Go", 5.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    all_shown_plants = set()
+    for frame in dataframe_calls:
+        all_shown_plants.update(frame["Alternative_Plant"])
+    assert all_shown_plants == {
+        "Go plant", "Plain investigate plant", "Verify plant", "Hold plant", "No-go plant",
+    }

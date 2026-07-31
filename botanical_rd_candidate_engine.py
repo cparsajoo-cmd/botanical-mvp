@@ -4958,13 +4958,36 @@ class BotanicalRDCandidateEngine:
     def _curated_evidence_for(self, plant):
         return _SLEEP_TEA_EVIDENCE_NORM_MAP.get(self._norm(plant))
 
+    @staticmethod
+    def _honest_external_status(value):
+        """Normalize legacy placeholders without upgrading evidence.
+
+        WHO and ESCOP must only be shown as verified when they come from a
+        separately curated, source-specific record. EMA inventory text is not
+        an acceptable proxy for either authority.
+        """
+        text = str(value or "").strip()
+        if not text:
+            return "Not independently verified"
+        low = text.lower()
+        if (
+            "see source pdf" in low
+            or "not yet verified" in low
+            or "column not reliably" in low
+        ):
+            return "Not independently verified"
+        return text
+
     def _eu_regulatory_status(self, plant):
         curated = self._curated_evidence_for(plant)
         if curated:
             return {
                 "EMA_HMPC_Status": curated.get("ema_status", "Not evaluated"),
-                "WHO_Status": curated.get("who_status", "Not listed"),
-                "ESCOP_Status": curated.get("escop_status", "Not listed"),
+                "WHO_Status": self._honest_external_status(curated.get("who_status")),
+                "ESCOP_Status": self._honest_external_status(curated.get("escop_status")),
+                "EMA_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE",
+                "WHO_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE — manually verified",
+                "ESCOP_Source": "Curated seed_data.SLEEP_TEA_EVIDENCE — manually verified",
                 "Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
             }
 
@@ -4975,8 +4998,11 @@ class BotanicalRDCandidateEngine:
                 r = records[0]
                 return {
                     "EMA_HMPC_Status": r.get("EMA_Status", "Not yet verified"),
-                    "WHO_Status": r.get("WHO_Status", "Not yet verified"),
-                    "ESCOP_Status": r.get("ESCOP_Status", "Not yet verified"),
+                    "WHO_Status": "Not independently verified",
+                    "ESCOP_Status": "Not independently verified",
+                    "EMA_Source": r.get("Source_URL", ""),
+                    "WHO_Source": "No independent WHO source connected for this plant",
+                    "ESCOP_Source": "No independent ESCOP source connected for this plant",
                     "Source": r.get("Notes", "") + f" ({r.get('Source_URL', '')})",
                 }
         except Exception:
@@ -4984,11 +5010,12 @@ class BotanicalRDCandidateEngine:
 
         return {
             "EMA_HMPC_Status": "Not yet verified",
-            "WHO_Status": "Not yet verified",
-            "ESCOP_Status": "Not yet verified",
-            "Source": "No EMA HMPC bulk API exists (browse-only site) — "
-                      "needs manual lookup at ema.europa.eu and adding to "
-                      "seed_data.py, same pattern as the sleep-tea plants",
+            "WHO_Status": "Not independently verified",
+            "ESCOP_Status": "Not independently verified",
+            "EMA_Source": "EMA lookup unavailable",
+            "WHO_Source": "No independent WHO source connected for this plant",
+            "ESCOP_Source": "No independent ESCOP source connected for this plant",
+            "Source": "EMA lookup unavailable; WHO and ESCOP require separate source-specific verification.",
         }
 
     def _search_patents(self, query, max_results=5):
@@ -5084,6 +5111,9 @@ class BotanicalRDCandidateEngine:
                 "WHO_Status": reg["WHO_Status"],
                 "ESCOP_Status": reg["ESCOP_Status"],
                 "Regulatory_Source": reg["Source"],
+                "EMA_Source": reg.get("EMA_Source", reg.get("Source", "")),
+                "WHO_Source": reg.get("WHO_Source", "No independent WHO source connected"),
+                "ESCOP_Source": reg.get("ESCOP_Source", "No independent ESCOP source connected"),
                 "US_Status": us_uk.get(
                     "us_status", "Not yet catalogued for this plant"
                 ),
@@ -5148,6 +5178,9 @@ class BotanicalRDCandidateEngine:
             "WHO_Status": "Market_Landscape_WHO_Status",
             "ESCOP_Status": "Market_Landscape_ESCOP_Status",
             "Regulatory_Source": "Market_Landscape_Regulatory_Source",
+            "EMA_Source": "Market_Landscape_EMA_Source",
+            "WHO_Source": "Market_Landscape_WHO_Source",
+            "ESCOP_Source": "Market_Landscape_ESCOP_Source",
             "US_Status": "Market_Landscape_US_Status",
             "UK_Status": "Market_Landscape_UK_Status",
             "Patent_Search_Status": "Market_Landscape_Patent_Search_Status",

@@ -30,8 +30,9 @@ WHAT THIS DOES AND DOES NOT GIVE YOU:
   thing that CAN be extracted reliably from linear text: whether the
   substance is present in EMA's official inventory at all (a genuine,
   verifiable "this has been formally proposed to HMPC for EU monograph
-  assessment" signal), plus a direct link to the source PDF so a human
-  can read off the exact ESCOP/WHO/etc. columns themselves. This is a
+  assessment" signal). WHO and ESCOP are separate authorities and are
+  never inferred from this EMA document; they remain "Not independently
+  verified" unless a separately curated, source-specific record exists. This is a
   real, honest upgrade over "Not yet verified for everything" — without
   claiming a precision the text extraction can't actually deliver.
 - Matching a scientific name (e.g. "Valeriana officinalis") to the
@@ -179,8 +180,8 @@ def search_regulatory_sources_real(
             "Notes": f"Could not check EMA's inventory this time: {error}",
             "Evidence_Level": "Not available",
             "EMA_Status": "Not yet verified",
-            "WHO_Status": "Not yet verified",
-            "ESCOP_Status": "Not yet verified",
+            "WHO_Status": "Not independently verified",
+            "ESCOP_Status": "Not independently verified",
             "Regulatory_Status": "Live lookup failed — see Notes.",
         }]
 
@@ -238,8 +239,8 @@ def search_regulatory_sources_real(
             ),
             "Evidence_Level": "Checked, not found",
             "EMA_Status": "Not in HMPC inventory (as of 2021 snapshot)",
-            "WHO_Status": "Not yet verified",
-            "ESCOP_Status": "Not yet verified",
+            "WHO_Status": "Not independently verified",
+            "ESCOP_Status": "Not independently verified",
             "Regulatory_Status": "Not found in EMA HMPC's assessment inventory.",
         }]
 
@@ -260,15 +261,15 @@ def search_regulatory_sources_real(
             f"Found in EMA's official HMPC inventory as: {matched_names}. "
             "This confirms the substance has been formally proposed/"
             "prioritized for EU herbal monograph assessment. The exact "
-            "ESCOP / German Commission E / French / WHO monograph "
-            "columns for this row require reading the source PDF table "
-            "directly (column alignment isn't reliably recoverable from "
-            "plain text extraction) — see Source_URL."
+            "WHO and ESCOP status are not inferred from this EMA PDF. "
+            "Those authorities require independent verification from their "
+            "own sources; this record therefore reports only the EMA HMPC "
+            "inventory signal."
         ),
         "Evidence_Level": "Listed in official EMA HMPC inventory",
         "EMA_Status": f"Listed in HMPC inventory as '{matched_names}' — see source PDF for monograph status",
-        "WHO_Status": "See source PDF (column not reliably text-extractable)",
-        "ESCOP_Status": "See source PDF (column not reliably text-extractable)",
+        "WHO_Status": "Not independently verified",
+        "ESCOP_Status": "Not independently verified",
         "Regulatory_Status": (
             f"Present in EMA HMPC's herbal substance inventory "
             f"('{matched_names}') — proposed/prioritized for assessment."

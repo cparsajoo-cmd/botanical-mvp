@@ -151,7 +151,7 @@ def search_regulatory_sources(
             "Notes": f"Real EMA lookup failed: {exc}",
             "Evidence_Level": "Not available",
             "EMA_Status": "Not yet verified",
-            "WHO_Status": "Not yet verified",
-            "ESCOP_Status": "Not yet verified",
+            "WHO_Status": "Not independently verified",
+            "ESCOP_Status": "Not independently verified",
             "Regulatory_Status": "Lookup failed — see Notes.",
         }]

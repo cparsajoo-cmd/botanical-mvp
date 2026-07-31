@@ -45,19 +45,30 @@ in a shared text column.
 REAL-WORLD PARSING NOTES (confirmed against actual fetched documents,
 not assumed):
 - The "Well-established use" column is frequently ENTIRELY EMPTY (e.g.
-  Melissa officinalis has no well-established-use content in any
-  clinical section — it's a pure traditional-use monograph). This is a
-  common case, not an edge case. This connector reliably detects that
-  case (weu_status="confirmed_absent") since it corresponds to a real,
-  cleanly-recognizable text pattern in the extracted PDF.
-- DECISION, confirmed after live end-to-end testing against the real
-  deployed Melissa officinalis fetch: when the WEU column has real
-  content alongside TU content, this connector does NOT attempt to
-  split the two apart. An earlier version tried, but PDF text
-  extraction collapses the two-column table with no reliable
-  delimiter, and every populated section tested came back unsplittable
-  — the split machinery was firing 100% of the time it mattered and
-  telling the caller nothing beyond "read the raw text yourself,"
+  Melissa officinalis has no well-established-use content in ANY of
+  its clinical sections — it's a pure traditional-use monograph).
+  IMPORTANT, confirmed by live testing: this connector can only detect
+  a section as "confirmed empty" when BOTH columns are empty. For a
+  traditional-use-only plant like Melissa, every section still has
+  Traditional-use content, so `{field}_section_status` will report
+  "has_content_see_raw_text" for essentially every section — it is
+  NOT a per-column signal, only a whole-section one. Do not read
+  "has_content_see_raw_text" as "WEU has content"; it may equally mean
+  only TU has content, which is the common case. This was the exact
+  mistake an earlier version of this connector's own diagnostic check
+  made, caught only by live-testing against the real deployed fetch.
+- DECISION, confirmed after that same live testing: when a section has
+  any content, this connector does NOT attempt to split WEU text from
+  TU text. An earlier version tried; PDF text extraction collapses the
+  two-column table with no reliable delimiter, and every populated
+  section tested came back unsplittable — the split machinery fired
+  100% of the time it mattered and told the caller nothing beyond
+  "read the raw text yourself," which is exactly what the raw text
+  field is for. Per-section `{field}_raw_text` is therefore the
+  SOURCE OF TRUTH for content; a human reads WEU vs. TU off that text
+  directly, the same way ema_regulatory_connector.py already asks a
+  human to read the inventory PDF's columns directly rather than trust
+  a guess.
   which is exactly what the raw text field is for. Per-section
   `{field}_raw_text` is therefore the SOURCE OF TRUTH for content; a
   human reads WEU vs. TU off that text directly, the same way
@@ -156,41 +167,44 @@ def _split_clinical_sections(full_text):
     return sections
 
 
-def _detect_weu_status(section_text):
-    """Detect whether a section's Well-established-use column is
-    CONFIRMED EMPTY — the one WEU/TU fact this parser can reliably
-    establish from linear PDF text. It does NOT attempt to split WEU
-    text from TU text when both are genuinely present: after this was
-    tried and tested (see project history), sections with real content
-    in both columns could not be split reliably from PDF-extracted
-    linear text, and guessing risked mislabeling a Traditional-use
-    statement as Well-established-use or vice versa — the same
-    "wrong is worse than absent" principle ema_regulatory_connector.py
-    already applies to the inventory PDF's columns.
+def _detect_section_emptiness(section_text):
+    """Detect whether a clinical section is CONFIRMED ENTIRELY EMPTY
+    (no content in either the Well-established-use or Traditional-use
+    column) — the one binary fact reliably extractable from linear PDF
+    text for a two-column table.
 
-    DECISION (confirmed with Hamid after live-testing against the real
-    Melissa officinalis monograph): rather than return a
-    NOT_RELIABLY_EXTRACTED placeholder for every populated section,
-    this connector no longer attempts a WEU/TU split at all for
-    populated sections. The full section text is always available
-    under f"{field_name}_raw_text" — that field is the source of
-    truth; a human (or a future, more capable parser) reads WEU vs. TU
-    off the raw text directly. This function only ever returns one of:
-      - "confirmed_absent"   — WEU column is empty (real, useful fact)
-      - "present_see_raw_text" — WEU has content; read raw_text
+    NAMING CORRECTION (confirmed with Hamid after live-testing against
+    the real Melissa officinalis monograph): an earlier version of this
+    function was named _detect_weu_status and implied it could tell you
+    whether the WEU column specifically was empty. It could not. Live
+    testing showed why: Melissa's monograph has an empty WEU column in
+    every single clinical section, yet this function returned
+    "present_see_raw_text" for nearly all of them — because TU content
+    was present, and this function has no way to know WHICH column
+    contributed that content once the two-column table has collapsed
+    into linear text. It can only tell you "this section has zero
+    content in it" vs. "this section has content in it (from WEU, TU,
+    or both — read raw_text to find out which)". Renamed and
+    redocumented to say exactly that and nothing more.
+
+    Returns one of:
+      - "section_entirely_empty"    — confirmed no WEU or TU content at all
+      - "has_content_see_raw_text"  — some content present; which
+                                       column(s) it belongs to is NOT
+                                       determined by this function
     """
     stripped = section_text.strip()
     if not stripped:
-        return "confirmed_absent"
+        return "section_entirely_empty"
 
     header_only_re = re.compile(
         r"^(well[\s-]*established\s+use)\s*(traditional\s+use)\s*$",
         re.IGNORECASE,
     )
     if header_only_re.match(stripped):
-        return "confirmed_absent"
+        return "section_entirely_empty"
 
-    return "present_see_raw_text"
+    return "has_content_see_raw_text"
 
 
 def fetch_monograph_record(scientific_name, plant_part):
@@ -253,7 +267,7 @@ def fetch_monograph_record(scientific_name, plant_part):
         section_text = sections_raw.get(section_number, "")
         if not section_text:
             base_record[f"{field_name}_raw_text"] = None
-            base_record[f"{field_name}_weu_status"] = None
+            base_record[f"{field_name}_section_status"] = None
             base_record[f"{field_name}_extraction_note"] = (
                 "Section not found in extracted text."
             )
@@ -261,12 +275,14 @@ def fetch_monograph_record(scientific_name, plant_part):
 
         # raw_text is the SOURCE OF TRUTH — read it directly for the
         # real content (WEU and TU together, exactly as the monograph
-        # states it). weu_status only tells you whether the
-        # well-established-use column is confirmed empty; it does not
-        # attempt to extract WEU text separately from TU text. See
-        # _detect_weu_status()'s docstring for why.
+        # states it). section_status only tells you whether the WHOLE
+        # section is confirmed empty (no WEU, no TU); it does NOT tell
+        # you whether WEU specifically is empty when the section has
+        # any content at all — see _detect_section_emptiness()'s
+        # docstring for why that distinction matters and why it
+        # doesn't (and can't reliably) go further than this.
         base_record[f"{field_name}_raw_text"] = section_text
-        base_record[f"{field_name}_weu_status"] = _detect_weu_status(section_text)
+        base_record[f"{field_name}_section_status"] = _detect_section_emptiness(section_text)
 
     return base_record
 

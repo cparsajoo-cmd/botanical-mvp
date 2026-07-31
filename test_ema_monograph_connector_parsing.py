@@ -16,7 +16,7 @@ output checked by a human — this test is not a substitute for that.
 
 from ema_monograph_connector import (
     _split_clinical_sections,
-    _detect_weu_status,
+    _detect_section_emptiness,
 )
 
 # Verbatim text of the real Melissa officinalis monograph's clinical
@@ -102,40 +102,43 @@ def test_section_5_boundary_excludes_pharmacological_properties():
     print("PASS: section 4.9 does not bleed into section 5 content")
 
 
-def test_populated_section_reports_present_see_raw_text():
+def test_populated_section_reports_has_content_not_empty():
     # Section 4.3 (Contraindications) in the real Melissa monograph has
-    # NO well-established-use content — extraction leaves only the
-    # "Well-established use Traditional use" header line followed by
-    # the single (traditional-use-only) sentence. Confirm this doesn't
-    # get misclassified as "confirmed_absent" just because it's short.
+    # NO well-established-use content, but DOES have traditional-use
+    # content ("Hypersensitivity to the active substance."). Confirm
+    # this correctly reports "has content" at the whole-section level
+    # — and confirm the test itself does NOT claim this proves WEU is
+    # empty, since the function can't tell WEU-empty from TU-only.
     sections = _split_clinical_sections(MELISSA_MONOGRAPH_FIXTURE)
     contraindications_text = sections["4.3"]
     print(f"4.3 raw text: {contraindications_text!r}")
-    status = _detect_weu_status(contraindications_text)
-    assert status == "present_see_raw_text", (
-        f"Expected 'present_see_raw_text' for a section with real "
+    status = _detect_section_emptiness(contraindications_text)
+    assert status == "has_content_see_raw_text", (
+        f"Expected 'has_content_see_raw_text' for a section with real "
         f"content after the header, got: {status!r}"
     )
     print(
-        "PASS: a section with real content after the WEU/TU header "
-        "correctly reports 'present_see_raw_text' — no split is "
-        "attempted, matching the confirmed design decision"
+        "PASS: a section with content (here, TU-only — WEU is actually "
+        "empty in this real document) correctly reports "
+        "'has_content_see_raw_text', not 'section_entirely_empty'. "
+        "This does NOT mean WEU has content — read raw_text to find "
+        "out which column contributed it."
     )
 
 
-def test_empty_section_after_header_reports_confirmed_absent():
+def test_truly_empty_section_reports_section_entirely_empty():
     header_only = "Well-established use Traditional use"
-    status = _detect_weu_status(header_only)
-    assert status == "confirmed_absent", (
-        f"Expected 'confirmed_absent' for a header with no content "
-        f"after it, got: {status!r}"
+    status = _detect_section_emptiness(header_only)
+    assert status == "section_entirely_empty", (
+        f"Expected 'section_entirely_empty' for a header with no "
+        f"content in either column, got: {status!r}"
     )
-    print("PASS: a truly empty WEU column (header only, no content) is correctly reported as 'confirmed_absent'")
+    print("PASS: a section with truly no content in either column (header only) is correctly reported as 'section_entirely_empty'")
 
 
 if __name__ == "__main__":
     test_all_nine_clinical_sections_found()
     test_section_5_boundary_excludes_pharmacological_properties()
-    test_populated_section_reports_present_see_raw_text()
-    test_empty_section_after_header_reports_confirmed_absent()
+    test_populated_section_reports_has_content_not_empty()
+    test_truly_empty_section_reports_section_entirely_empty()
     print("\nAll parsing tests passed against the real Melissa officinalis fixture.")

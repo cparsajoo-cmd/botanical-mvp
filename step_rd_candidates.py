@@ -734,6 +734,9 @@ def render_rd_candidates_step(inputs):
                 )
 
             st.session_state["rd_candidates_df"] = result_df
+            # Any previously prepared CSV bytes belong to the former run.
+            st.session_state.pop("rd_raw_candidate_csv_bytes", None)
+            st.session_state.pop("rd_triage_audit_csv_bytes", None)
 
             if isinstance(result_df, pd.DataFrame) and not result_df.empty:
                 plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
@@ -758,6 +761,11 @@ def render_rd_candidates_step(inputs):
                     f"aggregated into {shortlisted + exploratory + excluded} plant candidates "
                     f"({shortlisted} shortlisted, {exploratory} exploratory, {excluded} excluded)."
                 )
+                # End the expensive button run here and render the result in a fresh,
+                # lightweight rerun. This prevents Streamlit from appearing stuck
+                # after the success message while it continues formatting thousands
+                # of raw rows below the fold.
+                st.rerun()
             else:
                 st.session_state.pop("rd_candidate_plant_summary_df", None)
                 st.session_state.pop("rd_candidate_triage_audit_df", None)
@@ -768,12 +776,11 @@ def render_rd_candidates_step(inputs):
 
     result_df = st.session_state.get("rd_candidates_df")
 
-    if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        # Cheap (no network calls, pure string formatting over columns
-        # already on the row) — applied automatically, unlike market
-        # landscape enrichment which stays opt-in due to its real
-        # network cost.
-        result_df = add_development_concept_column(result_df, inputs.get("standardized_project"))
+    # Do not enrich all raw rows automatically. At several thousand rows,
+    # row-wise development-concept formatting is not cheap on Streamlit Cloud
+    # and was the main reason the page kept showing "Stop" after discovery had
+    # already completed. It is prepared lazily only when the user requests the
+    # full raw audit export below.
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
         if "Reference_Plant" in result_df.columns:
@@ -867,24 +874,50 @@ def render_rd_candidates_step(inputs):
 
         st.markdown("#### Audit downloads")
         st.caption(
-            "These files preserve the full raw network and gate-level traceability without rendering thousands of rows in the browser."
-        )
-        st.download_button(
-            "Download raw plant–compound network (CSV)",
-            data=result_df.to_csv(index=False).encode("utf-8-sig"),
-            file_name="step5_raw_candidate_association_network.csv",
-            mime="text/csv",
-            key="rd_download_raw_candidate_network_csv",
+            "Large audit files are prepared only on request, so normal Step 5 viewing stays responsive on mobile."
         )
 
-        if isinstance(triage_audit_df, pd.DataFrame) and not triage_audit_df.empty:
+        raw_csv_bytes = st.session_state.get("rd_raw_candidate_csv_bytes")
+        audit_csv_bytes = st.session_state.get("rd_triage_audit_csv_bytes")
+
+        if raw_csv_bytes is None or (
+            isinstance(triage_audit_df, pd.DataFrame)
+            and not triage_audit_df.empty
+            and audit_csv_bytes is None
+        ):
+            if st.button(
+                "Prepare full audit CSV files",
+                key="rd_prepare_audit_csv_btn",
+                help="Formats the large raw network only when you actually need to download it.",
+            ):
+                with st.spinner("Preparing large audit files..."):
+                    export_df = add_development_concept_column(
+                        result_df, inputs.get("standardized_project")
+                    )
+                    st.session_state["rd_raw_candidate_csv_bytes"] = (
+                        export_df.to_csv(index=False).encode("utf-8-sig")
+                    )
+                    if isinstance(triage_audit_df, pd.DataFrame) and not triage_audit_df.empty:
+                        st.session_state["rd_triage_audit_csv_bytes"] = (
+                            triage_audit_df.to_csv(index=False).encode("utf-8-sig")
+                        )
+                st.rerun()
+        else:
             st.download_button(
-                "Download full scientific gate audit (CSV)",
-                data=triage_audit_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name="step5_scientific_gate_audit.csv",
+                "Download raw plant–compound network (CSV)",
+                data=raw_csv_bytes,
+                file_name="step5_raw_candidate_association_network.csv",
                 mime="text/csv",
-                key="rd_download_triage_audit_csv",
+                key="rd_download_raw_candidate_network_csv",
             )
+            if audit_csv_bytes is not None:
+                st.download_button(
+                    "Download full scientific gate audit (CSV)",
+                    data=audit_csv_bytes,
+                    file_name="step5_scientific_gate_audit.csv",
+                    mime="text/csv",
+                    key="rd_download_triage_audit_csv",
+                )
 
         with st.expander("🌍 Enrich with market/patent landscape (optional, per-candidate)"):
             st.caption(

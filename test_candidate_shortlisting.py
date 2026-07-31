@@ -125,3 +125,104 @@ def test_near_duplicate_congener_is_demoted_without_independent_evidence():
     # stronger species remains the sole shortlisted representative of the genus.
     assert statuses["Scutellaria baicalensis"] == "Shortlist"
     assert statuses["Scutellaria sp."] == "Excluded"
+
+
+def test_templated_rationale_does_not_create_indication_relevance():
+    df = pd.DataFrame([_row(
+        Target_or_Mechanism="general antioxidant activity",
+        Scientific_Rationale="Shares an exact compound with the reference plant.",
+        Rationale=(
+            "For Infusion targeting Metabolic & blood sugar support, Candidate plant "
+            "is compared with Reference plant because it shares a compound."
+        ),
+    )])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    row = summary.iloc[0]
+    assert row["Indication_Relevance"] == "No relevance"
+    assert row["Scientific_Triage_Status"] == "Excluded"
+
+
+def test_generic_antiinflammatory_mechanism_is_not_blood_sugar_relevance():
+    df = pd.DataFrame([_row(
+        Target_or_Mechanism="NF-kB inhibition; antioxidant; anti-inflammatory",
+        Scientific_Rationale="reduces oxidative stress in a general cell assay",
+    )])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    assert summary.iloc[0]["Indication_Relevance"] == "No relevance"
+
+
+def test_two_relevant_congeners_keep_only_stronger_shortlist_representative():
+    strong = _row(
+        Alternative_Plant="Scutellaria baicalensis",
+        Target_or_Mechanism="alpha-glucosidase inhibition and AMPK activation",
+        Scientific_Rationale="improved blood glucose and insulin sensitivity in a human clinical study",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Human clinical evidence",
+        Source_Record_IDs="PMID:1; PMID:2; PMID:3",
+    )
+    weaker = _row(
+        Alternative_Plant="Scutellaria discolor",
+        Target_or_Mechanism="alpha-glucosidase inhibition",
+        Scientific_Rationale="blood glucose reduction in an in vitro screening assay",
+        Evidence_Level="Preclinical / mechanistic evidence",
+        Evidence_Hierarchy_Detail="In vitro evidence",
+        Source_Record_IDs="PMID:4",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([strong, weaker]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    statuses = dict(zip(summary["Alternative_Plant"], summary["Scientific_Triage_Status"]))
+    assert statuses["Scutellaria baicalensis"] == "Shortlist"
+    assert statuses["Scutellaria discolor"] == "Exploratory"
+    weaker_text = summary.loc[
+        summary["Alternative_Plant"] == "Scutellaria discolor", "Why_Selected_or_Rejected"
+    ].iloc[0]
+    assert weaker_text.startswith("Kept for further investigation because")
+
+
+def test_exploratory_explanation_never_says_selected():
+    df = pd.DataFrame([_row(
+        Target_or_Mechanism="AMPK activation",
+        Scientific_Rationale="AMPK activation in a mechanistic assay",
+        Evidence_Level="Preclinical / mechanistic evidence",
+        Evidence_Hierarchy_Detail="In vitro evidence",
+    )])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    row = summary.iloc[0]
+    assert row["Scientific_Triage_Status"] == "Exploratory"
+    assert row["Why_Selected_or_Rejected"].startswith("Kept for further investigation because")
+    assert not row["Why_Selected_or_Rejected"].startswith("Selected because")
+
+
+def test_mixed_candidates_are_not_all_high_relevance():
+    rows = [
+        _row(
+            Alternative_Plant="Direct candidate",
+            Target_or_Mechanism="alpha-glucosidase inhibition",
+            Scientific_Rationale="improved blood glucose and insulin sensitivity in humans",
+        ),
+        _row(
+            Alternative_Plant="Mechanistic candidate",
+            Target_or_Mechanism="AMPK activation",
+            Scientific_Rationale="AMPK activation in vitro",
+            Evidence_Level="Preclinical / mechanistic evidence",
+            Evidence_Hierarchy_Detail="In vitro evidence",
+        ),
+        _row(
+            Alternative_Plant="Unrelated candidate",
+            Target_or_Mechanism="GABAergic sedation",
+            Scientific_Rationale="sleep latency reduction",
+        ),
+    ]
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame(rows), indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    assert set(summary["Indication_Relevance"]) != {"High relevance"}

@@ -48,3 +48,18 @@ ALTER TABLE evidence_records
 -- lookup, not required for correctness.
 CREATE INDEX IF NOT EXISTS idx_evidence_records_pmid ON evidence_records(pmid);
 CREATE INDEX IF NOT EXISTS idx_evidence_records_doi ON evidence_records(doi);
+
+-- Supporting index for save_evidence_record()'s duplicate-evidence lookup
+-- (database.py), which now correctly includes plant_id (post-Phase-2
+-- correction: two different plants sharing the same source/indication/
+-- dosage form must never be collapsed into one evidence row). Not UNIQUE
+-- — a future version may legitimately store multiple observations from
+-- one study for the same plant.
+CREATE INDEX IF NOT EXISTS idx_evidence_records_plant_source_indication_form
+ON evidence_records
+(
+    plant_id,
+    source_id,
+    target_indication,
+    dosage_form
+);

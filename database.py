@@ -180,10 +180,28 @@ def save_evidence_record(record):
         title=source_title,
     )
 
+    # Architectural correctness fix (post-Phase-2 review): plant_id must be
+    # resolved BEFORE the duplicate-evidence lookup, and included in it.
+    # Two different plants can legitimately share the same source article,
+    # indication, and dosage form (e.g. one review article covering both
+    # Morus alba and Trigonella foenum-graecum for type 2 diabetes, oral
+    # dosage form) — without plant_id in the lookup, the second plant's
+    # evidence record was incorrectly treated as a duplicate of the
+    # first's and silently dropped. This is unacceptable in an
+    # evidence-centric system: candidate entry now depends entirely on
+    # each plant HAVING its own evidence, so losing one plant's row to a
+    # false-duplicate match would silently remove it from consideration.
+    plant_id = _get_or_create_plant(
+        supabase=supabase,
+        scientific_name=record.get("Scientific_Name", ""),
+        common_name=record.get("Common_Name", ""),
+    )
+
     if existing_source_id:
         existing_evidence = (
             supabase.table("evidence_records")
             .select("id")
+            .eq("plant_id", plant_id)
             .eq("source_id", existing_source_id)
             .eq("target_indication", record.get("Target_Indication", ""))
             .eq("dosage_form", record.get("Dosage_Form", ""))
@@ -193,12 +211,6 @@ def save_evidence_record(record):
 
         if existing_evidence.data:
             return existing_evidence.data[0]["id"]
-
-    plant_id = _get_or_create_plant(
-        supabase=supabase,
-        scientific_name=record.get("Scientific_Name", ""),
-        common_name=record.get("Common_Name", ""),
-    )
 
     if existing_source_id:
         source_id = existing_source_id

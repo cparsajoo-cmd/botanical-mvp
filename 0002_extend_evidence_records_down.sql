@@ -8,6 +8,10 @@
 -- gracefully when these columns are absent. No other table or column is
 -- affected.
 
+DROP INDEX IF EXISTS idx_evidence_records_plant_source_indication_form;
+DROP INDEX IF EXISTS idx_evidence_records_doi;
+DROP INDEX IF EXISTS idx_evidence_records_pmid;
+
 ALTER TABLE evidence_records
     DROP COLUMN IF EXISTS pmid,
     DROP COLUMN IF EXISTS doi,

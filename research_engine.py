@@ -1,5 +1,7 @@
 import math
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from collections import defaultdict
 from datetime import datetime
 
@@ -795,8 +797,19 @@ def run_research_engine(
     all_saved_records = []
     all_errors = []
     all_sources_checked = []
-    for plant in candidate_plants:
-        result = collect_multi_source_evidence(
+
+    # Step 2 used to process plants strictly one after another.  Each plant can
+    # legitimately consume the collector's whole per-plant time budget, so an
+    # 8-plant quick run could block the Streamlit page for many minutes.  Run a
+    # small number of plants concurrently and enforce one global wall-clock
+    # ceiling.  Successful partial results are preserved; unfinished plants are
+    # reported explicitly instead of leaving the UI spinner running forever.
+    quick_step_budget_seconds = 105 if not pilot_mode else 180
+    plant_workers = 2 if len(candidate_plants) > 1 else 1
+    started_at = time.monotonic()
+
+    def _collect_one_plant(plant):
+        return plant, collect_multi_source_evidence(
             scientific_name=plant,
             indication=indication,
             dosage_form=dosage_form,
@@ -806,9 +819,55 @@ def run_research_engine(
             save=save,
             max_results_override=PILOT_MAX_RESULTS if pilot_mode else None,
         )
-        all_saved_records.extend(result.get("saved_records", []))
-        all_errors.extend(result.get("errors", []))
-        all_sources_checked.extend(result.get("sources_checked", []))
+
+    executor = ThreadPoolExecutor(max_workers=plant_workers)
+    future_map = {
+        executor.submit(_collect_one_plant, plant): plant
+        for plant in candidate_plants
+    }
+    completed_plants = []
+    try:
+        for future in as_completed(future_map, timeout=quick_step_budget_seconds):
+            plant = future_map[future]
+            try:
+                completed_plant, result = future.result(timeout=1)
+                completed_plants.append(completed_plant)
+                all_saved_records.extend(result.get("saved_records", []))
+                all_errors.extend(result.get("errors", []))
+                all_sources_checked.extend(result.get("sources_checked", []))
+            except Exception as exc:
+                all_errors.append({
+                    "source": "Step 2 plant collection",
+                    "plant": plant,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+    except FuturesTimeoutError:
+        pass
+    finally:
+        unfinished = [
+            plant for future, plant in future_map.items()
+            if not future.done()
+        ]
+        for plant in unfinished:
+            all_errors.append({
+                "source": "Step 2 global time budget",
+                "plant": plant,
+                "error": (
+                    f"Skipped after the {quick_step_budget_seconds}s Step 2 "
+                    "wall-clock budget was reached; completed plant results "
+                    "were retained."
+                ),
+            })
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    discovery_diagnostics.update({
+        "collection_time_budget_seconds": quick_step_budget_seconds,
+        "collection_elapsed_seconds": round(time.monotonic() - started_at, 2),
+        "collection_completed_plants": completed_plants,
+        "collection_completed_plant_count": len(completed_plants),
+        "collection_unfinished_plants": unfinished,
+        "collection_unfinished_plant_count": len(unfinished),
+    })
 
     return {
         "candidate_plants": candidate_plants,

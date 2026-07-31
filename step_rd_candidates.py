@@ -698,9 +698,27 @@ def render_rd_candidates_step(inputs):
 
     col1, col2 = st.columns(2)
 
+    discovery_mode_label = st.radio(
+        "Discovery objective",
+        options=[
+            "Find botanicals for an indication",
+            "Find alternative botanical sources of an active compound",
+        ],
+        index=0,
+        help=(
+            "Indication mode ranks plants from plant–indication evidence. "
+            "Compound-source mode retains the legacy chemical-substitution workflow."
+        ),
+        key="rd_discovery_mode",
+    )
+    discovery_mode = (
+        "indication" if discovery_mode_label.startswith("Find botanicals")
+        else "compound_substitution"
+    )
+
     with col1:
         reference_plant = st.text_input(
-            "Restrict to reference plant (optional)",
+            "Reference plant (compound-source mode only)",
             value="",
             help="Leave empty to analyze every known plant for this indication.",
             key="rd_reference_plant",
@@ -708,7 +726,7 @@ def render_rd_candidates_step(inputs):
 
     with col2:
         reference_compound = st.text_input(
-            "Restrict to reference compound (optional)",
+            "Reference compound (compound-source mode only)",
             value="",
             key="rd_reference_compound",
         )
@@ -731,6 +749,7 @@ def render_rd_candidates_step(inputs):
                     market=market,
                     reference_plant=reference_plant,
                     reference_compound=reference_compound,
+                    discovery_mode=discovery_mode,
                 )
 
             st.session_state["rd_candidates_df"] = result_df

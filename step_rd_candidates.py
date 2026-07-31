@@ -802,22 +802,27 @@ def render_rd_candidates_step(inputs):
     # full raw audit export below.
 
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        if "Reference_Plant" in result_df.columns:
+        is_indication_mode = (
+            "Scoring_Config_Version" in result_df.columns
+            and result_df["Scoring_Config_Version"].astype(str).str.startswith("2.").any()
+        ) or (
+            "Reference_Plant" in result_df.columns
+            and result_df["Reference_Plant"].astype(str).eq("Indication-centric discovery").all()
+        )
+        if is_indication_mode:
+            st.info(
+                "🔎 **Indication-centric discovery:** candidates enter through "
+                "plant-specific indication or mechanism evidence. Shared chemistry "
+                "is supporting metadata only and is not used as an entry gate."
+            )
+        elif "Reference_Plant" in result_df.columns:
             n_ref_plants = result_df["Reference_Plant"].nunique()
             if n_ref_plants <= 3:
-                ref_names = ", ".join(
-                    result_df["Reference_Plant"].dropna().unique()[:3]
-                )
+                ref_names = ", ".join(result_df["Reference_Plant"].dropna().unique()[:3])
                 st.warning(
-                    f"⚠️ **Every candidate below traces back to just "
-                    f"{n_ref_plants} reference plant(s)** ({ref_names}) — the "
-                    f"only ones tagged with an indication matching this query "
-                    "in the database. All rows are that plant's known "
-                    "compounds fanned out across the whole database by "
-                    "chemical similarity, not an independent scientific base "
-                    "for this indication. Worth broadening the indication "
-                    "tagging (Source Ingestion / Bulk Evidence Collection) "
-                    "before treating this as a comprehensive result."
+                    f"⚠️ **Every candidate below traces back to just {n_ref_plants} "
+                    f"reference plant(s)** ({ref_names}). Broaden the reference base "
+                    "before treating compound-source results as comprehensive."
                 )
         plant_summary_df = st.session_state.get("rd_candidate_plant_summary_df")
         triage_audit_df = st.session_state.get("rd_candidate_triage_audit_df")

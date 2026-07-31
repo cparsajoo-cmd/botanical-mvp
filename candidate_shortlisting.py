@@ -297,10 +297,10 @@ def _evidence_points(group: pd.DataFrame) -> float:
 #                                            mechanistically relevant evidence)
 #   Evidence Quality ............ 30 pts   (evidence hierarchy, independent
 #                                            traceable sources, evidence provenance)
-#   Compound Quality ............ 12 pts   (specificity-weighted overlap only)
-#   Mechanism/Target Support ..... 8 pts   (supporting role; cannot create a
+#   Compound Support ............. 5 pts   (specificity-weighted overlap only)
+#   Mechanism/Target Support .... 10 pts   (supporting role; cannot create a
 #                                            shortlist recommendation by itself)
-#   Safety & Regulatory .......... 10 pts   (hard stops and explicit barriers)
+#   Safety & Regulatory .......... 15 pts   (hard stops and explicit barriers)
 #   Novelty & Market .............. 5 pts   (secondary opportunity signal)
 #                                 -------
 #                                 100 pts
@@ -622,7 +622,7 @@ def _evidence_quality(
 
 
 def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
-    """Score compounds by transparent specificity tiers rather than raw count."""
+    """Supporting chemistry only; capped at 5% of the 100-point score."""
     best_by_name: dict[str, float] = {}
     linked_weight = 0.0
     for _, row in group.iterrows():
@@ -644,17 +644,17 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
     if weighted_sum <= 0:
         return 0.0, "Non-informative overlap only"
 
-    base = min(9.0, 2.4 * weighted_sum)
-    bonus = min(3.0, 0.5 * linked_weight)
-    total = round(min(12.0, base + bonus), 1)
-    tier = "High" if total >= 9 else "Moderate" if total >= 4 else "Low"
+    base = min(4.0, 1.0 * weighted_sum)
+    bonus = min(1.0, 0.2 * linked_weight)
+    total = round(min(5.0, base + bonus), 1)
+    tier = "High" if total >= 4 else "Moderate" if total >= 2 else "Low"
     return total, tier
 
 
 def _mechanism_support(group: pd.DataFrame) -> tuple[float, str]:
     supported = int(group["Supported_Target_or_Mechanism"].sum())
-    total = min(8.0, 1.5 * supported)
-    tier = "Strong" if total >= 6 else "Some" if total > 0 else "None"
+    total = min(10.0, 2.0 * supported)
+    tier = "Strong" if total >= 7 else "Some" if total > 0 else "None"
     return total, tier
 
 
@@ -689,17 +689,17 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
     # Mixed row-level safety signals reduce confidence but do not erase a
     # scientifically relevant candidate unless they meet the plant-level rule.
     if group["Hard_Stop_Present"].any():
-        safety_points = 3.0
+        safety_points = 5.0
         safety_tier = "Mixed safety signals"
     else:
-        safety_points = 6.0
+        safety_points = 9.0
         safety_tier = "Clean"
 
     barriers = _norm(_join(group.get("Regulatory_Barriers", []), 5))
     if not barriers or barriers in _MISSING_MARKERS or "none identified" in barriers:
-        reg_points = 4.0
+        reg_points = 6.0
     else:
-        reg_points = 1.0
+        reg_points = 2.0
         safety_tier = "Regulatory review needed"
     return round(safety_points + reg_points, 1), safety_tier
 
@@ -741,8 +741,8 @@ def _explain_candidate(
         bullets.append("supported target/mechanism evidence")
     if components["evidence"][0] >= 10:
         bullets.append(f"{components['evidence'][1].lower()} evidence base")
-    if distinctive_count:
-        bullets.append(f"{distinctive_count} differentiating shared compound(s)")
+    # Chemistry is supporting metadata only and is intentionally omitted from
+    # the selection explanation; it cannot justify candidate entry or shortlist status.
     if components["safety"][1] == "Clean":
         bullets.append("clean safety/regulatory screen")
     if components["novelty"][1] == "Novel / white-space":
@@ -1004,9 +1004,9 @@ def build_plant_candidate_shortlist(
         score_breakdown = _format_breakdown([
             ("Indication Relevance", indication_points, 35),
             ("Evidence Quality", evq_points, 30),
-            ("Compound Quality", cq_points, 12),
-            ("Mechanism Support", mech_points, 8),
-            ("Safety & Regulatory", safety_reg_points, 10),
+            ("Compound Support", cq_points, 5),
+            ("Mechanism Support", mech_points, 10),
+            ("Safety & Regulatory", safety_reg_points, 15),
             ("Novelty & Market", novelty_points, 5),
         ])
 

@@ -134,6 +134,7 @@ def load_evidence_records_df():
                 "Source_URL": source.get("url", ""),
                 "Source_Title": source.get("title", ""),
                 "Source_Type": source.get("source_type", ""),
+                "Source_Raw_Text": source.get("raw_text", ""),
                 "PMID": item.get("pmid"),
                 "DOI": item.get("doi"),
                 "NCT_ID": item.get("nct_id"),

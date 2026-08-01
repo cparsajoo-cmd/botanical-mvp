@@ -115,6 +115,8 @@ def extract_evidence_from_text(text):
         "Detected_Indications": "",
         "Dosage_Form_Relevance": "Unknown",
         "Safety_Signal": "",
+        "Adverse_Events": None,
+        "Interactions_Structured": None,
         "Evidence_Score": 0,
     }
 
@@ -265,5 +267,27 @@ def extract_evidence_from_text(text):
     elif _contains(lower, ["adverse event", "adverse reaction", "contraindicated", "warning", "caution"]):
         record["Safety_Level"] = "Caution"
         record["Safety_Signal"] = "Safety caution detected"
+
+    # Preserve explicit source-carried safety and interaction statements for
+    # future evidence_records rows. This is deliberately conservative: no
+    # plant-specific fact is supplied unless the input text itself says it.
+    fragments = [f.strip() for f in re.split(r"(?<=[.!?;])\s+|\n+", raw) if f.strip()]
+    safety_terms = (
+        "adverse event", "adverse reaction", "side effect", "well tolerated",
+        "no serious adverse", "contraindicat", "toxicity", "hepatotoxic",
+        "liver injury", "bleeding", "hypoglyc", "allergic", "gastrointestinal",
+    )
+    interaction_terms = (
+        "drug interaction", "interacts with", "interaction with", "concomitant use",
+        "anticoagul", "antiplatelet", "warfarin", "hypoglycemic agent",
+        "antidiabetic medication", "cytochrome p450", "cyp3a4", "cyp2c9",
+        "p-glycoprotein",
+    )
+    safety_fragments = [f for f in fragments if any(k in f.lower() for k in safety_terms)]
+    interaction_fragments = [f for f in fragments if any(k in f.lower() for k in interaction_terms)]
+    if safety_fragments:
+        record["Adverse_Events"] = {"source_text": safety_fragments[:4]}
+    if interaction_fragments:
+        record["Interactions_Structured"] = {"source_text": interaction_fragments[:4]}
 
     return record

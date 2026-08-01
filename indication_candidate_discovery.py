@@ -87,7 +87,8 @@ def _record_text(row: pd.Series) -> str:
         "evidence_flags", "Study_Type", "study_type", "Evidence_Level", "evidence_level",
         "Target_Indication", "target_indication", "Detected_Indications", "detected_indications",
         "Primary_Outcome", "primary_outcome", "Result_Direction", "result_direction",
-        "Notes", "notes", "Target", "target", "Mechanism", "mechanism",
+        "Notes", "notes", "Source_Raw_Text", "source_raw_text", "Raw_Text", "raw_text",
+        "Target", "target", "Mechanism", "mechanism",
     )
     values = []
     for col in preferred:
@@ -131,6 +132,60 @@ def _structured_text(value: object) -> str:
         if parsed is not None and parsed is not value:
             return _structured_text(parsed)
     return text
+
+
+
+
+def _extract_explicit_safety_and_interactions(text: object) -> tuple[str, str]:
+    """Extract only explicit safety/interaction statements carried by a source.
+
+    This is a conservative transport fallback for legacy evidence rows whose
+    structured ``adverse_events`` / ``interactions_structured`` columns are
+    empty although the saved source ``raw_text`` or record notes contain an
+    explicit statement. It never supplies plant knowledge from a hard-coded
+    database and never treats absence of a phrase as evidence of safety.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return "", ""
+
+    # Keep source wording for auditability, but only the sentence/fragment that
+    # contains an explicit safety or interaction phrase.
+    fragments = [f.strip() for f in re.split(r"(?<=[.!?;])\s+|\n+", raw) if f.strip()]
+    safety_terms = (
+        "adverse event", "adverse reaction", "side effect", "well tolerated",
+        "no serious adverse", "no severe adverse", "contraindicat", "warning",
+        "caution", "toxicity", "toxic", "hepatotoxic", "liver injury",
+        "bleeding", "hemorrhag", "hypoglyc", "allergic", "anaphyl",
+        "gastrointestinal", "nausea", "vomiting", "diarrhea", "rash",
+    )
+    interaction_terms = (
+        "drug interaction", "interacts with", "interaction with",
+        "concomitant use", "coadministr", "co-administr", "avoid with",
+        "anticoagul", "antiplatelet", "warfarin", "hypoglycemic agent",
+        "antidiabetic medication", "cytochrome p450", "cyp3a4", "cyp2c9",
+        "p-glycoprotein", "p glycoprotein",
+    )
+
+    safety = []
+    interactions = []
+    for fragment in fragments:
+        norm = _norm(fragment)
+        if any(_norm(term) in norm for term in safety_terms):
+            safety.append(fragment)
+        if any(_norm(term) in norm for term in interaction_terms):
+            interactions.append(fragment)
+
+    # Stable de-duplication and a bounded export size.
+    def _dedupe(values):
+        seen = set(); out = []
+        for value in values:
+            key = _norm(value)
+            if key and key not in seen:
+                seen.add(key); out.append(value)
+        return "; ".join(out[:4])
+
+    return _dedupe(safety), _dedupe(interactions)
 
 
 def _explicit_result_direction(record: dict) -> str:
@@ -475,6 +530,14 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             record_preparation = str(record.get("preparation") or "").strip() if record else ""
             safety_findings = str(record.get("safety_findings") or "").strip() if record else ""
             interactions = str(record.get("interactions") or "").strip() if record else ""
+            if record and (not safety_findings or not interactions):
+                inferred_safety, inferred_interactions = _extract_explicit_safety_and_interactions(
+                    " ".join(str(record.get(k) or "") for k in ("text", "notes"))
+                )
+                # Source-text fallback only fills a missing structured field; it
+                # never overwrites connector/database-provided structured data.
+                safety_findings = safety_findings or inferred_safety
+                interactions = interactions or inferred_interactions
 
             # Phase 5 normalization/validation is now run on the individual
             # scientific observation rather than on a plant-wide concatenation.

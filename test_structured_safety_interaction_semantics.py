@@ -18,3 +18,14 @@ def test_structured_hypoglycemic_activity_is_not_adverse_event():
         "Syzygium cumini",
     )
     assert out["adverse_events"] == []
+
+
+def test_structured_coordinated_hypoglycemic_properties_are_not_adverse():
+    out = extract_structured_safety_interactions(
+        "Psidium guajava and Syzygium cumini have shown significant "
+        "hypoglycemic, antioxidant and anti-inflammatory properties.",
+        None,
+        "Syzygium cumini",
+    )
+    assert out["adverse_events"] == []
+    assert out["safety_data_status"] == "not_assessed"

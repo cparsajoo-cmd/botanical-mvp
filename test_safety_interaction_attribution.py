@@ -102,3 +102,16 @@ def test_immediate_following_reported_adverse_event_can_use_local_anchor():
     )
     out = extract_attributed_safety_interactions(text, "Trigonella foenum-graecum", structurally_linked=True)
     assert out["adverse_events"]
+
+
+def test_coordinated_hypoglycemic_properties_phrase_is_efficacy_not_safety():
+    text = (
+        "Psidium guajava and Syzygium cumini have shown significant "
+        "hypoglycemic, antioxidant and anti-inflammatory properties because "
+        "of the presence of quercetin, rutin and gallic acid."
+    )
+    out = extract_attributed_safety_interactions(
+        text, "Syzygium cumini", structurally_linked=True
+    )
+    assert out["adverse_events"] == []
+    assert out["safety_data_status"] == "not_assessed"

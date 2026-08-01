@@ -72,6 +72,14 @@ _HYPOGLYCEMIC_EFFICACY_CONTEXT = (
     "hypoglycemic potential", "hypoglycaemic potential",
     "glucose-lowering activity", "antidiabetic activity",
 )
+# Many abstracts coordinate several efficacy adjectives before one shared noun,
+# e.g. "hypoglycemic, antioxidant and anti-inflammatory properties".  Exact
+# phrase matching misses that syntax, so these patterns capture intended
+# pharmacological activity without suppressing true hypoglycaemia events.
+_HYPOGLYCEMIC_EFFICACY_PATTERNS = (
+    r"\bhypoglyc(?:emic|aemic)\b.{0,80}\b(?:activit(?:y|ies)|effect(?:s)?|propert(?:y|ies)|potential)\b",
+    r"\b(?:glucose[- ]lowering|antidiabetic)\b.{0,80}\b(?:activit(?:y|ies)|effect(?:s)?|propert(?:y|ies)|potential)\b",
+)
 _HYPOGLYCEMIA_EVENT_CONTEXT = (
     "risk", "event", "events", "episode", "episodes", "symptom", "symptoms",
     "occurred", "reported", "developed", "adverse", "severe", "clinically significant",
@@ -152,9 +160,12 @@ def _is_adverse_statement(fragment: str) -> bool:
     if not _matches_any_basic(fragment, _ADVERSE_PATTERNS):
         return False
     if "hypoglyc" in n:
-        if any(term in n for term in _HYPOGLYCEMIC_EFFICACY_CONTEXT) and not any(
-            term in n for term in _HYPOGLYCEMIA_EVENT_CONTEXT
-        ):
+        efficacy_context = (
+            any(term in n for term in _HYPOGLYCEMIC_EFFICACY_CONTEXT)
+            or _matches_any_basic(fragment, _HYPOGLYCEMIC_EFFICACY_PATTERNS)
+        )
+        event_context = any(term in n for term in _HYPOGLYCEMIA_EVENT_CONTEXT)
+        if efficacy_context and not event_context:
             return False
     return True
 

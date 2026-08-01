@@ -199,18 +199,6 @@ def _cached_compound_profiles_df():
         return pd.DataFrame(), False
 
 
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _cached_evidence_records_df():
-    """Cached joined evidence records used by indication-centric discovery."""
-    from supabase_data import load_evidence_records_df
-    try:
-        return load_evidence_records_df(), True
-    except Exception:
-        return pd.DataFrame(), False
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
@@ -250,7 +238,7 @@ def _evidence_fingerprint(evidence_df):
     return (len(evidence_df), content_hash)
 
 
-ENGINE_CACHE_VERSION = "step5_evidence_index_v1"
+ENGINE_CACHE_VERSION = "step4_scientific_inventory_v2"
 
 
 @st.cache_resource(ttl=120, show_spinner=False)
@@ -263,7 +251,6 @@ def _cached_engine(
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
     scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
-    evidence_records_df, evidence_records_ok = _cached_evidence_records_df()
 
     return BotanicalRDCandidateEngine(
         evidence_df=_evidence_df,
@@ -271,15 +258,11 @@ def _cached_engine(
         plant_compounds_df=plant_compounds_df,
         compound_profiles_df=compound_profiles_df,
         scientific_evidence_df=scientific_evidence_df,
-        evidence_records_df=evidence_records_df,
         # Review #17: if any core Supabase load actually FAILED (not
         # just legitimately returned few/no rows), the engine caps
         # every recommendation at "Investigate" — a Go call must never
         # be issued on data that may not have actually loaded.
-        data_source_reliable=(
-            plant_compounds_ok and compound_profiles_ok
-            and scientific_evidence_ok and evidence_records_ok
-        ),
+        data_source_reliable=plant_compounds_ok and compound_profiles_ok and scientific_evidence_ok,
     )
 
 
@@ -321,6 +304,58 @@ def _detect_discovery_mode(result_df) -> str:
         and result_df["Reference_Plant"].astype(str).eq("Indication-centric discovery").all()
     )
     return "indication" if is_indication_mode else "compound_substitution"
+
+
+
+
+def _prepare_plant_triage_display(df):
+    """Return a concise user-facing plant-level triage table.
+
+    Phase 3 made ``Overall_Score`` / ``R&D_Opportunity_Score`` the
+    authoritative plant-level score. ``Scientific_Triage_Score`` is retained
+    in the downloadable audit CSV as a legacy diagnostic, but must not be
+    presented as the primary score in the Streamlit table.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+
+    view = df.copy()
+    score_col = None
+    for candidate in ("R&D_Opportunity_Score", "Overall_Score"):
+        if candidate in view.columns:
+            score_col = candidate
+            break
+
+    columns = ["Alternative_Plant"]
+    if score_col:
+        columns.append(score_col)
+    columns.extend([
+        "Evidence_Confidence",
+        "Scientific_Triage_Status",
+        "Go_Investigate_Hold_NoGo",
+        "Indication_Relevance",
+        "Evidence_Quality_Score",
+        "Why_Selected_or_Rejected",
+    ])
+    columns = [column for column in columns if column in view.columns]
+    view = view[columns].copy()
+
+    if score_col:
+        view[score_col] = pd.to_numeric(view[score_col], errors="coerce")
+        view = view.sort_values(score_col, ascending=False, na_position="last")
+
+    rename_map = {
+        "Alternative_Plant": "Plant",
+        "R&D_Opportunity_Score": "R&D Opportunity Score",
+        "Overall_Score": "R&D Opportunity Score",
+        "Evidence_Confidence": "Evidence Confidence",
+        "Scientific_Triage_Status": "Triage Status",
+        "Go_Investigate_Hold_NoGo": "Decision",
+        "Indication_Relevance": "Indication Relevance",
+        "Evidence_Quality_Score": "Evidence Quality Score",
+        "Why_Selected_or_Rejected": "Why selected / rejected",
+    }
+    return view.rename(columns=rename_map).reset_index(drop=True)
 
 
 def _recommendation_block(result_df, report_ready_df=None):
@@ -996,11 +1031,12 @@ def render_rd_candidates_step(inputs):
                     "No plant passed all scientific gates. Raw chemical matches are not shown as candidates."
                 )
             else:
+                shortlist_display_df = _prepare_plant_triage_display(shortlist_df)
                 st.dataframe(
-                    shortlist_df,
+                    shortlist_display_df,
                     width="stretch",
                     hide_index=True,
-                    height=min(420, 86 + 44 * len(shortlist_df)),
+                    height=min(420, 86 + 44 * len(shortlist_display_df)),
                 )
 
             with st.expander(
@@ -1011,11 +1047,14 @@ def render_rd_candidates_step(inputs):
                     "Plausible hypotheses with incomplete evidence. The complete list is included in the CSV export."
                 )
                 if not exploratory_df.empty:
+                    exploratory_display_df = _prepare_plant_triage_display(
+                        exploratory_df.head(20)
+                    )
                     st.dataframe(
-                        exploratory_df.head(20),
+                        exploratory_display_df,
                         width="stretch",
                         hide_index=True,
-                        height=min(520, 86 + 44 * min(20, len(exploratory_df))),
+                        height=min(520, 86 + 44 * len(exploratory_display_df)),
                     )
 
             st.download_button(

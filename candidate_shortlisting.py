@@ -186,12 +186,21 @@ def _dosage_compatibility(row: pd.Series, dosage_form: str) -> str:
     if not selected:
         return "Not evaluated"
 
+    explicit = _norm(row.get("Preparation_Applicability", ""))
+    if explicit in {"compatible", "mismatch", "unknown", "not evaluated"}:
+        return explicit.title() if explicit != "not evaluated" else "Not evaluated"
+
     raw = row.get("Applicability_Summary", "")
     # Applicability_Summary is normally JSON.  Parse the structured fields so
     # a harmless key such as 'Not applicable': 0 is never mistaken for an
     # actual dosage-form mismatch.
     try:
-        payload = json.loads(raw) if isinstance(raw, str) and raw.strip().startswith("{") else {}
+        if isinstance(raw, dict):
+            payload = raw
+        elif isinstance(raw, str) and raw.strip().startswith("{"):
+            payload = json.loads(raw)
+        else:
+            payload = {}
     except Exception:
         payload = {}
 
@@ -492,6 +501,61 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
     return best
 
 
+
+def _result_category(row: pd.Series) -> str:
+    """Classify a record's reported outcome without inventing missing results."""
+    direction = _norm(row.get("Result_Direction", ""))
+    negative_text = _norm(row.get("Negative_Evidence_Types", ""))
+    narrative = " | ".join(
+        _norm(row.get(col, ""))
+        for col in ("Clinical_Rationale", "Scientific_Rationale", "Evidence_Conflict_Reasoning")
+    )
+    text = f"{direction} {negative_text} {narrative}"
+    if any(t in text for t in (
+        "worsened", "harm", "increased risk", "adverse direction", "negative effect",
+    )):
+        return "harmful"
+    if bool(row.get("Has_Negative_Evidence", False)) or any(t in text for t in (
+        "no significant", "no effect", "null", "not improved", "failed to improve",
+    )):
+        return "null"
+    if any(t in text for t in (
+        "positive", "improved", "improvement", "reduced", "reduction", "decreased",
+        "benefit", "beneficial", "significant effect", "effective",
+    )):
+        return "positive"
+    if "mixed" in text or "conflicting" in text or "inconsistent" in text:
+        return "mixed"
+    return "unreported"
+
+
+def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
+    """Summarise unique record-level efficacy directions for transparent gating."""
+    empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
+    if empirical.empty:
+        return {"positive": 0, "null": 0, "harmful": 0, "mixed": 0, "unreported": 0, "total": 0, "label": "No empirical outcomes"}
+    empirical["_source_key"] = empirical.apply(
+        lambda row: _norm(row.get("Source_Record_IDs", ""))
+        or _norm(row.get("Evidence_Source", ""))
+        or f"row-{row.name}", axis=1,
+    )
+    empirical = empirical.drop_duplicates(subset=["_source_key"], keep="first")
+    counts = {k: 0 for k in ("positive", "null", "harmful", "mixed", "unreported")}
+    for _, row in empirical.iterrows():
+        counts[_result_category(row)] += 1
+    total = len(empirical)
+    if counts["harmful"] > 0 and counts["positive"] == 0:
+        label = "Adverse/negative evidence"
+    elif counts["positive"] == 0 and counts["null"] > 0:
+        label = "No demonstrated benefit"
+    elif counts["positive"] > 0 and (counts["null"] + counts["harmful"] + counts["mixed"]) > 0:
+        label = "Mixed/inconsistent results"
+    elif counts["positive"] > 0:
+        label = "Predominantly positive results"
+    else:
+        label = "Results not reported"
+    return {**counts, "total": total, "label": label}
+
 def _indication_relevance_detail(
     group: pd.DataFrame, indication: str
 ) -> tuple[float, str, str, int]:
@@ -568,6 +632,14 @@ def _indication_relevance_detail(
         if human_sources >= 1:
             source_bonus = min(4.0, 1.5 * math.log2(1 + human_sources))
             points = min(35.0, 28.0 + source_bonus + concept_bonus)
+            outcomes = _outcome_profile(group)
+            if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
+                return min(15.0, round(points * 0.45, 1)), "Low relevance", "Direct human null/negative", direct_sources
+            if outcomes["positive"] > 0 and (outcomes["null"] + outcomes["harmful"] + outcomes["mixed"]) > 0:
+                points = min(27.0, points * 0.78)
+                return round(points, 1), "Medium relevance", "Direct human mixed", direct_sources
+            if outcomes["positive"] == 0:
+                return round(points, 1), "High relevance", "Direct human/clinical; result direction unavailable", direct_sources
             return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
         if preclinical_sources >= 1:
             source_bonus = min(4.0, 1.5 * math.log2(1 + preclinical_sources))
@@ -685,7 +757,15 @@ def _evidence_quality(
     else:
         consistency_points = 0.0
 
-    total = round(min(30.0, hierarchy_points + depth_points + diversity_points + consistency_points), 1)
+    raw_total = hierarchy_points + depth_points + diversity_points + consistency_points
+    outcomes = _outcome_profile(empirical)
+    if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
+        outcome_multiplier = 0.55
+    elif outcomes["positive"] > 0 and (outcomes["null"] + outcomes["harmful"] + outcomes["mixed"]) > 0:
+        outcome_multiplier = 0.80
+    else:
+        outcome_multiplier = 1.0
+    total = round(min(30.0, raw_total * outcome_multiplier), 1)
     if total >= 23:
         tier = "Strong"
     elif total >= 15:
@@ -801,10 +881,10 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
 
     if any(term in safety_text for term in severe_terms):
         safety_points, tier = 1.0, "Major safety concern"
-    elif any(term in safety_text for term in concern_terms):
-        safety_points, tier = 4.0, "Safety review needed"
     elif any(term in safety_text for term in reassuring_terms):
         safety_points, tier = 8.0, "Explicit reassuring evidence"
+    elif any(term in safety_text for term in concern_terms):
+        safety_points, tier = 4.0, "Safety review needed"
     else:
         safety_points, tier = 5.0, "Safety not adequately assessed"
 
@@ -883,11 +963,27 @@ def _derive_evidence_confidence(indication_points: float, evq_points: float) -> 
     return round(min(100.0, max(0.0, raw / _EVIDENCE_CONFIDENCE_MAX_POINTS * 100.0)), 1)
 
 
-def _derive_go_call(status: str, overall_score: float, reason: str = "") -> str:
+def _derive_go_call(
+    status: str,
+    overall_score: float,
+    reason: str = "",
+    *,
+    dosage_compatibility: str = "Unknown",
+    safety_tier: str = "Safety not adequately assessed",
+    outcome_label: str = "Results not reported",
+) -> str:
     if status == "Excluded":
         return "No-Go" if "safety" in _norm(reason) else "Hold"
     if status == "Exploratory":
         return "Investigate — verify before proceeding"
+    # A high numeric score alone cannot justify Go. Product-form applicability,
+    # explicit safety information, and demonstrated benefit must all be present.
+    if _norm(dosage_compatibility) != "compatible":
+        return "Investigate — verify preparation applicability"
+    if safety_tier != "Explicit reassuring evidence":
+        return "Investigate — complete safety/interaction review"
+    if outcome_label != "Predominantly positive results":
+        return "Investigate — resolve efficacy consistency"
     return "Go" if overall_score >= _STRONG_SCORE_THRESHOLD else "Investigate"
 
 
@@ -1133,6 +1229,13 @@ def build_plant_candidate_shortlist(
         plant_hard_stop = _critical_plant_stop(group)
         empirical_rows = int(group.apply(_row_has_candidate_specific_empirical_support, axis=1).sum())
         traceable_count = len(set(map(_norm, sources)))
+        outcome_profile = _outcome_profile(group)
+        dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
+        dosage_summary = (
+            "Compatible" if "Compatible" in dosage_statuses
+            else "Mismatch" if dosage_statuses == {"Mismatch"}
+            else "Unknown"
+        )
 
         if plant_hard_stop:
             plant_status = "Excluded"
@@ -1142,7 +1245,7 @@ def build_plant_candidate_shortlist(
         elif indication_points == 0.0:
             plant_status = "Excluded"
             reasons_note = "no candidate-specific evidence was found for the requested indication"
-        elif indication_mode == "Direct human/clinical":
+        elif str(indication_mode).startswith("Direct human/clinical") :
             if evq_points >= 12.0 and empirical_rows >= 1 and traceable_count >= 1:
                 plant_status = "Shortlist"
             else:
@@ -1174,6 +1277,12 @@ def build_plant_candidate_shortlist(
         if safety_reg_points <= 0.0:
             plant_status = "Excluded"
             reasons_note = "safety/regulatory screening did not pass at plant level"
+        elif outcome_profile["positive"] == 0 and (outcome_profile["null"] + outcome_profile["harmful"]) > 0:
+            plant_status = "Exploratory"
+            reasons_note = "human/clinical records did not demonstrate benefit or reported an adverse direction"
+        elif dosage_summary == "Mismatch":
+            plant_status = "Excluded"
+            reasons_note = "available evidence uses a preparation that does not match the selected dosage form"
 
         overall_score = round(
             indication_points + evq_points + cq_points + mech_points
@@ -1230,7 +1339,14 @@ def build_plant_candidate_shortlist(
         # report/UI/test already reads) — not a second, independently
         # computed number.
         evidence_confidence = _derive_evidence_confidence(indication_points, evq_points)
-        go_call = _derive_go_call(plant_status, overall_score, explanation_reason)
+        go_call = _derive_go_call(
+            plant_status,
+            overall_score,
+            explanation_reason,
+            dosage_compatibility=dosage_summary,
+            safety_tier=safety_reg_tier,
+            outcome_label=str(outcome_profile["label"]),
+        )
         decision_class_ah = _derive_decision_class_ah(plant_status, overall_score, explanation_reason)
 
         rows.append({
@@ -1266,11 +1382,11 @@ def build_plant_candidate_shortlist(
             "Evidence_Levels": _join(usable.get("Evidence_Level", []), 8),
             "Evidence_Sources": _join(usable.get("Evidence_Source", []), 8),
             "Traceable_Source_Count": len(sources),
-            "Dosage_Form_Compatibility": (
-                "Compatible" if "Compatible" in dosage_statuses
-                else "Mismatch" if dosage_statuses == {"Mismatch"}
-                else "Unknown"
-            ),
+            "Dosage_Form_Compatibility": dosage_summary,
+            "Outcome_Consistency": outcome_profile["label"],
+            "Positive_Result_Count": outcome_profile["positive"],
+            "Null_Negative_Result_Count": outcome_profile["null"] + outcome_profile["harmful"],
+            "Unreported_Result_Count": outcome_profile["unreported"],
             "Safety_Flags": _join(group.get("Safety_Flags", []), 8) or "No explicit flag found",
             "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit flag found",
             "Negative_Evidence": _join(group.get("Negative_Evidence_Types", []), 8),

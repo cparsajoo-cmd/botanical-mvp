@@ -20,7 +20,10 @@ import pandas as pd
 # being computed correctly, then discarded by the final reindex call).
 # OUTPUT_COLUMNS itself is intentionally left unmodified — it is shared
 # with the legacy compound-substitution engine, which never runs Phase 5.
-_PHASE5_DIAGNOSTIC_COLUMNS = ("Normalization_Summary", "Validation_Status", "Validation_Summary")
+_PHASE5_DIAGNOSTIC_COLUMNS = (
+    "Normalization_Summary", "Validation_Status", "Validation_Summary",
+    "Result_Direction", "Preparation_Applicability",
+)
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
@@ -170,6 +173,19 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 "evidence_hierarchy": _pick_from_row(engine, row, ["Evidence_Hierarchy_Detail", "evidence_hierarchy_detail"]),
                 "primary_outcome": _pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"]),
                 "result_direction": _pick_from_row(engine, row, ["Result_Direction", "result_direction"]),
+                "preparation": _pick_from_row(engine, row, [
+                    "Preparation", "preparation", "Extraction_Method", "extraction_method",
+                    "Dosage_Form", "dosage_form", "Administration_Route", "administration_route",
+                ]),
+                "dose": _pick_from_row(engine, row, ["Dosage", "dosage", "Dose", "dose"]),
+                "safety_findings": _pick_from_row(engine, row, [
+                    "Safety_Findings", "safety_findings", "Adverse_Events", "adverse_events",
+                    "Safety_Flags", "safety_flags",
+                ]),
+                "interactions": _pick_from_row(engine, row, [
+                    "Interactions_Structured", "interactions_structured", "Interactions", "interactions",
+                    "Interaction_Flags", "interaction_flags",
+                ]),
                 "nct_id": _pick_from_row(engine, row, ["NCT_ID", "nct_id"]),
             })
     return index
@@ -221,7 +237,8 @@ def _record_evidence_characteristics(engine, record: dict) -> dict:
     """
     text = " ".join(str(record.get(k) or "") for k in (
         "text", "study_type", "study_model", "evidence_level",
-        "evidence_hierarchy", "primary_outcome", "result_direction",
+        "evidence_hierarchy", "primary_outcome", "result_direction", "preparation",
+        "dose", "safety_findings", "interactions",
     ))
     normalized = _norm(text)
     source_norm = _norm(record.get("source"))
@@ -269,6 +286,39 @@ def _record_evidence_characteristics(engine, record: dict) -> dict:
         "negative": negative,
     }
 
+
+
+def _preparation_applicability(record: dict | None, selected_dosage_form: str) -> tuple[str, list[str]]:
+    """Classify preparation applicability from record-provided data only.
+
+    Unknown is never promoted to compatible.  Exact/near route or dosage-form
+    matches are compatible; explicit extract/capsule vs infusion/tea mismatches
+    are retained as mismatches.
+    """
+    selected = _norm(selected_dosage_form)
+    if not selected:
+        return "Not evaluated", []
+    if not record:
+        return "Unknown", ["No record-level preparation information"]
+    prep = _norm(record.get("preparation"))
+    if not prep:
+        return "Unknown", ["Preparation/route not reported in source record"]
+
+    synonym_groups = (
+        {"infusion", "tea", "herbal tea", "aqueous infusion"},
+        {"capsule", "tablet", "oral solid", "powder"},
+        {"extract", "dry extract", "standardized extract", "standardised extract"},
+        {"topical", "cream", "gel", "ointment"},
+        {"oral", "by mouth"},
+    )
+    selected_group = next((g for g in synonym_groups if any(t in selected for t in g)), {selected})
+    if any(term in prep for term in selected_group):
+        return "Compatible", []
+
+    explicit_groups = [g for g in synonym_groups if any(term in prep for term in g)]
+    if explicit_groups:
+        return "Mismatch", [f"Selected dosage form '{selected_dosage_form}' differs from reported preparation '{record.get('preparation')}'"]
+    return "Unknown", ["Reported preparation could not be mapped to selected dosage form"]
 
 def discover_indication_candidates(engine, indication: str, dosage_form: str = "", market: str = "", product_type: str = "") -> pd.DataFrame:
     """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence."""
@@ -347,6 +397,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             record_id = str(record.get("record_id") or "").strip() if record else ""
             sources = [source] if source else []
             record_ids = [record_id] if record_id else []
+            result_direction = str(record.get("result_direction") or "").strip() if record else ""
+            preparation_status, preparation_mismatches = _preparation_applicability(record, dosage_form)
+            record_preparation = str(record.get("preparation") or "").strip() if record else ""
+            safety_findings = str(record.get("safety_findings") or "").strip() if record else ""
+            interactions = str(record.get("interactions") or "").strip() if record else ""
 
             # Phase 5 normalization/validation is now run on the individual
             # scientific observation rather than on a plant-wide concatenation.
@@ -420,9 +475,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
             trace_points = 2 if source or record_id else 0
             mechanism_points = 10 if record_mechanistic else 3 if profile_mechanistic else 0
-            applicability_points = 8 if dosage_form and _contains_any(
-                record_text, (dosage_form, "oral", "infusion", "tea", "aqueous")
-            ) else 0
+            applicability_points = 8 if preparation_status == "Compatible" else 0
             compound_support = 5 if compounds and (record_direct or record_mechanistic) else 0
             score = min(100.0, float(
                 evidence_points + trace_points + mechanism_points
@@ -464,11 +517,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Target_or_Mechanism": mechanism_label,
                 "Target_Provenance": provenance,
                 "Concentration_Info": "Not established",
-                "Extraction_Method": engine._pick(item, ["Typical_Extraction", "Extraction_Method", "extraction"]),
+                "Extraction_Method": record_preparation or engine._pick(item, ["Typical_Extraction", "Extraction_Method", "extraction"]),
                 "Industrial_Feasibility": "Requires product-specific assessment",
                 "Co_Compounds": "; ".join(compounds[1:9]),
-                "Safety_Flags": "",
-                "Interaction_Flags": "",
+                "Safety_Flags": safety_findings,
+                "Interaction_Flags": interactions,
                 "Evidence_Source": source,
                 "Source_Record_IDs": record_id,
                 "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",
@@ -477,6 +530,8 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Evidence_Hierarchy_Detail": hierarchy,
                 "Has_Negative_Evidence": negative,
                 "Negative_Evidence_Types": "Negative/null reported result" if negative else "",
+                "Result_Direction": result_direction,
+                "Preparation_Applicability": preparation_status,
                 "Market_Status": "Search not performed",
                 "Regulatory_Barriers": "Not assessed",
                 "Novelty_Status": "Indication-derived candidate",
@@ -522,7 +577,14 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Scoring_Config_Version": SCORING_CONFIG_VERSION,
                 "Applicability_Summary": {
                     "evidence_record_ids": record_ids,
-                    "classification": "Not assessed",
+                    "classification": preparation_status,
+                    "critical_mismatches": preparation_mismatches,
+                    "evidence_items": [{
+                        "evidence_record_id": record_id or None,
+                        "applicability_classification": preparation_status,
+                        "detected_mismatches": preparation_mismatches,
+                        "missing_dimensions": ["preparation"] if preparation_status == "Unknown" else [],
+                    }],
                 },
                 "GRADE_Certainty": "Not graded",
                 "GRADE_Certainty_Rationale": "Record-level grading required.",

@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 
 # Single source of truth — see module docstring. Bump these here, and
 # nowhere else, when the corresponding logic actually changes.
-SCORING_MODEL_VERSION = "authoritative-plant-v1.1"
+SCORING_MODEL_VERSION = "authoritative-plant-v1.2"
 NORMALIZATION_VERSION = "evidence-standardizer-phase2"
 VALIDATION_VERSION = "candidate-output-adapter-v1"
 

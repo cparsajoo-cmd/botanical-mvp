@@ -166,6 +166,90 @@ def _extract_safety_details(text: object, plant_name: str) -> tuple[str, str, st
     )
 
 
+
+
+def _merge_unique_text(values: list[str]) -> str:
+    """Join non-empty semicolon-delimited values without duplication."""
+    seen = set()
+    out = []
+    for value in values:
+        for part in str(value or "").split(";"):
+            clean = part.strip()
+            key = _norm(clean)
+            if clean and key and key not in seen:
+                seen.add(key)
+                out.append(clean)
+    return "; ".join(out)
+
+
+def _aggregate_plant_safety(records: list[dict], plant_name: str) -> dict:
+    """Aggregate plant-specific safety across all indications.
+
+    Efficacy relevance is indication-specific, but adverse events and
+    plant-drug interactions are properties of the botanical/preparation and
+    must not disappear merely because the safety source was indexed under a
+    different indication. Structured fields are preferred; conservative raw
+    text attribution is used only as fallback for each record.
+    """
+    adverse_values: list[str] = []
+    interaction_values: list[str] = []
+    reassurance_values: list[str] = []
+    statuses: list[str] = []
+
+    for record in records:
+        structured_safety = str(record.get("safety_findings") or "").strip()
+        structured_interactions = str(record.get("interactions") or "").strip()
+
+        if structured_safety or structured_interactions:
+            structured = extract_structured_safety_interactions(
+                structured_safety,
+                structured_interactions,
+                plant_name=plant_name,
+            )
+            adverse_values.extend(structured.get("adverse_events", []))
+            interaction_values.extend(structured.get("interactions", []))
+            reassurance_values.extend(structured.get("safety_reassurance", []))
+            status = structured.get("safety_data_status")
+            if status and status != "not_assessed":
+                statuses.append(status)
+
+        raw = extract_attributed_safety_interactions(
+            " ".join(str(record.get(k) or "") for k in ("text", "notes")),
+            plant_name=plant_name,
+            structurally_linked=True,
+        )
+        adverse_values.extend(raw.get("adverse_events", []))
+        interaction_values.extend(raw.get("interactions", []))
+        reassurance_values.extend(raw.get("safety_reassurance", []))
+        status = raw.get("safety_data_status")
+        if status and status != "not_assessed":
+            statuses.append(status)
+
+    adverse = _merge_unique_text(adverse_values)
+    interactions = _merge_unique_text(interaction_values)
+    reassurance = _merge_unique_text(reassurance_values)
+
+    status_parts = []
+    if adverse:
+        status_parts.append("adverse_signal_present")
+    if interactions:
+        status_parts.append("interaction_signal_present")
+    if reassurance:
+        status_parts.append("reassurance_reported")
+    if not status_parts:
+        if any("source_excluded" in str(s) for s in statuses):
+            status_parts.append("source_excluded")
+        else:
+            status_parts.append("not_assessed")
+
+    return {
+        "adverse_events": adverse,
+        "interactions": interactions,
+        "safety_reassurance": reassurance,
+        "safety_data_status": "; ".join(status_parts),
+    }
+
+
 def _explicit_result_direction(record: dict) -> str:
     """Return a source-supported result direction, never a guessed efficacy call.
 
@@ -447,6 +531,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         targets = engine._pick(item, ["Known_Targets", "target", "mechanism"])
         compounds = engine._split_compound_terms(engine._pick(item, ["Known_Active_Compounds", "compound_name"]))
         records = _records_for_plant(engine, plant, evidence_index)
+        # Safety and interaction evidence is plant-wide, not indication-bound.
+        # Build it once from every plant-specific record, while efficacy
+        # relevance below remains restricted to the selected indication.
+        plant_safety = _aggregate_plant_safety(records, plant)
 
         direct_records = [r for r in records if _contains_any(r["text"], direct_terms)]
         mechanism_records = [r for r in records if _contains_any(r["text"], mechanism_terms)]
@@ -540,6 +628,27 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 safety_data_status = (
                     structured_status if structured_status != "not_assessed" else source_status
                 )
+
+            # Add cross-indication plant-specific safety. A safety case report
+            # indexed under eye health or cognition must still inform a
+            # metabolic R&D decision for the same botanical.
+            safety_findings = _merge_unique_text([
+                safety_findings, plant_safety["adverse_events"]
+            ])
+            interactions = _merge_unique_text([
+                interactions, plant_safety["interactions"]
+            ])
+            safety_reassurance = _merge_unique_text([
+                safety_reassurance, plant_safety["safety_reassurance"]
+            ])
+            status_parts = []
+            if safety_findings:
+                status_parts.append("adverse_signal_present")
+            if interactions:
+                status_parts.append("interaction_signal_present")
+            if safety_reassurance:
+                status_parts.append("reassurance_reported")
+            safety_data_status = "; ".join(status_parts) or plant_safety["safety_data_status"]
 
             # Phase 5 normalization/validation is now run on the individual
             # scientific observation rather than on a plant-wide concatenation.

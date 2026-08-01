@@ -279,6 +279,34 @@ def _format_gate_results_section(gate_results) -> list:
     return lines
 
 
+def _format_evidence_normalization_validation_section(row: pd.Series) -> list:
+    """Phase 5 (IMPLEMENTATION_PLAN.md) — surfaces the already-computed
+    Evidence Normalization / Evidence Validation results
+    (indication_candidate_discovery.py's Normalization_Summary /
+    Validation_Status / Validation_Summary columns) for this row.
+    Formatting only: reads existing values, computes nothing, changes no
+    score or decision. Rows without these columns (e.g. compound-
+    substitution mode, or an analysis run before Phase 5 existed) simply
+    get no section — degrades gracefully, no fabricated status."""
+    validation_status = row.get("Validation_Status")
+    if not validation_status:
+        return []
+
+    lines = [
+        "**Evidence normalization & validation** (Phase 5 — computed before scoring, "
+        "changes no score):",
+        f"- Overall validation status: {validation_status}",
+    ]
+    normalization_summary = str(row.get("Normalization_Summary", "") or "").strip()
+    if normalization_summary:
+        lines.append(f"- Normalized fields: {normalization_summary}")
+    validation_summary = str(row.get("Validation_Summary", "") or "").strip()
+    if validation_summary:
+        lines.append(f"- Validation checks: {validation_summary}")
+    lines.append("")
+    return lines
+
+
 def _format_evidence_applicability_section(applicability_traceability) -> list:
     """Task 13.1 — formats structured_rationale.build_applicability_
     traceability()'s output. Formatting only: every value already
@@ -574,6 +602,7 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None,
     lines += _format_evidence_conflict_section(row.get("Evidence_Conflict_Structured"))
     lines += _format_regulatory_intelligence_section(row, market)
     lines += _format_gate_results_section(row.get("Gate_Results"))
+    lines += _format_evidence_normalization_validation_section(row)
 
     lines += [
         "",

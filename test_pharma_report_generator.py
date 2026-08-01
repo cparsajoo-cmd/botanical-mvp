@@ -88,6 +88,29 @@ def test_remainder_table_uses_mechanism_column_for_indication_centric_candidates
     assert "| Plant | Compound | Score | Confidence | Call |" not in report
 
 
+def test_phase5_validation_status_appears_in_the_report_when_present():
+    row = _make_row(
+        Validation_Status="valid_with_limitations",
+        Normalization_Summary="plant_identity=verified; indication=verified",
+        Validation_Summary="plant_specific_attribution: pass; outcome_presence: fail",
+    )
+    result = pd.DataFrame([row])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Evidence normalization & validation" in report
+    assert "valid_with_limitations" in report
+    assert "plant_identity=verified" in report
+    assert "outcome_presence: fail" in report
+
+
+def test_phase5_section_absent_when_row_has_no_validation_status():
+    # Compound-substitution rows (and any pre-Phase-5 analysis) never set
+    # Validation_Status — the section must simply not appear, not error
+    # or show a fabricated status.
+    result = pd.DataFrame([_make_row()])
+    report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")
+    assert "Evidence normalization & validation" not in report
+
+
 def test_cso_reasoning_statements_appear_in_the_writeup():
     result = pd.DataFrame([_make_row()])
     report = generate_pharma_report(result, indication="X", dosage_form="Y", market="Z")

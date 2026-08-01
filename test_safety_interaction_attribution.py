@@ -76,17 +76,29 @@ def test_retracted_source_is_excluded():
     assert out["safety_data_status"] == "source_excluded"
 
 
-def test_structured_interaction_terms_are_preserved_without_relation_verb():
-    from safety_interaction_attribution import normalize_structured_interactions
+def test_hypoglycemic_activity_is_efficacy_not_adverse_event():
+    text = (
+        "Syzygium cumini was evaluated for diabetes. "
+        "Syzygium cumini has shown significant hypoglycemic activity and antioxidant properties."
+    )
+    out = extract_attributed_safety_interactions(text, "Syzygium cumini", structurally_linked=True)
+    assert out["adverse_events"] == []
+    assert out["safety_data_status"] == "not_assessed"
 
-    assert normalize_structured_interactions(["anticoagulants", "antiplatelets"]) == [
-        "anticoagulants", "antiplatelets"
-    ]
+
+def test_current_therapeutic_regimen_side_effects_are_not_attributed_to_plant():
+    text = (
+        "Scutellaria baicalensis was discussed as a possible natural product. "
+        "The current therapeutic regimen has low success rates and numerous side effects."
+    )
+    out = extract_attributed_safety_interactions(text, "Scutellaria baicalensis", structurally_linked=True)
+    assert out["adverse_events"] == []
 
 
-def test_structured_interaction_placeholders_and_noise_are_removed():
-    from safety_interaction_attribution import normalize_structured_interactions
-
-    assert normalize_structured_interactions([
-        "", "not assessed", "synthetic drugs have side effects", "warfarin"
-    ]) == ["warfarin"]
+def test_immediate_following_reported_adverse_event_can_use_local_anchor():
+    text = (
+        "Trigonella foenum-graecum extract was administered for 8 weeks. "
+        "Mild gastrointestinal adverse events were reported."
+    )
+    out = extract_attributed_safety_interactions(text, "Trigonella foenum-graecum", structurally_linked=True)
+    assert out["adverse_events"]

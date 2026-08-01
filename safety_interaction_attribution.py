@@ -43,7 +43,8 @@ _DRUG_TERMS = (
     "p-glycoprotein", "p glycoprotein", "digoxin", "cyclosporine", "tacrolimus",
 )
 _COMPARATOR_NOISE = (
-    "synthetic drugs", "conventional drugs", "current treatments", "standard treatment",
+    "synthetic drugs", "conventional drugs", "current treatments", "current therapeutic regimen",
+    "therapeutic regimen", "conventional therapy", "standard treatment",
     "standard therapy", "existing medications", "other medications", "control drug",
     "comparator", "placebo caused", "disease itself", "patients with diabetes often",
 )
@@ -59,6 +60,27 @@ _LOW_QUALITY_SOURCE = (
 _INTERVENTION_WORDS = (
     "extract", "preparation", "supplement", "intervention", "treatment group",
     "treated group", "administration", "administered", "capsule", "infusion", "tea",
+)
+
+# Terms indicating that a hypoglyc* mention describes intended pharmacological
+# activity rather than an adverse event.  These are deliberately evaluated only
+# for hypoglycaemia-like tokens; they do not suppress genuine adverse-event terms.
+_HYPOGLYCEMIC_EFFICACY_CONTEXT = (
+    "hypoglycemic activity", "hypoglycaemic activity",
+    "hypoglycemic effect", "hypoglycaemic effect",
+    "hypoglycemic properties", "hypoglycaemic properties",
+    "hypoglycemic potential", "hypoglycaemic potential",
+    "glucose-lowering activity", "antidiabetic activity",
+)
+_HYPOGLYCEMIA_EVENT_CONTEXT = (
+    "risk", "event", "events", "episode", "episodes", "symptom", "symptoms",
+    "occurred", "reported", "developed", "adverse", "severe", "clinically significant",
+)
+_INTERVENTION_REFERENCES = (
+    "the extract", "this extract", "the preparation", "this preparation",
+    "the supplement", "this supplement", "the intervention", "the treated group",
+    "participants receiving", "patients receiving", "subjects receiving",
+    "interaction with", "interacts with", "concomitant use", "co-administration",
 )
 
 
@@ -77,24 +99,40 @@ def _plant_tokens(plant_name: str) -> tuple[str, ...]:
     return tuple(words)
 
 
-def _has_plant_anchor(fragment: str, context: str, plant_name: str, structurally_linked: bool) -> bool:
+def _has_plant_anchor(fragment: str, previous_fragment: str, plant_name: str, structurally_linked: bool) -> bool:
+    """Require a local plant/intervention anchor, never a document-wide one.
+
+    A plant name in an abstract's opening sentence must not license every later
+    sentence as plant-attributed.  Pronoun/intervention anchoring is accepted
+    only when the immediately preceding sentence names the target plant and the
+    current sentence explicitly refers to that intervention.
+    """
     tokens = _plant_tokens(plant_name)
-    combined = _norm(f"{context} {fragment}")
+    frag_n = _norm(fragment)
+    prev_n = _norm(previous_fragment)
     if tokens:
         full = tokens[0]
-        if full in combined:
+        if full in frag_n:
             return True
-        if len(tokens) >= 3 and tokens[1] in combined and tokens[2] in combined:
+        if len(tokens) >= 3 and tokens[1] in frag_n and tokens[2] in frag_n:
             return True
     elif structurally_linked:
-        # Backward-compatible use for already plant-scoped records where the
-        # caller has no name available. Production Step 5 always supplies it.
         return True
-    # A structurally linked evidence row may use "the extract" rather than
-    # repeating the botanical name in every sentence.  Accept only when the
-    # source context names the plant and the sentence names the intervention.
-    if structurally_linked and tokens and tokens[0] in _norm(context):
-        return any(word in _norm(fragment) for word in _INTERVENTION_WORDS)
+
+    if structurally_linked and tokens and tokens[0] in prev_n:
+        if any(ref in frag_n for ref in _INTERVENTION_REFERENCES):
+            return True
+        # Abstracts commonly name the intervention in one sentence and report
+        # adverse events in the immediately following sentence. Accept that
+        # narrow pattern only when the current sentence uses explicit
+        # observation/reporting language—not generic discussion of therapy.
+        causal_report_terms = (
+            "were reported", "was reported", "occurred", "were observed",
+            "was observed", "was associated", "were associated",
+            "participants experienced", "patients experienced",
+        )
+        if any(term in frag_n for term in causal_report_terms):
+            return True
     return False
 
 
@@ -106,6 +144,23 @@ def _is_noise(fragment: str) -> bool:
 def _is_protective_or_negated(fragment: str) -> bool:
     n = _norm(fragment)
     return any(term in n for term in _PROTECTIVE_OR_NEGATED)
+
+
+def _is_adverse_statement(fragment: str) -> bool:
+    """Distinguish adverse outcomes from intended pharmacological activity."""
+    n = _norm(fragment)
+    if not _matches_any_basic(fragment, _ADVERSE_PATTERNS):
+        return False
+    if "hypoglyc" in n:
+        if any(term in n for term in _HYPOGLYCEMIC_EFFICACY_CONTEXT) and not any(
+            term in n for term in _HYPOGLYCEMIA_EVENT_CONTEXT
+        ):
+            return False
+    return True
+
+
+def _matches_any_basic(fragment: str, patterns: Iterable[str]) -> bool:
+    return any(re.search(pattern, fragment, flags=re.I) for pattern in patterns)
 
 
 def _matches_any(fragment: str, patterns: Iterable[str]) -> bool:
@@ -121,46 +176,79 @@ def _dedupe(values: Iterable[str], limit: int = 4) -> list[str]:
     return out[:limit]
 
 
+def extract_structured_safety_interactions(
+    safety_value: object,
+    interaction_value: object,
+    plant_name: str = "",
+) -> dict:
+    """Interpret already-structured fields without reapplying raw-text rules.
 
-def normalize_structured_interactions(value: object) -> list[str]:
-    """Normalize an explicitly structured interaction field conservatively.
-
-    Unlike raw prose, a value stored in ``interactions_structured`` already
-    carries the semantic relationship by schema.  Therefore a bare drug or
-    drug-class term (for example ``anticoagulants``) is valid here and must not
-    be discarded merely because the serialized value does not repeat a verb
-    such as ``interacts with``.  Missing placeholders, comparator/general text,
-    promotional/retracted material, and exact duplicates are still removed.
+    The field names themselves provide the semantic relationship.  Consequently
+    a structured interaction value such as ``anticoagulants`` is retained even
+    without prose saying "interacts with".  Safety values still undergo a small
+    semantic guard so efficacy phrases such as "hypoglycemic activity" cannot
+    become adverse-event flags.
     """
-    if value is None:
-        return []
-    if isinstance(value, dict):
-        raw_items = []
-        for key, item in value.items():
-            key_text = str(key or "").strip()
-            item_text = str(item or "").strip()
-            combined = ": ".join(x for x in (key_text, item_text) if x)
-            if combined:
-                raw_items.append(combined)
-    elif isinstance(value, (list, tuple, set)):
-        raw_items = [str(item or "").strip() for item in value]
-    else:
-        text = str(value or "").strip()
+    def items(value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, dict):
+            return [f"{k}: {v}" if str(v).strip() else str(k) for k, v in value.items()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        text = str(value).strip()
         if not text or _norm(text) in _MISSING:
             return []
-        raw_items = [x.strip() for x in re.split(r"[;|\n]+", text) if x.strip()]
+        return [x.strip() for x in re.split(r";|\n", text) if x.strip()]
 
-    accepted = []
-    for item in raw_items:
-        n = _norm(item)
-        if not n or n in _MISSING:
+    adverse: list[str] = []
+    reassurance: list[str] = []
+    for value in items(safety_value):
+        if _is_noise(value) or _is_protective_or_negated(value):
             continue
-        if any(term in n for term in _LOW_QUALITY_SOURCE):
+        if _matches_any(value, _REASSURANCE_PATTERNS):
+            reassurance.append(value)
+        elif _is_adverse_statement(value):
+            adverse.append(value)
+        else:
+            # Structured adverse-event fields may contain concise coded values
+            # (e.g. "bleeding: reported concern") that do not form a sentence.
+            n = _norm(value)
+            coded_terms = ("bleeding", "hemorrhage", "hepatotoxic", "liver injury",
+                           "nausea", "vomiting", "diarrhea", "diarrhoea", "rash",
+                           "anaphylaxis", "allergic reaction", "toxicity")
+            if any(term in n for term in coded_terms):
+                adverse.append(value)
+
+    interactions: list[str] = []
+    for value in items(interaction_value):
+        n = _norm(value)
+        if not n or n in _MISSING or _is_noise(value):
             continue
-        if any(term in n for term in _COMPARATOR_NOISE):
-            continue
-        accepted.append(item)
-    return _dedupe(accepted)
+        # Structured interaction fields are already relational. Preserve drug
+        # classes/names and explicit interaction statements, but not generic
+        # efficacy or safety prose accidentally placed in the field.
+        if any(term in n for term in _DRUG_TERMS) or _matches_any(value, _INTERACTION_RELATION_PATTERNS):
+            interactions.append(value)
+
+    adverse = _dedupe(adverse)
+    reassurance = _dedupe(reassurance)
+    interactions = _dedupe(interactions)
+    if adverse:
+        status = "adverse_signal_present"
+    elif reassurance:
+        status = "reassurance_reported"
+    elif interactions:
+        status = "interaction_signal_present"
+    else:
+        status = "not_assessed"
+    return {
+        "adverse_events": adverse,
+        "safety_reassurance": reassurance,
+        "interactions": interactions,
+        "safety_data_status": status,
+    }
+
 
 def extract_attributed_safety_interactions(
     text: object,
@@ -183,9 +271,8 @@ def extract_attributed_safety_interactions(
 
     fragments = _split(raw)
     adverse: list[str] = []; reassurance: list[str] = []; interactions: list[str] = []
-    source_intro = " ".join(fragments[:2])[:800]
     for i, fragment in enumerate(fragments):
-        context = " ".join(fragments[max(0, i-1):i+1])
+        previous_fragment = " ".join(fragments[max(0, i - 2):i])
         if _is_noise(fragment):
             continue
         # Reject a sentence explicitly naming a different botanical unless it
@@ -204,13 +291,13 @@ def extract_attributed_safety_interactions(
         target_full = _plant_tokens(plant_name)[0] if _plant_tokens(plant_name) else ""
         if binomials and target_full and target_full not in binomials:
             continue
-        anchored = _has_plant_anchor(fragment, f"{source_intro} {context}", plant_name, structurally_linked)
+        anchored = _has_plant_anchor(fragment, previous_fragment, plant_name, structurally_linked)
         if not anchored:
             continue
 
         if _matches_any(fragment, _REASSURANCE_PATTERNS):
             reassurance.append(fragment)
-        elif _matches_any(fragment, _ADVERSE_PATTERNS) and not _is_protective_or_negated(fragment):
+        elif _is_adverse_statement(fragment) and not _is_protective_or_negated(fragment):
             adverse.append(fragment)
 
         n = _norm(fragment)

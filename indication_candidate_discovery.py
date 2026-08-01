@@ -14,7 +14,7 @@ import pandas as pd
 
 from safety_interaction_attribution import (
     extract_attributed_safety_interactions,
-    normalize_structured_interactions,
+    extract_structured_safety_interactions,
 )
 
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
@@ -515,24 +515,16 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 # plant prefix supplies the structural attribution, while the
                 # conservative extractor still rejects comparator noise,
                 # protective/negated toxicity, other botanicals and retractions.
-                # Structured adverse-event prose is still passed through the
-                # conservative attribution filter.  Structured interaction
-                # values are handled separately: their schema already states
-                # that the listed drug/class is an interaction, so a bare term
-                # such as "anticoagulants" must be preserved rather than
-                # rejected for lacking a repeated relation verb.
-                structured_safety = structured_reassurance = ""
+                structured_safety = structured_interactions = structured_reassurance = ""
                 structured_status = "not_assessed"
-                if safety_findings:
-                    structured_safety, _, structured_reassurance, structured_status = (
-                        _extract_safety_details(
-                            f"{plant}. {safety_findings}", plant_name=plant,
-                        )
+                if safety_findings or interactions:
+                    structured_result = extract_structured_safety_interactions(
+                        safety_findings, interactions, plant_name=plant,
                     )
-                structured_interaction_items = normalize_structured_interactions(interactions)
-                structured_interactions = "; ".join(structured_interaction_items)
-                if structured_interactions and structured_status == "not_assessed":
-                    structured_status = "interaction_signal_present"
+                    structured_safety = "; ".join(structured_result["adverse_events"])
+                    structured_interactions = "; ".join(structured_result["interactions"])
+                    structured_reassurance = "; ".join(structured_result["safety_reassurance"])
+                    structured_status = structured_result["safety_data_status"]
 
                 # Then inspect raw source text only as a fallback. It must carry
                 # its own plant/intervention anchor and explicit relation.

@@ -12,6 +12,8 @@ import ast
 from typing import Iterable
 import pandas as pd
 
+from safety_interaction_attribution import extract_attributed_safety_interactions
+
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
 # botanical_rd_candidate_engine.py) predates Phase 5 and does not list
 # these three diagnostic columns. Every place this module reindexes a
@@ -25,6 +27,7 @@ import pandas as pd
 _PHASE5_DIAGNOSTIC_COLUMNS = (
     "Normalization_Summary", "Validation_Status", "Validation_Summary",
     "Result_Direction", "Preparation_Applicability",
+    "Safety_Reassurance", "Safety_Data_Status",
 )
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
@@ -136,56 +139,28 @@ def _structured_text(value: object) -> str:
 
 
 
-def _extract_explicit_safety_and_interactions(text: object) -> tuple[str, str]:
-    """Extract only explicit safety/interaction statements carried by a source.
-
-    This is a conservative transport fallback for legacy evidence rows whose
-    structured ``adverse_events`` / ``interactions_structured`` columns are
-    empty although the saved source ``raw_text`` or record notes contain an
-    explicit statement. It never supplies plant knowledge from a hard-coded
-    database and never treats absence of a phrase as evidence of safety.
-    """
-    raw = str(text or "").strip()
-    if not raw:
-        return "", ""
-
-    # Keep source wording for auditability, but only the sentence/fragment that
-    # contains an explicit safety or interaction phrase.
-    fragments = [f.strip() for f in re.split(r"(?<=[.!?;])\s+|\n+", raw) if f.strip()]
-    safety_terms = (
-        "adverse event", "adverse reaction", "side effect", "well tolerated",
-        "no serious adverse", "no severe adverse", "contraindicat", "warning",
-        "caution", "toxicity", "toxic", "hepatotoxic", "liver injury",
-        "bleeding", "hemorrhag", "hypoglyc", "allergic", "anaphyl",
-        "gastrointestinal", "nausea", "vomiting", "diarrhea", "rash",
+def _extract_explicit_safety_and_interactions(
+    text: object,
+    plant_name: str = "",
+) -> tuple[str, str]:
+    """Compatibility wrapper returning adverse and interaction text only."""
+    result = extract_attributed_safety_interactions(
+        text, plant_name=plant_name, structurally_linked=True,
     )
-    interaction_terms = (
-        "drug interaction", "interacts with", "interaction with",
-        "concomitant use", "coadministr", "co-administr", "avoid with",
-        "anticoagul", "antiplatelet", "warfarin", "hypoglycemic agent",
-        "antidiabetic medication", "cytochrome p450", "cyp3a4", "cyp2c9",
-        "p-glycoprotein", "p glycoprotein",
+    return "; ".join(result["adverse_events"]), "; ".join(result["interactions"])
+
+
+def _extract_safety_details(text: object, plant_name: str) -> tuple[str, str, str, str]:
+    """Detailed conservative output used by the indication workflow."""
+    result = extract_attributed_safety_interactions(
+        text, plant_name=plant_name, structurally_linked=True,
     )
-
-    safety = []
-    interactions = []
-    for fragment in fragments:
-        norm = _norm(fragment)
-        if any(_norm(term) in norm for term in safety_terms):
-            safety.append(fragment)
-        if any(_norm(term) in norm for term in interaction_terms):
-            interactions.append(fragment)
-
-    # Stable de-duplication and a bounded export size.
-    def _dedupe(values):
-        seen = set(); out = []
-        for value in values:
-            key = _norm(value)
-            if key and key not in seen:
-                seen.add(key); out.append(value)
-        return "; ".join(out[:4])
-
-    return _dedupe(safety), _dedupe(interactions)
+    return (
+        "; ".join(result["adverse_events"]),
+        "; ".join(result["interactions"]),
+        "; ".join(result["safety_reassurance"]),
+        result["safety_data_status"],
+    )
 
 
 def _explicit_result_direction(record: dict) -> str:
@@ -530,14 +505,39 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             record_preparation = str(record.get("preparation") or "").strip() if record else ""
             safety_findings = str(record.get("safety_findings") or "").strip() if record else ""
             interactions = str(record.get("interactions") or "").strip() if record else ""
-            if record and (not safety_findings or not interactions):
-                inferred_safety, inferred_interactions = _extract_explicit_safety_and_interactions(
-                    " ".join(str(record.get(k) or "") for k in ("text", "notes"))
+            safety_reassurance = ""
+            safety_data_status = "not_assessed"
+            if record:
+                # First sanitize structured fields as plant-scoped evidence. The
+                # plant prefix supplies the structural attribution, while the
+                # conservative extractor still rejects comparator noise,
+                # protective/negated toxicity, other botanicals and retractions.
+                structured_text = " ".join(
+                    x for x in (safety_findings, interactions) if x
                 )
-                # Source-text fallback only fills a missing structured field; it
-                # never overwrites connector/database-provided structured data.
-                safety_findings = safety_findings or inferred_safety
-                interactions = interactions or inferred_interactions
+                structured_safety = structured_interactions = structured_reassurance = ""
+                structured_status = "not_assessed"
+                if structured_text:
+                    structured_safety, structured_interactions, structured_reassurance, structured_status = (
+                        _extract_safety_details(
+                            f"{plant}. {structured_text}", plant_name=plant,
+                        )
+                    )
+
+                # Then inspect raw source text only as a fallback. It must carry
+                # its own plant/intervention anchor and explicit relation.
+                source_safety, source_interactions, source_reassurance, source_status = (
+                    _extract_safety_details(
+                        " ".join(str(record.get(k) or "") for k in ("text", "notes")),
+                        plant_name=plant,
+                    )
+                )
+                safety_findings = structured_safety or source_safety
+                interactions = structured_interactions or source_interactions
+                safety_reassurance = structured_reassurance or source_reassurance
+                safety_data_status = (
+                    structured_status if structured_status != "not_assessed" else source_status
+                )
 
             # Phase 5 normalization/validation is now run on the individual
             # scientific observation rather than on a plant-wide concatenation.
@@ -658,6 +658,8 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Co_Compounds": "; ".join(compounds[1:9]),
                 "Safety_Flags": safety_findings,
                 "Interaction_Flags": interactions,
+                "Safety_Reassurance": safety_reassurance,
+                "Safety_Data_Status": safety_data_status,
                 "Evidence_Source": source,
                 "Source_Record_IDs": record_id,
                 "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",

@@ -10,6 +10,18 @@ import re
 from typing import Iterable
 import pandas as pd
 
+# Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
+# botanical_rd_candidate_engine.py) predates Phase 5 and does not list
+# these three diagnostic columns. Every place this module reindexes a
+# DataFrame to OUTPUT_COLUMNS must ALSO include these, or the entire
+# Evidence Normalization / Evidence Validation stage's output is silently
+# dropped before it ever leaves discover_indication_candidates() — exactly
+# the regression a backward-compatibility test caught (the columns were
+# being computed correctly, then discarded by the final reindex call).
+# OUTPUT_COLUMNS itself is intentionally left unmodified — it is shared
+# with the legacy compound-substitution engine, which never runs Phase 5.
+_PHASE5_DIAGNOSTIC_COLUMNS = ("Normalization_Summary", "Validation_Status", "Validation_Summary")
+
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 
@@ -116,7 +128,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
     candidates = engine._candidate_frame()
     if candidates.empty:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))
 
     direct_terms, mechanism_terms = _terms(indication)
     rows = []
@@ -164,6 +176,43 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         context_n = _norm(f"{level} {hierarchy} {level_text}")
         human = any(t in context_n for t in ("clinical", "human", "randomized", "randomised", "meta analysis", "systematic review"))
         preclinical = any(t in context_n for t in ("in vivo", "animal", "in vitro", "ex vivo", "preclinical", "cell"))
+
+        # --- Phase 5 (IMPLEMENTATION_PLAN.md): Evidence Normalization and
+        # Evidence Validation, as two explicit stages that run BEFORE
+        # candidate scoring below. Purely additive/diagnostic — nothing in
+        # this block reads into or changes evidence_points/tier/score
+        # further down; Phase 3's authoritative scoring weights are
+        # untouched, per this phase's own constraint. Any failure here is
+        # caught and degrades to "not assessed", never blocks discovery.
+        try:
+            from evidence_normalization import normalize_evidence_record
+            from evidence_validation import validate_evidence_record
+            _phase5_row = {
+                "Scientific_Name": plant, "Target_Indication": indication,
+                "Dosage_Form": dosage_form, "Evidence_Level": level,
+                "Evidence_Hierarchy_Detail": hierarchy, "Notes": evidence_text,
+                "Source_Record_IDs": "; ".join(sources),
+                "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
+            }
+            _normalized_fields = normalize_evidence_record(_phase5_row)
+            _validation_result = validate_evidence_record(
+                _phase5_row, plant_name=plant, indication=indication,
+                dosage_form=dosage_form, normalized_fields=_normalized_fields,
+            )
+            normalization_summary = "; ".join(
+                f"{name}={f.verification_status}" for name, f in _normalized_fields.items()
+                if f.verification_status != "missing"
+            ) or "No fields normalized (all source values missing)"
+            validation_status = _validation_result["overall_status"]
+            validation_summary = "; ".join(
+                f"{check}: {'pass' if result.get('passed') else 'fail'}"
+                for check, result in _validation_result.items()
+                if isinstance(result, dict) and "passed" in result
+            )
+        except Exception:
+            normalization_summary = "Not assessed (Phase 5 stage error)"
+            validation_status = "not_assessable"
+            validation_summary = "Not assessed (Phase 5 stage error)"
 
         if direct and human:
             evidence_points = 35
@@ -238,6 +287,15 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             "Market_Status": "Search not performed",
             "Regulatory_Barriers": "Not assessed",
             "Novelty_Status": "Indication-derived candidate",
+            # Phase 5 (IMPLEMENTATION_PLAN.md) — diagnostic-only columns from
+            # the Evidence Normalization / Evidence Validation stages run
+            # above, before scoring. Deliberately NOT wired into
+            # Has_Negative_Evidence, evidence_points, or any other
+            # scoring-affecting field in this phase — see this phase's own
+            # "do not change authoritative scoring weights" constraint.
+            "Normalization_Summary": normalization_summary,
+            "Validation_Status": validation_status,
+            "Validation_Summary": validation_summary,
             "R&D_Opportunity_Score": score,
             "Score_Breakdown": {
                 "Direct indication evidence": evidence_points,
@@ -278,7 +336,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         rows.append(row)
 
     if not rows:
-        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
-    return out.reindex(columns=OUTPUT_COLUMNS).reset_index(drop=True)
+    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS)).reset_index(drop=True)

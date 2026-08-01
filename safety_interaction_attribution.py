@@ -121,6 +121,47 @@ def _dedupe(values: Iterable[str], limit: int = 4) -> list[str]:
     return out[:limit]
 
 
+
+def normalize_structured_interactions(value: object) -> list[str]:
+    """Normalize an explicitly structured interaction field conservatively.
+
+    Unlike raw prose, a value stored in ``interactions_structured`` already
+    carries the semantic relationship by schema.  Therefore a bare drug or
+    drug-class term (for example ``anticoagulants``) is valid here and must not
+    be discarded merely because the serialized value does not repeat a verb
+    such as ``interacts with``.  Missing placeholders, comparator/general text,
+    promotional/retracted material, and exact duplicates are still removed.
+    """
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        raw_items = []
+        for key, item in value.items():
+            key_text = str(key or "").strip()
+            item_text = str(item or "").strip()
+            combined = ": ".join(x for x in (key_text, item_text) if x)
+            if combined:
+                raw_items.append(combined)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = [str(item or "").strip() for item in value]
+    else:
+        text = str(value or "").strip()
+        if not text or _norm(text) in _MISSING:
+            return []
+        raw_items = [x.strip() for x in re.split(r"[;|\n]+", text) if x.strip()]
+
+    accepted = []
+    for item in raw_items:
+        n = _norm(item)
+        if not n or n in _MISSING:
+            continue
+        if any(term in n for term in _LOW_QUALITY_SOURCE):
+            continue
+        if any(term in n for term in _COMPARATOR_NOISE):
+            continue
+        accepted.append(item)
+    return _dedupe(accepted)
+
 def extract_attributed_safety_interactions(
     text: object,
     plant_name: str = "",

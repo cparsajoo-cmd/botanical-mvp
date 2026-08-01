@@ -74,3 +74,19 @@ def test_retracted_source_is_excluded():
     out = extract_attributed_safety_interactions(text, "Camellia sinensis", structurally_linked=True)
     assert out["adverse_events"] == []
     assert out["safety_data_status"] == "source_excluded"
+
+
+def test_structured_interaction_terms_are_preserved_without_relation_verb():
+    from safety_interaction_attribution import normalize_structured_interactions
+
+    assert normalize_structured_interactions(["anticoagulants", "antiplatelets"]) == [
+        "anticoagulants", "antiplatelets"
+    ]
+
+
+def test_structured_interaction_placeholders_and_noise_are_removed():
+    from safety_interaction_attribution import normalize_structured_interactions
+
+    assert normalize_structured_interactions([
+        "", "not assessed", "synthetic drugs have side effects", "warfarin"
+    ]) == ["warfarin"]

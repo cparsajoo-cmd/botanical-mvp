@@ -16,7 +16,7 @@ import pandas as pd
 from supabase_client import get_supabase_client
 
 
-def _fetch_table_df(table_name, page_size=1000, max_retries=3):
+def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*"):
     """Paginated fetch with per-page retry and graceful partial-result
     handling.
 
@@ -49,7 +49,7 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3):
             try:
                 response = (
                     supabase.table(table_name)
-                    .select("*")
+                    .select(select_expr)
                     .range(start, start + page_size - 1)
                     .execute()
                 )
@@ -106,14 +106,51 @@ def load_scientific_evidence_df():
 
 
 def load_evidence_records_df():
-    """Load structured evidence records used for indication-aware plant retrieval.
+    """Load evidence records with their canonical plant and source identities.
 
-    This table is intentionally kept separate from ``plant_compounds`` because
-    the latter may contain broad phytochemical compilation labels that are not
-    suitable as direct plant-indication evidence.
+    ``evidence_records`` stores foreign keys, so selecting only ``*`` leaves no
+    scientific name for indication discovery to match. Fetch the related plant
+    and source rows and flatten them into the column convention used elsewhere.
+    Pagination and retry behaviour remain identical to the generic loader.
     """
     try:
-        return _fetch_table_df("evidence_records")
+        raw = _fetch_table_df(
+            "evidence_records",
+            select_expr="*, plants(scientific_name, common_name), sources(*)",
+        )
+        if raw.empty:
+            return raw
+
+        rows = []
+        for item in raw.to_dict(orient="records"):
+            plant = item.get("plants") or {}
+            source = item.get("sources") or {}
+            flat = dict(item)
+            flat.update({
+                "Evidence_Record_ID": item.get("id"),
+                "Plant_ID": item.get("plant_id"),
+                "Scientific_Name": plant.get("scientific_name", ""),
+                "Common_Name": plant.get("common_name", ""),
+                "Source_URL": source.get("url", ""),
+                "Source_Title": source.get("title", ""),
+                "Source_Type": source.get("source_type", ""),
+                "PMID": item.get("pmid"),
+                "DOI": item.get("doi"),
+                "NCT_ID": item.get("nct_id"),
+                "Target_Indication": item.get("target_indication", ""),
+                "Primary_Outcome": item.get("primary_outcome", ""),
+                "Result_Direction": item.get("result_direction", ""),
+                "Study_Type": item.get("study_type", ""),
+                "Study_Model": item.get("study_model", ""),
+                "Evidence_Level": item.get("evidence_level", ""),
+                "Notes": item.get("notes", ""),
+                "Mechanism": item.get("mechanism"),
+                "Target": item.get("target"),
+            })
+            flat.pop("plants", None)
+            flat.pop("sources", None)
+            rows.append(flat)
+        return pd.DataFrame(rows)
     except Exception as exc:
         print(f"[supabase_data] load_evidence_records_df failed entirely: {exc}")
         return pd.DataFrame()

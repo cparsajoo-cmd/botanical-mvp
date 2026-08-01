@@ -115,34 +115,34 @@ def _record_id(engine, row: pd.Series, fallback_index: object = None) -> str:
     return str(fallback_index) if fallback_index is not None else ""
 
 
-def _records_for_plant(engine, plant: str) -> list[dict]:
-    """Return only records explicitly attached to this plant.
+def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
+    """Build a plant-keyed evidence index once per discovery run.
 
-    Searches all active evidence stores, including the persisted Supabase
-    ``evidence_records_df``.  No indication-key lookup is performed, preventing
-    general disease records from leaking into every botanical candidate.
+    The previous implementation scanned every evidence dataframe once for every
+    candidate plant. With thousands of catalogue plants and evidence rows this
+    became O(plants × evidence) and could leave Streamlit spinning indefinitely.
+    This function performs one linear pass over each active evidence store and
+    produces O(1) exact-name lookups for the scoring loop.
     """
-    plant_n = _norm(plant)
-    records: list[dict] = []
-    frames = [
+    index: dict[str, list[dict]] = {}
+    frames = (
         getattr(engine, "evidence_df", pd.DataFrame()),
         getattr(engine, "evidence_records_df", pd.DataFrame()),
         getattr(engine, "scientific_evidence_df", pd.DataFrame()),
-    ]
+    )
     plant_cols = (
         "Scientific_Name", "scientific_name", "Plant", "plant",
         "Botanical", "botanical", "Common_Name", "common_name",
     )
-    seen: set[tuple[str, str, str]] = set()
+    seen_by_plant: dict[str, set[tuple[str, str, str]]] = {}
+
     for frame in frames:
         if not isinstance(frame, pd.DataFrame) or frame.empty:
             continue
         for idx, row in frame.iterrows():
             row_plant = _pick_from_row(engine, row, list(plant_cols))
-            if not row_plant:
-                continue
-            row_plant_n = _norm(row_plant)
-            if not (row_plant_n == plant_n or row_plant_n in plant_n or plant_n in row_plant_n):
+            plant_key = _norm(row_plant)
+            if not plant_key:
                 continue
             text = _record_text(row)
             if not text:
@@ -150,11 +150,51 @@ def _records_for_plant(engine, plant: str) -> list[dict]:
             source = _record_source(engine, row)
             record_id = _record_id(engine, row, idx)
             dedupe_key = (_norm(text), _norm(source), _norm(record_id))
-            if dedupe_key in seen:
+            plant_seen = seen_by_plant.setdefault(plant_key, set())
+            if dedupe_key in plant_seen:
                 continue
-            seen.add(dedupe_key)
-            records.append({"text": text, "source": source, "record_id": record_id})
-    return records
+            plant_seen.add(dedupe_key)
+            index.setdefault(plant_key, []).append({
+                "text": text,
+                "source": source,
+                "record_id": record_id,
+            })
+    return index
+
+
+def _records_for_plant(
+    engine,
+    plant: str,
+    evidence_index: dict[str, list[dict]] | None = None,
+) -> list[dict]:
+    """Return records explicitly attached to ``plant`` without rescanning tables."""
+    plant_n = _norm(plant)
+    if not plant_n:
+        return []
+    if evidence_index is None:
+        evidence_index = _build_plant_evidence_index(engine)
+
+    exact = evidence_index.get(plant_n)
+    if exact is not None:
+        return exact
+
+    # Compatibility for records stored under a common/abbreviated name. This
+    # fallback compares only the small set of indexed plant keys, never every
+    # evidence row, so it does not reintroduce the old quadratic behaviour.
+    matched: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for key, records in evidence_index.items():
+        if key in plant_n or plant_n in key:
+            for record in records:
+                dedupe_key = (
+                    _norm(record.get("text")),
+                    _norm(record.get("source")),
+                    _norm(record.get("record_id")),
+                )
+                if dedupe_key not in seen:
+                    seen.add(dedupe_key)
+                    matched.append(record)
+    return matched
 
 
 def discover_indication_candidates(engine, indication: str, dosage_form: str = "", market: str = "", product_type: str = "") -> pd.DataFrame:
@@ -166,6 +206,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))
 
     direct_terms, mechanism_terms = _terms(indication)
+    evidence_index = _build_plant_evidence_index(engine)
     rows = []
 
     for _, item in candidates.iterrows():
@@ -176,7 +217,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         indications = engine._pick(item, ["Indications_Text", "Indications", "indication"])
         targets = engine._pick(item, ["Known_Targets", "target", "mechanism"])
         compounds = engine._split_compound_terms(engine._pick(item, ["Known_Active_Compounds", "compound_name"]))
-        records = _records_for_plant(engine, plant)
+        records = _records_for_plant(engine, plant, evidence_index)
 
         direct_records = [r for r in records if _contains_any(r["text"], direct_terms)]
         mechanism_records = [r for r in records if _contains_any(r["text"], mechanism_terms)]

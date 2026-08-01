@@ -199,6 +199,18 @@ def _cached_compound_profiles_df():
         return pd.DataFrame(), False
 
 
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_evidence_records_df():
+    """Cached joined evidence records used by indication-centric discovery."""
+    from supabase_data import load_evidence_records_df
+    try:
+        return load_evidence_records_df(), True
+    except Exception:
+        return pd.DataFrame(), False
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
@@ -238,7 +250,7 @@ def _evidence_fingerprint(evidence_df):
     return (len(evidence_df), content_hash)
 
 
-ENGINE_CACHE_VERSION = "step4_scientific_inventory_v2"
+ENGINE_CACHE_VERSION = "step5_evidence_index_v1"
 
 
 @st.cache_resource(ttl=120, show_spinner=False)
@@ -251,6 +263,7 @@ def _cached_engine(
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
     scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
+    evidence_records_df, evidence_records_ok = _cached_evidence_records_df()
 
     return BotanicalRDCandidateEngine(
         evidence_df=_evidence_df,
@@ -258,11 +271,15 @@ def _cached_engine(
         plant_compounds_df=plant_compounds_df,
         compound_profiles_df=compound_profiles_df,
         scientific_evidence_df=scientific_evidence_df,
+        evidence_records_df=evidence_records_df,
         # Review #17: if any core Supabase load actually FAILED (not
         # just legitimately returned few/no rows), the engine caps
         # every recommendation at "Investigate" — a Go call must never
         # be issued on data that may not have actually loaded.
-        data_source_reliable=plant_compounds_ok and compound_profiles_ok and scientific_evidence_ok,
+        data_source_reliable=(
+            plant_compounds_ok and compound_profiles_ok
+            and scientific_evidence_ok and evidence_records_ok
+        ),
     )
 
 

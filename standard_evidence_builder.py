@@ -296,9 +296,19 @@ def build_standard_evidence(record):
         # else has already set it.
         "Sample_Size": record.get("Sample_Size") or record.get("LLM_Sample_Size", ""),
         "Comparator": record.get("LLM_Comparator", ""),
-        "Primary_Outcome": record.get("LLM_Main_Outcome", ""),
-        "Result_Direction": record.get("LLM_Result_Direction", ""),
-        "Safety_Signal": record.get("LLM_Safety_Signal", ""),
+        # Literal connector/source fields take precedence.  LLM-derived
+        # values are fallbacks only, matching the Sample_Size policy above.
+        "Primary_Outcome": record.get("Primary_Outcome") or record.get("LLM_Main_Outcome", ""),
+        "Result_Direction": record.get("Result_Direction") or record.get("LLM_Result_Direction", ""),
+        "Safety_Signal": record.get("Safety_Signal") or record.get("LLM_Safety_Signal", ""),
+        "Adverse_Events": record.get("Adverse_Events"),
+        "Interactions_Structured": record.get("Interactions_Structured"),
+        "Effect_Size": record.get("Effect_Size"),
+        "P_Value": record.get("P_Value"),
+        "Administration_Route": record.get("Administration_Route"),
+        "Plant_Part": record.get("Plant_Part"),
+        "Extraction_Method": record.get("Extraction_Method"),
+        "Duration": record.get("Duration"),
         "Evidence_Level": record.get("Evidence_Level", "Unknown"),
         "Direct_For_Selected_Product": direct,
         "Directness_Reason": reason,

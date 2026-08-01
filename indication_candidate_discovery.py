@@ -7,6 +7,8 @@ entry gate.  Compound information is retained only as supporting metadata.
 from __future__ import annotations
 
 import re
+import json
+import ast
 from typing import Iterable
 import pandas as pd
 
@@ -94,6 +96,71 @@ def _record_text(row: pd.Series) -> str:
     return " ".join(values)
 
 
+def _structured_text(value: object) -> str:
+    """Render persisted JSON/list safety and interaction fields deterministically.
+
+    This is presentation/transport only: it never invents content.  Supabase
+    JSONB values otherwise become Python repr strings whose ordering and nested
+    shape are difficult for downstream keyword checks and audit exports.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        parts = []
+        for key in sorted(value):
+            rendered = _structured_text(value[key])
+            if rendered:
+                parts.append(f"{key}: {rendered}")
+        return "; ".join(parts)
+    if isinstance(value, (list, tuple, set)):
+        return "; ".join(x for x in (_structured_text(v) for v in value) if x)
+    text = str(value).strip()
+    if text.lower() in {"", "none", "nan", "null", "{}", "[]"}:
+        return ""
+    # BotanicalRDCandidateEngine._pick() stringifies every cell. Recover JSONB
+    # containers so their values remain readable after that compatibility layer.
+    if text[:1] in {"{", "["}:
+        parsed = None
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                parsed = None
+        if parsed is not None and parsed is not value:
+            return _structured_text(parsed)
+    return text
+
+
+def _explicit_result_direction(record: dict) -> str:
+    """Return a source-supported result direction, never a guessed efficacy call.
+
+    The persisted Result_Direction field is authoritative.  When it is absent,
+    only explicit outcome phrases in source-carried outcome/notes/effect fields
+    are mapped to a conservative canonical label.  Generic indication or
+    mechanism language is deliberately excluded.
+    """
+    direct = _structured_text(record.get("result_direction"))
+    if direct:
+        return direct
+    outcome_text = _norm(" ".join(_structured_text(record.get(k)) for k in (
+        "primary_outcome", "effect_size", "notes"
+    )))
+    if not outcome_text:
+        return ""
+    harmful = ("worsened", "increased risk", "harmful", "adverse effect", "deteriorat")
+    null = ("no significant difference", "not significant", "no effect", "no benefit", "failed to improve")
+    positive = ("significant reduction", "significantly reduced", "significant improvement", "significantly improved", "decreased", "improved")
+    if any(term in outcome_text for term in harmful):
+        return "harmful/adverse"
+    if any(term in outcome_text for term in null):
+        return "no significant benefit"
+    if any(term in outcome_text for term in positive):
+        return "positive benefit"
+    return ""
+
+
 def _record_source(engine, row: pd.Series) -> str:
     """Return a human-readable source locator, never a database row id."""
     return _pick_from_row(engine, row, [
@@ -171,21 +238,25 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 "study_model": _pick_from_row(engine, row, ["Study_Model", "study_model"]),
                 "evidence_level": _pick_from_row(engine, row, ["Evidence_Level", "evidence_level"]),
                 "evidence_hierarchy": _pick_from_row(engine, row, ["Evidence_Hierarchy_Detail", "evidence_hierarchy_detail"]),
-                "primary_outcome": _pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"]),
-                "result_direction": _pick_from_row(engine, row, ["Result_Direction", "result_direction"]),
-                "preparation": _pick_from_row(engine, row, [
+                "primary_outcome": _structured_text(_pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"])),
+                "result_direction": _structured_text(_pick_from_row(engine, row, ["Result_Direction", "result_direction"])),
+                "effect_size": _structured_text(_pick_from_row(engine, row, ["Effect_Size", "effect_size"])),
+                "p_value": _structured_text(_pick_from_row(engine, row, ["P_Value", "p_value"])),
+                "notes": _structured_text(_pick_from_row(engine, row, ["Notes", "notes"])),
+                "preparation": _structured_text(_pick_from_row(engine, row, [
                     "Preparation", "preparation", "Extraction_Method", "extraction_method",
                     "Dosage_Form", "dosage_form", "Administration_Route", "administration_route",
-                ]),
-                "dose": _pick_from_row(engine, row, ["Dosage", "dosage", "Dose", "dose"]),
-                "safety_findings": _pick_from_row(engine, row, [
+                ])),
+                "dose": _structured_text(_pick_from_row(engine, row, ["Dosage", "dosage", "Dose", "dose"])),
+                "safety_findings": _structured_text(_pick_from_row(engine, row, [
                     "Safety_Findings", "safety_findings", "Adverse_Events", "adverse_events",
-                    "Safety_Flags", "safety_flags",
-                ]),
-                "interactions": _pick_from_row(engine, row, [
+                    "Safety_Signal", "safety_signal", "Safety_Flags", "safety_flags",
+                ])),
+                "interactions": _structured_text(_pick_from_row(engine, row, [
                     "Interactions_Structured", "interactions_structured", "Interactions", "interactions",
+                    "Drug_Interaction_Level", "drug_interaction_level",
                     "Interaction_Flags", "interaction_flags",
-                ]),
+                ])),
                 "nct_id": _pick_from_row(engine, row, ["NCT_ID", "nct_id"]),
             })
     return index
@@ -243,7 +314,8 @@ def _record_evidence_characteristics(engine, record: dict) -> dict:
     normalized = _norm(text)
     source_norm = _norm(record.get("source"))
     registry_record = bool(record.get("nct_id")) or "clinicaltrials gov" in source_norm
-    result_direction = _norm(record.get("result_direction"))
+    resolved_result_direction = _explicit_result_direction(record)
+    result_direction = _norm(resolved_result_direction)
     has_reported_result = bool(result_direction) or any(term in normalized for term in (
         "statistically significant", "significant reduction", "significant improvement",
         "reduced hba1c", "reduced fasting glucose", "improved", "decreased", "increased",
@@ -284,6 +356,7 @@ def _record_evidence_characteristics(engine, record: dict) -> dict:
         "preclinical": preclinical,
         "registry_without_results": registry_without_results,
         "negative": negative,
+        "resolved_result_direction": resolved_result_direction,
     }
 
 
@@ -397,7 +470,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             record_id = str(record.get("record_id") or "").strip() if record else ""
             sources = [source] if source else []
             record_ids = [record_id] if record_id else []
-            result_direction = str(record.get("result_direction") or "").strip() if record else ""
+            result_direction = characteristics.get("resolved_result_direction", "") if record else ""
             preparation_status, preparation_mismatches = _preparation_applicability(record, dosage_form)
             record_preparation = str(record.get("preparation") or "").strip() if record else ""
             safety_findings = str(record.get("safety_findings") or "").strip() if record else ""

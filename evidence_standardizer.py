@@ -47,9 +47,18 @@ def standardize_extracted_record(extracted, source_metadata):
     # would otherwise have them silently dropped here before storage.
     # Copied back only when the connector actually set a non-empty value —
     # never defaulted or guessed for a source that didn't provide one.
-    for _identifier_field in ("PMID", "DOI", "NCT_ID", "Sample_Size"):
-        if record.get(_identifier_field):
-            normalized[_identifier_field] = record[_identifier_field]
+    # Preserve connector-provided scientific fields that the legacy
+    # normalize_source_record allowlist does not yet carry.  Values are copied
+    # only when actually present; missing facts remain missing.
+    for _source_field in (
+        "PMID", "DOI", "NCT_ID", "Sample_Size",
+        "Primary_Outcome", "Result_Direction", "Safety_Signal",
+        "Adverse_Events", "Interactions_Structured", "Effect_Size", "P_Value",
+        "Administration_Route", "Plant_Part", "Extraction_Method", "Duration",
+        "Mechanism", "Target", "Data_Quality_Score",
+    ):
+        if record.get(_source_field) not in (None, "", [], {}):
+            normalized[_source_field] = record[_source_field]
 
     if extract_evidence_with_llm is not None and not already_has_reliable_evidence_level:
         try:

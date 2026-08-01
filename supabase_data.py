@@ -146,6 +146,21 @@ def load_evidence_records_df():
                 "Notes": item.get("notes", ""),
                 "Mechanism": item.get("mechanism"),
                 "Target": item.get("target"),
+                "Administration_Route": item.get("administration_route"),
+                "Plant_Part": item.get("plant_part"),
+                "Extraction_Method": item.get("extraction_method"),
+                "Duration": item.get("duration"),
+                "Effect_Size": item.get("effect_size"),
+                "P_Value": item.get("p_value"),
+                "Adverse_Events": item.get("adverse_events"),
+                "Interactions_Structured": item.get("interactions_structured"),
+                "Data_Quality_Score": item.get("data_quality_score"),
+                "Safety_Signal": item.get("safety_signal", ""),
+                # Aliases consumed by indication_candidate_discovery.  These
+                # are direct copies of persisted values, never inferred.
+                "Preparation": item.get("extraction_method") or item.get("dosage_form") or item.get("administration_route"),
+                "Safety_Findings": item.get("adverse_events") or item.get("safety_signal"),
+                "Interactions": item.get("interactions_structured"),
             })
             flat.pop("plants", None)
             flat.pop("sources", None)

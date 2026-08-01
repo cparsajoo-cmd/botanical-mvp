@@ -24,6 +24,7 @@ _PHASE5_DIAGNOSTIC_COLUMNS = ("Normalization_Summary", "Validation_Status", "Val
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
+SCORING_CONFIG_VERSION = "2.2-indication-record-level-evidence"
 
 DISEASE_FAMILIES = {
     "metabolic": {
@@ -518,7 +519,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Comparative_Rationale_Structured": {},
                 "Rationale": rationale,
                 "Gate_Results": {},
-                "Scoring_Config_Version": "2.2-indication-record-level-evidence",
+                "Scoring_Config_Version": SCORING_CONFIG_VERSION,
                 "Applicability_Summary": {
                     "evidence_record_ids": record_ids,
                     "classification": "Not assessed",

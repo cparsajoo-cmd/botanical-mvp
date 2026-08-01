@@ -24,6 +24,7 @@ def test_general_indication_record_does_not_leak_to_other_plants():
     out=discover_indication_candidates(FakeEngine(), "type 2 diabetes")
     assert set(out["Alternative_Plant"]) == {"Plant A"}
     row=out.iloc[0]
-    assert "example/a" in row["Source_Record_IDs"]
-    assert "example/general" not in row["Source_Record_IDs"]
+    assert "example/a" in row["Evidence_Source"]
+    assert "example/general" not in row["Evidence_Source"]
+    assert "example/a" not in row["Source_Record_IDs"]
     assert row["Scoring_Config_Version"] == "2.1-indication-centric-no-leakage"

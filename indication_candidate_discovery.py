@@ -79,7 +79,9 @@ def _record_text(row: pd.Series) -> str:
         "Indication", "indication", "Disease", "disease", "Condition", "condition",
         "Evidence_Text", "evidence_text", "Snippet", "snippet", "decision_reason",
         "evidence_flags", "Study_Type", "study_type", "Evidence_Level", "evidence_level",
-        "Target", "target", "Mechanism", "mechanism",
+        "Target_Indication", "target_indication", "Detected_Indications", "detected_indications",
+        "Primary_Outcome", "primary_outcome", "Result_Direction", "result_direction",
+        "Notes", "notes", "Target", "target", "Mechanism", "mechanism",
     )
     values = []
     for col in preferred:
@@ -89,22 +91,49 @@ def _record_text(row: pd.Series) -> str:
 
 
 def _record_source(engine, row: pd.Series) -> str:
+    """Return a human-readable source locator, never a database row id."""
     return _pick_from_row(engine, row, [
-        "Source_URL", "source_url", "URL", "url", "PMID", "pmid",
-        "DOI", "doi", "Evidence_Record_ID", "evidence_record_id", "id",
+        "Source_URL", "source_url", "URL", "url",
+        "Source_Title", "source_title", "Title", "title",
+        "PMID", "pmid", "DOI", "doi", "NCT_ID", "nct_id",
     ])
 
 
-def _records_for_plant(engine, plant: str) -> list[tuple[str, str, object]]:
+def _record_id(engine, row: pd.Series, fallback_index: object = None) -> str:
+    """Return the stable evidence identifier used for traceability.
+
+    Prefer the evidence_records primary key, then stable literature/registry
+    identifiers.  A dataframe index is used only as a last-resort compatibility
+    fallback for transient session evidence that has not yet been persisted.
+    """
+    value = _pick_from_row(engine, row, [
+        "Evidence_Record_ID", "evidence_record_id", "id",
+        "PMID", "pmid", "DOI", "doi", "NCT_ID", "nct_id",
+    ])
+    if value:
+        return str(value)
+    return str(fallback_index) if fallback_index is not None else ""
+
+
+def _records_for_plant(engine, plant: str) -> list[dict]:
     """Return only records explicitly attached to this plant.
 
-    No indication-key lookup is performed.  This prevents generic diabetes (or
-    other indication) records from leaking into every botanical candidate.
+    Searches all active evidence stores, including the persisted Supabase
+    ``evidence_records_df``.  No indication-key lookup is performed, preventing
+    general disease records from leaking into every botanical candidate.
     """
     plant_n = _norm(plant)
-    records: list[tuple[str, str, object]] = []
-    frames = [getattr(engine, "evidence_df", pd.DataFrame()), getattr(engine, "scientific_evidence_df", pd.DataFrame())]
-    plant_cols = ("Scientific_Name", "scientific_name", "Plant", "plant", "Botanical", "botanical", "Common_Name", "common_name")
+    records: list[dict] = []
+    frames = [
+        getattr(engine, "evidence_df", pd.DataFrame()),
+        getattr(engine, "evidence_records_df", pd.DataFrame()),
+        getattr(engine, "scientific_evidence_df", pd.DataFrame()),
+    ]
+    plant_cols = (
+        "Scientific_Name", "scientific_name", "Plant", "plant",
+        "Botanical", "botanical", "Common_Name", "common_name",
+    )
+    seen: set[tuple[str, str, str]] = set()
     for frame in frames:
         if not isinstance(frame, pd.DataFrame) or frame.empty:
             continue
@@ -118,7 +147,13 @@ def _records_for_plant(engine, plant: str) -> list[tuple[str, str, object]]:
             text = _record_text(row)
             if not text:
                 continue
-            records.append((text, _record_source(engine, row), idx))
+            source = _record_source(engine, row)
+            record_id = _record_id(engine, row, idx)
+            dedupe_key = (_norm(text), _norm(source), _norm(record_id))
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            records.append({"text": text, "source": source, "record_id": record_id})
     return records
 
 
@@ -143,8 +178,8 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         compounds = engine._split_compound_terms(engine._pick(item, ["Known_Active_Compounds", "compound_name"]))
         records = _records_for_plant(engine, plant)
 
-        direct_records = [(t, s, i) for t, s, i in records if _contains_any(t, direct_terms)]
-        mechanism_records = [(t, s, i) for t, s, i in records if _contains_any(t, mechanism_terms)]
+        direct_records = [r for r in records if _contains_any(r["text"], direct_terms)]
+        mechanism_records = [r for r in records if _contains_any(r["text"], mechanism_terms)]
 
         # Database profile fields may create an exploratory lead, but never a
         # direct-evidence candidate and never a shortlist by themselves.
@@ -154,16 +189,16 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
             continue
 
-        evidence_text = " ".join(t for t, _, _ in records)[:12000]
+        evidence_text = " ".join(r["text"] for r in records)[:12000]
         direct = bool(direct_records)
         mechanistic_empirical = bool(mechanism_records)
         profile_only = not direct and not mechanistic_empirical
 
         source_records = direct_records if direct else mechanism_records
-        sources = list(dict.fromkeys(s for _, s, _ in source_records if str(s).strip()))
-        record_ids = [str(i) for _, _, i in source_records]
+        sources = list(dict.fromkeys(r["source"] for r in source_records if str(r["source"]).strip()))
+        record_ids = list(dict.fromkeys(r["record_id"] for r in source_records if str(r["record_id"]).strip()))
 
-        level_text = " ".join(t for t, _, _ in source_records)
+        level_text = " ".join(r["text"] for r in source_records)
         level = engine._evidence_level(level_text) if level_text else "Profile-level hypothesis"
         hierarchy = level
         if level_text:
@@ -191,7 +226,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Scientific_Name": plant, "Target_Indication": indication,
                 "Dosage_Form": dosage_form, "Evidence_Level": level,
                 "Evidence_Hierarchy_Detail": hierarchy, "Notes": evidence_text,
-                "Source_Record_IDs": "; ".join(sources),
+                "Source_Record_IDs": "; ".join(record_ids),
                 "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
             }
             _normalized_fields = normalize_evidence_record(_phase5_row)
@@ -277,7 +312,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             "Safety_Flags": "",
             "Interaction_Flags": "",
             "Evidence_Source": "; ".join(sources),
-            "Source_Record_IDs": "; ".join(sources or record_ids),
+            "Source_Record_IDs": "; ".join(record_ids),
             "Occurrence_Corroboration": f"{len(sources)} traceable plant-specific source(s)",
             "Candidate_Evidence_Strength_Tier": tier,
             "Evidence_Level": level,

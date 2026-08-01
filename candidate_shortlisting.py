@@ -53,6 +53,8 @@ _HARD_STOP_TERMS = (
 _NO_DIRECT_EVIDENCE_TERMS = (
     "no direct evidence", "no evidence", "general literature signal",
     "not grade-applicable", "unclassified", "unknown",
+    "registry record without reported results", "registry / protocol only",
+    "results not reported", "await reported results",
 )
 
 _APPLICABILITY_MISMATCH_TERMS = (
@@ -529,7 +531,7 @@ def _indication_relevance_detail(
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
 
-        if direct_hits and traceable and not _row_is_inferred_or_generic(row):
+        if direct_hits and traceable and empirical and not _row_is_inferred_or_generic(row):
             direct_hits_all.update(direct_hits)
             direct_source_ids.extend(_split_values([row.get("Source_Record_IDs", "")]))
         if mechanism_hits:
@@ -571,45 +573,93 @@ def _evidence_quality(
     sources: list[str],
     references: list[str],
 ) -> tuple[float, str]:
-    """Score evidence quality, down-weighting inferred and non-specific rows."""
-    empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
-    traceable = group[group.apply(_row_has_traceable_source, axis=1)]
-    evidence_group = empirical if not empirical.empty else traceable
+    """Score record-level evidence quality without collapsing every source.
 
-    if evidence_group.empty:
+    Phase 5/Step 5 now emits one raw row per evidence record.  This function
+    therefore scores the actual hierarchy mix and depth rather than assigning
+    the strongest label found anywhere to one synthetic plant row.  Duplicate
+    identifiers are counted once, registry records without results do not earn
+    efficacy points, and contradictory/null findings reduce consistency.
+    """
+    empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
+    if empirical.empty:
         return 0.0, "None"
 
-    hierarchy_text = " | ".join(
-        _norm(v)
-        for col in (
-            "Evidence_Level", "Evidence_Hierarchy_Detail",
-            "Candidate_Evidence_Strength_Tier", "GRADE_Certainty",
-        )
-        if col in evidence_group.columns
-        for v in evidence_group[col].dropna().tolist()
+    # One scientific source must not inflate the score merely because it entered
+    # through multiple connectors or compound associations.
+    empirical["_source_key"] = empirical.apply(
+        lambda row: _norm(row.get("Source_Record_IDs", ""))
+        or _norm(row.get("Evidence_Source", ""))
+        or f"row-{row.name}",
+        axis=1,
     )
-    if "systematic review" in hierarchy_text or "meta-analysis" in hierarchy_text:
-        hierarchy_points = 20.0
-    elif any(t in hierarchy_text for t in ("randomized", "randomised", "clinical trial", "human evidence")):
-        hierarchy_points = 17.0
-    elif any(t in hierarchy_text for t in ("in vivo", "animal", "validated ex vivo")):
-        hierarchy_points = 12.0
-    elif any(t in hierarchy_text for t in ("in vitro", "cell", "preclinical", "mechanistic")):
-        hierarchy_points = 8.0
-    elif "analytical chemistry" in hierarchy_text or "occurrence" in hierarchy_text:
-        hierarchy_points = 3.0
+    empirical = empirical.drop_duplicates(subset=["_source_key"], keep="first")
+
+    def row_hierarchy_points(row: pd.Series) -> tuple[float, str]:
+        text = " | ".join(
+            _norm(row.get(col, ""))
+            for col in (
+                "Evidence_Level", "Evidence_Hierarchy_Detail",
+                "Candidate_Evidence_Strength_Tier", "GRADE_Certainty",
+            )
+        )
+        if any(t in text for t in ("registry record without reported results", "registry / protocol only")):
+            return 0.0, "registry_no_results"
+        if "systematic review" in text or "meta-analysis" in text:
+            return 18.0, "review"
+        if any(t in text for t in ("randomized", "randomised", "controlled trial", "rct")):
+            return 16.0, "rct"
+        if any(t in text for t in ("clinical trial", "human evidence", "human study", "clinical / human")):
+            return 13.0, "human"
+        if any(t in text for t in ("in vivo", "animal", "validated ex vivo")):
+            return 9.0, "animal"
+        if any(t in text for t in ("in vitro", "cell", "preclinical", "mechanistic")):
+            return 6.0, "preclinical"
+        if "analytical chemistry" in text or "occurrence" in text:
+            return 2.0, "analytical"
+        return 3.0, "unclassified"
+
+    classified = [row_hierarchy_points(row) for _, row in empirical.iterrows()]
+    positive_scores = [points for points, _ in classified if points > 0]
+    if not positive_scores:
+        return 0.0, "None"
+
+    # Hierarchy quality (max 18): 60% best study + 40% mean of the best
+    # three independent studies.  A single review helps, but cannot make a
+    # plant with otherwise weak evidence indistinguishable from a broad,
+    # consistently strong clinical programme.
+    ranked = sorted(positive_scores, reverse=True)
+    best = ranked[0]
+    top_mean = sum(ranked[:3]) / len(ranked[:3])
+    hierarchy_points = 0.6 * best + 0.4 * top_mean
+
+    # Independent evidence depth (max 7), deliberately diminishing rather than
+    # saturating after four sources.  This keeps 4, 9 and 14 studies distinct.
+    import math
+    independent_count = len(empirical)
+    depth_points = min(7.0, 1.8 * math.log2(1 + independent_count))
+
+    # Study-design diversity (max 3) rewards corroboration across genuinely
+    # different evidence strata, not repeated copies of the same paper.
+    strata = {label for points, label in classified if points > 0}
+    diversity_points = min(3.0, float(len(strata)))
+
+    # Consistency (max 2). Null/negative records are retained and visibly lower
+    # the score instead of being silently discarded.
+    negative_count = int(
+        empirical.get("Has_Negative_Evidence", pd.Series(False, index=empirical.index))
+        .fillna(False).astype(bool).sum()
+    )
+    if independent_count <= 1:
+        consistency_points = 0.0
+    elif negative_count == 0:
+        consistency_points = min(2.0, 0.5 * (independent_count - 1))
+    elif negative_count < independent_count:
+        consistency_points = max(0.0, 1.0 - negative_count / independent_count)
     else:
-        hierarchy_points = 4.0
+        consistency_points = 0.0
 
-    empirical_sources = _split_values(empirical.get("Source_Record_IDs", []))
-    all_sources = _split_values(traceable.get("Source_Record_IDs", []))
-    independent_count = len(set(map(_norm, empirical_sources or all_sources)))
-    source_points = min(8.0, 2.5 * independent_count)
-
-    direct_rows = int(empirical.shape[0])
-    consistency_points = min(2.0, 0.5 * max(0, direct_rows - 1))
-    total = round(min(30.0, hierarchy_points + source_points + consistency_points), 1)
-
+    total = round(min(30.0, hierarchy_points + depth_points + diversity_points + consistency_points), 1)
     if total >= 23:
         tier = "Strong"
     elif total >= 15:
@@ -619,7 +669,6 @@ def _evidence_quality(
     else:
         tier = "None"
     return total, tier
-
 
 def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
     """Supporting chemistry only; capped at 5% of the 100-point score."""

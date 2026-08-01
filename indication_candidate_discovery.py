@@ -158,6 +158,18 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 "text": text,
                 "source": source,
                 "record_id": record_id,
+                # Preserve only source-provided metadata needed for record-level
+                # evidence classification.  Keeping this per record (instead of
+                # concatenating every paper into one plant-level blob) is what
+                # allows the downstream shortlist to distinguish one RCT from a
+                # review plus several preclinical studies.
+                "study_type": _pick_from_row(engine, row, ["Study_Type", "study_type"]),
+                "study_model": _pick_from_row(engine, row, ["Study_Model", "study_model"]),
+                "evidence_level": _pick_from_row(engine, row, ["Evidence_Level", "evidence_level"]),
+                "evidence_hierarchy": _pick_from_row(engine, row, ["Evidence_Hierarchy_Detail", "evidence_hierarchy_detail"]),
+                "primary_outcome": _pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"]),
+                "result_direction": _pick_from_row(engine, row, ["Result_Direction", "result_direction"]),
+                "nct_id": _pick_from_row(engine, row, ["NCT_ID", "nct_id"]),
             })
     return index
 
@@ -197,6 +209,66 @@ def _records_for_plant(
     return matched
 
 
+def _record_evidence_characteristics(engine, record: dict) -> dict:
+    """Classify one evidence record without borrowing labels from other records.
+
+    The earlier implementation concatenated every source for a plant and then
+    assigned the strongest label found anywhere in that blob to the single
+    plant row.  Consequently one review could make every underlying source look
+    like review-level evidence and many plants received identical scores.  This
+    helper keeps study type, model and outcome attached to their own record.
+    """
+    text = " ".join(str(record.get(k) or "") for k in (
+        "text", "study_type", "study_model", "evidence_level",
+        "evidence_hierarchy", "primary_outcome", "result_direction",
+    ))
+    normalized = _norm(text)
+    source_norm = _norm(record.get("source"))
+    registry_record = bool(record.get("nct_id")) or "clinicaltrials gov" in source_norm
+    result_direction = _norm(record.get("result_direction"))
+    has_reported_result = bool(result_direction) or any(term in normalized for term in (
+        "statistically significant", "significant reduction", "significant improvement",
+        "reduced hba1c", "reduced fasting glucose", "improved", "decreased", "increased",
+        "no significant difference", "no effect", "worsened",
+    ))
+    registry_without_results = registry_record and not has_reported_result
+
+    explicit_level = str(record.get("evidence_level") or "").strip()
+    explicit_hierarchy = str(record.get("evidence_hierarchy") or "").strip()
+    level = explicit_level or (engine._evidence_level(text) if text else "Unknown")
+    hierarchy = explicit_hierarchy or level
+    if text and not explicit_hierarchy:
+        try:
+            from evidence_hierarchy_classifier import classify_evidence_hierarchy
+            hierarchy = classify_evidence_hierarchy(text)
+        except Exception:
+            pass
+
+    if registry_without_results:
+        level = "Registry record without reported results"
+        hierarchy = "Registry / protocol only"
+
+    context = _norm(f"{level} {hierarchy} {text}")
+    human = (not registry_without_results) and any(t in context for t in (
+        "clinical", "human", "randomized", "randomised", "meta analysis",
+        "systematic review", "controlled trial",
+    ))
+    preclinical = any(t in context for t in (
+        "in vivo", "animal", "in vitro", "ex vivo", "preclinical", "cell",
+    ))
+    negative = any(t in result_direction for t in (
+        "negative", "no effect", "no significant", "null", "worsened", "harm",
+    ))
+    return {
+        "level": level,
+        "hierarchy": hierarchy,
+        "human": human,
+        "preclinical": preclinical,
+        "registry_without_results": registry_without_results,
+        "negative": negative,
+    }
+
+
 def discover_indication_candidates(engine, indication: str, dosage_form: str = "", market: str = "", product_type: str = "") -> pd.DataFrame:
     """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence."""
     from botanical_rd_candidate_engine import OUTPUT_COLUMNS
@@ -230,186 +302,231 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
             continue
 
-        evidence_text = " ".join(r["text"] for r in records)[:12000]
-        direct = bool(direct_records)
-        mechanistic_empirical = bool(mechanism_records)
-        profile_only = not direct and not mechanistic_empirical
+        # Preserve record-level granularity.  The previous implementation
+        # collapsed every source for a plant into one synthetic row, assigned
+        # that row the strongest hierarchy label seen anywhere in the combined
+        # text, and therefore made many plants tie.  Each relevant source now
+        # becomes its own raw association row; candidate_shortlisting.py can
+        # then measure study depth, hierarchy mix, consistency and independent
+        # source count honestly.
+        relevant_records: list[dict] = []
+        seen_relevant: set[tuple[str, str, str]] = set()
+        for record in direct_records + mechanism_records:
+            key = (_norm(record.get("record_id")), _norm(record.get("source")), _norm(record.get("text")))
+            if key not in seen_relevant:
+                seen_relevant.add(key)
+                relevant_records.append(record)
 
-        source_records = direct_records if direct else mechanism_records
-        sources = list(dict.fromkeys(r["source"] for r in source_records if str(r["source"]).strip()))
-        record_ids = list(dict.fromkeys(r["record_id"] for r in source_records if str(r["record_id"]).strip()))
+        evidence_units: list[dict | None] = relevant_records or [None]
+        for record in evidence_units:
+            record_text = str(record.get("text") or "")[:12000] if record else ""
+            record_direct = bool(record and _contains_any(record_text, direct_terms))
+            record_mechanistic = bool(record and _contains_any(record_text, mechanism_terms))
+            profile_only = record is None
 
-        level_text = " ".join(r["text"] for r in source_records)
-        level = engine._evidence_level(level_text) if level_text else "Profile-level hypothesis"
-        hierarchy = level
-        if level_text:
+            characteristics = (
+                _record_evidence_characteristics(engine, record)
+                if record is not None else {
+                    "level": "Profile-level hypothesis",
+                    "hierarchy": "Profile-level hypothesis",
+                    "human": False,
+                    "preclinical": False,
+                    "registry_without_results": False,
+                    "negative": False,
+                }
+            )
+            level = characteristics["level"]
+            hierarchy = characteristics["hierarchy"]
+            human = characteristics["human"]
+            preclinical = characteristics["preclinical"]
+            registry_without_results = characteristics["registry_without_results"]
+            negative = characteristics["negative"]
+
+            source = str(record.get("source") or "").strip() if record else ""
+            record_id = str(record.get("record_id") or "").strip() if record else ""
+            sources = [source] if source else []
+            record_ids = [record_id] if record_id else []
+
+            # Phase 5 normalization/validation is now run on the individual
+            # scientific observation rather than on a plant-wide concatenation.
             try:
-                from evidence_hierarchy_classifier import classify_evidence_hierarchy
-                hierarchy = classify_evidence_hierarchy(level_text)
+                from evidence_normalization import normalize_evidence_record
+                from evidence_validation import validate_evidence_record
+                _phase5_row = {
+                    "Scientific_Name": plant,
+                    "Target_Indication": indication,
+                    "Dosage_Form": dosage_form,
+                    "Evidence_Level": level,
+                    "Evidence_Hierarchy_Detail": hierarchy,
+                    "Notes": record_text,
+                    "Source_Record_IDs": record_id,
+                    "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
+                }
+                _normalized_fields = normalize_evidence_record(_phase5_row)
+                _validation_result = validate_evidence_record(
+                    _phase5_row,
+                    plant_name=plant,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    normalized_fields=_normalized_fields,
+                )
+                normalization_summary = "; ".join(
+                    f"{name}={field.verification_status}"
+                    for name, field in _normalized_fields.items()
+                    if field.verification_status != "missing"
+                ) or "No fields normalized (all source values missing)"
+                validation_status = _validation_result["overall_status"]
+                validation_summary = "; ".join(
+                    f"{check}: {'pass' if result.get('passed') else 'fail'}"
+                    for check, result in _validation_result.items()
+                    if isinstance(result, dict) and "passed" in result
+                )
             except Exception:
-                pass
+                normalization_summary = "Not assessed (Phase 5 stage error)"
+                validation_status = "not_assessable"
+                validation_summary = "Not assessed (Phase 5 stage error)"
 
-        context_n = _norm(f"{level} {hierarchy} {level_text}")
-        human = any(t in context_n for t in ("clinical", "human", "randomized", "randomised", "meta analysis", "systematic review"))
-        preclinical = any(t in context_n for t in ("in vivo", "animal", "in vitro", "ex vivo", "preclinical", "cell"))
+            if registry_without_results:
+                evidence_points = 6
+                tier = "Registry record without reported results"
+                decision = "Exploratory registered study"
+                call = "Hold — await reported results"
+            elif record_direct and human:
+                evidence_points = 35
+                tier = "Direct human evidence"
+                decision = "Indication-based R&D candidate"
+                call = "Investigate"
+            elif record_direct and preclinical:
+                evidence_points = 27
+                tier = "Direct preclinical evidence"
+                decision = "Indication-based R&D candidate"
+                call = "Investigate"
+            elif record_direct:
+                evidence_points = 22
+                tier = "Direct but unclassified evidence"
+                decision = "Indication-based R&D candidate"
+                call = "Investigate — verify evidence type"
+            elif record_mechanistic:
+                evidence_points = 12
+                tier = "Candidate-specific mechanistic evidence"
+                decision = "Exploratory mechanistic hypothesis"
+                call = "Investigate — mechanistic only"
+            else:
+                evidence_points = 4
+                tier = "Profile-derived hypothesis only"
+                decision = "Exploratory profile hypothesis"
+                call = "Hold — collect candidate-specific evidence"
 
-        # --- Phase 5 (IMPLEMENTATION_PLAN.md): Evidence Normalization and
-        # Evidence Validation, as two explicit stages that run BEFORE
-        # candidate scoring below. Purely additive/diagnostic — nothing in
-        # this block reads into or changes evidence_points/tier/score
-        # further down; Phase 3's authoritative scoring weights are
-        # untouched, per this phase's own constraint. Any failure here is
-        # caught and degrades to "not assessed", never blocks discovery.
-        try:
-            from evidence_normalization import normalize_evidence_record
-            from evidence_validation import validate_evidence_record
-            _phase5_row = {
-                "Scientific_Name": plant, "Target_Indication": indication,
-                "Dosage_Form": dosage_form, "Evidence_Level": level,
-                "Evidence_Hierarchy_Detail": hierarchy, "Notes": evidence_text,
-                "Source_Record_IDs": "; ".join(record_ids),
-                "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
-            }
-            _normalized_fields = normalize_evidence_record(_phase5_row)
-            _validation_result = validate_evidence_record(
-                _phase5_row, plant_name=plant, indication=indication,
-                dosage_form=dosage_form, normalized_fields=_normalized_fields,
+            trace_points = 2 if source or record_id else 0
+            mechanism_points = 10 if record_mechanistic else 3 if profile_mechanistic else 0
+            applicability_points = 8 if dosage_form and _contains_any(
+                record_text, (dosage_form, "oral", "infusion", "tea", "aqueous")
+            ) else 0
+            compound_support = 5 if compounds and (record_direct or record_mechanistic) else 0
+            score = min(100.0, float(
+                evidence_points + trace_points + mechanism_points
+                + applicability_points + compound_support + 10
+            ))
+            confidence = min(100.0, float(
+                (30 if record_direct else 15 if record_mechanistic else 5)
+                + (25 if human else 15 if preclinical else 5)
+                + (5 if source or record_id else 0)
+            ))
+
+            provenance = (
+                "Registered study; efficacy results not reported"
+                if registry_without_results else
+                "Candidate-specific indication evidence"
+                if record_direct else
+                "Candidate-specific mechanistic evidence only"
+                if record_mechanistic else
+                "Profile-derived hypothesis; no candidate-specific empirical record"
             )
-            normalization_summary = "; ".join(
-                f"{name}={f.verification_status}" for name, f in _normalized_fields.items()
-                if f.verification_status != "missing"
-            ) or "No fields normalized (all source values missing)"
-            validation_status = _validation_result["overall_status"]
-            validation_summary = "; ".join(
-                f"{check}: {'pass' if result.get('passed') else 'fail'}"
-                for check, result in _validation_result.items()
-                if isinstance(result, dict) and "passed" in result
+            mechanism_label = targets or "; ".join(
+                mechanism_terms[:5] if (record_mechanistic or profile_mechanistic) else []
             )
-        except Exception:
-            normalization_summary = "Not assessed (Phase 5 stage error)"
-            validation_status = "not_assessable"
-            validation_summary = "Not assessed (Phase 5 stage error)"
+            rationale = (
+                f"{plant} has a plant-specific evidence record linked to the requested indication; "
+                "shared chemistry was not used as an entry gate."
+                if record is not None else
+                f"{plant} is retained only as a profile-derived hypothesis; no plant-specific empirical record linked to the requested indication was found."
+            )
 
-        if direct and human:
-            evidence_points = 35
-            tier = "Direct human evidence"
-            decision = "Indication-based R&D candidate"
-            call = "Investigate"
-        elif direct and preclinical:
-            evidence_points = 27
-            tier = "Direct preclinical evidence"
-            decision = "Indication-based R&D candidate"
-            call = "Investigate"
-        elif direct:
-            evidence_points = 22
-            tier = "Direct but unclassified evidence"
-            decision = "Indication-based R&D candidate"
-            call = "Investigate — verify evidence type"
-        elif mechanistic_empirical:
-            evidence_points = 12
-            tier = "Candidate-specific mechanistic evidence"
-            decision = "Exploratory mechanistic hypothesis"
-            call = "Investigate — mechanistic only"
-        else:
-            evidence_points = 4
-            tier = "Profile-derived hypothesis only"
-            decision = "Exploratory profile hypothesis"
-            call = "Hold — collect candidate-specific evidence"
-
-        trace_points = min(10, 2 * len(sources))
-        mechanism_points = 10 if mechanistic_empirical else 3 if profile_mechanistic else 0
-        applicability_points = 8 if dosage_form and _contains_any(evidence_text, (dosage_form, "oral", "infusion", "tea", "aqueous")) else 0
-        compound_support = 5 if compounds and (direct or mechanistic_empirical) else 0
-        score = min(100.0, float(evidence_points + trace_points + mechanism_points + applicability_points + compound_support + 10))
-        confidence = min(100.0, float((30 if direct else 15 if mechanistic_empirical else 5) + (25 if human else 15 if preclinical else 5) + min(25, len(sources) * 5)))
-
-        provenance = (
-            "Candidate-specific indication evidence" if direct
-            else "Candidate-specific mechanistic evidence only" if mechanistic_empirical
-            else "Profile-derived hypothesis; no candidate-specific empirical record"
-        )
-        mechanism_label = targets or "; ".join(mechanism_terms[:5] if (mechanistic_empirical or profile_mechanistic) else [])
-        rationale = (
-            f"{plant} entered through plant-specific evidence linked to the requested indication; "
-            "shared chemistry was not used as an entry gate."
-            if not profile_only else
-            f"{plant} is retained only as a profile-derived hypothesis; no plant-specific empirical record linked to the requested indication was found."
-        )
-
-        row = {col: "" for col in OUTPUT_COLUMNS}
-        row.update({
-            "Reference_Plant": INDICATION_CENTRIC_REFERENCE_LABEL,
-            "Reference_Plant_Part": "",
-            "Reference_Compound": COMPOUND_NOT_GATING_LABEL,
-            "Alternative_Plant": plant,
-            "Alternative_Plant_Part": engine._pick(item, ["Plant_Part", "plant_part"]),
-            "Shared_or_Similar_Compound": "; ".join(compounds[:8]),
-            "Target_or_Mechanism": mechanism_label,
-            "Target_Provenance": provenance,
-            "Concentration_Info": "Not established",
-            "Extraction_Method": engine._pick(item, ["Typical_Extraction", "Extraction_Method", "extraction"]),
-            "Industrial_Feasibility": "Requires product-specific assessment",
-            "Co_Compounds": "; ".join(compounds[1:9]),
-            "Safety_Flags": "",
-            "Interaction_Flags": "",
-            "Evidence_Source": "; ".join(sources),
-            "Source_Record_IDs": "; ".join(record_ids),
-            "Occurrence_Corroboration": f"{len(sources)} traceable plant-specific source(s)",
-            "Candidate_Evidence_Strength_Tier": tier,
-            "Evidence_Level": level,
-            "Evidence_Hierarchy_Detail": hierarchy,
-            "Has_Negative_Evidence": False,
-            "Negative_Evidence_Types": "",
-            "Market_Status": "Search not performed",
-            "Regulatory_Barriers": "Not assessed",
-            "Novelty_Status": "Indication-derived candidate",
-            # Phase 5 (IMPLEMENTATION_PLAN.md) — diagnostic-only columns from
-            # the Evidence Normalization / Evidence Validation stages run
-            # above, before scoring. Deliberately NOT wired into
-            # Has_Negative_Evidence, evidence_points, or any other
-            # scoring-affecting field in this phase — see this phase's own
-            # "do not change authoritative scoring weights" constraint.
-            "Normalization_Summary": normalization_summary,
-            "Validation_Status": validation_status,
-            "Validation_Summary": validation_summary,
-            "R&D_Opportunity_Score": score,
-            "Score_Breakdown": {
-                "Direct indication evidence": evidence_points,
-                "Traceability": trace_points,
-                "Mechanistic plausibility": mechanism_points,
-                "Preparation applicability": applicability_points,
-                "Compound support (non-gating; max 5)": compound_support,
-                "Baseline development potential": 10,
-            },
-            "Evidence_Confidence": confidence,
-            "Decision_Class": decision,
-            "Decision_Class_AH": "C" if direct else "F",
-            "White_Space_Type": "To be assessed",
-            "Confidence_Note": "Candidate generated independently of chemical similarity.",
-            "Go_Investigate_Hold_NoGo": call,
-            "Scientific_Rationale": rationale,
-            "Commercial_Regulatory_Rationale": "Commercial and regulatory enrichment required.",
-            "Evidence_Strengths": provenance,
-            "Evidence_Weaknesses": "Preparation, dose, effect size and regulatory applicability require record-level review.",
-            "Next_Experiment_Suggestion": "Verify plant-specific records, preparation, dose, outcomes and effect size before investment.",
-            "Evidence_Conflict_Reasoning": "Not yet assessed at record level.",
-            "Evidence_Conflict_Structured": {},
-            "Recommendation_Confidence_Statement": f"Evidence confidence {confidence:.1f}/100.",
-            "Competitive_Positioning": "Not yet enriched.",
-            "Regulatory_Rationale": "Regulatory search not yet performed.",
-            "Commercial_Rationale": "Market search not yet performed.",
-            "Safety_Rationale": "Safety review required; absence of a flag is not proof of safety.",
-            "Clinical_Rationale": "Plant-specific human evidence detected." if human and direct else "No confirmed plant-specific human-evidence classification detected.",
-            "Comparative_Rationale": "Ranked by indication evidence rather than shared chemistry.",
-            "Comparative_Rationale_Structured": {},
-            "Rationale": rationale,
-            "Gate_Results": {},
-            "Scoring_Config_Version": "2.1-indication-centric-no-leakage",
-            "Applicability_Summary": {"evidence_record_ids": record_ids, "classification": "Not assessed"},
-            "GRADE_Certainty": "Not graded",
-            "GRADE_Certainty_Rationale": "Record-level grading required.",
-        })
-        rows.append(row)
+            row = {col: "" for col in OUTPUT_COLUMNS}
+            row.update({
+                "Reference_Plant": INDICATION_CENTRIC_REFERENCE_LABEL,
+                "Reference_Plant_Part": "",
+                "Reference_Compound": COMPOUND_NOT_GATING_LABEL,
+                "Alternative_Plant": plant,
+                "Alternative_Plant_Part": engine._pick(item, ["Plant_Part", "plant_part"]),
+                "Shared_or_Similar_Compound": "; ".join(compounds[:8]),
+                "Target_or_Mechanism": mechanism_label,
+                "Target_Provenance": provenance,
+                "Concentration_Info": "Not established",
+                "Extraction_Method": engine._pick(item, ["Typical_Extraction", "Extraction_Method", "extraction"]),
+                "Industrial_Feasibility": "Requires product-specific assessment",
+                "Co_Compounds": "; ".join(compounds[1:9]),
+                "Safety_Flags": "",
+                "Interaction_Flags": "",
+                "Evidence_Source": source,
+                "Source_Record_IDs": record_id,
+                "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",
+                "Candidate_Evidence_Strength_Tier": tier,
+                "Evidence_Level": level,
+                "Evidence_Hierarchy_Detail": hierarchy,
+                "Has_Negative_Evidence": negative,
+                "Negative_Evidence_Types": "Negative/null reported result" if negative else "",
+                "Market_Status": "Search not performed",
+                "Regulatory_Barriers": "Not assessed",
+                "Novelty_Status": "Indication-derived candidate",
+                "Normalization_Summary": normalization_summary,
+                "Validation_Status": validation_status,
+                "Validation_Summary": validation_summary,
+                "R&D_Opportunity_Score": score,
+                "Score_Breakdown": {
+                    "Direct indication evidence": evidence_points,
+                    "Traceability": trace_points,
+                    "Mechanistic plausibility": mechanism_points,
+                    "Preparation applicability": applicability_points,
+                    "Compound support (non-gating; max 5)": compound_support,
+                    "Baseline development potential": 10,
+                },
+                "Evidence_Confidence": confidence,
+                "Decision_Class": decision,
+                "Decision_Class_AH": "C" if record_direct and not registry_without_results else "F",
+                "White_Space_Type": "To be assessed",
+                "Confidence_Note": "Candidate generated independently of chemical similarity.",
+                "Go_Investigate_Hold_NoGo": call,
+                "Scientific_Rationale": rationale,
+                "Commercial_Regulatory_Rationale": "Commercial and regulatory enrichment required.",
+                "Evidence_Strengths": provenance,
+                "Evidence_Weaknesses": "Preparation, dose, effect size and regulatory applicability require record-level review.",
+                "Next_Experiment_Suggestion": "Verify plant-specific records, preparation, dose, outcomes and effect size before investment.",
+                "Evidence_Conflict_Reasoning": "Record-level result direction retained; aggregate consistency is assessed during shortlisting.",
+                "Evidence_Conflict_Structured": {},
+                "Recommendation_Confidence_Statement": f"Evidence confidence {confidence:.1f}/100.",
+                "Competitive_Positioning": "Not yet enriched.",
+                "Regulatory_Rationale": "Regulatory search not yet performed.",
+                "Commercial_Rationale": "Market search not yet performed.",
+                "Safety_Rationale": "Safety review required; absence of a flag is not proof of safety.",
+                "Clinical_Rationale": (
+                    "Plant-specific human evidence detected."
+                    if human and record_direct and not registry_without_results else
+                    "No confirmed plant-specific human efficacy result detected."
+                ),
+                "Comparative_Rationale": "Ranked by indication evidence rather than shared chemistry.",
+                "Comparative_Rationale_Structured": {},
+                "Rationale": rationale,
+                "Gate_Results": {},
+                "Scoring_Config_Version": "2.2-indication-record-level-evidence",
+                "Applicability_Summary": {
+                    "evidence_record_ids": record_ids,
+                    "classification": "Not assessed",
+                },
+                "GRADE_Certainty": "Not graded",
+                "GRADE_Certainty_Rationale": "Record-level grading required.",
+            })
+            rows.append(row)
 
     if not rows:
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))

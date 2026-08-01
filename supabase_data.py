@@ -156,11 +156,12 @@ def load_evidence_records_df():
                 "Adverse_Events": item.get("adverse_events"),
                 "Interactions_Structured": item.get("interactions_structured"),
                 "Data_Quality_Score": item.get("data_quality_score"),
+                "Safety_Findings_Raw": item.get("safety_findings"),
                 "Safety_Signal": item.get("safety_signal", ""),
                 # Aliases consumed by indication_candidate_discovery.  These
                 # are direct copies of persisted values, never inferred.
                 "Preparation": item.get("extraction_method") or item.get("dosage_form") or item.get("administration_route"),
-                "Safety_Findings": item.get("adverse_events") or item.get("safety_signal"),
+                "Safety_Findings": item.get("safety_findings") or item.get("adverse_events") or item.get("safety_signal"),
                 "Interactions": item.get("interactions_structured"),
             })
             flat.pop("plants", None)

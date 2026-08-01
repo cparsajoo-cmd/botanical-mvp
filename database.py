@@ -82,7 +82,7 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     "mechanism", "target", "administration_route",
     "plant_part", "extraction_method", "duration",
     "effect_size", "p_value", "adverse_events", "interactions_structured",
-    "data_quality_score",
+    "safety_findings", "data_quality_score",
 }
 
 
@@ -319,6 +319,7 @@ def save_evidence_record(record):
         "p_value": record.get("P_Value") or None,
         "adverse_events": record.get("Adverse_Events") or None,
         "interactions_structured": record.get("Interactions_Structured") or None,
+        "safety_findings": record.get("Safety_Findings") or record.get("Safety_Findings_Raw") or None,
         "data_quality_score": record.get("Data_Quality_Score") or None,
     }
 
@@ -444,6 +445,7 @@ def load_evidence_records():
             "P_Value": item.get("p_value"),
             "Adverse_Events": item.get("adverse_events"),
             "Interactions_Structured": item.get("interactions_structured"),
+            "Safety_Findings": item.get("safety_findings"),
             "Data_Quality_Score": item.get("data_quality_score"),
 
             # Task 10.2 — previously discarded on read (id was selected

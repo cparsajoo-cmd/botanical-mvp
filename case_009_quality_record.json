@@ -1,7 +1,7 @@
 {
-  "case_number": 12,
-  "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
-  "taxon": "Lavandula angustifolia Mill.",
+  "case_number": 9,
+  "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+  "taxon": "Melissa officinalis L.",
   "domain": "INDICATION_EVIDENCE",
   "approval_status": "CORRECTED_ACTIVE",
   "source_type": "EMA_HMPC",

@@ -1,8 +1,8 @@
 {
-  "case_number": 12,
-  "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
-  "taxon": "Lavandula angustifolia Mill.",
-  "domain": "INDICATION_EVIDENCE",
+  "case_number": 8,
+  "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+  "taxon": "Ginkgo biloba L.",
+  "domain": "PREPARATION_SPEC",
   "approval_status": "CORRECTED_ACTIVE",
   "source_type": "EMA_HMPC",
   "resolution_status": "SELECTED",

@@ -1,0 +1,78 @@
+{
+  "generated": "2026-08-01",
+  "active_cases": [
+    {
+      "file": "gold_case_reference_grounded_001_melissa_officinalis.py",
+      "case_number": 1,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_003_matricaria_chamomilla.py",
+      "case_number": 3,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_004_ginkgo_biloba.py",
+      "case_number": 4,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_005_cimicifuga_racemosa.py",
+      "case_number": 5,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_006_hypericum_perforatum_safety_interaction.py",
+      "case_number": 6,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_007_valeriana_officinalis_preparation_spec.py",
+      "case_number": 7,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py",
+      "case_number": 8,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_009_melissa_officinalis_mental_stress.py",
+      "case_number": 9,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_010_passiflora_incarnata_mental_stress.py",
+      "case_number": 10,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_011_matricaria_chamomilla_indication_evidence.py",
+      "case_number": 11,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_012_lavandula_angustifolia_sleep.py",
+      "case_number": 12,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_013_echinacea_purpurea_identity_quality.py",
+      "case_number": 13,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_014_ginkgo_biloba_safety_interaction.py",
+      "case_number": 14,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_015_hypericum_perforatum_preparation_spec.py",
+      "case_number": 15,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
+    }
+  ],
+  "abandoned_cases": [
+    2
+  ]
+}

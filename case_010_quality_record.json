@@ -1,7 +1,7 @@
 {
-  "case_number": 12,
-  "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
-  "taxon": "Lavandula angustifolia Mill.",
+  "case_number": 10,
+  "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
+  "taxon": "Passiflora incarnata L.",
   "domain": "INDICATION_EVIDENCE",
   "approval_status": "CORRECTED_ACTIVE",
   "source_type": "EMA_HMPC",

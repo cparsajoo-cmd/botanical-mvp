@@ -1,0 +1,10 @@
+{
+  "case_number": 9,
+  "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+  "source_type": "EMA_HMPC",
+  "official_source": "EMA/HMPC/310761/2013; monograph EMA/HMPC/196745/2012",
+  "official_landing_page": "https://www.ema.europa.eu/en/medicines/herbal/melissae-folium",
+  "retrieval_date": "2026-08-01",
+  "verification_status": "VERIFIED_FROM_OFFICIAL_EMA_PAGE",
+  "correction_note": "Replaced unrecognized Journal Article source_type with official EMA/HMPC mental-stress claim."
+}

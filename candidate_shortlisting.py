@@ -493,15 +493,18 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
 
 
 def _indication_relevance_detail(
-    group: pd.DataFrame,
-    indication: str,
+    group: pd.DataFrame, indication: str
 ) -> tuple[float, str, str, int]:
-    """Return points, tier, evidence mode, and supporting source count.
+    """Score candidate-specific indication relevance without flattening it.
 
     Direct indication language must be supported by candidate-specific evidence.
-    Mechanism-only links are deliberately capped and cannot, by themselves,
-    create a final Shortlist recommendation.
+    The score now preserves meaningful differences in direct-evidence breadth:
+    evidence type, independent direct sources, and breadth of indication-specific
+    concepts all contribute within the same 35-point cap.  Evidence quality and
+    study hierarchy remain scored separately by :func:`_evidence_quality`.
     """
+    import math
+
     if not _norm(indication):
         return 17.5, "Not evaluated (no indication specified)", "Not evaluated", 0
 
@@ -511,57 +514,80 @@ def _indication_relevance_detail(
         tokens = _indication_tokens(indication)
         hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
         supported_rows = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
-        source_count = len(_split_values(supported_rows.get("Source_Record_IDs", [])))
+        source_count = len(set(map(_norm, _split_values(supported_rows.get("Source_Record_IDs", [])))))
         if len(hits) >= 2 and source_count >= 2:
-            return 25.0, "Medium relevance", "Direct candidate-specific", source_count
+            points = min(27.0, 21.0 + min(4.0, math.log2(1 + source_count) * 1.5) + min(2.0, len(hits) * 0.5))
+            return round(points, 1), "Medium relevance", "Direct candidate-specific", source_count
         if len(hits) == 1 and source_count >= 1:
             return 10.0, "Low relevance", "Indirect candidate-specific", source_count
         return 0.0, "No relevance", "None", 0
 
     direct_source_ids: list[str] = []
+    direct_human_source_ids: list[str] = []
+    direct_preclinical_source_ids: list[str] = []
     mechanism_source_ids: list[str] = []
     direct_hits_all: set[str] = set()
     mechanism_hits_all: set[str] = set()
     inferred_mechanism_hits: set[str] = set()
 
     for _, row in group.iterrows():
-        row_blob = _candidate_specific_blob(pd.DataFrame([row]), indication)
+        row_frame = pd.DataFrame([row])
+        row_blob = _candidate_specific_blob(row_frame, indication)
         direct_hits = set(_matched_terms(row_blob, family["direct"]))
         mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
+        row_sources = _split_values([row.get("Source_Record_IDs", "")])
+        row_human, row_preclinical = _evidence_context(row_frame)
 
         if direct_hits and traceable and empirical and not _row_is_inferred_or_generic(row):
             direct_hits_all.update(direct_hits)
-            direct_source_ids.extend(_split_values([row.get("Source_Record_IDs", "")]))
+            direct_source_ids.extend(row_sources)
+            if row_human:
+                direct_human_source_ids.extend(row_sources)
+            elif row_preclinical:
+                direct_preclinical_source_ids.extend(row_sources)
         if mechanism_hits:
             if empirical:
                 mechanism_hits_all.update(mechanism_hits)
-                mechanism_source_ids.extend(_split_values([row.get("Source_Record_IDs", "")]))
+                mechanism_source_ids.extend(row_sources)
             else:
                 inferred_mechanism_hits.update(mechanism_hits)
 
     direct_sources = len(set(map(_norm, direct_source_ids)))
+    human_sources = len(set(map(_norm, direct_human_source_ids)))
+    preclinical_sources = len(set(map(_norm, direct_preclinical_source_ids)))
     mechanism_sources = len(set(map(_norm, mechanism_source_ids)))
-    human, preclinical = _evidence_context(group)
 
+    # Relevance is not a binary 35/0 switch.  Within each evidence stratum,
+    # independent direct sources and distinct indication-specific concepts add
+    # modest, diminishing increments.  This preserves ranking resolution while
+    # avoiding double-counting study quality, which belongs to Evidence Quality.
     if direct_hits_all:
-        if human and direct_sources >= 1:
-            return 35.0, "High relevance", "Direct human/clinical", direct_sources
-        if preclinical and (direct_sources >= 2 or len(direct_hits_all) >= 2):
-            return 27.0, "Medium relevance", "Direct preclinical", direct_sources
-        return 22.0, "Medium relevance", "Direct but limited", direct_sources
+        concept_bonus = min(3.0, 0.75 * len(direct_hits_all))
+        if human_sources >= 1:
+            source_bonus = min(4.0, 1.5 * math.log2(1 + human_sources))
+            points = min(35.0, 28.0 + source_bonus + concept_bonus)
+            return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+        if preclinical_sources >= 1:
+            source_bonus = min(4.0, 1.5 * math.log2(1 + preclinical_sources))
+            points = min(27.0, 21.0 + source_bonus + min(2.0, concept_bonus))
+            return round(points, 1), "Medium relevance", "Direct preclinical", direct_sources
+        source_bonus = min(3.0, math.log2(1 + direct_sources))
+        points = min(22.0, 18.0 + source_bonus + min(1.0, concept_bonus))
+        return round(points, 1), "Medium relevance", "Direct but limited", direct_sources
 
     if mechanism_hits_all:
+        source_bonus = min(3.0, math.log2(1 + mechanism_sources))
+        concept_bonus = min(2.0, 0.5 * len(mechanism_hits_all))
         if len(mechanism_hits_all) >= 2 and mechanism_sources >= 2:
-            return 18.0, "Low relevance", "Mechanistic empirical", mechanism_sources
-        return 12.0, "Low relevance", "Mechanistic empirical", mechanism_sources
+            return round(min(18.0, 13.0 + source_bonus + concept_bonus), 1), "Low relevance", "Mechanistic empirical", mechanism_sources
+        return round(min(12.0, 8.0 + source_bonus + concept_bonus), 1), "Low relevance", "Mechanistic empirical", mechanism_sources
 
     if inferred_mechanism_hits:
         return 6.0, "Low relevance", "Mechanistic inference only", 0
 
     return 0.0, "No relevance", "None", 0
-
 
 def _indication_relevance(group: pd.DataFrame, indication: str) -> tuple[float, str]:
     points, tier, _, _ = _indication_relevance_detail(group, indication)
@@ -731,40 +757,90 @@ def _critical_plant_stop(group: pd.DataFrame) -> bool:
     return hard_count >= 2 and (hard_count / row_count) >= 0.5
 
 
+def _meaningful_group_values(group: pd.DataFrame, column: str) -> list[str]:
+    """Return non-placeholder values without treating missingness as evidence."""
+    if column not in group.columns:
+        return []
+    out: list[str] = []
+    for value in group[column].dropna().tolist():
+        text = str(value).strip()
+        norm = _norm(text)
+        if not norm or norm in _MISSING_MARKERS:
+            continue
+        if norm in {
+            "not assessed", "search not performed", "requires product specific assessment",
+            "requires product-specific assessment", "indication derived candidate",
+            "indication-derived candidate",
+        }:
+            continue
+        out.append(text)
+    return out
+
+
 def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
+    """Score only explicit safety/regulatory information.
+
+    Absence of a flag is not proof of safety.  Unknown safety and an unperformed
+    regulatory search therefore receive a conservative neutral score rather than
+    the previous optimistic 'clean' score.  Genuine reassuring, adverse, and
+    prohibitive evidence still produce differentiated values.
+    """
     if _critical_plant_stop(group):
         return 0.0, "Plant-level hard stop"
 
-    # Mixed row-level safety signals reduce confidence but do not erase a
-    # scientifically relevant candidate unless they meet the plant-level rule.
-    if group["Hard_Stop_Present"].any():
-        safety_points = 5.0
-        safety_tier = "Mixed safety signals"
-    else:
-        safety_points = 9.0
-        safety_tier = "Clean"
+    safety_values = (
+        _meaningful_group_values(group, "Safety_Flags")
+        + _meaningful_group_values(group, "Interaction_Flags")
+        + _meaningful_group_values(group, "Negative_Evidence_Types")
+    )
+    safety_text = _norm(" | ".join(safety_values))
 
-    barriers = _norm(_join(group.get("Regulatory_Barriers", []), 5))
-    if not barriers or barriers in _MISSING_MARKERS or "none identified" in barriers:
-        reg_points = 6.0
-    else:
-        reg_points = 2.0
-        safety_tier = "Regulatory review needed"
-    return round(safety_points + reg_points, 1), safety_tier
+    severe_terms = ("fatal", "severe toxicity", "hepatotoxic", "nephrotoxic", "teratogenic", "contraindicated")
+    concern_terms = ("toxicity", "toxic", "adverse", "interaction", "bleeding", "allergic", "irritant")
+    reassuring_terms = ("well tolerated", "no serious adverse", "no adverse event", "no safety signal")
 
+    if any(term in safety_text for term in severe_terms):
+        safety_points, tier = 1.0, "Major safety concern"
+    elif any(term in safety_text for term in concern_terms):
+        safety_points, tier = 4.0, "Safety review needed"
+    elif any(term in safety_text for term in reassuring_terms):
+        safety_points, tier = 8.0, "Explicit reassuring evidence"
+    else:
+        safety_points, tier = 5.0, "Safety not adequately assessed"
+
+    regulatory_values = _meaningful_group_values(group, "Regulatory_Barriers")
+    regulatory_text = _norm(" | ".join(regulatory_values))
+    if any(term in regulatory_text for term in ("prohibited", "banned", "regulatory ban")):
+        reg_points, tier = 0.0, "Regulatory prohibition"
+    elif regulatory_values:
+        if any(term in regulatory_text for term in ("approved", "authorized", "authorised", "monograph", "traditional use")):
+            reg_points = 6.0
+        else:
+            reg_points = 2.0
+            if tier == "Safety not adequately assessed":
+                tier = "Regulatory review needed"
+    else:
+        reg_points = 3.0
+
+    return round(min(15.0, safety_points + reg_points), 1), tier
 
 def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
-    novelty_text = _norm(_join(group.get("Novelty_Status", []), 5))
-    market_text = _norm(_join(group.get("Market_Status", []), 5))
-    combined = f"{novelty_text} {market_text}"
+    """Use genuine market/novelty evidence; placeholders remain unassessed."""
+    novelty_values = _meaningful_group_values(group, "Novelty_Status")
+    market_values = _meaningful_group_values(group, "Market_Status")
+    combined = _norm(" | ".join(novelty_values + market_values))
+
+    if not combined:
+        return 2.5, "Not assessed"
     if any(t in combined for t in _NOVELTY_HIGH_TERMS):
         return 5.0, "Novel / white-space"
     if any(t in combined for t in _NOVELTY_LOW_TERMS):
         return 1.0, "Saturated / common"
-    if combined.strip():
-        return 3.0, "Moderate"
-    return 2.5, "Not reported"
-
+    if any(t in combined for t in ("crowded", "many products", "high competition")):
+        return 1.5, "Competitive market"
+    if any(t in combined for t in ("limited products", "emerging market", "moderate competition")):
+        return 4.0, "Emerging opportunity"
+    return 3.0, "Some market information"
 
 def _format_breakdown(components: list[tuple[str, float, int]]) -> str:
     lines = []

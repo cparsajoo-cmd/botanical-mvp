@@ -526,3 +526,78 @@ def test_merge_all_excluded_returns_empty_dataframe():
     merged = merge_authoritative_scores(raw_df, plant_summary)
     assert not merged.empty
     assert merged.iloc[0]["Scientific_Triage_Status"] == "Excluded"
+
+# --- Post-record-level ranking-resolution correction -----------------------
+
+def test_direct_human_indication_relevance_preserves_source_depth_differences():
+    shallow = _row(
+        Alternative_Plant="Shallow plant",
+        Scientific_Rationale="improved fasting glucose",
+        Clinical_Rationale="human clinical trial",
+        Source_Record_IDs="PMID:1",
+    )
+    deep_rows = []
+    for i, text in enumerate([
+        "improved fasting glucose and HbA1c",
+        "reduced postprandial glucose",
+        "improved insulin sensitivity",
+        "improved glycemic control",
+    ], start=10):
+        deep_rows.append(_row(
+            Alternative_Plant="Deep plant",
+            Scientific_Rationale=text,
+            Clinical_Rationale="human randomized clinical trial",
+            Source_Record_IDs=f"PMID:{i}",
+        ))
+
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([shallow] + deep_rows),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    scores = dict(zip(summary["Alternative_Plant"], summary["Indication_Relevance_Score"]))
+    assert scores["Deep plant"] > scores["Shallow plant"]
+    assert scores["Deep plant"] <= 35.0
+
+
+def test_missing_safety_and_regulatory_data_is_not_scored_as_clean():
+    row = _row(
+        Scientific_Rationale="improved fasting glucose in humans",
+        Safety_Flags="No explicit flag found",
+        Interaction_Flags="No explicit flag found",
+        Regulatory_Barriers="Not assessed",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]), indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    out = summary.iloc[0]
+    assert out["Safety_Regulatory_Score"] == 8.0
+    assert "not adequately assessed" in out["Score_Breakdown_Display"].lower() or out["Safety_Regulatory_Score"] < 11.0
+
+
+def test_explicit_safety_and_market_information_create_real_differentiation():
+    unknown = _row(
+        Alternative_Plant="Unknown plant",
+        Scientific_Rationale="improved fasting glucose in humans",
+        Safety_Flags="No explicit flag found",
+        Regulatory_Barriers="Not assessed",
+        Novelty_Status="Indication-derived candidate",
+        Market_Status="Search not performed",
+    )
+    supported = _row(
+        Alternative_Plant="Supported plant",
+        Scientific_Rationale="improved fasting glucose in humans",
+        Safety_Flags="Well tolerated; no serious adverse events",
+        Regulatory_Barriers="Traditional use monograph available",
+        Novelty_Status="Underexplored white space",
+        Market_Status="Limited products; emerging market",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([unknown, supported]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    indexed = summary.set_index("Alternative_Plant")
+    assert indexed.loc["Supported plant", "Safety_Regulatory_Score"] > indexed.loc["Unknown plant", "Safety_Regulatory_Score"]
+    assert indexed.loc["Supported plant", "Novelty_Market_Score"] > indexed.loc["Unknown plant", "Novelty_Market_Score"]
+    assert indexed.loc["Unknown plant", "Novelty_Market_Score"] == 2.5

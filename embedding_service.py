@@ -66,6 +66,18 @@ _DEFAULT_HASH_FETCH_BATCH_SIZE = 150
 _DEFAULT_UPSERT_BATCH_SIZE = 50
 
 
+# OpenAI's text-embedding-3-small/large models reject any single input
+# longer than this many tokens ("Invalid 'input[x]': maximum input length
+# is 8192 tokens"). Some evidence records (long abstracts/raw source text)
+# exceed this, which previously surfaced as a per-item backfill failure
+# instead of being handled before the request was ever sent.
+_EMBEDDING_MAX_INPUT_TOKENS = 8192
+# Stay a little under the hard limit -- the fallback estimator below is
+# approximate, so a small margin keeps a slightly-off estimate from still
+# landing on or over the real boundary.
+_EMBEDDING_TOKEN_SAFETY_MARGIN = 32
+
+
 def get_openai_client():
     """Reuses llm_extractor.py's exact existing convention rather than a
     second one. Imported lazily so importing this module never requires
@@ -73,6 +85,87 @@ def get_openai_client():
     tests that only exercise pure functions)."""
     from llm_extractor import get_openai_client as _get_client
     return _get_client()
+
+
+_token_encoding = None
+_token_encoding_load_failed = False
+
+
+def _get_token_encoding():
+    """Lazily load a tiktoken encoding for exact token counting.
+
+    Returns None if tiktoken is not installed, or if loading its encoding
+    data fails for any reason (e.g. no network access to fetch it on first
+    use -- tiktoken downloads its BPE ranks file the first time an
+    encoding is requested and caches it locally after that). Callers must
+    treat None as "use the conservative character-based estimate instead"
+    and must never raise or block backfill/runtime embedding on this.
+
+    cl100k_base is the tokenizer used by the text-embedding-3-small/large
+    models (same family as EMBEDDING_MODEL).
+    """
+    global _token_encoding, _token_encoding_load_failed
+    if _token_encoding is not None or _token_encoding_load_failed:
+        return _token_encoding
+    try:
+        import tiktoken
+        _token_encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception as exc:
+        print(
+            "[embedding_service] tiktoken encoding unavailable, falling "
+            f"back to a conservative character-based token estimate: {exc}"
+        )
+        _token_encoding_load_failed = True
+        _token_encoding = None
+    return _token_encoding
+
+
+def _truncate_to_token_limit(
+    text: str, *, max_tokens: int = _EMBEDDING_MAX_INPUT_TOKENS, label: str = "input",
+) -> str:
+    """Return ``text``, truncated if necessary so it never exceeds
+    ``max_tokens`` tokens for the embedding model -- this is what makes
+    OpenAI's per-input token limit ("Invalid 'input[x]': maximum input
+    length is 8192 tokens") impossible to hit, rather than something the
+    caller has to recover from after the API rejects a batch.
+
+    Uses an exact tiktoken count when available. When it is not (see
+    ``_get_token_encoding``), falls back to a deliberately conservative
+    character-based estimate: ~3 characters/token, well below the ~4
+    chars/token typical of English prose, so the estimate errs toward
+    truncating a bit more than strictly necessary rather than risking an
+    under-count that would still exceed the real limit.
+
+    Logs once whenever truncation actually occurs, naming ``label`` so the
+    backfill log can identify which record was affected.
+    """
+    if not text:
+        return text
+    budget = max(1, max_tokens - _EMBEDDING_TOKEN_SAFETY_MARGIN)
+
+    encoding = _get_token_encoding()
+    if encoding is not None:
+        tokens = encoding.encode(text)
+        if len(tokens) <= budget:
+            return text
+        truncated = encoding.decode(tokens[:budget])
+        print(
+            f"[embedding_service] Truncated {label} from {len(tokens)} to "
+            f"{budget} tokens (exceeded the embedding model's "
+            f"{max_tokens}-token input limit)."
+        )
+        return truncated
+
+    char_budget = budget * 3
+    if len(text) <= char_budget:
+        return text
+    print(
+        f"[embedding_service] Truncated {label} from {len(text)} to "
+        f"{char_budget} characters (no tokenizer available; applied a "
+        f"conservative character-based limit for the embedding model's "
+        f"{max_tokens}-token input limit)."
+    )
+    return text[:char_budget]
 
 
 @dataclass
@@ -110,6 +203,7 @@ def embed_query(
     text = str(query_text or "").strip()
     if not text:
         return None
+    text = _truncate_to_token_limit(text, label="query")
     try:
         active_client = client or get_openai_client()
         response = active_client.embeddings.create(
@@ -174,7 +268,10 @@ def embed_texts_batched(
     indices = list(range(len(texts)))
     for start in range(0, len(indices), batch_size):
         batch_indices = indices[start:start + batch_size]
-        batch_texts = [texts[i] for i in batch_indices]
+        batch_texts = [
+            _truncate_to_token_limit(texts[i], label=f"evidence embedding text (index {i})")
+            for i in batch_indices
+        ]
         try:
             vectors = _embed_batch_with_retry(
                 active_client, batch_texts, model, timeout_seconds,

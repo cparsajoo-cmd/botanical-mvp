@@ -5,6 +5,7 @@ include api.openai.com or *.supabase.co; see EMBEDDING_ARCHITECTURE_REVIEW.md
 section 6).
 """
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -17,6 +18,7 @@ from embedding_service import (
     fetch_existing_content_hashes,
     upsert_evidence_embeddings,
 )
+import embedding_service as embedding_service_mod
 import backfill_evidence_embeddings as backfill_mod
 
 
@@ -211,6 +213,107 @@ def test_one_failed_batch_does_not_abort_remaining_batches():
     assert set(errors.keys()) == {0, 1, 2, 3}
     # Both batches were attempted despite the first failing.
     assert len(client.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Token-limit truncation (data-quality regression)
+#
+# Production bug: with the scalability fixes in place, a limit=5000 backfill
+# run completed but reported failed=100, all with the OpenAI error
+# "Invalid 'input[x]': maximum input length is 8192 tokens" -- some evidence
+# records' text is long enough to exceed the embedding model's per-input
+# token limit. These tests prove the embedding pipeline now truncates any
+# over-limit text BEFORE it is sent, so this specific error can no longer
+# occur, using an exact token count when a tokenizer is available and a
+# safe conservative fallback when it is not.
+# ---------------------------------------------------------------------------
+
+class _FakeEncoding:
+    """Deterministic stand-in for a real tiktoken encoding: one 'token' per
+    whitespace-separated word. Only used to test the truncate/token-count
+    plumbing in this file -- not meant to mimic real BPE tokenization."""
+
+    def encode(self, text: str) -> list[str]:
+        return text.split(" ")
+
+    def decode(self, tokens: list[str]) -> str:
+        return " ".join(tokens)
+
+
+def test_truncate_to_token_limit_leaves_short_text_unchanged():
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=_FakeEncoding()):
+        text = "short evidence text"
+        assert embedding_service_mod._truncate_to_token_limit(text, max_tokens=100) == text
+
+
+def test_truncate_to_token_limit_uses_exact_token_count_when_tokenizer_available():
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=_FakeEncoding()):
+        # 20 "words" (fake tokens); budget = max_tokens(40) - safety_margin(32) = 8.
+        text = " ".join(f"word{i}" for i in range(20))
+        truncated = embedding_service_mod._truncate_to_token_limit(
+            text, max_tokens=40, label="test record",
+        )
+        assert truncated.split(" ") == [f"word{i}" for i in range(8)]
+
+
+def test_truncate_to_token_limit_falls_back_to_character_estimate_without_tokenizer():
+    """When no tokenizer is available (e.g. tiktoken not installed, or its
+    encoding data can't be fetched -- exactly the sandbox's situation, since
+    tiktoken needs network access this repo's allowlist does not grant),
+    a long text must still be safely shortened using the conservative
+    character-based estimate, not sent through unmodified."""
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=None):
+        long_text = "x" * 50000
+        truncated = embedding_service_mod._truncate_to_token_limit(long_text, max_tokens=8192)
+        # budget = 8192 - 32 = 8160 tokens; fallback ratio is 3 chars/token.
+        assert len(truncated) == 8160 * 3
+        assert len(truncated) < len(long_text)
+
+
+def test_truncate_to_token_limit_no_op_below_fallback_character_budget():
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=None):
+        text = "a reasonably short evidence record"
+        assert embedding_service_mod._truncate_to_token_limit(text, max_tokens=8192) == text
+
+
+def test_embed_texts_batched_truncates_oversized_text_before_sending_to_openai():
+    """Reproduces the reported failed=100 production symptom: a record
+    whose text exceeds the token limit must be truncated before it reaches
+    the OpenAI call, not sent as-is and left to fail with 'maximum input
+    length is 8192 tokens'."""
+    client = _FakeOpenAIClient()
+    # Default budget = 8192 - 32 = 8160 fake tokens; this text exceeds it.
+    oversized_text = " ".join(f"word{i}" for i in range(8200))
+    short_text = "short record"
+
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=_FakeEncoding()):
+        embeddings, errors = embed_texts_batched([oversized_text, short_text], client=client)
+
+    assert errors == {}
+    assert len(embeddings) == 2
+    sent_texts = client.calls[0]["input"]
+    # The oversized text was shortened before being sent; the short one
+    # (well under any realistic budget) was sent unchanged.
+    assert len(sent_texts[0].split(" ")) == 8160
+    assert sent_texts[1] == short_text
+
+
+def test_embed_texts_batched_does_not_mutate_caller_texts_list():
+    client = _FakeOpenAIClient()
+    oversized_text = " ".join(f"word{i}" for i in range(8200))
+    original_texts = [oversized_text]
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=_FakeEncoding()):
+        embed_texts_batched(original_texts, client=client)
+    assert original_texts == [oversized_text]  # caller's list is untouched
+
+
+def test_embed_query_truncates_oversized_query_before_sending_to_openai():
+    client = _FakeOpenAIClient()
+    oversized_query = " ".join(f"term{i}" for i in range(8200))
+    with patch.object(embedding_service_mod, "_get_token_encoding", return_value=_FakeEncoding()):
+        vector = embed_query(oversized_query, client=client)
+    assert vector is not None
+    assert len(client.calls[0]["input"][0].split(" ")) == 8160
 
 
 # ---------------------------------------------------------------------------

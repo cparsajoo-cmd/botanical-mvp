@@ -16,7 +16,7 @@ import pandas as pd
 from supabase_client import get_supabase_client
 
 
-def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*"):
+def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", order_by="id"):
     """Paginated fetch with per-page retry and graceful partial-result
     handling.
 
@@ -35,6 +35,23 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*"):
     Now: each page gets its own retry budget, and if a page ultimately
     still fails after retries, whatever pages were already fetched are
     returned instead of being thrown away.
+
+    Each page is also requested with an explicit ``.order(order_by)``
+    (the table's primary key, ``"id"`` by convention throughout this
+    schema) applied BEFORE ``.range(start, end)``. PostgREST/Supabase does
+    not guarantee a stable row order across separate requests unless an
+    explicit order is specified -- without one, the two requests for
+    ``range(0, 999)`` and ``range(1000, 1999)`` are not guaranteed to see
+    the same underlying row ordering (this can shift between requests,
+    especially once the query involves an embedded-resource join such as
+    evidence_records' ``plants(...)``/``sources(...)`` select). That let
+    pagination silently omit or re-fetch rows across page boundaries, and
+    could make a later page appear shorter than ``page_size`` (ending the
+    loop) well before every row had actually been returned -- exactly the
+    "backfill only sees ~half the table, no error anywhere" failure mode.
+    Ordering by the primary key makes each page a stable, reproducible
+    slice of the table, so pagination is gapless and duplicate-free
+    regardless of how many pages a full fetch needs.
     """
     supabase = get_supabase_client()
 
@@ -50,6 +67,7 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*"):
                 response = (
                     supabase.table(table_name)
                     .select(select_expr)
+                    .order(order_by)
                     .range(start, start + page_size - 1)
                     .execute()
                 )
@@ -117,6 +135,7 @@ def load_evidence_records_df():
         raw = _fetch_table_df(
             "evidence_records",
             select_expr="*, plants(scientific_name, common_name), sources(*)",
+            order_by="id",
         )
         if raw.empty:
             return raw

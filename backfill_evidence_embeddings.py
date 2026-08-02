@@ -85,7 +85,11 @@ def _build_engine():
         plant_compounds_df=supabase_data.load_plant_compounds_df(),
         compound_profiles_df=supabase_data.load_compound_profiles_df(),
         scientific_evidence_df=supabase_data.load_scientific_evidence_df(),
-        evidence_records_df=supabase_data.load_evidence_records_df(),
+        # strict=True: a backfill run must fail loudly (raising
+        # IncompletePaginationError, which surfaces as a failed GitHub
+        # Actions run) rather than silently proceeding to embed a partial
+        # evidence_records dataset if pagination can't complete.
+        evidence_records_df=supabase_data.load_evidence_records_df(strict=True),
     )
 
 

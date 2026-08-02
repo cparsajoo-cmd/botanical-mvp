@@ -16,7 +16,21 @@ import pandas as pd
 from supabase_client import get_supabase_client
 
 
-def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", order_by="id"):
+class IncompletePaginationError(RuntimeError):
+    """Raised only when ``strict=True`` and a page could not be fetched
+    after exhausting retries, so pagination stopped before every row in
+    the table had been collected.
+
+    A distinct exception type (rather than a plain ``RuntimeError``) so a
+    caller like ``load_evidence_records_df`` can propagate specifically
+    THIS failure in strict mode while still defensively swallowing
+    unrelated errors the way it always has.
+    """
+
+
+def _fetch_table_df(
+    table_name, page_size=1000, max_retries=3, select_expr="*", order_by="id", strict=False,
+):
     """Paginated fetch with per-page retry and graceful partial-result
     handling.
 
@@ -33,8 +47,20 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", 
     thousands of matching rows.
 
     Now: each page gets its own retry budget, and if a page ultimately
-    still fails after retries, whatever pages were already fetched are
-    returned instead of being thrown away.
+    still fails after retries, ``strict`` decides what happens next:
+      - False (default): preserve the original defensive behavior --
+        return whatever rows were already collected instead of losing
+        them, and log a warning. Appropriate for interactive/app code
+        paths where a partial dataset with a visible-but-non-fatal
+        warning beats a hard crash.
+      - True: raise ``IncompletePaginationError`` instead of returning a
+        partial result. A backfill run must NOT be able to silently treat
+        an incomplete fetch as "done" -- that is exactly how a prior bug
+        went unnoticed for a while: a workflow reported success
+        (failed=0) while a pagination-ordering bug meant only about half
+        of a 21,806-row table had actually been loaded. Callers that need
+        "all rows or a loud failure" (e.g. the embedding backfill) should
+        pass ``strict=True``.
 
     Each page is also requested with an explicit ``.order(order_by)``
     (the table's primary key, ``"id"`` by convention throughout this
@@ -57,6 +83,7 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", 
 
     all_rows = []
     start = 0
+    incomplete = False
 
     while True:
         rows = None
@@ -79,14 +106,24 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", 
                     time.sleep(0.5 * (attempt + 1))
 
         if rows is None:
-            # This page never succeeded even after retries. Stop here and
-            # return whatever was already collected rather than losing it
-            # all — a partial dataset is far more useful than silently
-            # falling back to the tiny local seed data.
+            # This page never succeeded even after retries.
+            if strict:
+                raise IncompletePaginationError(
+                    f"_fetch_table_df('{table_name}'): page starting at row "
+                    f"offset {start} failed after {max_retries} retries; "
+                    f"{len(all_rows)} row(s) had been collected before this "
+                    f"failure. Refusing to return a partial dataset because "
+                    f"strict=True. Last error: {last_error}"
+                )
+            # Non-strict: stop here and return whatever was already
+            # collected rather than losing it all -- a partial dataset is
+            # far more useful than silently falling back to the tiny local
+            # seed data.
             print(
                 f"[supabase_data] Stopped fetching '{table_name}' at row "
                 f"{start} after {max_retries} failed attempts: {last_error}"
             )
+            incomplete = True
             break
 
         all_rows.extend(rows)
@@ -95,6 +132,9 @@ def _fetch_table_df(table_name, page_size=1000, max_retries=3, select_expr="*", 
             break
 
         start += page_size
+
+    if not incomplete:
+        print(f"[supabase_data] Fetched {len(all_rows)} row(s) from '{table_name}'.")
 
     return pd.DataFrame(all_rows)
 
@@ -123,19 +163,31 @@ def load_scientific_evidence_df():
         return pd.DataFrame()
 
 
-def load_evidence_records_df():
+def load_evidence_records_df(strict: bool = False):
     """Load evidence records with their canonical plant and source identities.
 
     ``evidence_records`` stores foreign keys, so selecting only ``*`` leaves no
     scientific name for indication discovery to match. Fetch the related plant
     and source rows and flatten them into the column convention used elsewhere.
     Pagination and retry behaviour remain identical to the generic loader.
+
+    ``strict`` is passed straight through to the underlying paginated fetch
+    (see ``_fetch_table_df``): False (default) preserves this function's
+    existing defensive behavior for interactive/app use (a partial dataset,
+    or an empty one on total failure, rather than a crash). True raises
+    ``IncompletePaginationError`` if any page permanently fails after
+    retries, instead of silently returning a partial dataset -- that
+    exception is never swallowed by this function's own broad
+    except-and-return-empty-dataframe fallback below, in strict mode or
+    not, precisely so a caller that opted into strict mode (the embedding
+    backfill) sees a loud failure rather than a quietly incomplete load.
     """
     try:
         raw = _fetch_table_df(
             "evidence_records",
             select_expr="*, plants(scientific_name, common_name), sources(*)",
             order_by="id",
+            strict=strict,
         )
         if raw.empty:
             return raw
@@ -187,6 +239,13 @@ def load_evidence_records_df():
             flat.pop("sources", None)
             rows.append(flat)
         return pd.DataFrame(rows)
+    except IncompletePaginationError:
+        # Must propagate all the way up (e.g. so a GitHub Actions backfill
+        # run fails instead of silently embedding a partial evidence_records
+        # dataset) -- caught and re-raised explicitly so the broad except
+        # below, which exists for genuinely unexpected errors, never
+        # swallows it.
+        raise
     except Exception as exc:
         print(f"[supabase_data] load_evidence_records_df failed entirely: {exc}")
         return pd.DataFrame()

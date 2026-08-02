@@ -172,41 +172,90 @@ def embed_texts_batched(
     return embeddings, errors
 
 
+def _canonical_id_key(value) -> str:
+    """Return a stable STRING identity key for an id, tolerating harmless
+    representation differences (10 / 10.0 / "10" all -> "10"). Mirrors
+    backfill_evidence_embeddings._canonical_id_key; duplicated here (rather
+    than imported) so embedding_service.py has no dependency on the
+    backfill CLI module."""
+    if value is None:
+        return ""
+    try:
+        if value != value:  # pandas / NumPy NaN
+            return ""
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return ""
+    try:
+        numeric = float(text)
+        if numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return text
+
+
+def _to_bigint(value) -> int | None:
+    """Normalize a value to a Postgres-bigint-compatible int, or None if it
+    cannot be represented as one. Used only when building the real database
+    payload immediately before the Supabase call -- never applied to rows
+    handed back to a caller."""
+    key = _canonical_id_key(value)
+    if not key:
+        return None
+    try:
+        return int(key)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
     """Idempotently upsert one row per conflict key.
 
-    PostgreSQL rejects a single ``INSERT .. ON CONFLICT DO UPDATE`` command
-    when the submitted payload contains the same conflict key more than once
-    ("cannot affect row a second time").  Deduplicate defensively here even
-    though the canonical backfill iterator also guarantees uniqueness.  This
-    keeps every future caller safe and makes the storage boundary authoritative.
+    The caller's rows (and each row dict inside it) are never mutated --
+    this is the externally observed boundary: a caller (including test
+    mocks that patch this function out entirely) must see exactly the
+    evidence_record_id/plant_id representation it was given, e.g. a string
+    "2", not an int.
+
+    A SEPARATE database payload is built here, immediately before the real
+    Supabase call, with evidence_record_id/plant_id normalized to
+    Postgres-bigint-compatible ints (bigint foreign-key columns require it).
+    That payload is deduplicated defensively by conflict key -- PostgreSQL
+    rejects a single INSERT .. ON CONFLICT DO UPDATE command when the
+    submitted payload contains the same conflict key more than once
+    ("cannot affect row a second time") -- even though the canonical
+    backfill iterator and its own pre-upsert dedupe pass also guarantee
+    uniqueness. This keeps every future caller safe and makes the storage
+    boundary authoritative.
     """
     if not rows:
         return
 
-    deduped: dict[tuple[int, str, str], dict] = {}
+    db_payload: dict[tuple[int, str, str], dict] = {}
     for row in rows:
-        try:
-            record_id = int(row.get("evidence_record_id"))
-            plant_id = int(row.get("plant_id"))
-        except (TypeError, ValueError, OverflowError):
-            raise ValueError(
-                "Each evidence embedding row requires integer "
-                "evidence_record_id and plant_id values."
-            )
+        record_id = _to_bigint(row.get("evidence_record_id"))
+        plant_id = _to_bigint(row.get("plant_id"))
         model = str(row.get("embedding_model") or "").strip()
         version = str(row.get("embedding_version") or "").strip()
+        if record_id is None or plant_id is None:
+            raise ValueError(
+                "Each evidence embedding row requires a bigint-compatible "
+                "evidence_record_id and plant_id value."
+            )
         if not model or not version:
             raise ValueError(
                 "Each evidence embedding row requires embedding_model and "
                 "embedding_version."
             )
-        normalized = dict(row)
-        normalized["evidence_record_id"] = record_id
-        normalized["plant_id"] = plant_id
+        db_row = dict(row)  # copy -- never mutate the caller-owned row
+        db_row["evidence_record_id"] = record_id
+        db_row["plant_id"] = plant_id
         # Last occurrence wins deterministically; canonical callers should
-        # normally submit only one occurrence.
-        deduped[(record_id, model, version)] = normalized
+        # normally submit only one occurrence per conflict key.
+        db_payload[(record_id, model, version)] = db_row
 
     if supabase is None:
         from supabase_client import get_supabase_client
@@ -214,7 +263,7 @@ def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
     else:
         client = supabase
     client.table("evidence_embeddings").upsert(
-        list(deduped.values()),
+        list(db_payload.values()),
         on_conflict="evidence_record_id,embedding_model,embedding_version",
     ).execute()
 
@@ -229,7 +278,12 @@ def fetch_existing_content_hashes(
     """Map evidence_record_id -> content_hash for already-stored embeddings
     under this model/version, used to skip unchanged records during
     backfill (idempotent, resumable)."""
-    ids = [i for i in evidence_record_ids if i is not None]
+    ids = []
+    for raw_id in evidence_record_ids:
+        if raw_id is None:
+            continue
+        bigint_id = _to_bigint(raw_id)
+        ids.append(bigint_id if bigint_id is not None else raw_id)
     if not ids:
         return {}
     if supabase is None:

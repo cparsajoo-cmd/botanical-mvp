@@ -30,17 +30,26 @@ from embedding_service import (
     upsert_evidence_embeddings,
 )
 from evidence_embedding_text import build_evidence_embedding_text, compute_content_hash
-from indication_candidate_discovery import _pick_from_row
 
 
-def _canonical_id_key(value):
-    """Return a stable lookup key for IDs coming from pandas/Supabase.
+def _canonical_id_key(value) -> str:
+    """Return a stable STRING lookup/identity key for IDs coming from
+    pandas/Supabase/CLI args.
 
-    ``_record_id`` intentionally converts evidence IDs to strings for output,
-    while ``evidence_records_df`` may retain them as Python/NumPy integers.
-    Normalising both sides prevents a valid plant_id from becoming ``None``
-    merely because one representation is ``27901`` and the other is
-    ``"27901"`` (or ``27901.0``).
+    IDs must be compared and carried around as their canonical string
+    representation everywhere in this module -- ``evidence_record_id`` is
+    an externally observed value (tests and any caller of the mocked
+    ``upsert_evidence_embeddings``/``fetch_existing_content_hashes``
+    boundary see exactly this string, e.g. ``"2"``), so this function must
+    never collapse to an ``int``. Only the real database adapter
+    (embedding_service.py, immediately before the actual Supabase request)
+    is allowed to convert to a bigint, and it does so on a private copy
+    without touching the value produced here.
+
+    Normalises harmless representation differences -- ``10``, ``10.0``,
+    ``"10"`` -- to the same key (``"10"``) so a valid record/plant is never
+    treated as unresolved merely because one side is a Python/NumPy int
+    and the other is a numeric string or an integral float.
     """
     if value is None:
         return ""
@@ -80,23 +89,6 @@ def _build_engine():
     )
 
 
-def _as_int_id(value):
-    """Return a canonical integer database ID, or ``None`` when invalid.
-
-    ``evidence_embeddings.evidence_record_id`` and ``plant_id`` are bigint
-    foreign-key columns.  The Supabase loader may expose those IDs as Python
-    ints, NumPy ints, numeric strings, or integral floats; normalise all of
-    those representations before lookup/write and reject non-integral values.
-    """
-    key = _canonical_id_key(value)
-    if not key:
-        return None
-    try:
-        return int(key)
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
 def _clean_text(value) -> str:
     """Conservatively stringify a persisted evidence field."""
     if value is None:
@@ -132,32 +124,33 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
     """Yield canonical persisted ``evidence_records`` rows for embedding.
 
     Backfill storage must be keyed only by the real ``evidence_records.id``.
-    The previous implementation reused Step 5's combined evidence index,
-    which merges three dataframes and may assign transient dataframe indices
-    or IDs from ``scientific_evidence`` to a record.  Those IDs either had no
-    matching plant_id or collided with a genuine evidence-record ID, causing
-    NULL plant IDs and duplicate ON CONFLICT keys.
+    This function reads ``engine.evidence_records_df`` directly -- never
+    Step 5's combined evidence index (``_build_plant_evidence_index``),
+    which merges ``evidence_df``, ``evidence_records_df`` and
+    ``scientific_evidence_df`` and may surface a transient dataframe index
+    or an id from a different source table under the same key. Mixing
+    those in is what previously produced records with no resolvable
+    plant_id and duplicate ON CONFLICT keys.
 
-    This function therefore reads ``engine.evidence_records_df`` directly,
-    preserves one row per canonical evidence-record primary key, and builds
-    the exact field-aware mapping expected by
-    ``build_evidence_embedding_text``.
+    ``evidence_record_id`` and ``plant_id`` are both yielded as their
+    canonical STRING representation (see ``_canonical_id_key``) and are
+    never converted to ``int`` in this module.
     """
     evidence_df = getattr(engine, "evidence_records_df", None)
     if evidence_df is None or getattr(evidence_df, "empty", True):
         return
 
     canonical_filter = {
-        rid for rid in (_as_int_id(v) for v in (record_id_filter or set()))
-        if rid is not None
+        key for key in (_canonical_id_key(v) for v in (record_id_filter or set()))
+        if key
     }
-    seen_record_ids: set[int] = set()
+    seen_record_ids: set[str] = set()
 
     for _, row in evidence_df.iterrows():
-        record_id = _as_int_id(_first(row, "Evidence_Record_ID", "evidence_record_id", "id"))
-        plant_id = _as_int_id(_first(row, "Plant_ID", "plant_id"))
+        record_id = _canonical_id_key(_first(row, "Evidence_Record_ID", "evidence_record_id", "id"))
+        plant_id = _canonical_id_key(_first(row, "Plant_ID", "plant_id"))
 
-        if record_id is None:
+        if not record_id:
             print("[backfill_evidence_embeddings] Skipping row: no canonical evidence_record_id.")
             continue
         if record_id in seen_record_ids:
@@ -168,7 +161,7 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
 
         if canonical_filter and record_id not in canonical_filter:
             continue
-        if plant_id is None:
+        if not plant_id:
             print(
                 "[backfill_evidence_embeddings] Skipping evidence record "
                 f"{record_id!r}: no canonical plant_id could be resolved."
@@ -223,6 +216,36 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
         yield record_id, plant_id, plant_name, text
 
 
+def _dedupe_rows_for_upsert(rows: list[dict]) -> list[dict]:
+    """Deterministically collapse rows so no single upsert payload contains
+    the same (evidence_record_id, embedding_model, embedding_version)
+    conflict key twice.
+
+    The canonical iterator above already guarantees at most one row per
+    evidence_record_id for a given run, so this is a second, defensive
+    pass (as required at the real database boundary too). If two rows
+    ever do share a conflict key with differing content_hash, the later
+    row is kept -- deterministic on input order -- and the conflict is
+    logged rather than silently dropped.
+    """
+    deduped: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        key = (
+            str(row.get("evidence_record_id")),
+            str(row.get("embedding_model")),
+            str(row.get("embedding_version")),
+        )
+        previous = deduped.get(key)
+        if previous is not None and previous.get("content_hash") != row.get("content_hash"):
+            print(
+                "[backfill_evidence_embeddings] Conflicting rows for the same "
+                f"evidence_record_id/embedding_model/embedding_version {key!r}; "
+                "keeping the later row."
+            )
+        deduped[key] = row
+    return list(deduped.values())
+
+
 def run_backfill(
     *,
     dry_run: bool = False,
@@ -238,8 +261,8 @@ def run_backfill(
     engine = engine or _build_engine()
     record_id_filter = record_id_filter or set()
 
-    candidates: list[tuple[int, int, str, str, str]] = []  # (id, plant_id, plant, text, hash)
-    seen_candidate_ids: set[int] = set()
+    candidates: list[tuple[str, str, str, str, str]] = []  # (id, plant_id, plant, text, hash)
+    seen_candidate_ids: set[str] = set()
     for record_id, plant_id, plant_name, text in _iter_embeddable_records(
         engine, plant_filter=plant_filter, record_id_filter=record_id_filter,
     ):
@@ -258,14 +281,16 @@ def run_backfill(
     existing_hashes_raw = fetch_existing_content_hashes(
         (c[0] for c in candidates), embedding_model=model, embedding_version=version,
     )
-    # Supabase normally returns integer bigint IDs, while tests/legacy mocks
-    # may return numeric strings. Canonicalise once so hash-gated idempotency
-    # is representation-independent.
+    # Supabase normally returns bigint evidence_record_id values as Python
+    # ints, while tests/legacy mocks may return numeric strings. Canonicalise
+    # once (to the same STRING form used throughout this module) so
+    # hash-gated idempotency is representation-independent -- this never
+    # converts anything to int.
     existing_hashes = {
-        rid: content_hash
-        for key, content_hash in existing_hashes_raw.items()
-        for rid in [_as_int_id(key)]
-        if rid is not None
+        key: content_hash
+        for raw_key, content_hash in existing_hashes_raw.items()
+        for key in [_canonical_id_key(raw_key)]
+        if key
     }
 
     to_embed = []
@@ -307,6 +332,7 @@ def run_backfill(
             stats.embedded += 1
 
     if rows:
+        rows = _dedupe_rows_for_upsert(rows)
         upsert_evidence_embeddings(rows)
 
     return stats

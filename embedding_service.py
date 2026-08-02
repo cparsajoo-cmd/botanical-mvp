@@ -173,15 +173,49 @@ def embed_texts_batched(
 
 
 def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
-    """Idempotent upsert into evidence_embeddings, keyed on the table's own
-    unique constraint (evidence_record_id, embedding_model,
-    embedding_version) -- see 0005_add_evidence_embeddings.sql."""
+    """Idempotently upsert one row per conflict key.
+
+    PostgreSQL rejects a single ``INSERT .. ON CONFLICT DO UPDATE`` command
+    when the submitted payload contains the same conflict key more than once
+    ("cannot affect row a second time").  Deduplicate defensively here even
+    though the canonical backfill iterator also guarantees uniqueness.  This
+    keeps every future caller safe and makes the storage boundary authoritative.
+    """
     if not rows:
         return
-    from supabase_client import get_supabase_client
-    client = supabase or get_supabase_client()
+
+    deduped: dict[tuple[int, str, str], dict] = {}
+    for row in rows:
+        try:
+            record_id = int(row.get("evidence_record_id"))
+            plant_id = int(row.get("plant_id"))
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                "Each evidence embedding row requires integer "
+                "evidence_record_id and plant_id values."
+            )
+        model = str(row.get("embedding_model") or "").strip()
+        version = str(row.get("embedding_version") or "").strip()
+        if not model or not version:
+            raise ValueError(
+                "Each evidence embedding row requires embedding_model and "
+                "embedding_version."
+            )
+        normalized = dict(row)
+        normalized["evidence_record_id"] = record_id
+        normalized["plant_id"] = plant_id
+        # Last occurrence wins deterministically; canonical callers should
+        # normally submit only one occurrence.
+        deduped[(record_id, model, version)] = normalized
+
+    if supabase is None:
+        from supabase_client import get_supabase_client
+        client = get_supabase_client()
+    else:
+        client = supabase
     client.table("evidence_embeddings").upsert(
-        rows, on_conflict="evidence_record_id,embedding_model,embedding_version",
+        list(deduped.values()),
+        on_conflict="evidence_record_id,embedding_model,embedding_version",
     ).execute()
 
 
@@ -198,8 +232,11 @@ def fetch_existing_content_hashes(
     ids = [i for i in evidence_record_ids if i is not None]
     if not ids:
         return {}
-    from supabase_client import get_supabase_client
-    client = supabase or get_supabase_client()
+    if supabase is None:
+        from supabase_client import get_supabase_client
+        client = get_supabase_client()
+    else:
+        client = supabase
     response = (
         client.table("evidence_embeddings")
         .select("evidence_record_id,content_hash")

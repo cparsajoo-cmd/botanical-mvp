@@ -30,7 +30,7 @@ from embedding_service import (
     upsert_evidence_embeddings,
 )
 from evidence_embedding_text import build_evidence_embedding_text, compute_content_hash
-from indication_candidate_discovery import _build_plant_evidence_index, _pick_from_row
+from indication_candidate_discovery import _pick_from_row
 
 
 def _canonical_id_key(value):
@@ -80,47 +80,147 @@ def _build_engine():
     )
 
 
-def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filter: set):
-    """Yield (evidence_record_id, plant_id, plant_name, embedding_text) for
-    every embeddable record in the evidence index, applying filters.
+def _as_int_id(value):
+    """Return a canonical integer database ID, or ``None`` when invalid.
 
-    Reuses indication_candidate_discovery._build_plant_evidence_index()
-    (the same per-record field extraction Step 5 itself uses) rather than
-    re-deriving field names independently -- one source of truth for what
-    a record's tier1/tier2/tier3 text is.
+    ``evidence_embeddings.evidence_record_id`` and ``plant_id`` are bigint
+    foreign-key columns.  The Supabase loader may expose those IDs as Python
+    ints, NumPy ints, numeric strings, or integral floats; normalise all of
+    those representations before lookup/write and reject non-integral values.
     """
-    index = _build_plant_evidence_index(engine)
-    evidence_df = getattr(engine, "evidence_records_df", None)
-    plant_id_by_record_id: dict[object, object] = {}
-    if evidence_df is not None and not evidence_df.empty:
-        for _, row in evidence_df.iterrows():
-            rid = row.get("Evidence_Record_ID", row.get("id"))
-            pid = row.get("Plant_ID", row.get("plant_id"))
-            rid_key = _canonical_id_key(rid)
-            if rid_key:
-                plant_id_by_record_id[rid_key] = pid
+    key = _canonical_id_key(value)
+    if not key:
+        return None
+    try:
+        return int(key)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
-    for plant_key, records in index.items():
-        for record in records:
-            record_id = record.get("record_id")
-            if record_id_filter and str(record_id) not in record_id_filter:
-                continue
-            plant_name = record.get("plant_name", plant_key)
-            if plant_filter and plant_filter.strip().lower() not in str(plant_name).lower():
-                continue
-            plant_id = plant_id_by_record_id.get(_canonical_id_key(record_id))
-            if not _canonical_id_key(plant_id):
-                print(
-                    "[backfill_evidence_embeddings] Skipping evidence record "
-                    f"{record_id!r}: no canonical plant_id could be resolved."
-                )
-                continue
-            embedding_record = dict(record)
-            embedding_record["plant_name"] = plant_name
-            text = build_evidence_embedding_text(embedding_record)
-            if not text:
-                continue  # proxy/excluded record, or genuinely empty -- not an error
-            yield record_id, plant_id, plant_name, text
+
+def _clean_text(value) -> str:
+    """Conservatively stringify a persisted evidence field."""
+    if value is None:
+        return ""
+    try:
+        if value != value:  # pandas / NumPy NaN
+            return ""
+    except Exception:
+        pass
+    if isinstance(value, (dict, list, tuple, set)):
+        import json
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return str(value)
+    text = str(value).strip()
+    return "" if text.lower() in {"", "nan", "none", "null"} else text
+
+
+def _first(row, *names):
+    """Return the first non-empty value among dataframe column aliases."""
+    for name in names:
+        try:
+            value = row.get(name)
+        except AttributeError:
+            value = None
+        if _clean_text(value):
+            return value
+    return None
+
+
+def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filter: set):
+    """Yield canonical persisted ``evidence_records`` rows for embedding.
+
+    Backfill storage must be keyed only by the real ``evidence_records.id``.
+    The previous implementation reused Step 5's combined evidence index,
+    which merges three dataframes and may assign transient dataframe indices
+    or IDs from ``scientific_evidence`` to a record.  Those IDs either had no
+    matching plant_id or collided with a genuine evidence-record ID, causing
+    NULL plant IDs and duplicate ON CONFLICT keys.
+
+    This function therefore reads ``engine.evidence_records_df`` directly,
+    preserves one row per canonical evidence-record primary key, and builds
+    the exact field-aware mapping expected by
+    ``build_evidence_embedding_text``.
+    """
+    evidence_df = getattr(engine, "evidence_records_df", None)
+    if evidence_df is None or getattr(evidence_df, "empty", True):
+        return
+
+    canonical_filter = {
+        rid for rid in (_as_int_id(v) for v in (record_id_filter or set()))
+        if rid is not None
+    }
+    seen_record_ids: set[int] = set()
+
+    for _, row in evidence_df.iterrows():
+        record_id = _as_int_id(_first(row, "Evidence_Record_ID", "evidence_record_id", "id"))
+        plant_id = _as_int_id(_first(row, "Plant_ID", "plant_id"))
+
+        if record_id is None:
+            print("[backfill_evidence_embeddings] Skipping row: no canonical evidence_record_id.")
+            continue
+        if record_id in seen_record_ids:
+            # Defensive against duplicated REST/join rows. One persisted PK
+            # must produce exactly one embedding row per model/version.
+            continue
+        seen_record_ids.add(record_id)
+
+        if canonical_filter and record_id not in canonical_filter:
+            continue
+        if plant_id is None:
+            print(
+                "[backfill_evidence_embeddings] Skipping evidence record "
+                f"{record_id!r}: no canonical plant_id could be resolved."
+            )
+            continue
+
+        plant_name = _clean_text(_first(
+            row, "Scientific_Name", "scientific_name", "Plant", "plant",
+            "Botanical", "botanical", "Common_Name", "common_name",
+        ))
+        if plant_filter and plant_filter.strip().lower() not in plant_name.lower():
+            continue
+
+        tier1 = " ".join(filter(None, [
+            _clean_text(_first(row, "Target_Indication", "target_indication")),
+            _clean_text(_first(row, "Extracted_Indication", "extracted_indication")),
+            _clean_text(_first(row, "Target_Indication_Detected", "target_indication_detected")),
+            _clean_text(_first(row, "Detected_Indications", "detected_indications")),
+        ]))
+        tier2 = " ".join(filter(None, [
+            _clean_text(_first(row, "Primary_Outcome", "primary_outcome", "Outcome", "outcome")),
+            _clean_text(_first(row, "Result_Direction", "result_direction")),
+            _clean_text(_first(row, "Mechanism", "mechanism")),
+            _clean_text(_first(row, "Target", "target")),
+        ]))
+        tier3 = " ".join(filter(None, [
+            _clean_text(_first(row, "Source_Title", "source_title", "Title", "title")),
+            _clean_text(_first(row, "Abstract", "abstract")),
+            _clean_text(_first(row, "Notes", "notes")),
+            _clean_text(_first(row, "Source_Raw_Text", "source_raw_text", "Raw_Text", "raw_text")),
+            _clean_text(_first(row, "Study_Type", "study_type")),
+            _clean_text(_first(row, "Evidence_Type", "evidence_type", "Evidence_Level", "evidence_level")),
+        ]))
+
+        embedding_record = {
+            "plant_name": plant_name,
+            "tier1_text": tier1,
+            "tier2_text": tier2,
+            "tier3_text": tier3,
+            "study_type": _clean_text(_first(row, "Study_Type", "study_type")),
+            "evidence_level": _clean_text(_first(row, "Evidence_Level", "evidence_level")),
+            "preparation": _clean_text(_first(
+                row, "Preparation", "preparation", "Extraction_Method", "extraction_method",
+                "Dosage_Form", "dosage_form", "Administration_Route", "administration_route",
+            )),
+            "source_type": _clean_text(_first(row, "Source_Type", "source_type")),
+            "evidence_type": _clean_text(_first(row, "Evidence_Type", "evidence_type")),
+        }
+        text = build_evidence_embedding_text(embedding_record)
+        if not text:
+            continue
+        yield record_id, plant_id, plant_name, text
 
 
 def run_backfill(
@@ -138,10 +238,14 @@ def run_backfill(
     engine = engine or _build_engine()
     record_id_filter = record_id_filter or set()
 
-    candidates: list[tuple[object, object, str, str, str]] = []  # (id, plant_id, plant, text, hash)
+    candidates: list[tuple[int, int, str, str, str]] = []  # (id, plant_id, plant, text, hash)
+    seen_candidate_ids: set[int] = set()
     for record_id, plant_id, plant_name, text in _iter_embeddable_records(
         engine, plant_filter=plant_filter, record_id_filter=record_id_filter,
     ):
+        if record_id in seen_candidate_ids:
+            continue
+        seen_candidate_ids.add(record_id)
         stats.scanned += 1
         content_hash = compute_content_hash(text)
         candidates.append((record_id, plant_id, plant_name, text, content_hash))
@@ -151,9 +255,18 @@ def run_backfill(
     if not candidates:
         return stats
 
-    existing_hashes = fetch_existing_content_hashes(
+    existing_hashes_raw = fetch_existing_content_hashes(
         (c[0] for c in candidates), embedding_model=model, embedding_version=version,
     )
+    # Supabase normally returns integer bigint IDs, while tests/legacy mocks
+    # may return numeric strings. Canonicalise once so hash-gated idempotency
+    # is representation-independent.
+    existing_hashes = {
+        rid: content_hash
+        for key, content_hash in existing_hashes_raw.items()
+        for rid in [_as_int_id(key)]
+        if rid is not None
+    }
 
     to_embed = []
     for record_id, plant_id, plant_name, text, content_hash in candidates:

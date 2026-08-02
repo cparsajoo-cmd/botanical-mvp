@@ -16,6 +16,30 @@ from typing import Iterable
 import pandas as pd
 
 from indication_semantics import resolve_indication_semantics
+from general_indication_relevance import (
+    ENGINE_VERSION as _RELEVANCE_ENGINE_VERSION,
+    MATCH_EXACT_INDICATION,
+    MATCH_EXPLICIT_FIELD_OVERLAP,
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT,
+    MATCH_CORPUS_DERIVED_SEMANTIC,
+    MATCH_WEAK_LEXICAL,
+    MATCH_CURATED_ASSIST_FALLBACK,
+    MATCH_NO_MATCH,
+)
+
+# Same strength grouping used by indication_candidate_discovery.py's own
+# gating (_MATCH_STRONG / _MATCH_SUPPORTIVE there). Duplicated as plain
+# string-constant tuples rather than imported, to avoid a module-level
+# import cycle with indication_candidate_discovery.py (which itself may be
+# imported lazily elsewhere for that reason). The category names themselves
+# come from general_indication_relevance.py, the single authoritative
+# source -- this is not a second vocabulary, just the same categories
+# grouped by strength for scoring weights below.
+_MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
+_MATCH_SUPPORTIVE = (
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
+    MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
+)
 
 # Transparent compound-specificity tiers. Tier 0 compounds are chemically
 # non-informative for alternative-source discovery. Tier 1 compounds are common
@@ -506,35 +530,78 @@ def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
         label = "Results not reported"
     return {**counts, "total": total, "label": label}
 
+def _row_authoritative_relevance(row: pd.Series) -> tuple[str, set[str]]:
+    """Read the per-record relevance already computed upstream by the single
+    authoritative engine, general_indication_relevance.py (attached to each
+    row by indication_candidate_discovery.py as Indication_Match_Type /
+    Indication_Match_Terms). This function performs no matching of its own --
+    it only reads what discovery already decided, so shortlisting cannot
+    disagree with discovery about which rows are direct vs. mechanistic
+    evidence."""
+    match_type = str(row.get("Indication_Match_Type", "") or "").strip()
+    raw_terms = row.get("Indication_Match_Terms", "")
+    terms = (
+        {t.strip() for t in str(raw_terms).split(";") if t.strip()}
+        if not _is_missing(raw_terms) else set()
+    )
+    return match_type, terms
+
+
+def _group_has_authoritative_relevance(group: pd.DataFrame) -> bool:
+    """True when this group's rows carry the authoritative Indication_Match_*
+    columns produced by general_indication_relevance.py via
+    indication_candidate_discovery.py. False for rows that never went
+    through that engine (e.g. compound-source discovery mode, or any legacy
+    caller) -- those use the one clearly-marked compatibility fallback
+    below, per architecture requirement that indication_semantics.py is
+    never required and never overrides the authoritative engine."""
+    if "Indication_Match_Type" not in group.columns:
+        return False
+    return bool(group["Indication_Match_Type"].apply(lambda v: not _is_missing(v)).any())
+
+
 def _indication_relevance_detail(
     group: pd.DataFrame, indication: str
 ) -> tuple[float, str, str, int]:
-    """Score candidate-specific indication relevance without flattening it.
+    """Score candidate-specific indication relevance for one plant's rows.
 
-    Direct indication language must be supported by candidate-specific evidence.
-    The score now preserves meaningful differences in direct-evidence breadth:
-    evidence type, independent direct sources, and breadth of indication-specific
-    concepts all contribute within the same 35-point cap.  Evidence quality and
-    study hierarchy remain scored separately by :func:`_evidence_quality`.
+    Primary path: consume the authoritative per-record relevance already
+    computed by general_indication_relevance.py (via
+    indication_candidate_discovery.py's Indication_Match_* columns) -- see
+    _indication_relevance_detail_authoritative(). This is what makes
+    discovery and shortlisting share one relevance calculation instead of
+    two that can disagree.
+
+    Fallback path: only when those columns are entirely absent from this
+    group (legacy/compound-source rows that never went through the
+    authoritative engine) -- see
+    _indication_relevance_detail_legacy_fallback(), which independently
+    resolves indication_semantics.py the same way it always has. This path
+    is clearly separated, not silently blended with the primary one.
     """
-    import math
-
     if not _norm(indication):
         return 17.5, "Not evaluated (no indication specified)", "Not evaluated", 0
 
-    family = _concept_family(indication)
-    if not family:
-        blob = _candidate_specific_blob(group, indication)
-        tokens = _indication_tokens(indication)
-        hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
-        supported_rows = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
-        source_count = len(set(map(_norm, _split_values(supported_rows.get("Source_Record_IDs", [])))))
-        if len(hits) >= 2 and source_count >= 2:
-            points = min(27.0, 21.0 + min(4.0, math.log2(1 + source_count) * 1.5) + min(2.0, len(hits) * 0.5))
-            return round(points, 1), "Medium relevance", "Direct candidate-specific", source_count
-        if len(hits) == 1 and source_count >= 1:
-            return 10.0, "Low relevance", "Indirect candidate-specific", source_count
-        return 0.0, "No relevance", "None", 0
+    if _group_has_authoritative_relevance(group):
+        return _indication_relevance_detail_authoritative(group, indication)
+    return _indication_relevance_detail_legacy_fallback(group, indication)
+
+
+def _indication_relevance_detail_authoritative(
+    group: pd.DataFrame, indication: str
+) -> tuple[float, str, str, int]:
+    """Score relevance using the upstream engine's per-row match_type/terms.
+
+    Mirrors the scoring shape of the legacy fallback (human/preclinical
+    source bonuses, concept breadth, outcome-profile adjustments), but the
+    direct-vs-mechanistic classification of each row is read from
+    Indication_Match_Type/Indication_Match_Terms -- computed once, upstream,
+    by general_indication_relevance.py -- rather than recomputed here
+    against indication_semantics.py. An indication with no curated
+    indication_semantics.py entry scores exactly the same way as one that
+    has one, because this function never consults that dictionary.
+    """
+    import math
 
     direct_source_ids: list[str] = []
     direct_human_source_ids: list[str] = []
@@ -546,9 +613,14 @@ def _indication_relevance_detail(
 
     for _, row in group.iterrows():
         row_frame = pd.DataFrame([row])
-        row_blob = _candidate_specific_blob(row_frame, indication)
-        direct_hits = set(_matched_terms(row_blob, family["direct"]))
-        mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
+        match_type, match_terms = _row_authoritative_relevance(row)
+        # A qualifying match_type always counts as at least one "hit" for the
+        # concept-breadth bonus below, even on the rare record whose matched
+        # terms happen to be empty (e.g. an exact phrase match whose query
+        # had no individually tokenizable words) -- the match_type itself is
+        # the signal.
+        direct_hits = (match_terms or {match_type}) if match_type in _MATCH_STRONG else set()
+        mechanism_hits = (match_terms or {match_type}) if match_type in _MATCH_SUPPORTIVE else set()
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
         row_sources = _split_values([row.get("Source_Record_IDs", "")])
@@ -611,7 +683,104 @@ def _indication_relevance_detail(
 
     return 0.0, "No relevance", "None", 0
 
-def _indication_relevance(group: pd.DataFrame, indication: str) -> tuple[float, str]:
+
+def _indication_relevance_detail_legacy_fallback(
+    group: pd.DataFrame, indication: str
+) -> tuple[float, str, str, int]:
+    """Compatibility-only path for rows that never went through
+    general_indication_relevance.py (e.g. compound-source discovery mode).
+    Independently resolves indication_semantics.py exactly as this module
+    did before the authoritative engine existed. Never consulted when
+    Indication_Match_Type is present -- see _indication_relevance_detail().
+    """
+    import math
+
+    family = _concept_family(indication)
+    if not family:
+        blob = _candidate_specific_blob(group, indication)
+        tokens = _indication_tokens(indication)
+        hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
+        supported_rows = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
+        source_count = len(set(map(_norm, _split_values(supported_rows.get("Source_Record_IDs", [])))))
+        if len(hits) >= 2 and source_count >= 2:
+            points = min(27.0, 21.0 + min(4.0, math.log2(1 + source_count) * 1.5) + min(2.0, len(hits) * 0.5))
+            return round(points, 1), "Medium relevance", "Direct candidate-specific", source_count
+        if len(hits) == 1 and source_count >= 1:
+            return 10.0, "Low relevance", "Indirect candidate-specific", source_count
+        return 0.0, "No relevance", "None", 0
+
+    direct_source_ids: list[str] = []
+    direct_human_source_ids: list[str] = []
+    direct_preclinical_source_ids: list[str] = []
+    mechanism_source_ids: list[str] = []
+    direct_hits_all: set[str] = set()
+    mechanism_hits_all: set[str] = set()
+    inferred_mechanism_hits: set[str] = set()
+
+    for _, row in group.iterrows():
+        row_frame = pd.DataFrame([row])
+        row_blob = _candidate_specific_blob(row_frame, indication)
+        direct_hits = set(_matched_terms(row_blob, family["direct"]))
+        mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
+        traceable = _row_has_traceable_source(row)
+        empirical = _row_has_candidate_specific_empirical_support(row)
+        row_sources = _split_values([row.get("Source_Record_IDs", "")])
+        row_human, row_preclinical = _evidence_context(row_frame)
+
+        if direct_hits and traceable and empirical and not _row_is_inferred_or_generic(row):
+            direct_hits_all.update(direct_hits)
+            direct_source_ids.extend(row_sources)
+            if row_human:
+                direct_human_source_ids.extend(row_sources)
+            elif row_preclinical:
+                direct_preclinical_source_ids.extend(row_sources)
+        if mechanism_hits:
+            if empirical:
+                mechanism_hits_all.update(mechanism_hits)
+                mechanism_source_ids.extend(row_sources)
+            else:
+                inferred_mechanism_hits.update(mechanism_hits)
+
+    direct_sources = len(set(map(_norm, direct_source_ids)))
+    human_sources = len(set(map(_norm, direct_human_source_ids)))
+    preclinical_sources = len(set(map(_norm, direct_preclinical_source_ids)))
+    mechanism_sources = len(set(map(_norm, mechanism_source_ids)))
+
+    if direct_hits_all:
+        concept_bonus = min(3.0, 0.75 * len(direct_hits_all))
+        if human_sources >= 1:
+            source_bonus = min(4.0, 1.5 * math.log2(1 + human_sources))
+            points = min(35.0, 28.0 + source_bonus + concept_bonus)
+            outcomes = _outcome_profile(group)
+            if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
+                return min(15.0, round(points * 0.45, 1)), "Low relevance", "Direct human null/negative", direct_sources
+            if outcomes["positive"] > 0 and (outcomes["null"] + outcomes["harmful"] + outcomes["mixed"]) > 0:
+                points = min(27.0, points * 0.78)
+                return round(points, 1), "Medium relevance", "Direct human mixed", direct_sources
+            if outcomes["positive"] == 0:
+                return round(points, 1), "High relevance", "Direct human/clinical; result direction unavailable", direct_sources
+            return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+        if preclinical_sources >= 1:
+            source_bonus = min(4.0, 1.5 * math.log2(1 + preclinical_sources))
+            points = min(27.0, 21.0 + source_bonus + min(2.0, concept_bonus))
+            return round(points, 1), "Medium relevance", "Direct preclinical", direct_sources
+        source_bonus = min(3.0, math.log2(1 + direct_sources))
+        points = min(22.0, 18.0 + source_bonus + min(1.0, concept_bonus))
+        return round(points, 1), "Medium relevance", "Direct but limited", direct_sources
+
+    if mechanism_hits_all:
+        source_bonus = min(3.0, math.log2(1 + mechanism_sources))
+        concept_bonus = min(2.0, 0.5 * len(mechanism_hits_all))
+        if len(mechanism_hits_all) >= 2 and mechanism_sources >= 2:
+            return round(min(18.0, 13.0 + source_bonus + concept_bonus), 1), "Low relevance", "Mechanistic empirical", mechanism_sources
+        return round(min(12.0, 8.0 + source_bonus + concept_bonus), 1), "Low relevance", "Mechanistic empirical", mechanism_sources
+
+    if inferred_mechanism_hits:
+        return 6.0, "Low relevance", "Mechanistic inference only", 0
+
+    return 0.0, "No relevance", "None", 0
+
+
     points, tier, _, _ = _indication_relevance_detail(group, indication)
     return points, tier
 

@@ -17,6 +17,12 @@ from safety_interaction_attribution import (
     extract_structured_safety_interactions,
 )
 from indication_semantics import indication_terms as _resolve_indication_terms
+from general_indication_relevance import (
+    ENGINE_VERSION as RELEVANCE_ENGINE_VERSION,
+    build_indication_profile,
+    corpus_texts_from_records,
+    score_record_relevance,
+)
 
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
 # botanical_rd_candidate_engine.py) predates Phase 5 and does not list
@@ -32,6 +38,17 @@ _PHASE5_DIAGNOSTIC_COLUMNS = (
     "Normalization_Summary", "Validation_Status", "Validation_Summary",
     "Result_Direction", "Preparation_Applicability",
     "Safety_Reassurance", "Safety_Data_Status",
+)
+
+# Record-level output of the authoritative general_indication_relevance.py
+# engine. Same reindex-guard requirement as _PHASE5_DIAGNOSTIC_COLUMNS above:
+# OUTPUT_COLUMNS predates this engine and does not list these, so they must
+# be included in every final reindex() call in this module or they are
+# silently dropped before discover_indication_candidates() returns.
+_RELEVANCE_ENGINE_COLUMNS = (
+    "Indication_Match_Score", "Indication_Match_Type", "Indication_Match_Terms",
+    "Indication_Match_Reason", "Indication_Match_Confidence",
+    "Indication_Relevance_Engine_Version",
 )
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
@@ -81,14 +98,16 @@ def _norm(value: object) -> str:
 
 
 def _terms(indication: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Resolve an indication to (direct_terms, mechanistic_terms).
+    """Resolve an indication to (direct_terms, mechanistic_terms) from
+    indication_semantics.py.
 
-    Delegates entirely to indication_semantics.indication_terms(), the
-    shared 27-family, alias-aware term set already used by the later
-    plant-level scoring stage (candidate_shortlisting.py). This makes term
-    resolution consistent across both stages of the pipeline and means a new
-    indication only needs a single entry in indication_semantics.py, not a
-    second, separate one here.
+    This is NO LONGER the primary indication-matching mechanism (see
+    general_indication_relevance.py, which is now authoritative and requires
+    no per-indication dictionary entry). It is kept only to supply
+    ``assist_terms`` to score_record_relevance()'s strictly-capped,
+    disclosed backward-compatibility fallback path -- consulted only when
+    the general corpus-adaptive engine finds no match at all. Its absence
+    for any indication does not prevent discovery.
     """
     return _resolve_indication_terms(indication)
 
@@ -427,6 +446,32 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                     "Interaction_Flags", "interaction_flags",
                 ])),
                 "nct_id": _pick_from_row(engine, row, ["NCT_ID", "nct_id"]),
+                # Field-aware tiers for general_indication_relevance.py. Tier 1
+                # (explicit indication fields) is authoritative for indication
+                # matching; Tier 2 (outcome/mechanism) and Tier 3 (source text)
+                # degrade in that order. Kept separate from the flat "text"
+                # blob above (which is used for safety/interaction extraction
+                # and stays untouched) so a match found only in raw source
+                # text never outranks an explicit indication field match.
+                "tier1_text": _pick_from_row(engine, row, [
+                    "Target_Indication", "target_indication",
+                    "Detected_Indications", "detected_indications",
+                    "Indication", "indication", "Disease", "disease", "Condition", "condition",
+                ]),
+                "tier2_text": " ".join(t for t in (
+                    _structured_text(_pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"])),
+                    _structured_text(_pick_from_row(engine, row, ["Result_Direction", "result_direction"])),
+                    _pick_from_row(engine, row, ["Mechanism", "mechanism"]),
+                    _pick_from_row(engine, row, ["Target", "target"]),
+                ) if t),
+                "tier3_text": " ".join(t for t in (
+                    _pick_from_row(engine, row, ["Title", "title"]),
+                    _pick_from_row(engine, row, ["Abstract", "abstract"]),
+                    _structured_text(_pick_from_row(engine, row, ["Notes", "notes"])),
+                    _pick_from_row(engine, row, ["Source_Raw_Text", "source_raw_text", "Raw_Text", "raw_text"]),
+                    _pick_from_row(engine, row, ["Study_Type", "study_type"]),
+                    _pick_from_row(engine, row, ["Evidence_Type", "evidence_type", "Evidence_Level", "evidence_level"]),
+                ) if t),
             })
     return index
 
@@ -568,10 +613,38 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
     candidates = engine._candidate_frame()
     if candidates.empty:
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
 
-    direct_terms, mechanism_terms = _terms(indication)
+    # Build ONE corpus-adaptive relevance profile for this query from the
+    # full evidence corpus (every plant's records), and reuse it for every
+    # record below. This is the single authoritative relevance engine --
+    # general_indication_relevance.py -- and it requires no per-indication
+    # dictionary entry: an unseen indication (e.g. a novel R&D question) is
+    # scored the same way as a familiar one. indication_semantics.py, if it
+    # resolves this indication, supplies only a strictly-capped, disclosed
+    # assist_terms fallback consulted inside score_record_relevance() when
+    # the corpus-adaptive engine finds no match at all; it never overrides
+    # a corpus-adaptive match and is never required.
     evidence_index = _build_plant_evidence_index(engine)
+    relevance_profile = build_indication_profile(
+        indication, corpus_texts_from_records(evidence_index),
+    )
+    assist_family = _resolve_indication_terms(indication)
+    assist_terms: tuple[str, ...] = tuple(dict.fromkeys(
+        (*assist_family[0], *assist_family[1])
+    )) if assist_family else ()
+
+    def _score(tier1: str, tier2: str, tier3: str):
+        return score_record_relevance(
+            relevance_profile, tier1, tier2, tier3, assist_terms,
+        )
+
+    _MATCH_STRONG = ("exact_indication", "explicit_field_overlap")
+    _MATCH_SUPPORTIVE = (
+        "outcome_or_mechanism_support", "corpus_derived_semantic",
+        "weak_lexical", "curated_assist_fallback",
+    )
+
     rows = []
 
     for _, item in candidates.iterrows():
@@ -588,13 +661,20 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         # relevance below remains restricted to the selected indication.
         plant_safety = _aggregate_plant_safety(records, plant)
 
-        direct_records = [r for r in records if _contains_any(r["text"], direct_terms)]
-        mechanism_records = [r for r in records if _contains_any(r["text"], mechanism_terms)]
+        for record in records:
+            if "relevance" not in record:
+                record["relevance"] = _score(
+                    record.get("tier1_text", ""), record.get("tier2_text", ""), record.get("tier3_text", ""),
+                )
+
+        direct_records = [r for r in records if r["relevance"].match_type in _MATCH_STRONG]
+        mechanism_records = [r for r in records if r["relevance"].match_type in _MATCH_SUPPORTIVE]
 
         # Database profile fields may create an exploratory lead, but never a
         # direct-evidence candidate and never a shortlist by themselves.
-        profile_direct = _contains_any(indications, direct_terms)
-        profile_mechanistic = _contains_any(" | ".join((targets, indications)), mechanism_terms)
+        profile_relevance = _score(indications, targets, "")
+        profile_direct = profile_relevance.match_type in _MATCH_STRONG
+        profile_mechanistic = profile_relevance.match_type in _MATCH_SUPPORTIVE
 
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
             continue
@@ -617,8 +697,9 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         evidence_units: list[dict | None] = relevant_records or [None]
         for record in evidence_units:
             record_text = str(record.get("text") or "")[:12000] if record else ""
-            record_direct = bool(record and _contains_any(record_text, direct_terms))
-            record_mechanistic = bool(record and _contains_any(record_text, mechanism_terms))
+            record_relevance = record["relevance"] if record else profile_relevance
+            record_direct = bool(record and record_relevance.match_type in _MATCH_STRONG)
+            record_mechanistic = bool(record and record_relevance.match_type in _MATCH_SUPPORTIVE)
             profile_only = record is None
 
             characteristics = (
@@ -796,7 +877,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Profile-derived hypothesis; no candidate-specific empirical record"
             )
             mechanism_label = targets or "; ".join(
-                mechanism_terms[:5] if (record_mechanistic or profile_mechanistic) else []
+                record_relevance.matched_terms[:5] if (record_mechanistic or profile_mechanistic) else []
             )
             rationale = (
                 f"{plant} has a plant-specific evidence record linked to the requested indication; "
@@ -823,6 +904,12 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Interaction_Flags": interactions,
                 "Safety_Reassurance": safety_reassurance,
                 "Safety_Data_Status": safety_data_status,
+                "Indication_Match_Score": record_relevance.score,
+                "Indication_Match_Type": record_relevance.match_type,
+                "Indication_Match_Terms": "; ".join(record_relevance.matched_terms),
+                "Indication_Match_Reason": record_relevance.reason,
+                "Indication_Match_Confidence": record_relevance.confidence,
+                "Indication_Relevance_Engine_Version": RELEVANCE_ENGINE_VERSION,
                 "Evidence_Source": source,
                 "Source_Record_IDs": record_id,
                 "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",
@@ -893,7 +980,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             rows.append(row)
 
     if not rows:
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
-    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS)).reset_index(drop=True)
+    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS)).reset_index(drop=True)

@@ -32,7 +32,36 @@ _STOPWORDS = {
     "using", "with", "without", "which", "were", "this", "that", "their", "there",
     "these", "those", "into", "over", "under", "than", "then", "have", "has",
     "had", "not", "and", "the", "for", "are", "was", "may", "can", "could",
+    # Generic outcome-direction words. These describe the direction of
+    # virtually any clinical result ("reduced X", "improved Y") regardless of
+    # what X or Y is, so they carry no indication-specific information and
+    # must never become a discriminative corpus-derived expansion term (see
+    # constraint: matching only generic words must never create a relevant
+    # candidate). Without this, a shared word like "reduced" could link a
+    # diabetes record ("Reduced HbA1c") to an unrelated cough query merely
+    # because both records happen to report a reduction in something.
+    "reduced", "reduce", "reduces", "reducing", "reduction", "reductions",
+    "increased", "increase", "increases", "increasing",
+    "improved", "improve", "improves", "improving", "improvement", "improvements",
+    "decreased", "decrease", "decreases", "decreasing",
+    "elevated", "elevate", "elevates", "elevating",
+    "lower", "lowered", "lowering", "lowers",
+    "higher", "raised", "raising", "raises",
+    "changes", "change", "changed", "following", "prior", "versus", "compared",
+    "baseline", "placebo", "administered", "administration",
+    # Generic clinical-trial-methodology words. These describe HOW a study
+    # was conducted, not WHAT it studied, so they are just as indication-
+    # agnostic as the outcome-direction words above -- an RCT for diabetes
+    # and an RCT for cough share this vocabulary purely because both are
+    # RCTs. Without this, "randomized"/"rct" leaked a diabetes record into
+    # a cough query via shared study-design wording in Study_Type/
+    # Evidence_Level text (test_cough_indication_generalization.py).
+    "randomized", "randomised", "rct", "controlled", "blind", "blinded",
+    "crossover", "cohort", "multicenter", "multicentre", "phase", "pilot",
+    "label", "open", "arm", "arms",
 }
+
+
 
 
 def normalize_text(value: object) -> str:
@@ -66,6 +95,7 @@ class RelevanceMatch:
     match_type: str
     matched_terms: tuple[str, ...]
     reason: str
+    confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -185,3 +215,181 @@ def corpus_texts_from_records(records_by_plant: dict[str, list[dict]]) -> list[s
         for record in records
         if str(record.get("text") or "").strip()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Field-aware, single-authoritative record-level relevance.
+#
+# This is the production entry point: one function, one scoring path, used by
+# both indication_candidate_discovery.py (record-level gating) and
+# candidate_shortlisting.py (plant-level scoring), so the two stages cannot
+# disagree by recomputing relevance with different rules.
+# ---------------------------------------------------------------------------
+
+ENGINE_VERSION = "1.0-general-corpus-adaptive"
+
+# Required match_type categories (see module docstring / architecture notes).
+# Listed in descending strength order.
+MATCH_EXACT_INDICATION = "exact_indication"
+MATCH_EXPLICIT_FIELD_OVERLAP = "explicit_field_overlap"
+MATCH_OUTCOME_OR_MECHANISM_SUPPORT = "outcome_or_mechanism_support"
+MATCH_CORPUS_DERIVED_SEMANTIC = "corpus_derived_semantic"
+MATCH_WEAK_LEXICAL = "weak_lexical"
+MATCH_CURATED_ASSIST_FALLBACK = "curated_assist_fallback"
+MATCH_NO_MATCH = "no_match"
+
+# A record's evidence text is split into three reliability tiers before
+# scoring. Tier 1 (explicit indication fields) is authoritative: a match
+# there outranks any match found only in outcome/mechanism fields or free
+# source text, regardless of how that match was found.
+TIER1_FIELDS = ("target_indication", "extracted_indication", "target_indication_detected")
+TIER2_FIELDS = ("primary_outcome", "result_direction", "mechanism", "target")
+TIER3_FIELDS = ("title", "abstract", "notes", "source_raw_text", "study_type", "evidence_type")
+
+# Score ceilings enforce strict tier ordering: any non-zero Tier 1 match
+# outranks any Tier 2 match, which outranks any Tier 3 match, which outranks
+# the curated fallback. "Exact indication matches should be stronger than
+# inferred semantic matches" (constraint 7) and "A direct match in Tier 1
+# must score higher than a match found only in free text" both fall out of
+# these ceilings directly, not from ad hoc per-case logic.
+_TIER1_CEILING = 0.95   # 1.0 is reserved for a literal exact-phrase match
+_TIER2_CEILING = 0.70
+_TIER3_SEMANTIC_CEILING = 0.50
+_TIER3_LEXICAL_CEILING = 0.35
+_ASSIST_CEILING = 0.30
+
+_CONFIDENCE_BY_TYPE = {
+    MATCH_EXACT_INDICATION: 95.0,
+    MATCH_EXPLICIT_FIELD_OVERLAP: 80.0,
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT: 60.0,
+    MATCH_CORPUS_DERIVED_SEMANTIC: 50.0,
+    MATCH_WEAK_LEXICAL: 25.0,
+    MATCH_CURATED_ASSIST_FALLBACK: 20.0,
+    MATCH_NO_MATCH: 0.0,
+}
+
+
+def score_record_relevance(
+    profile: IndicationProfile,
+    tier1_text: object = "",
+    tier2_text: object = "",
+    tier3_text: object = "",
+    assist_terms: Sequence[str] = (),
+) -> RelevanceMatch:
+    """Score one evidence record's indication relevance from field-tiered text.
+
+    This is the single authoritative scoring function. ``profile`` is built
+    once per query from the current evidence corpus (see
+    :func:`build_indication_profile`) and contains no disease-specific
+    vocabulary of its own -- it is derived entirely from the query and the
+    corpus at hand.
+
+    Priority is strength-first, tier-second: a full/exact literal query-phrase
+    match is strong evidence wherever it is found (most real evidence records
+    name their indication in a title or abstract, not a separate structured
+    field), but Tier 1 (explicit indication fields) always scores strictly
+    higher than the same strength of match found only in Tier 2 or Tier 3,
+    and a literal match always outranks a corpus-learned (non-literal)
+    expansion-term match, wherever either is found.
+
+    ``assist_terms`` is the ONLY place a curated vocabulary (e.g.
+    indication_semantics.py) may contribute. It is consulted only after the
+    corpus-adaptive engine finds nothing at all, its contribution is capped
+    below every corpus-adaptive match type, and its use is always disclosed
+    in ``reason`` -- it never overrides or is required for a corpus-adaptive
+    match.
+    """
+    m1 = profile.match(tier1_text)
+    m2 = profile.match(tier2_text)
+    m3 = profile.match(tier3_text)
+    literal_types = ("direct lexical", "partial lexical")
+
+    # 1. Tier 1 full/exact literal match -- the strongest possible signal.
+    if m1.match_type == "direct lexical":
+        return RelevanceMatch(
+            1.0, MATCH_EXACT_INDICATION, m1.matched_terms,
+            "Exact indication phrase matched an explicit indication field "
+            f"(target_indication/extracted_indication); matched={', '.join(m1.matched_terms) or 'query phrase'}",
+            _CONFIDENCE_BY_TYPE[MATCH_EXACT_INDICATION],
+        )
+
+    # 2. Any literal (non-corpus-derived) full/exact match found only in Tier
+    #    2 or Tier 3 -- most real evidence names its indication in a title or
+    #    abstract, not a separate structured field, so this is still strong,
+    #    directly-stated evidence. Scored below every Tier 1 result.
+    if m2.match_type == "direct lexical" or m3.match_type == "direct lexical":
+        best = m2 if m2.match_type == "direct lexical" else m3
+        tier_label = "outcome/mechanism fields" if best is m2 else "source text (title/abstract/notes)"
+        score = round(min(_TIER2_CEILING if best is m2 else _TIER2_CEILING - 0.05, best.score * 0.85), 4)
+        return RelevanceMatch(
+            score, MATCH_EXPLICIT_FIELD_OVERLAP, best.matched_terms,
+            f"Exact indication phrase matched in {tier_label} rather than an explicit indication "
+            f"field; matched={', '.join(best.matched_terms) or 'query phrase'}",
+            _CONFIDENCE_BY_TYPE[MATCH_EXPLICIT_FIELD_OVERLAP],
+        )
+
+    # 3. Tier 1 partial literal overlap (some but not all query tokens).
+    if m1.score > 0:
+        score = round(min(_TIER1_CEILING, m1.score), 4)
+        return RelevanceMatch(
+            score, MATCH_EXPLICIT_FIELD_OVERLAP, m1.matched_terms,
+            f"Query terms overlapped an explicit indication field without a full exact phrase; matched={', '.join(m1.matched_terms)}",
+            _CONFIDENCE_BY_TYPE[MATCH_EXPLICIT_FIELD_OVERLAP],
+        )
+
+    # 4. Tier 2 partial literal overlap, or corpus-learned terms in Tier 2.
+    if m2.score > 0:
+        score = round(min(_TIER2_CEILING, m2.score * 0.85), 4)
+        match_type = (
+            MATCH_OUTCOME_OR_MECHANISM_SUPPORT if m2.match_type in literal_types
+            else MATCH_CORPUS_DERIVED_SEMANTIC
+        )
+        reason = (
+            "Query terms matched in outcome/mechanism fields (primary_outcome/mechanism/target)"
+            if match_type == MATCH_OUTCOME_OR_MECHANISM_SUPPORT
+            else "Corpus-learned terms co-occurring with the query matched in outcome/mechanism fields"
+        )
+        return RelevanceMatch(
+            score, match_type, m2.matched_terms,
+            f"{reason}; matched={', '.join(m2.matched_terms)}",
+            _CONFIDENCE_BY_TYPE[match_type],
+        )
+
+    # 5. Corpus-learned (non-literal) terms found only in Tier 3 source text.
+    if m3.match_type == "corpus-semantic" and m3.score > 0:
+        score = round(min(_TIER3_SEMANTIC_CEILING, m3.score * 0.6), 4)
+        return RelevanceMatch(
+            score, MATCH_CORPUS_DERIVED_SEMANTIC, m3.matched_terms,
+            f"Corpus-learned terms co-occurring with the query matched only in source text; matched={', '.join(m3.matched_terms)}",
+            _CONFIDENCE_BY_TYPE[MATCH_CORPUS_DERIVED_SEMANTIC],
+        )
+    # 6. Weak partial literal overlap in Tier 3 source text only.
+    if m3.score > 0:
+        score = round(min(_TIER3_LEXICAL_CEILING, m3.score * 0.4), 4)
+        return RelevanceMatch(
+            score, MATCH_WEAK_LEXICAL, m3.matched_terms,
+            f"Only weak literal term overlap in free source text; matched={', '.join(m3.matched_terms)}",
+            _CONFIDENCE_BY_TYPE[MATCH_WEAK_LEXICAL],
+        )
+
+    # 7. Strictly-capped, disclosed backward-compatibility fallback.
+    if assist_terms:
+        combined = " ".join(str(t) for t in (tier1_text, tier2_text, tier3_text) if t)
+        combined_norm = normalize_text(combined)
+        hits = sorted({
+            term for term in assist_terms
+            if term and normalize_text(term) and normalize_text(term) in combined_norm
+        })
+        if hits:
+            score = round(min(_ASSIST_CEILING, 0.12 + 0.04 * len(hits)), 4)
+            return RelevanceMatch(
+                score, MATCH_CURATED_ASSIST_FALLBACK, tuple(hits),
+                "No corpus-adaptive match; matched curated indication_semantics.py "
+                f"term(s) as a capped backward-compatibility fallback: {', '.join(hits)}",
+                _CONFIDENCE_BY_TYPE[MATCH_CURATED_ASSIST_FALLBACK],
+            )
+
+    return RelevanceMatch(
+        0.0, MATCH_NO_MATCH, (), "No matching indication terms found in any evidence field",
+        _CONFIDENCE_BY_TYPE[MATCH_NO_MATCH],
+    )

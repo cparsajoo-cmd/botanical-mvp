@@ -230,6 +230,85 @@ def test_upsert_is_idempotent_on_evidence_record_model_version():
     assert len(stored) == 1  # second upsert replaced, did not duplicate
 
 
+# ---------------------------------------------------------------------------
+# upsert_evidence_embeddings: paging the WRITE path (scalability regression)
+#
+# Production bug: a large backfill run (limit=5000) failed with
+# postgrest.exceptions.APIError({'message': 'JSON could not be generated',
+# 'code': 520, ...}) inside upsert_evidence_embeddings()'s `.execute()` call
+# -- a Supabase/Cloudflare 520 ("Web server is returning an unknown error"),
+# not a normal PostgREST error, because the request body (thousands of rows,
+# each carrying a full embedding vector) was too large to be handled at
+# all. These tests simulate that backend limit and prove
+# upsert_evidence_embeddings() now writes in bounded pages instead of ever
+# submitting every row in one request.
+# ---------------------------------------------------------------------------
+
+def _make_row(record_id: int, *, model: str = EMBEDDING_MODEL, version: str = EMBEDDING_VERSION) -> dict:
+    return {
+        "evidence_record_id": record_id, "plant_id": 1, "embedding": [0.1, 0.2, 0.3],
+        "embedding_text": f"text {record_id}", "embedding_model": model,
+        "embedding_version": version, "content_hash": f"hash-{record_id}",
+    }
+
+
+def test_upsert_evidence_embeddings_pages_to_avoid_oversized_request():
+    """Reproduces the reported limit=5000 production failure: a backend that
+    rejects any single upsert carrying more than 50 rows must still be
+    written successfully, because upsert_evidence_embeddings() pages its
+    writes rather than sending all 1000 rows at once."""
+    supabase = _SizeLimitedFakeSupabaseClient(max_upsert_rows=50)
+    rows = [_make_row(i) for i in range(1, 1001)]
+
+    upsert_evidence_embeddings(rows, supabase=supabase, batch_size=50)
+
+    stored = supabase._store["evidence_embeddings"]
+    assert len(stored) == 1000
+    assert {r["evidence_record_id"] for r in stored} == set(range(1, 1001))
+    # 1000 rows at batch_size=50 -> exactly 20 paged upsert requests.
+    assert len(supabase.table_calls) == 20
+
+
+def test_upsert_evidence_embeddings_default_batch_size_stays_under_backend_limit():
+    """Must scale to thousands of rows without ever tripping a realistic
+    backend row-count limit, using the DEFAULT batch_size (i.e. callers
+    like backfill_evidence_embeddings.py that don't pass one explicitly are
+    still safe)."""
+    supabase = _SizeLimitedFakeSupabaseClient(max_upsert_rows=50)
+    rows = [_make_row(i) for i in range(1, 5001)]
+
+    upsert_evidence_embeddings(rows, supabase=supabase)
+
+    stored = supabase._store["evidence_embeddings"]
+    assert len(stored) == 5000
+
+
+def test_upsert_evidence_embeddings_single_page_when_under_batch_size():
+    """The common case (a small backfill run) must still make exactly one
+    request -- paging must not add overhead when it isn't needed."""
+    supabase = _FakeSupabaseClient()
+    rows = [_make_row(i) for i in range(1, 4)]
+
+    upsert_evidence_embeddings(rows, supabase=supabase, batch_size=50)
+
+    assert len(supabase._store["evidence_embeddings"]) == 3
+    assert len(supabase.table_calls) == 1
+
+
+def test_upsert_evidence_embeddings_paged_writes_stay_idempotent():
+    """Re-running a paged write for the same rows must still replace, not
+    duplicate -- idempotency must hold across page boundaries, not just
+    within a single request."""
+    supabase = _SizeLimitedFakeSupabaseClient(max_upsert_rows=50)
+    rows = [_make_row(i) for i in range(1, 121)]
+
+    upsert_evidence_embeddings(rows, supabase=supabase, batch_size=50)
+    upsert_evidence_embeddings(rows, supabase=supabase, batch_size=50)
+
+    stored = supabase._store["evidence_embeddings"]
+    assert len(stored) == 120  # second run replaced, did not duplicate
+
+
 def test_fetch_existing_content_hashes_filters_by_model_and_version():
     supabase = _FakeSupabaseClient()
     supabase._store["evidence_embeddings"] = [
@@ -254,15 +333,17 @@ def test_fetch_existing_content_hashes_filters_by_model_and_version():
 # ---------------------------------------------------------------------------
 
 class _SizeLimitedFakeTable(_FakeTable):
-    """Raises the way PostgREST would if a single `.in_()` filter carries
-    more ids than the backend's per-request limit allows."""
+    """Raises the way PostgREST/Cloudflare would if a single request --
+    either a `.in_()` filter or an `.upsert()` payload -- carries more
+    items than the backend's per-request limit allows."""
 
-    def __init__(self, store, name, max_in_size):
+    def __init__(self, store, name, max_in_size=None, max_upsert_rows=None):
         super().__init__(store, name)
         self._max_in_size = max_in_size
+        self._max_upsert_rows = max_upsert_rows
 
     def in_(self, col, values):
-        if len(values) > self._max_in_size:
+        if self._max_in_size is not None and len(values) > self._max_in_size:
             raise Exception(
                 f"400 Bad Request: JSON could not be generated "
                 f"({len(values)} ids exceeds the simulated PostgREST limit "
@@ -270,15 +351,25 @@ class _SizeLimitedFakeTable(_FakeTable):
             )
         return super().in_(col, values)
 
+    def upsert(self, rows, on_conflict=None):
+        if self._max_upsert_rows is not None and len(rows) > self._max_upsert_rows:
+            raise Exception(
+                "520: Web server is returning an unknown error "
+                f"({len(rows)} rows exceeds the simulated backend limit of "
+                f"{self._max_upsert_rows})"
+            )
+        return super().upsert(rows, on_conflict=on_conflict)
+
 
 class _SizeLimitedFakeSupabaseClient(_FakeSupabaseClient):
-    def __init__(self, max_in_size: int):
+    def __init__(self, max_in_size: int = None, max_upsert_rows: int = None):
         super().__init__()
         self._max_in_size = max_in_size
+        self._max_upsert_rows = max_upsert_rows
 
     def table(self, name):
         self.table_calls.append(name)
-        return _SizeLimitedFakeTable(self._store, name, self._max_in_size)
+        return _SizeLimitedFakeTable(self._store, name, self._max_in_size, self._max_upsert_rows)
 
 
 def test_fetch_existing_content_hashes_pages_to_avoid_oversized_query():

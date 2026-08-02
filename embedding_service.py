@@ -54,6 +54,16 @@ _DEFAULT_BACKOFF_BASE_SECONDS = 1.0
 # could not be generated") before any embedding work even starts. Querying
 # in bounded pages avoids this regardless of how large a backfill run is.
 _DEFAULT_HASH_FETCH_BATCH_SIZE = 150
+# Each upsert row carries a full EMBEDDING_DIMENSION-length float vector
+# (plus text/metadata), so it is far heavier per-row than an id-only hash
+# lookup. Sending every pending row in one request risks the same
+# request-size failure as the hash lookup did -- observed in production as
+# a Supabase/Cloudflare 520 ("Web server is returning an unknown error")
+# with a large limit=5000 run, because the oversized request body never
+# reached PostgREST as valid JSON at all. Batching the write side keeps
+# each request small regardless of how many rows a single backfill run
+# needs to write.
+_DEFAULT_UPSERT_BATCH_SIZE = 50
 
 
 def get_openai_client():
@@ -217,7 +227,9 @@ def _to_bigint(value) -> int | None:
         return None
 
 
-def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
+def upsert_evidence_embeddings(
+    rows: list[dict], *, supabase=None, batch_size: int = _DEFAULT_UPSERT_BATCH_SIZE,
+) -> None:
     """Idempotently upsert one row per conflict key.
 
     The caller's rows (and each row dict inside it) are never mutated --
@@ -236,6 +248,18 @@ def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
     backfill iterator and its own pre-upsert dedupe pass also guarantee
     uniqueness. This keeps every future caller safe and makes the storage
     boundary authoritative.
+
+    The deduplicated payload is then written in bounded pages of
+    ``batch_size`` rows (default ``_DEFAULT_UPSERT_BATCH_SIZE``) rather than
+    one single request. Each row carries a full embedding vector, so a
+    large backfill run (thousands of rows to write) can produce a request
+    body large enough that Supabase/Cloudflare reject it outright -- this
+    surfaced in production as a 520 ("Web server is returning an unknown
+    error") on `.execute()`, not a normal PostgREST error, because the
+    oversized body never made it to PostgREST as valid JSON. Paging the
+    write keeps every request small regardless of how many rows a run
+    produces, exactly mirroring the paging already applied to
+    fetch_existing_content_hashes() on the read side.
     """
     if not rows:
         return
@@ -268,10 +292,15 @@ def upsert_evidence_embeddings(rows: list[dict], *, supabase=None) -> None:
         client = get_supabase_client()
     else:
         client = supabase
-    client.table("evidence_embeddings").upsert(
-        list(db_payload.values()),
-        on_conflict="evidence_record_id,embedding_model,embedding_version",
-    ).execute()
+
+    page_size = batch_size if batch_size and batch_size > 0 else _DEFAULT_UPSERT_BATCH_SIZE
+    values = list(db_payload.values())
+    for start in range(0, len(values), page_size):
+        chunk = values[start:start + page_size]
+        client.table("evidence_embeddings").upsert(
+            chunk,
+            on_conflict="evidence_record_id,embedding_model,embedding_version",
+        ).execute()
 
 
 def fetch_existing_content_hashes(

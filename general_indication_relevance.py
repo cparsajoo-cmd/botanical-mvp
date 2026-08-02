@@ -59,7 +59,18 @@ _STOPWORDS = {
     "randomized", "randomised", "rct", "controlled", "blind", "blinded",
     "crossover", "cohort", "multicenter", "multicentre", "phase", "pilot",
     "label", "open", "arm", "arms",
+    # Generic mechanism buzzwords that appear across a huge share of
+    # botanical evidence regardless of indication (almost every plant
+    # extract is tested for antioxidant activity at some point). Domain-
+    # appropriate-but-common words that DO carry indication-specific
+    # meaning (e.g. "inflammatory" for the Inflammation indication) are
+    # deliberately NOT added here -- those are still correctly filtered by
+    # the corpus-ubiquity check in build_indication_profile() when they
+    # really are ubiquitous in a given corpus, without losing their
+    # legitimate discriminative value when they are not.
+    "antioxidant", "antioxidants", "oxidative", "scavenging",
 }
+
 
 
 
@@ -392,4 +403,199 @@ def score_record_relevance(
     return RelevanceMatch(
         0.0, MATCH_NO_MATCH, (), "No matching indication terms found in any evidence field",
         _CONFIDENCE_BY_TYPE[MATCH_NO_MATCH],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hybrid engine: deterministic lexical/corpus-adaptive engine (above, fully
+# unchanged) plus an optional embedding-similarity component.
+#
+# score_record_relevance() above remains the complete, self-sufficient
+# deterministic engine and every existing caller/test of it is unaffected.
+# score_record_relevance_hybrid() below is purely additive: it calls the
+# same profile.match() computations, adds an optional embedding_similarity
+# input (a plain float, injected by the caller -- this module makes no
+# network call and has no OpenAI/Supabase dependency of its own), and
+# combines them under one centralized, versioned weight configuration.
+# When embedding_similarity is None (embedding provider/RPC unavailable,
+# or simply not supplied), this degrades EXACTLY to the deterministic
+# engine's own answer, with weights renormalized across the remaining
+# three components -- see HybridScore.fallback_mode.
+# ---------------------------------------------------------------------------
+
+MATCH_HYBRID_SEMANTIC = "hybrid_semantic"
+MATCH_EMBEDDING_SEMANTIC = "embedding_semantic"
+
+HYBRID_CONFIG_VERSION = "hybrid-1.0"
+
+# Centralized, versioned weights (requirement: "weights and thresholds must
+# be centralized in one versioned configuration and validated through
+# tests/Gold Cases"). These are the requested INITIAL values -- explicitly
+# not yet calibrated against real embeddings (see
+# EMBEDDING_THRESHOLD_CALIBRATION.md). Changing these numbers is a
+# configuration change, not a code change, and should be done in one place.
+HYBRID_WEIGHTS = {
+    "explicit_indication": 0.35,
+    "embedding_similarity": 0.45,
+    "outcome_mechanism": 0.15,
+    "lexical_fallback": 0.05,
+}
+
+# Below this cosine similarity, an embedding match contributes nothing --
+# prevents low-confidence embedding noise from ever entering the score.
+# PROVISIONAL default; see EMBEDDING_THRESHOLD_CALIBRATION.md.
+EMBEDDING_MIN_CONTRIBUTION = 0.55
+# At or above this cosine similarity, with no other supporting signal, an
+# embedding match alone is strong enough to be labelled embedding_semantic
+# (never "direct evidence" -- rule 2). PROVISIONAL default.
+EMBEDDING_SEMANTIC_THRESHOLD = 0.82
+# At or above this (lower) cosine similarity, COMBINED with at least some
+# deterministic support (outcome/mechanism or lexical), the record is
+# labelled hybrid_semantic. PROVISIONAL default.
+HYBRID_SEMANTIC_THRESHOLD = 0.65
+
+_HYBRID_CONFIDENCE_BY_TYPE = dict(_CONFIDENCE_BY_TYPE)
+_HYBRID_CONFIDENCE_BY_TYPE[MATCH_HYBRID_SEMANTIC] = 55.0
+_HYBRID_CONFIDENCE_BY_TYPE[MATCH_EMBEDDING_SEMANTIC] = 45.0
+
+
+@dataclass(frozen=True)
+class HybridScore:
+    final_relevance_score: float
+    match_type: str
+    matched_terms: tuple[str, ...]
+    reason: str
+    confidence: float
+    explicit_indication_score: float
+    embedding_similarity: float | None
+    outcome_mechanism_score: float
+    lexical_fallback_score: float
+    fallback_mode: bool  # True when embedding_similarity was unavailable
+
+
+def score_record_relevance_hybrid(
+    profile: IndicationProfile,
+    tier1_text: object = "",
+    tier2_text: object = "",
+    tier3_text: object = "",
+    assist_terms: Sequence[str] = (),
+    embedding_similarity: float | None = None,
+    weights: dict[str, float] | None = None,
+) -> HybridScore:
+    """Score one record combining the deterministic lexical/corpus-adaptive
+    engine with an optional embedding-similarity signal.
+
+    Rules enforced here (see module docstring for the full architecture):
+
+    1. A literal Tier-1 exact-phrase match remains the strongest possible
+       evidence regardless of embedding_similarity.
+    2. A high embedding_similarity alone is never labelled as strong as an
+       explicit field match -- it is labelled embedding_semantic or
+       hybrid_semantic, both scored and gated below explicit matches, and
+       both grouped with the "supportive", not "strong", match types by
+       every caller (indication_candidate_discovery.py,
+       candidate_shortlisting.py).
+    3. embedding_similarity is supplied by the caller for THIS record only
+       -- this function has no mechanism to look at any other record, so it
+       cannot transfer evidence between plants by construction.
+    4. Generic semantic similarity does not by itself create a candidate:
+       EMBEDDING_MIN_CONTRIBUTION and EMBEDDING_SEMANTIC_THRESHOLD gate how
+       much a similarity score can contribute and whether it can stand
+       alone.
+    5. Generic mechanism-only support: outcome_mechanism_score comes from
+       the same corpus-adaptive engine as score_record_relevance(), whose
+       stopword list already excludes generic mechanism buzzwords
+       (antioxidant, oxidative, scavenging) from ever becoming a
+       discriminative learned term.
+    """
+    w = weights or HYBRID_WEIGHTS
+
+    m1 = profile.match(tier1_text)
+    m2 = profile.match(tier2_text)
+    m3 = profile.match(tier3_text)
+
+    explicit_score = m1.score
+    outcome_score = m2.score
+    lexical_score = m3.score
+
+    # Rule 1: literal Tier-1 exact phrase always wins outright.
+    if m1.match_type == "direct lexical":
+        return HybridScore(
+            1.0, MATCH_EXACT_INDICATION, m1.matched_terms,
+            "Exact indication phrase matched an explicit indication field; "
+            f"matched={', '.join(m1.matched_terms) or 'query phrase'}",
+            _HYBRID_CONFIDENCE_BY_TYPE[MATCH_EXACT_INDICATION],
+            explicit_score, embedding_similarity, outcome_score, lexical_score,
+            fallback_mode=embedding_similarity is None,
+        )
+
+    # Any other literal (non-corpus-derived) full/exact match, in Tier 1
+    # partial or Tier 2/3 full -- delegate entirely to the deterministic
+    # engine's own strong-match handling (identical priority ordering to
+    # score_record_relevance(), reused rather than re-implemented).
+    deterministic = score_record_relevance(profile, tier1_text, tier2_text, tier3_text, assist_terms)
+    if deterministic.match_type in (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP):
+        return HybridScore(
+            deterministic.score, deterministic.match_type, deterministic.matched_terms,
+            deterministic.reason, _HYBRID_CONFIDENCE_BY_TYPE[deterministic.match_type],
+            explicit_score, embedding_similarity, outcome_score, lexical_score,
+            fallback_mode=embedding_similarity is None,
+        )
+
+    # From here, no literal explicit-field match exists. Embedding
+    # similarity, if available and above the minimum contribution
+    # threshold, is combined with whatever deterministic signal exists.
+    effective_embedding = (
+        embedding_similarity
+        if embedding_similarity is not None and embedding_similarity >= EMBEDDING_MIN_CONTRIBUTION
+        else None
+    )
+
+    has_deterministic_support = deterministic.match_type not in (MATCH_NO_MATCH, MATCH_CURATED_ASSIST_FALLBACK)
+
+    if effective_embedding is not None:
+        if effective_embedding >= EMBEDDING_SEMANTIC_THRESHOLD and not has_deterministic_support:
+            combined = (
+                w["explicit_indication"] * explicit_score
+                + w["embedding_similarity"] * effective_embedding
+                + w["outcome_mechanism"] * outcome_score
+                + w["lexical_fallback"] * lexical_score
+            )
+            return HybridScore(
+                round(min(0.80, combined), 4), MATCH_EMBEDDING_SEMANTIC, (),
+                f"Embedding similarity ({effective_embedding:.3f}) alone matched no explicit "
+                "lexical/corpus-derived term in any tier; treated as exploratory semantic "
+                "relevance, never as direct evidence",
+                _HYBRID_CONFIDENCE_BY_TYPE[MATCH_EMBEDDING_SEMANTIC],
+                explicit_score, embedding_similarity, outcome_score, lexical_score,
+                fallback_mode=False,
+            )
+        if effective_embedding >= HYBRID_SEMANTIC_THRESHOLD and has_deterministic_support:
+            combined = (
+                w["explicit_indication"] * explicit_score
+                + w["embedding_similarity"] * effective_embedding
+                + w["outcome_mechanism"] * outcome_score
+                + w["lexical_fallback"] * lexical_score
+            )
+            matched = tuple(dict.fromkeys(m2.matched_terms + m3.matched_terms))
+            return HybridScore(
+                round(min(0.85, combined), 4), MATCH_HYBRID_SEMANTIC, matched,
+                f"Embedding similarity ({effective_embedding:.3f}) combined with deterministic "
+                f"{deterministic.match_type} support; matched={', '.join(matched) or 'none'}",
+                _HYBRID_CONFIDENCE_BY_TYPE[MATCH_HYBRID_SEMANTIC],
+                explicit_score, embedding_similarity, outcome_score, lexical_score,
+                fallback_mode=False,
+            )
+
+    # No embedding contribution (unavailable, below threshold, or did not
+    # clear either gate) -- deterministic engine's own answer stands,
+    # unchanged, with weights renormalized across the three components
+    # that remain meaningful (fallback_mode=True whenever
+    # embedding_similarity itself was None, i.e. the provider/RPC was
+    # unavailable for this run, as opposed to merely scoring low).
+    return HybridScore(
+        deterministic.score, deterministic.match_type, deterministic.matched_terms,
+        deterministic.reason, _HYBRID_CONFIDENCE_BY_TYPE.get(deterministic.match_type, deterministic.confidence),
+        explicit_score, embedding_similarity, outcome_score, lexical_score,
+        fallback_mode=embedding_similarity is None,
     )

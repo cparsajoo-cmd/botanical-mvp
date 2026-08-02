@@ -19,10 +19,41 @@ from safety_interaction_attribution import (
 from indication_semantics import indication_terms as _resolve_indication_terms
 from general_indication_relevance import (
     ENGINE_VERSION as RELEVANCE_ENGINE_VERSION,
+    HYBRID_CONFIG_VERSION,
+    MATCH_EXACT_INDICATION,
+    MATCH_EXPLICIT_FIELD_OVERLAP,
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT,
+    MATCH_CORPUS_DERIVED_SEMANTIC,
+    MATCH_HYBRID_SEMANTIC,
+    MATCH_EMBEDDING_SEMANTIC,
+    MATCH_WEAK_LEXICAL,
+    MATCH_CURATED_ASSIST_FALLBACK,
     build_indication_profile,
     corpus_texts_from_records,
-    score_record_relevance,
+    score_record_relevance_hybrid,
 )
+
+# Embedding/vector-search infrastructure is optional at import time. Step 5
+# must never crash because the `openai` package is missing, misconfigured,
+# or unreachable -- this defensive import is what makes that possible at
+# the module-load level; per-run failures (bad API key, network error, RPC
+# unavailable) are handled separately, at call time, inside embed_query()
+# and match_evidence_embeddings() themselves (both already catch and
+# return None/[] rather than raising).
+try:
+    from embedding_service import EMBEDDING_MODEL, EMBEDDING_VERSION, embed_query
+    from vector_search import match_evidence_embeddings
+    _EMBEDDING_INFRA_IMPORTED = True
+except Exception as _embedding_import_exc:  # pragma: no cover - environment-dependent
+    EMBEDDING_MODEL = "text-embedding-3-small"
+    EMBEDDING_VERSION = "v1"
+    _EMBEDDING_INFRA_IMPORTED = False
+
+    def embed_query(*args, **kwargs):
+        return None
+
+    def match_evidence_embeddings(*args, **kwargs):
+        return []
 
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
 # botanical_rd_candidate_engine.py) predates Phase 5 and does not list
@@ -49,6 +80,9 @@ _RELEVANCE_ENGINE_COLUMNS = (
     "Indication_Match_Score", "Indication_Match_Type", "Indication_Match_Terms",
     "Indication_Match_Reason", "Indication_Match_Confidence",
     "Indication_Relevance_Engine_Version",
+    "Explicit_Indication_Score", "Embedding_Similarity",
+    "Outcome_Mechanism_Score", "Lexical_Fallback_Score",
+    "Embedding_Model", "Embedding_Version",
 )
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
@@ -417,6 +451,7 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 "text": text,
                 "source": source,
                 "record_id": record_id,
+                "plant_name": row_plant,
                 # Preserve only source-provided metadata needed for record-level
                 # evidence classification.  Keeping this per record (instead of
                 # concatenating every paper into one plant-level blob) is what
@@ -634,15 +669,45 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         (*assist_family[0], *assist_family[1])
     )) if assist_family else ()
 
-    def _score(tier1: str, tier2: str, tier3: str):
-        return score_record_relevance(
+    # --- Embedding: query embedded ONCE per run, vector search called ONCE
+    # per run (never once per plant, never once per record). Both steps are
+    # wrapped so any failure (missing API key, network error, RPC
+    # unavailable, migration not yet applied) degrades to fallback_mode
+    # rather than raising -- Step 5 must keep working with the deterministic
+    # engine alone when embeddings are unavailable.
+    query_embedding = embed_query(indication)
+    embedding_fallback_reason = "" if query_embedding else (
+        "embedding provider unavailable" if not _EMBEDDING_INFRA_IMPORTED
+        else "query embedding failed or OPENAI_API_KEY not configured"
+    )
+    embedding_by_record_id: dict[str, float] = {}
+    if query_embedding:
+        rpc_matches = match_evidence_embeddings(
+            query_embedding, match_count=500,
+            embedding_model=EMBEDDING_MODEL, embedding_version=EMBEDDING_VERSION,
+        )
+        for match in rpc_matches:
+            rid = match.get("evidence_record_id")
+            similarity = match.get("cosine_similarity")
+            if rid is not None and similarity is not None:
+                embedding_by_record_id[str(rid)] = float(similarity)
+        if not rpc_matches:
+            embedding_fallback_reason = embedding_fallback_reason or "no embedding matches returned (RPC unavailable or table empty)"
+
+    def _score(record: dict | None, tier1: str, tier2: str, tier3: str):
+        embedding_similarity = (
+            embedding_by_record_id.get(str(record.get("record_id"))) if record else None
+        )
+        return score_record_relevance_hybrid(
             relevance_profile, tier1, tier2, tier3, assist_terms,
+            embedding_similarity=embedding_similarity,
         )
 
-    _MATCH_STRONG = ("exact_indication", "explicit_field_overlap")
+    _MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
     _MATCH_SUPPORTIVE = (
-        "outcome_or_mechanism_support", "corpus_derived_semantic",
-        "weak_lexical", "curated_assist_fallback",
+        MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
+        MATCH_HYBRID_SEMANTIC, MATCH_EMBEDDING_SEMANTIC,
+        MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
     )
 
     rows = []
@@ -664,7 +729,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         for record in records:
             if "relevance" not in record:
                 record["relevance"] = _score(
-                    record.get("tier1_text", ""), record.get("tier2_text", ""), record.get("tier3_text", ""),
+                    record, record.get("tier1_text", ""), record.get("tier2_text", ""), record.get("tier3_text", ""),
                 )
 
         direct_records = [r for r in records if r["relevance"].match_type in _MATCH_STRONG]
@@ -672,7 +737,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
         # Database profile fields may create an exploratory lead, but never a
         # direct-evidence candidate and never a shortlist by themselves.
-        profile_relevance = _score(indications, targets, "")
+        # No embedding is attempted here: profile fields (Indications_Text/
+        # Known_Targets) have no evidence_record_id to join an embedding
+        # match to, so this always scores via the deterministic engine only.
+        profile_relevance = _score(None, indications, targets, "")
         profile_direct = profile_relevance.match_type in _MATCH_STRONG
         profile_mechanistic = profile_relevance.match_type in _MATCH_SUPPORTIVE
 
@@ -904,12 +972,18 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Interaction_Flags": interactions,
                 "Safety_Reassurance": safety_reassurance,
                 "Safety_Data_Status": safety_data_status,
-                "Indication_Match_Score": record_relevance.score,
+                "Indication_Match_Score": record_relevance.final_relevance_score,
                 "Indication_Match_Type": record_relevance.match_type,
                 "Indication_Match_Terms": "; ".join(record_relevance.matched_terms),
                 "Indication_Match_Reason": record_relevance.reason,
                 "Indication_Match_Confidence": record_relevance.confidence,
-                "Indication_Relevance_Engine_Version": RELEVANCE_ENGINE_VERSION,
+                "Indication_Relevance_Engine_Version": f"{RELEVANCE_ENGINE_VERSION}+{HYBRID_CONFIG_VERSION}",
+                "Explicit_Indication_Score": record_relevance.explicit_indication_score,
+                "Embedding_Similarity": record_relevance.embedding_similarity,
+                "Outcome_Mechanism_Score": record_relevance.outcome_mechanism_score,
+                "Lexical_Fallback_Score": record_relevance.lexical_fallback_score,
+                "Embedding_Model": EMBEDDING_MODEL if not record_relevance.fallback_mode else f"{EMBEDDING_MODEL} (fallback: {embedding_fallback_reason or 'unavailable for this record'})",
+                "Embedding_Version": EMBEDDING_VERSION,
                 "Evidence_Source": source,
                 "Source_Record_IDs": record_id,
                 "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",

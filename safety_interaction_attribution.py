@@ -58,6 +58,21 @@ _LOW_QUALITY_SOURCE = (
     "retracted", "retraction", "advertisement", "sponsored content", "buy now",
     "shop now", "customer review", "affiliate", "promotional material",
 )
+# Some connectors (LiverTox, OpenFDA FAERS) record that a safety-relevant
+# source EXISTS for a plant, e.g. "LiverTox hepatotoxicity/safety source
+# found for Ginkgo biloba." or "OpenFDA FAERS returned 5 adverse event
+# records for Ginkgo biloba. This is a safety signal source and requires
+# manual clinical interpretation." These are pointers to go read a source,
+# not a description of what that source says, but they contain medical
+# trigger words ("hepatotoxicity", "adverse event") that would otherwise be
+# misread as an actual finding. Reject them as noise, the same way
+# promotional or retracted text is rejected.
+_SOURCE_POINTER_NOISE_PATTERNS = (
+    r"\bsafety source found for\b",
+    r"\breturned \d+ adverse event records\b",
+    r"\brequires manual clinical interpretation\b",
+    r"\bis a safety signal source\b",
+)
 _INTERVENTION_WORDS = (
     "extract", "preparation", "supplement", "intervention", "treatment group",
     "treated group", "administration", "administered", "capsule", "infusion", "tea",
@@ -147,7 +162,9 @@ def _has_plant_anchor(fragment: str, previous_fragment: str, plant_name: str, st
 
 def _is_noise(fragment: str) -> bool:
     n = _norm(fragment)
-    return any(term in n for term in _COMPARATOR_NOISE) or any(term in n for term in _LOW_QUALITY_SOURCE)
+    if any(term in n for term in _COMPARATOR_NOISE) or any(term in n for term in _LOW_QUALITY_SOURCE):
+        return True
+    return _matches_any_basic(fragment, _SOURCE_POINTER_NOISE_PATTERNS)
 
 
 def _is_protective_or_negated(fragment: str) -> bool:

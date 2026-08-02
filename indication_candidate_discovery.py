@@ -124,7 +124,16 @@ def _record_text(row: pd.Series) -> str:
             if rendered:
                 values.append(rendered)
 
-    return " ".join(values)
+    # Join with ". " rather than a bare space. Downstream extraction
+    # (safety_interaction_attribution._split) splits on sentence-ending
+    # punctuation to classify one fragment at a time. Without a separator,
+    # unrelated column values (e.g. Study_Type="Unknown", Evidence_Level=
+    # "Unknown", Target_Indication="...", Notes="...") were glued into a
+    # single run-on "sentence", so a genuine adverse-event/interaction
+    # sentence in Notes could absorb neighboring placeholder values into the
+    # accepted output, and vice versa. Each value keeps its own content
+    # unchanged; only the join separator changes.
+    return ". ".join(v.strip().rstrip(".") for v in values if v.strip())
 
 
 def _structured_text(value: object) -> str:

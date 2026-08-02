@@ -29,6 +29,8 @@ _REASSURANCE_PATTERNS = (
     r"\bno treatment-related adverse (?:event|events)\b",
     r"\bno clinically significant adverse (?:event|events|effect|effects)\b",
     r"\bdid not cause (?:toxicity|adverse effects?)\b",
+    r"\bno (?:important|major|significant|serious) safety concerns\b",
+    r"\bno safety concerns\b",
 )
 _INTERACTION_RELATION_PATTERNS = (
     r"\binteract(?:s|ed|ion|ions)? with\b", r"\bdrug[- ]interaction(?:s)?\b",

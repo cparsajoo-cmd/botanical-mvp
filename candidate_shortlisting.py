@@ -15,6 +15,8 @@ from typing import Iterable
 
 import pandas as pd
 
+from indication_semantics import resolve_indication_semantics
+
 # Transparent compound-specificity tiers. Tier 0 compounds are chemically
 # non-informative for alternative-source discovery. Tier 1 compounds are common
 # phytochemicals: they can support a hypothesis, but must not dominate ranking.
@@ -339,53 +341,7 @@ _INDICATION_TEXT_COLUMNS = (
 
 # Conservative concept lexicon for common R&D indication families. The matcher
 # also has a generic fallback, but broad words alone never create High relevance.
-_INDICATION_CONCEPTS = {
-    "glycemic_metabolic": {
-        "triggers": (
-            "blood sugar", "blood glucose", "glycemic", "glycaemic", "diabetes",
-            "diabetic", "hyperglycemia", "hyperglycaemia", "hypoglycemia",
-            "hypoglycaemia", "insulin", "metabolic syndrome", "metabolic",
-        ),
-        "direct": (
-            "blood sugar", "blood glucose", "glycemic", "glycaemic", "hba1c",
-            "diabetes", "diabetic", "antidiabetic", "anti-diabetic",
-            "hyperglycemia", "hyperglycaemia", "hypoglycemic", "hypoglycaemic",
-            "glucose tolerance", "insulin resistance", "insulin sensitivity",
-            "insulin secretion", "fasting glucose", "postprandial glucose",
-        ),
-        "mechanistic": (
-            "alpha-glucosidase", "α-glucosidase", "alpha glucosidase",
-            "alpha-amylase", "α-amylase", "alpha amylase", "glut4", "ampk",
-            "aldose-reductase", "aldose reductase", "ppar-gamma", "pparγ",
-            "metabolic syndrome", "lipid metabolism", "dyslipidemia",
-            "dyslipidaemia", "insulin receptor", "pancreatic beta cell",
-            "pancreatic β-cell", "gluconeogenesis", "glycogen synthesis",
-        ),
-    },
-    "sleep_anxiety": {
-        "triggers": ("sleep", "insomnia", "anxiety", "anxiolytic", "sedative"),
-        "direct": (
-            "sleep quality", "sleep latency", "insomnia", "anxiety", "anxiolytic",
-            "sedative", "sleep duration", "sleep onset",
-        ),
-        "mechanistic": ("gaba", "gabaergic", "benzodiazepine receptor", "melatonin"),
-    },
-    "wound_skin": {
-        "triggers": ("wound", "healing", "skin repair", "burn"),
-        "direct": ("wound healing", "wound closure", "skin repair", "burn healing"),
-        "mechanistic": ("collagen synthesis", "fibroblast", "re-epithelialization", "angiogenesis"),
-    },
-    "cognition": {
-        "triggers": ("cognition", "memory", "alzheimer", "dementia", "neuroprotect"),
-        "direct": ("cognitive", "memory", "alzheimer", "dementia"),
-        "mechanistic": ("acetylcholinesterase", "ache inhibitor", "neuroprotective", "bdnf"),
-    },
-    "constipation_digestive": {
-        "triggers": ("constipation", "laxative", "bowel", "digestive"),
-        "direct": ("constipation", "bowel movement", "stool frequency", "laxative"),
-        "mechanistic": ("intestinal motility", "colonic transit", "peristalsis"),
-    },
-}
+_INDICATION_CONCEPTS = None  # semantics are centralized in indication_semantics.py
 
 _GENERIC_MECHANISM_ONLY = (
     "antioxidant", "anti-oxidant", "anti-inflammatory", "antiinflammatory",
@@ -491,14 +447,8 @@ def _row_has_candidate_specific_empirical_support(row: pd.Series) -> bool:
 
 
 def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
-    indication_norm = _norm(indication)
-    best = None
-    best_hits = 0
-    for family in _INDICATION_CONCEPTS.values():
-        hits = sum(1 for term in family["triggers"] if term in indication_norm)
-        if hits > best_hits:
-            best, best_hits = family, hits
-    return best
+    """Use the same semantic family as raw Step 5 candidate discovery."""
+    return resolve_indication_semantics(indication)
 
 
 

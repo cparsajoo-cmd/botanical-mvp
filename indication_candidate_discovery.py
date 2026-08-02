@@ -100,40 +100,7 @@ def _record_text(row: pd.Series) -> str:
     for col in preferred:
         if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip():
             values.append(str(row.get(col)))
-
-    # A record can exist solely to carry structured safety/interaction JSONB
-    # (e.g. a case-report-derived adverse-event or drug-interaction entry with
-    # no Title/Abstract/Outcome/Notes/Target_Indication text of its own). None
-    # of the columns above cover that case, so such a record previously
-    # produced an empty `text` here and was silently dropped by the
-    # `if not text: continue` guard in _build_plant_evidence_index -- meaning
-    # its Adverse_Events / Interactions_Structured never reached the plant's
-    # evidence index at all, regardless of which indication it was stored
-    # under. Render these structured columns (via _structured_text, which
-    # safely handles JSONB dicts/lists without pandas truthiness ambiguity)
-    # so the record is treated as non-empty and kept.
-    structured_cols = (
-        "Adverse_Events", "adverse_events",
-        "Interactions_Structured", "interactions_structured",
-        "Safety_Findings", "safety_findings",
-        "Interactions", "interactions",
-    )
-    for col in structured_cols:
-        if col in row.index:
-            rendered = _structured_text(row.get(col))
-            if rendered:
-                values.append(rendered)
-
-    # Join with ". " rather than a bare space. Downstream extraction
-    # (safety_interaction_attribution._split) splits on sentence-ending
-    # punctuation to classify one fragment at a time. Without a separator,
-    # unrelated column values (e.g. Study_Type="Unknown", Evidence_Level=
-    # "Unknown", Target_Indication="...", Notes="...") were glued into a
-    # single run-on "sentence", so a genuine adverse-event/interaction
-    # sentence in Notes could absorb neighboring placeholder values into the
-    # accepted output, and vice versa. Each value keeps its own content
-    # unchanged; only the join separator changes.
-    return ". ".join(v.strip().rstrip(".") for v in values if v.strip())
+    return " ".join(values)
 
 
 def _structured_text(value: object) -> str:

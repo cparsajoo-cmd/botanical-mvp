@@ -33,6 +33,35 @@ from evidence_embedding_text import build_evidence_embedding_text, compute_conte
 from indication_candidate_discovery import _build_plant_evidence_index, _pick_from_row
 
 
+def _canonical_id_key(value):
+    """Return a stable lookup key for IDs coming from pandas/Supabase.
+
+    ``_record_id`` intentionally converts evidence IDs to strings for output,
+    while ``evidence_records_df`` may retain them as Python/NumPy integers.
+    Normalising both sides prevents a valid plant_id from becoming ``None``
+    merely because one representation is ``27901`` and the other is
+    ``"27901"`` (or ``27901.0``).
+    """
+    if value is None:
+        return ""
+    try:
+        # Handles pandas/NumPy NaN without importing either package here.
+        if value != value:
+            return ""
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return ""
+    try:
+        numeric = float(text)
+        if numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return text
+
+
 def _build_engine():
     """Real production engine, backed by Supabase. Imported lazily so this
     module can be imported (e.g. by tests) without requiring Supabase
@@ -67,8 +96,9 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
         for _, row in evidence_df.iterrows():
             rid = row.get("Evidence_Record_ID", row.get("id"))
             pid = row.get("Plant_ID", row.get("plant_id"))
-            if rid is not None:
-                plant_id_by_record_id[rid] = pid
+            rid_key = _canonical_id_key(rid)
+            if rid_key:
+                plant_id_by_record_id[rid_key] = pid
 
     for plant_key, records in index.items():
         for record in records:
@@ -78,7 +108,13 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
             plant_name = record.get("plant_name", plant_key)
             if plant_filter and plant_filter.strip().lower() not in str(plant_name).lower():
                 continue
-            plant_id = plant_id_by_record_id.get(record_id)
+            plant_id = plant_id_by_record_id.get(_canonical_id_key(record_id))
+            if not _canonical_id_key(plant_id):
+                print(
+                    "[backfill_evidence_embeddings] Skipping evidence record "
+                    f"{record_id!r}: no canonical plant_id could be resolved."
+                )
+                continue
             embedding_record = dict(record)
             embedding_record["plant_name"] = plant_name
             text = build_evidence_embedding_text(embedding_record)

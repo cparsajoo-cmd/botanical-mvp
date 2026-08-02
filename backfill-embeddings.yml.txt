@@ -1,0 +1,129 @@
+name: Backfill Evidence Embeddings
+
+# Manual only. This workflow can write to the evidence_embeddings table in
+# apply mode, so it never runs on push/pull_request -- only an explicit,
+# human-triggered workflow_dispatch.
+"on":
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (no writes) or apply (writes to evidence_embeddings)"
+        required: true
+        type: choice
+        options:
+          - dry-run
+          - apply
+        default: dry-run
+      plant:
+        description: "Optional: filter to plants whose scientific name contains this substring"
+        required: false
+        type: string
+        default: ""
+      limit:
+        description: "Optional: max number of records to process"
+        required: false
+        type: string
+        default: "20"
+      batch_size:
+        description: "Optional: embedding batch size"
+        required: false
+        type: string
+        default: "50"
+      confirm_apply:
+        description: "Required ONLY for apply mode: type exactly APPLY EMBEDDINGS to confirm"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    env:
+      MODE: ${{ inputs.mode }}
+      PLANT: ${{ inputs.plant }}
+      LIMIT: ${{ inputs.limit }}
+      BATCH_SIZE: ${{ inputs.batch_size }}
+      CONFIRM_APPLY: ${{ inputs.confirm_apply }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      # workflow_dispatch has no native "required only if another input
+      # equals X" support, so confirm_apply is declared optional above and
+      # enforced here at runtime instead. Apply mode is blocked before any
+      # backfill command runs unless confirm_apply is exactly the required
+      # phrase -- not merely non-empty.
+      - name: Validate apply confirmation
+        if: ${{ inputs.mode == 'apply' }}
+        run: |
+          if [ "$CONFIRM_APPLY" != "APPLY EMBEDDINGS" ]; then
+            echo "::error::Apply mode requires confirm_apply to equal exactly 'APPLY EMBEDDINGS'. Aborting without running the backfill."
+            exit 1
+          fi
+          echo "Apply confirmation accepted."
+
+      - name: Run backfill (dry-run)
+        if: ${{ inputs.mode == 'dry-run' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -e
+          args=(--dry-run --limit "$LIMIT" --batch-size "$BATCH_SIZE")
+          if [ -n "$PLANT" ]; then
+            args+=(--plant "$PLANT")
+          fi
+          python backfill_evidence_embeddings.py "${args[@]}" | tee backfill_output.log
+
+      # Runs only when mode is apply AND the confirmation phrase matched
+      # exactly -- redundant with the Validate step above (which already
+      # exits 1 on mismatch), kept as a second, independent gate on the
+      # step itself so this step can never execute from a workflow-syntax
+      # or ordering change alone.
+      - name: Run backfill (apply)
+        if: ${{ inputs.mode == 'apply' && inputs.confirm_apply == 'APPLY EMBEDDINGS' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -e
+          args=(--limit "$LIMIT" --batch-size "$BATCH_SIZE")
+          if [ -n "$PLANT" ]; then
+            args+=(--plant "$PLANT")
+          fi
+          python backfill_evidence_embeddings.py "${args[@]}" | tee backfill_output.log
+
+      # Prints only the scanned/skipped/embedded/updated/failed summary line
+      # that backfill_evidence_embeddings.py's own main() already emits
+      # (e.g. "scanned=20 skipped=15 embedded=4 updated=1 failed=0") --
+      # nothing else from the log, and never any secret (the log is the
+      # script's own stdout, which never prints OPENAI_API_KEY/SUPABASE_URL/
+      # SUPABASE_KEY -- see embedding_service.py).
+      - name: Print backfill summary
+        if: always()
+        run: |
+          if [ -f backfill_output.log ]; then
+            summary_line=$(grep -E '^scanned=' backfill_output.log || true)
+            if [ -n "$summary_line" ]; then
+              echo "$summary_line"
+            else
+              echo "No summary line found in backfill output."
+            fi
+          else
+            echo "Backfill did not run for this input combination -- no summary available."
+          fi

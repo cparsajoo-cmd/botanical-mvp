@@ -48,6 +48,12 @@ _DEFAULT_BATCH_SIZE = 100
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_TIMEOUT_SECONDS = 30
 _DEFAULT_BACKOFF_BASE_SECONDS = 1.0
+# PostgREST (Supabase's REST layer) rejects requests whose URL/JSON body
+# grows too large -- a single `.in_("evidence_record_id", ids)` filter with
+# many thousands of ids can exceed that limit and fail with a 400 ("JSON
+# could not be generated") before any embedding work even starts. Querying
+# in bounded pages avoids this regardless of how large a backfill run is.
+_DEFAULT_HASH_FETCH_BATCH_SIZE = 150
 
 
 def get_openai_client():
@@ -274,10 +280,23 @@ def fetch_existing_content_hashes(
     embedding_model: str = EMBEDDING_MODEL,
     embedding_version: str = EMBEDDING_VERSION,
     supabase=None,
+    batch_size: int = _DEFAULT_HASH_FETCH_BATCH_SIZE,
 ) -> dict[int, str]:
     """Map evidence_record_id -> content_hash for already-stored embeddings
     under this model/version, used to skip unchanged records during
-    backfill (idempotent, resumable)."""
+    backfill (idempotent, resumable).
+
+    Queries in bounded pages of ``batch_size`` ids at a time (default
+    ``_DEFAULT_HASH_FETCH_BATCH_SIZE``) rather than sending every id in one
+    ``.in_(...)`` filter. A single request with many thousands of ids can
+    exceed PostgREST's request-size/URL limit and fail with a 400 ("JSON
+    could not be generated") -- and it does so before any embedding call
+    happens, so a large backfill run would fail immediately with no
+    progress at all. Paging keeps each request small regardless of how
+    many evidence records are being backfilled (tens of thousands or more),
+    and the results from every page are merged into one dict, so callers
+    see exactly the same return shape as a single-request call.
+    """
     ids = []
     for raw_id in evidence_record_ids:
         if raw_id is None:
@@ -291,12 +310,20 @@ def fetch_existing_content_hashes(
         client = get_supabase_client()
     else:
         client = supabase
-    response = (
-        client.table("evidence_embeddings")
-        .select("evidence_record_id,content_hash")
-        .eq("embedding_model", embedding_model)
-        .eq("embedding_version", embedding_version)
-        .in_("evidence_record_id", ids)
-        .execute()
-    )
-    return {row["evidence_record_id"]: row["content_hash"] for row in (response.data or [])}
+
+    page_size = batch_size if batch_size and batch_size > 0 else _DEFAULT_HASH_FETCH_BATCH_SIZE
+
+    hashes: dict[int, str] = {}
+    for start in range(0, len(ids), page_size):
+        page_ids = ids[start:start + page_size]
+        response = (
+            client.table("evidence_embeddings")
+            .select("evidence_record_id,content_hash")
+            .eq("embedding_model", embedding_model)
+            .eq("embedding_version", embedding_version)
+            .in_("evidence_record_id", page_ids)
+            .execute()
+        )
+        for row in (response.data or []):
+            hashes[row["evidence_record_id"]] = row["content_hash"]
+    return hashes

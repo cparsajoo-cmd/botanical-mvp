@@ -96,8 +96,10 @@ class _FakeSupabaseClient:
         self._store: dict[str, list[dict]] = {}
         self.rpc_calls: list[dict] = []
         self._rpc_result: list[dict] = []
+        self.table_calls: list[str] = []
 
     def table(self, name):
+        self.table_calls.append(name)
         return _FakeTable(self._store, name)
 
     def set_rpc_result(self, rows):
@@ -236,6 +238,131 @@ def test_fetch_existing_content_hashes_filters_by_model_and_version():
     ]
     hashes = fetch_existing_content_hashes([1, 2], supabase=supabase)
     assert hashes == {1: "h1"}  # record 2 excluded: different embedding_version
+
+
+# ---------------------------------------------------------------------------
+# fetch_existing_content_hashes: paging (scalability regression)
+#
+# Production bug: a single large backfill run (limit=5000) failed with
+# "APIError: JSON could not be generated / 400 Bad Request" inside
+# fetch_existing_content_hashes(), before any embedding call started. Root
+# cause: every evidence_record_id was sent in one `.in_(...)` filter, and
+# PostgREST (Supabase's REST layer) rejects a request once its URL/JSON
+# body grows too large. These tests simulate that backend limit and prove
+# fetch_existing_content_hashes() now pages its queries instead of ever
+# submitting an oversized single request.
+# ---------------------------------------------------------------------------
+
+class _SizeLimitedFakeTable(_FakeTable):
+    """Raises the way PostgREST would if a single `.in_()` filter carries
+    more ids than the backend's per-request limit allows."""
+
+    def __init__(self, store, name, max_in_size):
+        super().__init__(store, name)
+        self._max_in_size = max_in_size
+
+    def in_(self, col, values):
+        if len(values) > self._max_in_size:
+            raise Exception(
+                f"400 Bad Request: JSON could not be generated "
+                f"({len(values)} ids exceeds the simulated PostgREST limit "
+                f"of {self._max_in_size})"
+            )
+        return super().in_(col, values)
+
+
+class _SizeLimitedFakeSupabaseClient(_FakeSupabaseClient):
+    def __init__(self, max_in_size: int):
+        super().__init__()
+        self._max_in_size = max_in_size
+
+    def table(self, name):
+        self.table_calls.append(name)
+        return _SizeLimitedFakeTable(self._store, name, self._max_in_size)
+
+
+def test_fetch_existing_content_hashes_pages_to_avoid_oversized_query():
+    """Reproduces the reported limit=5000 production failure: a backend that
+    rejects any single request carrying more than 200 ids must still be
+    queried successfully, because fetch_existing_content_hashes() pages its
+    requests rather than sending all 5000 ids at once."""
+    supabase = _SizeLimitedFakeSupabaseClient(max_in_size=200)
+    ids = list(range(1, 5001))
+    supabase._store["evidence_embeddings"] = [
+        {"evidence_record_id": i, "content_hash": f"hash-{i}",
+         "embedding_model": EMBEDDING_MODEL, "embedding_version": EMBEDDING_VERSION}
+        for i in ids
+    ]
+
+    hashes = fetch_existing_content_hashes(ids, supabase=supabase, batch_size=150)
+
+    assert len(hashes) == 5000
+    assert hashes[1] == "hash-1"
+    assert hashes[5000] == "hash-5000"
+    # 5000 ids at batch_size=150 -> 34 paged requests (33 full + 1 partial),
+    # every one of them under the simulated backend's 200-id limit.
+    assert len(supabase.table_calls) == 34
+
+
+def test_fetch_existing_content_hashes_default_batch_size_scales_to_20000():
+    """Must scale to 20,000+ evidence records without ever tripping a
+    realistic PostgREST request-size limit, using the DEFAULT batch_size
+    (i.e. callers that don't pass one explicitly, like backfill_evidence_
+    embeddings.py, are still safe)."""
+    supabase = _SizeLimitedFakeSupabaseClient(max_in_size=200)
+    ids = list(range(1, 20001))
+    supabase._store["evidence_embeddings"] = [
+        {"evidence_record_id": i, "content_hash": f"hash-{i}",
+         "embedding_model": EMBEDDING_MODEL, "embedding_version": EMBEDDING_VERSION}
+        for i in ids
+    ]
+
+    hashes = fetch_existing_content_hashes(ids, supabase=supabase)
+
+    assert len(hashes) == 20000
+    assert hashes[1] == "hash-1"
+    assert hashes[20000] == "hash-20000"
+
+
+def test_fetch_existing_content_hashes_merges_pages_without_leaking_filtered_rows():
+    """Results from every paged request must be merged into one dict, and a
+    row excluded by model/version on one page must not leak into the
+    merged result."""
+    supabase = _FakeSupabaseClient()
+    supabase._store["evidence_embeddings"] = [
+        {"evidence_record_id": i, "content_hash": f"hash-{i}",
+         "embedding_model": EMBEDDING_MODEL, "embedding_version": EMBEDDING_VERSION}
+        for i in range(1, 8)
+    ] + [
+        {"evidence_record_id": 8, "content_hash": "stale-version-hash",
+         "embedding_model": EMBEDDING_MODEL, "embedding_version": "v0-old"},
+    ]
+
+    hashes = fetch_existing_content_hashes(list(range(1, 9)), supabase=supabase, batch_size=3)
+
+    assert hashes == {i: f"hash-{i}" for i in range(1, 8)}  # id 8 excluded: different version
+    assert len(supabase.table_calls) == 3  # 8 ids at batch_size=3 -> 3 paged requests
+
+
+def test_fetch_existing_content_hashes_single_page_when_under_batch_size():
+    """The common case (a small backfill run) must still make exactly one
+    request -- paging must not add overhead when it isn't needed."""
+    supabase = _FakeSupabaseClient()
+    supabase._store["evidence_embeddings"] = [
+        {"evidence_record_id": 1, "content_hash": "h1", "embedding_model": EMBEDDING_MODEL, "embedding_version": EMBEDDING_VERSION},
+    ]
+
+    hashes = fetch_existing_content_hashes([1, 2, 3], supabase=supabase, batch_size=150)
+
+    assert hashes == {1: "h1"}
+    assert len(supabase.table_calls) == 1
+
+
+def test_fetch_existing_content_hashes_empty_input_makes_no_request():
+    supabase = _FakeSupabaseClient()
+    hashes = fetch_existing_content_hashes([], supabase=supabase)
+    assert hashes == {}
+    assert supabase.table_calls == []
 
 
 def test_backfill_skips_unchanged_hash_and_reembeds_changed_one():

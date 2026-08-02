@@ -21,7 +21,7 @@ _ADVERSE_PATTERNS = (
     r"\bhypoglyc(?:emia|aemia|emic|aemic)\b", r"\banaphyl(?:axis|actic)\b",
     r"\ballergic reaction(?:s)?\b", r"\bnausea\b", r"\bvomiting\b",
     r"\bdiarrh(?:ea|eas|oea)\b", r"\brash(?:es)?\b", r"\btoxicit(?:y|ies)\b",
-    r"\bcontraindicat(?:ed|ion|ions)\b",
+    r"\bcontraindicat(?:ed|ion|ions)\b", r"\bseizure(?:s)?\b", r"\bhyphema\b",
 )
 _REASSURANCE_PATTERNS = (
     r"\bwell tolerated\b", r"\bno serious adverse (?:event|events|reaction|reactions)\b",
@@ -39,8 +39,9 @@ _INTERACTION_RELATION_PATTERNS = (
 )
 _DRUG_TERMS = (
     "warfarin", "anticoagulant", "antiplatelet", "antidiabetic", "hypoglycemic agent",
-    "hypoglycaemic agent", "insulin", "cyp3a4", "cyp2c9", "cytochrome p450",
+    "hypoglycaemic agent", "insulin", "cyp3a4", "cyp2c9", "cyp2c19", "cytochrome p450",
     "p-glycoprotein", "p glycoprotein", "digoxin", "cyclosporine", "tacrolimus",
+    "anticonvulsant", "antiepileptic", "phenytoin", "valproate", "valproic acid",
 )
 _COMPARATOR_NOISE = (
     "synthetic drugs", "conventional drugs", "current treatments", "current therapeutic regimen",
@@ -227,7 +228,8 @@ def extract_structured_safety_interactions(
             n = _norm(value)
             coded_terms = ("bleeding", "hemorrhage", "hepatotoxic", "liver injury",
                            "nausea", "vomiting", "diarrhea", "diarrhoea", "rash",
-                           "anaphylaxis", "allergic reaction", "toxicity")
+                           "anaphylaxis", "allergic reaction", "toxicity",
+                           "seizure", "hyphema")
             if any(term in n for term in coded_terms):
                 adverse.append(value)
 

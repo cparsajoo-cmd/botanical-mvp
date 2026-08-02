@@ -16,6 +16,7 @@ from safety_interaction_attribution import (
     extract_attributed_safety_interactions,
     extract_structured_safety_interactions,
 )
+from indication_semantics import indication_terms as _resolve_indication_terms
 
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
 # botanical_rd_candidate_engine.py) predates Phase 5 and does not list
@@ -37,6 +38,18 @@ INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 SCORING_CONFIG_VERSION = "2.2-indication-record-level-evidence"
 
+# NOTE: superseded by indication_semantics.py, which its own docstring
+# already describes as "the single source of truth used by both raw
+# candidate discovery and plant-level shortlisting" -- it just was not
+# actually wired into _terms() below until this fix. candidate_shortlisting.py
+# (the later scoring stage) already used indication_semantics exclusively;
+# this module still used only this narrower, 4-family dict for the earlier
+# record-filtering stage, so any indication outside these four families (e.g.
+# "Cough", "Migraine", "Eczema") fell back to a bare single/few-word literal
+# substring match with no synonym or mechanistic support at all -- unlike the
+# 27-family, alias-aware indication_semantics module, which already covers
+# these indications with real clinical/mechanistic term sets.
+# Kept only for reference; _terms() no longer reads from it.
 DISEASE_FAMILIES = {
     "metabolic": {
         "triggers": ("diabetes", "blood sugar", "glycemic", "glycaemic", "metabolic", "insulin resistance", "hypergly"),
@@ -68,12 +81,18 @@ def _norm(value: object) -> str:
 
 
 def _terms(indication: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    q = _norm(indication)
-    for family in DISEASE_FAMILIES.values():
-        if any(_norm(t) in q for t in family["triggers"]):
-            return family["direct"], family["mechanistic"]
-    tokens = tuple(t for t in q.split() if len(t) >= 4 and t not in {"support", "comfort", "health"})
-    return tokens, ()
+    """Resolve an indication to (direct_terms, mechanistic_terms).
+
+    Delegates entirely to indication_semantics.indication_terms(), the
+    shared 27-family, alias-aware term set already used by the later
+    plant-level scoring stage (candidate_shortlisting.py). This makes term
+    resolution consistent across both stages of the pipeline and means a new
+    indication only needs a single entry in indication_semantics.py, not a
+    second, separate one here.
+    """
+    return _resolve_indication_terms(indication)
+
+
 
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
@@ -100,7 +119,40 @@ def _record_text(row: pd.Series) -> str:
     for col in preferred:
         if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip():
             values.append(str(row.get(col)))
-    return " ".join(values)
+
+    # A record can exist solely to carry structured safety/interaction JSONB
+    # (e.g. a case-report-derived adverse-event or drug-interaction entry with
+    # no Title/Abstract/Outcome/Notes/Target_Indication text of its own). None
+    # of the columns above cover that case, so such a record previously
+    # produced an empty `text` here and was silently dropped by the
+    # `if not text: continue` guard in _build_plant_evidence_index -- meaning
+    # its Adverse_Events / Interactions_Structured never reached the plant's
+    # evidence index at all, regardless of which indication it was stored
+    # under. Render these structured columns (via _structured_text, which
+    # safely handles JSONB dicts/lists without pandas truthiness ambiguity)
+    # so the record is treated as non-empty and kept.
+    structured_cols = (
+        "Adverse_Events", "adverse_events",
+        "Interactions_Structured", "interactions_structured",
+        "Safety_Findings", "safety_findings",
+        "Interactions", "interactions",
+    )
+    for col in structured_cols:
+        if col in row.index:
+            rendered = _structured_text(row.get(col))
+            if rendered:
+                values.append(rendered)
+
+    # Join with ". " rather than a bare space. Downstream extraction
+    # (safety_interaction_attribution._split) splits on sentence-ending
+    # punctuation to classify one fragment at a time. Without a separator,
+    # unrelated column values (e.g. Study_Type="Unknown", Evidence_Level=
+    # "Unknown", Target_Indication="...", Notes="...") were glued into a
+    # single run-on "sentence", so a genuine adverse-event/interaction
+    # sentence in Notes could absorb neighboring placeholder values into the
+    # accepted output, and vice versa. Each value keeps its own content
+    # unchanged; only the join separator changes.
+    return ". ".join(v.strip().rstrip(".") for v in values if v.strip())
 
 
 def _structured_text(value: object) -> str:

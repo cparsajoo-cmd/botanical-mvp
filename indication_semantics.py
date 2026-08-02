@@ -179,7 +179,15 @@ def resolve_indication_semantics(indication: str) -> dict[str, tuple[str, ...]] 
     best = None
     best_score = 0
     for canonical, family in INDICATION_SEMANTICS.items():
-        candidates: Iterable[str] = (canonical, *family.get("aliases", ()))
+        # Also match against this family's own "direct" clinical terms, not
+        # just the curated aliases list. Without this, a term already
+        # present in "direct" (e.g. "migraine" for "Headache / mood
+        # support") could describe evidence correctly once a family was
+        # found, but could never be used to find that family from a
+        # free-text query in the first place -- silently falling back to
+        # the bare-token path for any indication whose common name happens
+        # not to be in "aliases".
+        candidates: Iterable[str] = (canonical, *family.get("aliases", ()), *family.get("direct", ()))
         score = 0
         for phrase in candidates:
             norm = normalize_indication_text(phrase)

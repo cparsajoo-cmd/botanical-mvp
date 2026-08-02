@@ -4,10 +4,26 @@ import streamlit as st
 from openai import OpenAI
 
 
+def _streamlit_secret(name: str):
+    """Read a Streamlit secret without requiring secrets.toml to exist."""
+    try:
+        value = st.secrets.get(name)
+        return str(value).strip() if value else None
+    except Exception:
+        return None
+
+
 def get_openai_client():
-    api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    # Environment-first is required for CLI tools and GitHub Actions.
+    # Streamlit secrets remain the fallback for the deployed application.
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip() or _streamlit_secret(
+        "OPENAI_API_KEY"
+    )
     if not api_key:
-        raise ValueError("OPENAI_API_KEY is missing.")
+        raise ValueError(
+            "OPENAI_API_KEY is missing. Configure an environment variable for "
+            "CLI/GitHub Actions or a Streamlit secret for the app."
+        )
     return OpenAI(api_key=api_key)
 
 

@@ -16,6 +16,22 @@ Snapshot facts: 290 total files, 268 `.py` files, 83 `test_*.py` files, 6 pre-ex
 │   └── legacy-files.txt        65 files confirmed unreachable from production (see Section 6 note)
 ├── benchmark_cases/
 │   └── smoke_cases.json        Synthetic mechanics/regression fixtures (NOT Gold Cases)
+├── docs/
+│   ├── reports/                 NEW 2026-08-03 — 32 historical delivery/fix reports,
+│   │                             moved from repository root; zero code references
+│   │                             (verified individually before moving — see CHANGELOG.md)
+│   └── archive/                 NEW 2026-08-03 — old delivery zip bundles, a stray CSV
+│                                 export, a misnamed workflow-as-.txt copy
+├── migrations/                  NEW 2026-08-03 — 6 SQL migration files, moved from
+│                                 repository root. Run by hand against Supabase; NOT
+│                                 executed programmatically by any script (verified —
+│                                 every code reference is a comment, not an open()/exec())
+├── gold_cases/                  NEW 2026-08-03 — all 16 canonical Gold Case data files
+│                                 (17 with the one flagged-superseded file), their 15
+│                                 dedicated tests, case-specific companion scripts,
+│                                 case-specific reports/records, the Gold Case registry
+│                                 JSON, and a conftest.py (see its own docstring — it is
+│                                 the only reason imports still work after the move)
 ├── locales/                    en.json, fa.json, fr.json — i18n strings
 ├── pages/                      Independent Streamlit pages (see Section 3)
 │   └── pages/
@@ -26,18 +42,20 @@ Snapshot facts: 290 total files, 268 `.py` files, 83 `test_*.py` files, 6 pre-ex
 ├── app.py                      Main Streamlit entry point (Steps 0–6)
 ├── ARCHITECTURE.md             Verified, detailed architecture document (pre-existing)
 ├── VALIDATION_PROTOCOL.md      Reference-Grounded Validation protocol, v0.3 DRAFT (pre-existing)
-├── TECHNICAL_DEBT.md           Deferred-issue log, 1 entry (pre-existing)
+├── TECHNICAL_DEBT.md           Deferred-issue log (pre-existing; 2 entries as of 2026-08-03)
 ├── VALIDATION_CASE_TEMPLATE.md Case-authoring template for the ValidationCaseProtocol track (pre-existing)
 ├── Prospective_Claim_to_Decision_Mapping_Proposal.md  Design doc, adopted into Protocol §14 (pre-existing)
-├── case_006_source_suitability_screening.md           Case 006's pre-build screening record (pre-existing)
-├── [~230 other .py files]      Engines, connectors, steps, gold cases, data contracts, tests
-├── PROJECT_STATUS.md           NEW — this documentation pass
-├── DECISIONS.md                NEW — this documentation pass
-├── NEXT_ACTIONS.md             NEW — this documentation pass
-├── BENCHMARK_PROGRESS.md       NEW — this documentation pass
-├── ARCHITECTURE_OVERVIEW.md    NEW — this documentation pass
-├── REPOSITORY_STRUCTURE.md     NEW — this documentation pass (this file)
-└── CHANGELOG.md                NEW — this documentation pass
+├── [~215 other .py files]      Engines, connectors, steps, data contracts, tests, and the
+│                                shared Gold Case validation FRAMEWORK modules (gold_case.py,
+│                                applicability_check.py, assertion_vocabulary.py, etc.) —
+│                                these stay at root because gold_cases/ imports them too
+├── PROJECT_STATUS.md           NEW — earlier documentation pass
+├── DECISIONS.md                NEW — earlier documentation pass
+├── NEXT_ACTIONS.md             NEW — earlier documentation pass
+├── BENCHMARK_PROGRESS.md       NEW — earlier documentation pass
+├── ARCHITECTURE_OVERVIEW.md    NEW — earlier documentation pass
+├── REPOSITORY_STRUCTURE.md     NEW — earlier documentation pass (this file)
+└── CHANGELOG.md                NEW — earlier documentation pass; see its 2026-08-03 entries
 ```
 
 ## 2. Purpose of Each Major Folder
@@ -45,9 +63,13 @@ Snapshot facts: 290 total files, 268 `.py` files, 83 `test_*.py` files, 6 pre-ex
 - **`.devcontainer/`** — Codespaces development environment config; installs `requirements.txt` + `streamlit` on container start. Not part of the running application.
 - **`.github/workflows/`** — CI: `tests.yml` (test suite) and `archive-legacy.yml` (legacy-file archival, not yet triggered — see `PROJECT_STATUS.md` §16/`NEXT_ACTIONS.md` NA-002).
 - **`benchmark_cases/`** — Synthetic smoke-test cases for `benchmark_harness.py`. See `BENCHMARK_PROGRESS.md` Appendix for why these are kept separate from Gold Cases.
+- **`docs/reports/`** — NEW 2026-08-03. Historical, point-in-time delivery and bug-fix reports (`STEP5_*_FIX.md`, `IMPLEMENTATION_REPORT.md`, `PIPELINE_ARCHITECTURE.md`, and similar). Read-only history; nothing in the live application reads these files.
+- **`docs/archive/`** — NEW 2026-08-03. Old zipped delivery bundles and other stray historical artifacts with no code reference.
+- **`migrations/`** — NEW 2026-08-03. SQL files documenting schema changes actually applied to Supabase by hand. Not run by any script in this repository — see `CHANGELOG.md` for how this was verified before the move.
+- **`gold_cases/`** — NEW 2026-08-03. Holds every Gold Case data file (`gold_case_reference_grounded_*.py`, 17 files including one flagged-superseded), their dedicated tests (`test_case_*.py`, 15 files), case-specific companion scripts (`case_003_engine_evidence_run.py`, `case_006_engine_evidence_run.py`, `pipeline_executor_e2e.py`), case-specific reports/records (`CASE_*.md/.txt`, `case_*_quality_record.json`, `case_*_source_record.json`, `QUALITY_RECORDS_INDEX.json`, `gold_case_registry_corrected_2026-08-01.json`). Contains its own `conftest.py`, which is the only reason imports still work after the move — see that file's own docstring. Deliberately does NOT contain the shared validation *framework* modules (`gold_case.py`, `applicability_check.py`, `assertion_vocabulary.py`, `reference_claim.py`, `reference_descriptor.py`, `validation_unit.py`, `field_provenance.py`, `agreement_eligibility.py`, `evaluation_run.py`, `reference_precedence.py`, `user_roles.py`, and related) — those remain at repository root since every future Gold Case (built inside `gold_cases/`) will keep importing them, same as before the move.
 - **`locales/`** — Translated UI strings for the Streamlit app (English, Farsi, French).
 - **`pages/`** — Streamlit's auto-discovered multi-page mechanism. Each file here is an independently-loaded page, not part of `app.py`'s Step 0–6 flow.
-- **`synthetic_validation_fixtures/`** — Fixtures for `GoldCaseKind.SYNTHETIC` cases (pipeline-mechanics testing), distinct from the Reference-Grounded (`GoldCaseKind.REFERENCE_GROUNDED`) cases at repository root.
+- **`synthetic_validation_fixtures/`** — Fixtures for `GoldCaseKind.SYNTHETIC` cases (pipeline-mechanics testing), distinct from the Reference-Grounded (`GoldCaseKind.REFERENCE_GROUNDED`) cases now in `gold_cases/`.
 
 ## 3. Purpose of Each Major Module (by category)
 
@@ -91,14 +113,13 @@ Snapshot facts: 290 total files, 268 `.py` files, 83 `test_*.py` files, 6 pre-ex
 
 ## 5. Testing Structure
 
-- 83 `test_*.py` files, all at repository root (no dedicated `tests/` directory).
-- 1462 tests collected via `pytest --collect-only` in this documentation-pass environment; 6 test files failed to collect in this environment specifically because of two **missing optional dependencies** (`streamlit`, `supabase`) — not because of any code defect. Affected files: `test_evidence_database_deduplication.py`, `test_multi_source_collector.py`, `test_task10_2_preparation_applicability.py`, `test_task11_1_scientific_evidence_activation.py`, `test_task6_pilot_scope.py`, `test_validation_matrix.py`. Whether these pass in an environment with those dependencies installed was **not verified in this pass**.
-- Full test-suite pass/fail status (`pytest -q` executed to completion) was **not run to completion in this documentation pass** — collection only. Do not state elsewhere in this documentation set that "the full suite passes" as a currently-verified fact; `ARCHITECTURE.md` states it passed as of its own last verification, which is a different point in time.
+- **Updated 2026-08-03:** 15 of the `test_*.py` files (all `test_case_*.py`, the Gold-Case-specific tests) moved into `gold_cases/` along with the case data files they test, plus a `conftest.py` that keeps their imports working — see Section 2's `gold_cases/` note. All other test files remain at repository root. A full `pytest -q` run after the move and the subsequent root cleanup (`migrations/`, `docs/reports/`, `docs/archive/`) passed **2002/2002** — see `CHANGELOG.md` for both verification records.
+- 83 `test_*.py` files total across the repository (68 remaining at root + 15 in `gold_cases/`), no dedicated `tests/` directory otherwise.
 - `test_production_dependency_integrity.py` — the pytest-enforced legacy-file/production-dependency check described in `DECISIONS.md` D-011.
 
 ## 6. Validation Structure
 
-Covered fully in `ARCHITECTURE_OVERVIEW.md` §2 and `VALIDATION_PROTOCOL.md`. Two tracks exist side by side: the active `GoldCase` track (repository root, no subfolder) and the out-of-scope `ValidationCaseProtocol`/`ExpertPanel` track (also repository root, no subfolder — both tracks are flat files, not separated into directories).
+Covered fully in `ARCHITECTURE_OVERVIEW.md` §2 and `VALIDATION_PROTOCOL.md`. Two tracks exist side by side: the active `GoldCase` track (case data + case tests in `gold_cases/` as of 2026-08-03; the shared framework modules remain at repository root, no subfolder) and the out-of-scope `ValidationCaseProtocol`/`ExpertPanel` track (repository root, no subfolder).
 
 **Discrepancy noted, not resolved, in this pass:** `ARCHITECTURE.md`'s prose states 66 legacy files were confirmed for archival; `.github/legacy-files.txt` (and its identical root-level copy, `legacy-files.txt`) contains exactly 65 lines in this snapshot. A second, older-looking file, `legacy-files (github folder version).txt`, contains a different (smaller, unreconciled) list referencing "67 files" in its accompanying old workflow copy (`archive-legacy.yml` at repository root, which differs meaningfully from the current `.github/workflows/archive-legacy.yml` — the root copy predates the validation-step fix described in `ARCHITECTURE.md` and `DECISIONS.md` D-011). This suggests the root-level `archive-legacy.yml` and `legacy-files (github folder version).txt` are stale, superseded copies left in the repository root, with `.github/workflows/archive-legacy.yml` and `.github/legacy-files.txt` being the current, authoritative versions — but this was not confirmed with the repository's own author in this pass, so it is recorded here as an observation, not acted upon. See `NEXT_ACTIONS.md` NA-003.
 
@@ -110,7 +131,7 @@ Covered fully in `ARCHITECTURE_OVERVIEW.md` §2 and `VALIDATION_PROTOCOL.md`. Tw
 - `TECHNICAL_DEBT.md` — deferred-issue log.
 - `VALIDATION_CASE_TEMPLATE.md` — case-authoring template (ValidationCaseProtocol track).
 - `Prospective_Claim_to_Decision_Mapping_Proposal.md` — adopted design proposal (now Protocol §14).
-- `case_006_source_suitability_screening.md` — Case 006's pre-build screening record.
+- `case_006_source_suitability_screening.md` — Case 006's pre-build screening record. **Moved to `gold_cases/` on 2026-08-03** (was at repository root when this line was originally written).
 
 **New, created in this pass:**
 `PROJECT_STATUS.md`, `DECISIONS.md`, `NEXT_ACTIONS.md`, `BENCHMARK_PROGRESS.md`, `ARCHITECTURE_OVERVIEW.md`, `REPOSITORY_STRUCTURE.md`, `CHANGELOG.md`.

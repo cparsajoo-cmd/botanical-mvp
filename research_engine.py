@@ -1,4 +1,3 @@
-import math
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
@@ -13,70 +12,9 @@ from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pubmed_connector import search_and_fetch_pubmed
 from source_registry import PILOT_MAX_RESULTS
 from supabase_data import load_plants_df
+import therapeutic_area_registry
+import candidate_selection
 
-
-_DISCOVERY_QUERY_TERMS = {
-    "metabolic and blood sugar support": [
-        "diabetes", "type 2 diabetes", "hyperglycemia", "blood glucose",
-        "glycemic control", "insulin resistance", "metabolic syndrome",
-        "postprandial glucose", "HbA1c",
-    ],
-    "energy fatigue": [
-        "fatigue", "chronic fatigue", "asthenia", "tiredness", "energy",
-    ],
-    "sleep": ["sleep", "insomnia", "sleep quality", "sleep disorder"],
-    "anxiety stress": ["anxiety", "stress", "anxiolytic"],
-}
-
-
-
-# Candidate-driven discovery pools are deliberately small and indication-specific.
-# They are not treated as evidence by themselves: every plant must still be
-# validated against live literature before entering the shortlist.
-_DISCOVERY_CANDIDATE_POOLS = {
-    "metabolic and blood sugar support": [
-        "Gymnema sylvestre",
-        "Momordica charantia",
-        "Morus alba",
-        "Salacia reticulata",
-        "Syzygium cumini",
-        "Camellia sinensis",
-        "Olea europaea",
-        "Vaccinium myrtillus",
-        "Galega officinalis",
-        "Gynostemma pentaphyllum",
-        "Panax ginseng",
-        "Curcuma longa",
-        "Allium sativum",
-        "Nigella sativa",
-        "Aloe vera",
-        "Ocimum tenuiflorum",
-        "Zingiber officinale",
-        "Silybum marianum",
-        "Cichorium intybus",
-        "Phaseolus vulgaris",
-        "Plantago ovata",
-        "Urtica dioica",
-        "Taraxacum officinale",
-        "Arctium lappa",
-    ],
-    "energy fatigue": [
-        "Rhodiola rosea", "Panax ginseng", "Eleutherococcus senticosus",
-        "Withania somnifera", "Schisandra chinensis", "Lepidium meyenii",
-        "Ilex paraguariensis", "Camellia sinensis", "Cordyceps sinensis",
-    ],
-    "sleep": [
-        "Valeriana officinalis", "Melissa officinalis",
-        "Passiflora incarnata", "Humulus lupulus",
-        "Lavandula angustifolia", "Matricaria chamomilla",
-        "Tilia cordata", "Ziziphus jujuba",
-    ],
-    "anxiety stress": [
-        "Withania somnifera", "Rhodiola rosea", "Melissa officinalis",
-        "Passiflora incarnata", "Lavandula angustifolia",
-        "Valeriana officinalis", "Matricaria chamomilla",
-    ],
-}
 
 _COMMON_NAME_STOPWORDS = {
     "plant", "herb", "herbal", "tea", "root", "leaf", "leaves", "seed",
@@ -92,16 +30,14 @@ def _norm_text(value):
 
 
 def _query_terms(indication):
-    indication_norm = _norm_text(indication)
-    terms = [str(indication or "").strip()]
+    """Search-query terms for an indication.
 
-    for key, synonyms in _DISCOVERY_QUERY_TERMS.items():
-        key_tokens = set(key.split())
-        indication_tokens = set(indication_norm.split())
-        if key in indication_norm or len(key_tokens & indication_tokens) >= 2:
-            terms.extend(synonyms)
-
-    return list(dict.fromkeys(term for term in terms if term))
+    Delegates to therapeutic_area_registry.py, which returns curated terms
+    for a known therapeutic area or a safe generic lexical expansion of the
+    user's own text for an unknown one -- no per-indication if-statements
+    are needed here or in the registry as new areas are added.
+    """
+    return therapeutic_area_registry.get_query_terms(indication)
 
 
 def _split_common_names(value):
@@ -412,14 +348,7 @@ def _candidate_pool_for_indication(indication, alias_catalog):
     candidate-driven route.  Membership is only a search hypothesis; live
     literature support is required before a plant is returned.
     """
-    indication_norm = _norm_text(indication)
-    pool = []
-
-    for key, plants in _DISCOVERY_CANDIDATE_POOLS.items():
-        key_tokens = set(key.split())
-        indication_tokens = set(indication_norm.split())
-        if key in indication_norm or len(key_tokens & indication_tokens) >= 2:
-            pool.extend(plants)
+    pool = list(therapeutic_area_registry.get_candidate_hypotheses(indication))
 
     # Add matching entries from the platform's own global candidate database.
     try:
@@ -714,11 +643,46 @@ def run_research_engine(
     global_candidate_count=8,
     pilot_mode=False,
 ):
+    requested_count = max(1, int(global_candidate_count))
+
+    # --- Staged candidate selection (general architecture) -----------------
+    # A. Reference/database seeds. These are NOT yet validated for this
+    #    indication -- they are only a stable starting inventory.
+    reference_seed_plants = _richer_candidate_plants(
+        indication=indication,
+        dosage_form=dosage_form,
+        target_market=target_market,
+        target_count=requested_count,
+    ) or []
+    reference_seed_plants = list(dict.fromkeys(reference_seed_plants))[:requested_count]
+
+    # B + C. Generic literature discovery, plus focused plant+indication
+    # validation of candidate hypotheses (both already implemented by
+    # _online_discovered_candidate_plants -- reused unchanged here). Seeds
+    # are intentionally NOT passed in as an exclusion set: discovery is run
+    # at full requested strength so that a strong literature-discovered
+    # candidate can outrank a weak seed later, instead of being crowded out
+    # by a fixed seed/discovery quota.
+    discovered, discovery_diagnostics = _online_discovered_candidate_plants(
+        indication=indication,
+        dosage_form=dosage_form,
+        target_market=target_market,
+        target_count=requested_count,
+        seed_plants=[],
+    )
+    discovered = list(dict.fromkeys(discovered or []))
+    ranked_meta = discovery_diagnostics.get("ranked_matches", {}) or {}
+    connector_failure = bool(discovery_diagnostics.get("connector_errors")) and not discovered
+
+    # D. Globally ranked fallback candidates. Oversample relative to the
+    # requested count so the merge/rank stage (E-G) below has real
+    # alternatives to choose from, rather than returning the first N rows
+    # regardless of quality.
     global_candidates = rank_global_candidates(
         indication=indication,
         dosage_form=dosage_form,
         market=target_market,
-        target_count=global_candidate_count,
+        target_count=max(requested_count * 3, requested_count),
     )
     if global_candidates is None or global_candidates.empty:
         fallback_plants = []
@@ -728,70 +692,94 @@ def run_research_engine(
             .dropna().astype(str).drop_duplicates().tolist()
         )
 
-    # Do not allow the seed/reference inventory to consume every requested
-    # slot.  The previous implementation requested ``global_candidate_count``
-    # evidence-backed plants up front, so ``_online_discovered_candidate_plants``
-    # calculated zero available discovery slots and could never contribute a
-    # new species.  Reserve roughly half of the shortlist for live literature
-    # discovery while keeping at least three strong seeds for stability.
-    requested_count = max(1, int(global_candidate_count))
-    if requested_count >= 5:
-        seed_target_count = max(3, int(math.ceil(requested_count * 0.5)))
-        seed_target_count = min(seed_target_count, requested_count - 2)
-    else:
-        seed_target_count = requested_count
+    # Candidate hypotheses that were part of the discovery pool but never
+    # confirmed against literature -- exposed for transparency/diagnostics
+    # only. They can still be selected (per the architecture's "attempt to
+    # fill the requested count" goal) but only ever with a
+    # pending_validation status, never labelled evidence-backed.
+    candidate_hypotheses = [
+        plant for plant in therapeutic_area_registry.get_candidate_hypotheses(indication)
+        if plant not in discovered
+    ]
 
-    evidence_backed = _richer_candidate_plants(
-        indication=indication,
-        dosage_form=dosage_form,
-        target_market=target_market,
-        target_count=seed_target_count,
-    ) or []
-
-    # Defensive cap: a backend may ignore max_reference_plants and return more
-    # rows than requested.  Preserve ranking order and enforce the reserved
-    # discovery budget here.
-    evidence_backed = list(dict.fromkeys(evidence_backed))[:seed_target_count]
-    candidate_plants = list(evidence_backed)
-    seed_plants_before_discovery = list(candidate_plants)
-    discovered, discovery_diagnostics = _online_discovered_candidate_plants(
-        indication=indication,
-        dosage_form=dosage_form,
-        target_market=target_market,
-        target_count=global_candidate_count,
-        seed_plants=candidate_plants,
-    )
-    candidate_plants.extend(
-        plant for plant in discovered if plant not in candidate_plants
-    )
-
+    # E. Merge candidate inputs from every origin into a single, provenance-
+    #    tagged pool.
+    candidate_records = []
+    for plant in discovered:
+        meta = ranked_meta.get(plant, {})
+        has_strong_support = bool(
+            meta.get("clinical_human_records") or meta.get("systematic_review_records")
+        )
+        candidate_records.append(candidate_selection.make_candidate(
+            plant,
+            candidate_selection.ORIGIN_VALIDATED_LITERATURE,
+            score=float(meta.get("score") or 5.0),
+            score_components=meta,
+            sources=("literature_discovery",),
+            evidence_status=(
+                candidate_selection.STATUS_VALIDATED_DIRECT if has_strong_support
+                else candidate_selection.STATUS_VALIDATED_INDIRECT
+            ),
+        ))
+    for plant in reference_seed_plants:
+        candidate_records.append(candidate_selection.make_candidate(
+            plant,
+            candidate_selection.ORIGIN_REFERENCE_SEED,
+            sources=("reference_database",),
+        ))
+    for plant in candidate_hypotheses:
+        candidate_records.append(candidate_selection.make_candidate(
+            plant,
+            candidate_selection.ORIGIN_CANDIDATE_HYPOTHESIS,
+            sources=("therapeutic_area_registry",),
+        ))
     for plant in fallback_plants:
-        if plant not in candidate_plants:
-            candidate_plants.append(plant)
-        if len(candidate_plants) >= global_candidate_count:
-            break
+        candidate_records.append(candidate_selection.make_candidate(
+            plant,
+            candidate_selection.ORIGIN_RANKED_FALLBACK,
+            sources=("global_candidate_ranking",),
+        ))
 
-    candidate_plants = candidate_plants[:global_candidate_count]
+    # F + G + H. Deduplicate, rank by evidence strength/relevance, and
+    # select up to the requested count -- with a shortfall reported only
+    # when scientifically plausible candidates genuinely run out.
+    selected_records, selection_diagnostics = candidate_selection.select_candidates(
+        candidate_records, requested_count, connector_failure=connector_failure,
+    )
+    candidate_plants = [record.name for record in selected_records]
+
+    validated_literature_plants = [
+        record.name for record in selected_records
+        if record.origin == candidate_selection.ORIGIN_VALIDATED_LITERATURE
+    ]
+    reference_seed_selected = [
+        record.name for record in selected_records
+        if record.origin == candidate_selection.ORIGIN_REFERENCE_SEED
+    ]
+    # Backward-compatible key: only genuinely validated plants are exposed
+    # as "evidence-backed" now. Reference-database seeds that were not
+    # confirmed against literature are exposed separately below under
+    # reference_seed_plants instead of being mislabelled here.
+    evidence_backed = validated_literature_plants
 
     # Always expose a complete, UI-friendly pipeline trace.  This makes it
     # possible to distinguish "discovery returned nothing" from "discovery
     # worked but candidates were later removed or replaced by fallback rows".
     discovery_diagnostics = dict(discovery_diagnostics or {})
     discovery_diagnostics.update({
-        "requested_candidate_count": int(global_candidate_count),
-        "reserved_seed_target_count": int(seed_target_count),
-        "reserved_discovery_slot_count": max(
-            0, int(global_candidate_count) - int(seed_target_count)
-        ),
-        "seed_plants_before_discovery": seed_plants_before_discovery,
-        "seed_plant_count": len(seed_plants_before_discovery),
+        "requested_candidate_count": requested_count,
+        "seed_plants_before_discovery": reference_seed_plants,
+        "seed_plant_count": len(reference_seed_plants),
         "online_discovered_plants": list(discovered or []),
         "online_discovered_count": len(discovered or []),
         "fallback_ranked_plants": list(fallback_plants or []),
         "fallback_ranked_count": len(fallback_plants or []),
+        "candidate_hypothesis_plants": list(candidate_hypotheses or []),
         "final_candidate_plants": list(candidate_plants),
         "final_candidate_count": len(candidate_plants),
-        "candidate_shortfall": max(0, int(global_candidate_count) - len(candidate_plants)),
+        "candidate_shortfall": selection_diagnostics["candidate_shortfall"],
+        "shortfall_reason": selection_diagnostics["shortfall_reason"],
+        "candidate_selection_diagnostics": selection_diagnostics,
     })
 
     all_saved_records = []
@@ -870,6 +858,7 @@ def run_research_engine(
     })
 
     return {
+        # --- Existing public keys, preserved unchanged in type/shape -------
         "candidate_plants": candidate_plants,
         "evidence_backed_plants": evidence_backed,
         "online_discovered_plants": discovered,
@@ -877,4 +866,18 @@ def run_research_engine(
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),
+        # --- New, additive keys ---------------------------------------------
+        "candidate_records": [
+            {
+                "name": record.name,
+                "origin": record.origin,
+                "evidence_status": record.evidence_status,
+                "score": record.score,
+                "sources": list(record.sources),
+            }
+            for record in selected_records
+        ],
+        "candidate_selection_diagnostics": selection_diagnostics,
+        "validated_literature_plants": validated_literature_plants,
+        "reference_seed_plants": reference_seed_selected,
     }

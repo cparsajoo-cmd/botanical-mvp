@@ -1,29 +1,67 @@
 import pandas as pd
 
 from global_plant_candidate_database import GLOBAL_PLANT_CANDIDATES
+from general_indication_relevance import normalize_text
+import therapeutic_area_registry as _registry
+
+
+def _general_relevance(candidate, indication):
+    """General, disease-agnostic relevance check + transparent score/reasons.
+
+    Replaces the previous narrow substring matching plus a handful of
+    indication-specific if-statements (sleep/anxiety/digestive) with three
+    generalized signals, checked strongest-first:
+
+    1. exact / substring alias match against the candidate's own
+       ``Indications`` list (unchanged from the previous behavior);
+    2. registry-derived related concepts (therapeutic_area_registry.py),
+       which generalizes the old hand-written sleep<->anxiety<->stress and
+       digestive<->IBS<->constipation links to ANY registered area without
+       new code here;
+    3. plain token overlap, which works even for indications the registry
+       has never seen.
+
+    Mechanism/target overlap is available via
+    therapeutic_area_registry.get_mechanism_terms() but is intentionally
+    NOT used here to *gate* a match -- mechanism similarity alone must not
+    be treated as direct clinical evidence (see module docstring of
+    therapeutic_area_registry.py). It only ever contributes to score, never
+    to the boolean match decision, and only when a lexical/registry match
+    already exists.
+
+    Returns (matches: bool, score: float 0-100, reasons: list[str]).
+    """
+    indication_norm = normalize_text(indication)
+    indications = [normalize_text(x) for x in candidate.get("Indications", [])]
+    if not indication_norm or not indications:
+        return False, 0.0, []
+
+    if indication_norm in indications:
+        return True, 100.0, ["exact_indication_match"]
+
+    for item in indications:
+        if indication_norm in item or item in indication_norm:
+            return True, 90.0, [f"substring_indication_match:{item}"]
+
+    related = {normalize_text(c) for c in _registry.get_related_concepts(indication)}
+    hit = related & set(indications)
+    if hit:
+        return True, 70.0, [f"registry_related_concept:{','.join(sorted(hit))}"]
+
+    indication_tokens = {t for t in indication_norm.split() if len(t) > 3}
+    for item in indications:
+        overlap = indication_tokens & {t for t in item.split() if len(t) > 3}
+        if overlap:
+            score = min(60.0, 35.0 + len(overlap) * 5.0)
+            return True, score, [f"token_overlap:{','.join(sorted(overlap))}"]
+
+    return False, 0.0, []
 
 
 def _matches_indication(candidate, indication):
-    indication = str(indication).lower()
-    indications = [str(x).lower() for x in candidate.get("Indications", [])]
-
-    if indication in indications:
-        return True
-
-    for item in indications:
-        if indication in item or item in indication:
-            return True
-
-    if "sleep" in indication:
-        return any(x in indications for x in ["sleep and relaxation", "anxiety", "stress"])
-
-    if "anxiety" in indication:
-        return any(x in indications for x in ["anxiety", "sleep and relaxation", "stress"])
-
-    if "digestive" in indication:
-        return any(x in indications for x in ["digestive comfort", "ibs", "constipation"])
-
-    return False
+    """Backward-compatible boolean wrapper around _general_relevance()."""
+    matches, _score, _reasons = _general_relevance(candidate, indication)
+    return matches
 
 
 def _regulatory_score(candidate, market):
@@ -202,7 +240,8 @@ def rank_global_candidates(
     rows = []
 
     for candidate in GLOBAL_PLANT_CANDIDATES:
-        if not _matches_indication(candidate, indication):
+        relevance_match, relevance_score, relevance_reasons = _general_relevance(candidate, indication)
+        if not relevance_match:
             continue
 
         regulatory = _regulatory_score(candidate, market)
@@ -235,6 +274,8 @@ def rank_global_candidates(
             "Novelty_Score": novelty,
             "Market_Score": market_score,
             "Commercial_Score": commercial,
+            "Relevance_Score": relevance_score,
+            "Relevance_Reasons": "; ".join(relevance_reasons),
         }
 
         row["Global_Ranking_Score"] = _final_weighted_score(row)

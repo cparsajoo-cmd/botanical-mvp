@@ -371,8 +371,10 @@ def test_task_16_regulatory_wiring_still_present():
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_unchanged():
+    # Task 17 itself does not touch the version; Phase 2A later bumped
+    # it separately (1.0.0 -> 1.0.1) for an unrelated regulatory fix.
     import botanical_rd_candidate_engine as eng
-    assert eng.DECISION_ENGINE_VERSION == "1.0.0"
+    assert eng.DECISION_ENGINE_VERSION == "1.0.1"
 
 
 def test_page_never_references_decision_engine_version():
@@ -459,5 +461,5 @@ def test_engine_output_unaffected_by_task_17():
     assert row_a["R&D_Opportunity_Score"] == row_b["R&D_Opportunity_Score"]
     assert row_a["Decision_Class"] == row_b["Decision_Class"]
     assert row_a["Gate_Results"] == row_b["Gate_Results"]
-    assert row_a["Decision_Engine_Version"] == "1.0.0"
+    assert row_a["Decision_Engine_Version"] == eng.DECISION_ENGINE_VERSION
     assert list(result_a["Alternative_Plant"]) == list(result_b["Alternative_Plant"])

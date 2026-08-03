@@ -68,11 +68,15 @@ def _run(evidence_df=None):
 
 
 # ---------------------------------------------------------------------
-# 1) DECISION_ENGINE_VERSION exists and equals "1.0.0".
+# 1) DECISION_ENGINE_VERSION exists and equals "1.0.1" (bumped by
+#    Phase 2A's _market_status() regulatory-normalization fix, which
+#    can alter R&D_Opportunity_Score for inventory-only EMA/HMPC
+#    records — see botanical_rd_candidate_engine.py's DECISION_ENGINE_VERSION
+#    comment for the exact change).
 # ---------------------------------------------------------------------
 
-def test_decision_engine_version_constant_exists_and_equals_1_0_0():
-    assert eng.DECISION_ENGINE_VERSION == "1.0.0"
+def test_decision_engine_version_constant_exists_and_equals_1_0_1():
+    assert eng.DECISION_ENGINE_VERSION == "1.0.1"
 
 
 # ---------------------------------------------------------------------
@@ -102,7 +106,7 @@ def test_value_comes_from_the_canonical_constant():
 def test_all_rows_in_one_run_carry_the_same_version():
     result = _run()
     assert result["Decision_Engine_Version"].nunique() == 1
-    assert result["Decision_Engine_Version"].iloc[0] == "1.0.0"
+    assert result["Decision_Engine_Version"].iloc[0] == eng.DECISION_ENGINE_VERSION
 
 
 # ---------------------------------------------------------------------

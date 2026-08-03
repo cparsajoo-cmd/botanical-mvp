@@ -38,12 +38,13 @@ needed.
 """
 
 import pandas as pd
+# Phase 2A: this file now uses @pytest.mark.parametrize
+# (test_classify_ema_hmpc_signal_generic_matrix), so pytest is a
+# required import, not an optional one — the previous try/except
+# ImportError fallback (which let the file's __main__ block run
+# without pytest installed) is no longer meaningful once a decorator
+# needs pytest to be importable at module load time anyway.
 import pytest
-
-try:
-    import pytest
-except ImportError:
-    pytest = None
 
 import botanical_rd_candidate_engine as eng
 
@@ -1733,11 +1734,55 @@ def test_market_status_no_regulatory_data_never_upgraded_to_monograph():
         ("", "unknown"),
         (None, "unknown"),
         ("completely unrelated free text about something else", "unknown"),
+        # --- Negation-safe monograph coverage (item 2 correction) -----
+        ("Monograph adopted and published for this substance", "monograph_exists"),
+        ("EMA HMPC monograph available", "monograph_exists"),
+        ("No monograph exists for this substance", "searched_not_found"),
+        ("Monograph not established", "unknown"),
+        ("Monograph unavailable", "unknown"),
+        ("Monograph not found", "searched_not_found"),
+        ("Monograph status unknown", "unknown"),
+        ("Draft monograph currently under public consultation", "unknown"),
+        ("Monograph under assessment", "unknown"),
+        (
+            "Listed in HMPC inventory as 'Genus speciosa' — caveat: monograph status unresolved",
+            "inventory_listed",
+        ),
+        # This function's OWN public output string, fed back in as input
+        # — must round-trip to inventory_listed, and must specifically
+        # never be upgraded to monograph_exists.
+        ("Listed in EMA HMPC inventory — monograph not established", "inventory_listed"),
     ],
 )
 def test_classify_ema_hmpc_signal_generic_matrix(raw_text, expected_signal):
     from standard_evidence_builder import classify_ema_hmpc_signal
-    assert classify_ema_hmpc_signal(raw_text) == expected_signal
+    result = classify_ema_hmpc_signal(raw_text)
+    assert result == expected_signal
+    if expected_signal != "monograph_exists":
+        assert result != "monograph_exists", (
+            f"{raw_text!r} was incorrectly upgraded to monograph_exists"
+        )
+
+
+def test_classify_ema_hmpc_signal_negative_and_hedged_monograph_states_never_upgrade():
+    # Explicit, standalone regression for item 2: every negative/hedged/
+    # draft/pending/unknown monograph phrasing must never classify as
+    # monograph_exists, regardless of which non-monograph-exists bucket
+    # it lands in.
+    from standard_evidence_builder import classify_ema_hmpc_signal
+    hedged_or_negative_phrases = [
+        "No monograph exists",
+        "Monograph not established",
+        "Monograph unavailable",
+        "No published monograph was found",
+        "Draft monograph under assessment",
+        "Monograph status unknown",
+        "Monograph pending",
+    ]
+    for phrase in hedged_or_negative_phrases:
+        assert classify_ema_hmpc_signal(phrase) != "monograph_exists", (
+            f"{phrase!r} was incorrectly classified as monograph_exists"
+        )
 
 
 

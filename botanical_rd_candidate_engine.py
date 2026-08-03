@@ -229,7 +229,16 @@ OUTPUT_COLUMNS = [
 # A hardcoded, manually-incremented string is the only thing that
 # survives that — the same reasoning Task 3's Scoring_Config_Version
 # already established for scoring weights.
-DECISION_ENGINE_VERSION = "1.0.0"
+# 1.0.1 — Phase 2A (regulatory-normalization audit): _market_status()
+# no longer maps mere EMA/HMPC inventory presence to "Regulatory
+# monograph exists". Inventory-only records now return "Listed in EMA
+# HMPC inventory — monograph not established" instead, which falls
+# through to the market-signal neutral-default component in
+# _score_candidate() (+3) rather than the regulatory-monograph
+# component (+2) — a real, small R&D_Opportunity_Score change for any
+# inventory-listed-only candidate. Genuine monograph/traditional-use
+# text is unaffected and still reaches the same scores as before.
+DECISION_ENGINE_VERSION = "1.0.1"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s

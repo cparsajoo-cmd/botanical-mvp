@@ -772,43 +772,78 @@ def build_scientific_evidence_presentation_payload(scientific_evidence_by_id):
 # below relies on). Before Phase 2A, that classification treated ANY
 # genuine "listed in HMPC inventory" match as "Regulatory monograph
 # exists" — the exact overstatement build_regulatory_record() was
-# already written to avoid (see _REGULATORY_EVIDENCE_LEVEL_TO_STATUS
-# below: inventory presence maps to REGULATORY_ASSESSMENT_INVENTORY_LISTED,
-# never to a monograph-exists status). This function is the smallest
-# shared piece of that same distinction, extracted so both call sites
-# use one narrow, tested rule for "what does this EMA/HMPC text
-# actually claim" rather than two independently-maintained ones.
+# already written to avoid (inventory presence maps to
+# REGULATORY_ASSESSMENT_INVENTORY_LISTED, never to a monograph-exists
+# status). This function is now the ONE shared primitive both paths
+# rely on for that distinction — build_regulatory_record() below
+# consumes it too (via CANONICAL_EMA_SIGNAL_TO_MARKET_STATUS,
+# immediately after this function), so there is a single canonical
+# rule for "what does this EMA/HMPC text actually claim", not two
+# independently-maintained ones.
 #
 # SCOPE: text classification only — a raw regulatory-signal string in,
-# one semantic category out. It does not build a RegulatoryRecord, does
-# not require Source_Type, and does not decide MarketVerificationStatus
-# on its own (build_regulatory_record() still owns that, for the rows
-# it is eligible to see). Deliberately generic: matches on structural
-# text patterns only, never a plant name, indication, or dosage form.
+# one semantic category out. It does not build a RegulatoryRecord and
+# does not require Source_Type; build_regulatory_record() still owns
+# the Source_Type=="Regulatory" eligibility gate and RegulatoryRecord
+# construction, it just no longer maintains its own separate text-to-
+# status table to do the status half of that job. Deliberately
+# generic: matches on structural text patterns only, never a plant
+# name, indication, or dosage form.
 # ======================================================================
 
 def classify_ema_hmpc_signal(raw_text) -> str:
     """Classify a raw EMA/HMPC regulatory-status text fragment (e.g. the
-    EMA_Status field produced by ema_regulatory_connector.py, or the
-    legacy stub's literal "Yes") into one semantic category:
+    EMA_Status field produced by ema_regulatory_connector.py, the
+    legacy stub's literal "Yes", or an Evidence_Level value such as
+    "Listed in official EMA HMPC inventory"/"Checked, not found"/
+    "Not available") into one semantic category:
 
-      - "monograph_exists"    — an explicit, affirmative monograph claim
+      - "monograph_exists"    — an explicit, AFFIRMATIVE monograph claim
       - "traditional_use"     — traditional-use / well-established-use
                                   regulatory support mentioned
       - "inventory_listed"    — listed in the HMPC assessment inventory
                                   only; NOT a monograph claim
-      - "searched_not_found"  — explicitly checked, not present
-      - "source_unavailable"  — the lookup itself failed/couldn't run
-      - "unknown"             — empty, unrecognized, or explicitly
-                                  unverified text
+      - "searched_not_found"  — explicitly checked, not present (this
+                                  also covers a monograph confirmed
+                                  absent after a completed check, e.g.
+                                  "monograph not found" — a genuine
+                                  negative finding, not an unresolved one)
+      - "source_unavailable"  — the lookup/connector itself failed
+      - "unknown"             — empty, unrecognized text, OR a monograph
+                                  state that is explicitly hedged/
+                                  pending/unresolved (draft, under
+                                  assessment, status unknown, not yet
+                                  established) rather than a completed
+                                  negative finding
 
-    NEVER upgrades inventory presence to "monograph_exists" — that is
-    the one specific overstatement this function exists to prevent.
-    Order matters: negative/hedged states are checked before any
-    affirmative keyword, so a phrase like the real connector's "...see
-    source PDF for monograph status" (a caveat, not a claim) is
-    classified by its actual "listed in HMPC inventory" structure, not
-    by the incidental later appearance of the word "monograph".
+    NEVER upgrades inventory presence, or a negative/hedged monograph
+    mention, to "monograph_exists" — that overstatement is the one
+    specific defect this function exists to prevent.
+
+    ORDER IS LOAD-BEARING — evaluated top to bottom, first match wins:
+      1) explicit "searched and absent" phrases (covers both general
+         inventory/product absence AND a monograph confirmed absent,
+         e.g. "no monograph exists", "monograph not found");
+      2) connector/lookup failure phrases;
+      3) generic unverified/not-evaluated phrases;
+      4) structural inventory-listed match (checked BEFORE any generic
+         "monograph" keyword, because the real connector's genuine
+         inventory-hit text itself contains the word "monograph" only
+         as a hedge — "...see source PDF for monograph status" — never
+         as a claim; this also makes reclassifying this function's own
+         "Listed in EMA HMPC inventory — monograph not established"
+         output land back on "inventory_listed", not "unknown", since
+         that phrase also names "hmpc inventory");
+      5) traditional-use / well-established-use mention;
+      6) hedged/pending/unresolved monograph mentions (not established,
+         unavailable, status unknown, draft, under assessment/
+         evaluation, pending) — checked BEFORE the generic "not
+         available" fallback and BEFORE the affirmative monograph
+         check, so these never reach either;
+      7) generic "not available" (connector/source-level, no
+         monograph-specific wording) — source unavailable;
+      8) affirmative monograph phrasing — only what is left here can
+         become "monograph_exists".
     """
     if not raw_text:
         return "unknown"
@@ -816,31 +851,72 @@ def classify_ema_hmpc_signal(raw_text) -> str:
     if not text:
         return "unknown"
 
-    if any(p in text for p in ("not in hmpc inventory", "not found", "not listed", "no match")):
+    # 1) Searched and explicitly absent — general, and monograph-specific.
+    if any(p in text for p in (
+        "not in hmpc inventory", "not found", "not listed", "no match",
+        "no monograph exists", "no monograph", "no published monograph",
+    )):
         return "searched_not_found"
 
+    # 2) The lookup/connector itself failed to run.
     if any(p in text for p in ("live fetch failed", "lookup unavailable", "could not check", "could not fetch")):
         return "source_unavailable"
 
+    # 3) Generic unverified / not-evaluated states.
     if any(p in text for p in ("not yet verified", "not evaluated", "not independently verified")):
         return "unknown"
 
-    # Structural match on the real connector's actual inventory-hit
-    # format, and the legacy stub's literal value — checked BEFORE the
-    # generic "monograph" keyword below, because the real connector's
-    # genuine inventory-hit text itself contains the word "monograph"
-    # only as a hedge ("...see source PDF for monograph status"), never
-    # as an affirmative claim.
-    if text == "yes" or text.startswith("listed in hmpc inventory") or "listed in hmpc inventory" in text:
+    # 4) Structural inventory-listed match — before any "monograph"
+    # keyword check, so a caveat mentioning "monograph" inside an
+    # inventory-listed sentence still resolves as inventory presence.
+    if text == "yes" or "hmpc inventory" in text:
         return "inventory_listed"
 
+    # 5) Traditional-use / well-established-use support.
     if "traditional use" in text or "traditional-use" in text or "well-established use" in text or "well established use" in text:
         return "traditional_use"
 
-    if "monograph" in text:
+    # 6) Hedged / pending / unresolved monograph states — never an
+    # affirmative claim, never a completed negative finding either.
+    if any(p in text for p in (
+        "monograph not established", "monograph unavailable", "monograph not available",
+        "monograph status unknown", "monograph unknown", "draft monograph",
+        "monograph under assessment", "monograph under evaluation",
+        "pending monograph", "monograph pending",
+    )):
+        return "unknown"
+
+    # 7) Generic source/connector unavailability (no monograph-specific
+    # wording reached this point — that was already resolved above).
+    if "not available" in text:
+        return "source_unavailable"
+
+    # 8) Only genuinely affirmative monograph phrasing reaches here.
+    if any(p in text for p in (
+        "monograph adopted", "monograph published", "monograph available",
+        "monograph exists", "monograph in force", "adopted monograph",
+        "published monograph", "has a monograph",
+    )):
         return "monograph_exists"
 
     return "unknown"
+
+
+# Canonical semantic category (classify_ema_hmpc_signal's return value)
+# -> MarketVerificationStatus. The ONE shared mapping both active
+# regulatory-normalization paths use — botanical_rd_candidate_engine.
+# _market_status() (via the category string directly, for its own
+# public string vocabulary) and build_regulatory_record() below (via
+# this dict, for the data_contracts enum). Keeping a single dict here
+# means a new distinction only ever needs to be added in one place.
+CANONICAL_EMA_SIGNAL_TO_MARKET_STATUS = {
+    "inventory_listed": MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED,
+    "monograph_exists": MarketVerificationStatus.REGULATORY_MONOGRAPH_EXISTS,
+    "traditional_use": MarketVerificationStatus.TRADITIONAL_USE_STATUS,
+    "searched_not_found": MarketVerificationStatus.NO_VERIFIED_PRODUCT_FOUND,
+    "source_unavailable": MarketVerificationStatus.SOURCE_UNAVAILABLE,
+    "unknown": MarketVerificationStatus.UNKNOWN,
+}
 
 
 # ======================================================================
@@ -876,17 +952,21 @@ def classify_ema_hmpc_signal(raw_text) -> str:
 # ======================================================================
 
 # Evidence_Level -> MarketVerificationStatus, for rows that already
-# passed the Source_Type=="Regulatory" eligibility gate. Exact-string
-# matching only (case-insensitive) against the genuine, hand-verified
-# strings ema_regulatory_connector.py actually emits
-# (search_regulatory_sources_real(), the only production write path to
-# a Source_Type=="Regulatory" row) — never a keyword/substring match,
-# and never a guess for a string not in this table.
-_REGULATORY_EVIDENCE_LEVEL_TO_STATUS = {
-    "listed in official ema hmpc inventory": MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED,
-    "checked, not found": MarketVerificationStatus.NO_VERIFIED_PRODUCT_FOUND,
-    "not available": MarketVerificationStatus.SOURCE_UNAVAILABLE,
-}
+# passed the Source_Type=="Regulatory" eligibility gate. Phase 2A —
+# this now goes through the SAME classify_ema_hmpc_signal() rule
+# _market_status() uses (via CANONICAL_EMA_SIGNAL_TO_MARKET_STATUS
+# above), rather than an independently-maintained exact-string dict.
+# Verified against the three genuine, hand-verified strings
+# ema_regulatory_connector.py's search_regulatory_sources_real() (the
+# only production write path to a Source_Type=="Regulatory" row)
+# actually emits — "Listed in official EMA HMPC inventory" (->
+# inventory_listed, via the "hmpc inventory" structural match),
+# "Checked, not found" (-> searched_not_found, via the "not found"
+# match), "Not available" (-> source_unavailable) — each still resolves
+# to exactly the same MarketVerificationStatus member as before this
+# change; see test_classify_ema_hmpc_signal_generic_matrix and
+# test_task14_1_regulatory_record_activation.py for the regression
+# coverage locking this equivalence in.
 
 
 def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRecord]:
@@ -914,12 +994,11 @@ def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRec
 
     MAPPINGS (see module-level docstring above and the Task 14 audit
     for the full reasoning):
-      - status: from Evidence_Level via _REGULATORY_EVIDENCE_LEVEL_TO_STATUS,
-        exact match only; anything unmapped (including "Unknown" or a
-        genuinely novel string this table doesn't contain) -> UNKNOWN.
-        NEVER REGULATORY_MONOGRAPH_EXISTS for inventory presence —
-        being listed in an assessment inventory is not the same claim
-        as having a published monograph.
+      - status: from Evidence_Level, via classify_ema_hmpc_signal()
+        (Phase 2A shared helper) then CANONICAL_EMA_SIGNAL_TO_MARKET_STATUS;
+        anything unrecognized -> UNKNOWN. NEVER REGULATORY_MONOGRAPH_EXISTS
+        for inventory presence — being listed in an assessment inventory
+        is not the same claim as having a published monograph.
       - jurisdiction_or_market: from Target_Market, verbatim.
       - monograph_source: the literal string "EMA/HMPC", but ONLY when
         Source_Organization also identifies the EMA/HMPC connector —
@@ -971,8 +1050,8 @@ def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRec
         evidence_level = normalize_missing_value(record.get("Evidence_Level"))
         status = MarketVerificationStatus.UNKNOWN
         if evidence_level is not None:
-            status = _REGULATORY_EVIDENCE_LEVEL_TO_STATUS.get(
-                str(evidence_level).strip().lower(), MarketVerificationStatus.UNKNOWN
+            status = CANONICAL_EMA_SIGNAL_TO_MARKET_STATUS.get(
+                classify_ema_hmpc_signal(evidence_level), MarketVerificationStatus.UNKNOWN
             )
 
         jurisdiction_or_market = normalize_missing_value(record.get("Target_Market"))

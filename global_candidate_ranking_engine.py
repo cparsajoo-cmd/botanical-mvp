@@ -203,18 +203,39 @@ def _commercial_score(candidate):
     return min(score, 100)
 
 
+# Weighted ranking components. These must always sum to exactly 1.0 --
+# see test_relevance_ranking_weight.py::test_ranking_weights_sum_to_one.
+#
+# Relevance_Score (indication relevance -- see _general_relevance()) is
+# included here with a moderate 12% weight. It is deliberately NOT the
+# largest weight: Clinical_Score (direct clinical evidence) remains higher
+# at 20%, because relevance describes how *on-topic* a candidate is, not
+# how strong its clinical evidence is -- relevance must inform ranking
+# without replacing evidence. The other nine weights are the previous
+# weights scaled down proportionally (by 0.8) to make room for the new
+# 12% component while preserving their original relative importance to
+# one another.
+RANKING_WEIGHTS = {
+    "Relevance_Score": 0.12,
+    "Clinical_Score": 0.20,
+    "Chemistry_Score": 0.16,
+    "Active_Compound_Score": 0.12,
+    "Target_Score": 0.08,
+    "Extraction_Score": 0.08,
+    "Regulatory_Score": 0.08,
+    "Safety_Score": 0.04,
+    "Novelty_Score": 0.04,
+    "Market_Score": 0.04,
+    "Commercial_Score": 0.04,
+}
+
+
 def _final_weighted_score(row):
+    # Relevance_Score defaults to 0 for any caller/row that predates this
+    # column, preserving backward compatibility rather than raising a
+    # KeyError.
     return round(
-        row["Clinical_Score"] * 0.25
-        + row["Chemistry_Score"] * 0.20
-        + row["Active_Compound_Score"] * 0.15
-        + row["Target_Score"] * 0.10
-        + row["Extraction_Score"] * 0.10
-        + row["Regulatory_Score"] * 0.10
-        + row["Safety_Score"] * 0.05
-        + row["Novelty_Score"] * 0.05
-        + row["Market_Score"] * 0.05
-        + row["Commercial_Score"] * 0.05,
+        sum(row.get(column, 0) * weight for column, weight in RANKING_WEIGHTS.items()),
         1,
     )
 

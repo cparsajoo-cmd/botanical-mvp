@@ -80,10 +80,37 @@ def render_evidence_step(inputs):
                 "seed_plants_before_discovery", []
             ),
         )
+        # candidate_records (added alongside candidate_selection_diagnostics)
+        # carries a per-plant evidence_status. When present, "directly
+        # supported" (validated_direct: clinical/systematic-review
+        # literature) and "indirectly supported" (validated_indirect:
+        # weaker literature signal) are shown separately -- they are never
+        # collapsed into one undifferentiated "Literature-validated" label,
+        # since the strength of support differs scientifically. Older
+        # research_output dictionaries have no candidate_records key and
+        # fall back to the previous combined list under cautious umbrella
+        # wording instead.
+        candidate_records = research_output.get("candidate_records") or []
+        directly_supported = [
+            record["name"] for record in candidate_records
+            if record.get("evidence_status") == "validated_direct"
+        ]
+        indirectly_supported = [
+            record["name"] for record in candidate_records
+            if record.get("evidence_status") == "validated_indirect"
+        ]
+
         if reference_seeds:
             st.caption("Reference/database seeds (not yet validated for this indication): " + ", ".join(reference_seeds))
-        if evidence_backed:
-            st.caption("Literature-validated plants: " + ", ".join(evidence_backed))
+        if candidate_records:
+            if directly_supported:
+                st.caption("Directly supported (clinical/systematic-review literature): " + ", ".join(directly_supported))
+            if indirectly_supported:
+                st.caption("Indirectly supported (weaker literature signal): " + ", ".join(indirectly_supported))
+        elif evidence_backed:
+            # Backward compatibility: older research_output has no
+            # per-candidate evidence_status breakdown to split on.
+            st.caption("Literature-supported/discovered: " + ", ".join(evidence_backed))
         if discovered:
             st.caption("Newly discovered from literature: " + ", ".join(discovered))
 
@@ -117,7 +144,7 @@ def render_evidence_step(inputs):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Requested", int(requested or 0))
         c2.metric("Reference seeds", len(seed_list or []))
-        c3.metric("Literature-validated/discovered", len(discovered_list or []))
+        c3.metric("Literature-supported/discovered", len(discovered_list or []))
         c4.metric("Final candidates", len(final_list or []))
         c5.metric("Collection completed", diagnostics.get("collection_completed_plant_count", 0))
 
@@ -132,8 +159,20 @@ def render_evidence_step(inputs):
 
         st.write("**1. Reference/database seed plants** _(not yet indication-validated)_")
         st.write(", ".join(seed_list) if seed_list else "None")
-        st.write("**2. Newly discovered / validated from literature**")
-        st.write(", ".join(discovered_list) if discovered_list else "None")
+        st.write("**2. Literature-supported/discovered plants**")
+        if candidate_records:
+            st.write(
+                "_Directly supported (clinical/systematic-review literature):_ "
+                + (", ".join(directly_supported) if directly_supported else "None")
+            )
+            st.write(
+                "_Indirectly supported (weaker literature signal):_ "
+                + (", ".join(indirectly_supported) if indirectly_supported else "None")
+            )
+        else:
+            # Backward compatibility: no per-candidate evidence_status
+            # breakdown available for this research_output shape.
+            st.write(", ".join(discovered_list) if discovered_list else "None")
         st.write("**3. Ranked fallback candidates available**")
         st.write(", ".join(fallback_list) if fallback_list else "None")
         st.write("**4. Final plants sent to evidence collectors**")

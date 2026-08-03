@@ -1,0 +1,86 @@
+name: Archive legacy files (Phase 7)
+
+# Manually triggered only — go to the Actions tab (in the GitHub app or
+# on github.com), select "Archive legacy files (Phase 7)", tap "Run
+# workflow". No terminal or local Python needed.
+#
+# What this does, in order:
+#   1. Creates archive/ if it doesn't exist.
+#   2. `git mv`s each of the 67 files confirmed as unreachable from
+#      app.py (Phase 1/7 audit) into archive/, preserving their git
+#      history (mv, not delete+recreate).
+#   3. Runs the full test suite — if anything fails, the workflow stops
+#      WITHOUT committing, so a bad move never reaches main.
+#   4. Writes archive/ARCHIVED_FILES.md documenting what was moved and
+#      when, and commits everything in one commit.
+#
+# Safe to re-run: files already in archive/ are skipped, not errored on.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Move legacy files into archive/
+        run: |
+          mkdir -p archive
+          moved=""
+          skipped=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if [ -f "$f" ]; then
+              git mv "$f" "archive/$f"
+              moved="$moved- $f\n"
+            else
+              skipped="$skipped- $f (not found — already moved or removed)\n"
+            fi
+          done < .github/legacy-files.txt
+          echo "MOVED<<EOF" >> "$GITHUB_ENV"
+          echo -e "$moved" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+          echo "SKIPPED<<EOF" >> "$GITHUB_ENV"
+          echo -e "$skipped" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Run test suite (safety check before committing)
+        run: pytest -q
+
+      - name: Write archive manifest
+        run: |
+          {
+            echo "# Archived files (Phase 7)"
+            echo ""
+            echo "Moved on $(date -u +%Y-%m-%dT%H:%M:%SZ) by the"
+            echo "\`archive-legacy.yml\` workflow. Each file below was"
+            echo "confirmed, by automated import-reachability analysis"
+            echo "from \`app.py\` (see \`ARCHITECTURE.md\`), to have zero"
+            echo "active imports pointing to it at the time it was moved."
+            echo ""
+            echo "Moved this run:"
+            echo -e "$MOVED"
+          } > archive/ARCHIVED_FILES.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Phase 7: archive legacy files (automated, workflow_dispatch)" || echo "Nothing to commit"
+          git push

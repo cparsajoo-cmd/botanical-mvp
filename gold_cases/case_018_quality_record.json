@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "audit_trail_entry": true,
+    "generated_timestamp": "2026-08-01T16:45:00+02:00"
+  },
+  "case_information": {
+    "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+    "case_number": 18,
+    "taxon": "Ephedra sinica Stapf",
+    "domain": "REGULATORY_STATUS"
+  },
+  "primary_reference": {
+    "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction",
+    "source_type": "NATIONAL_REGULATORY",
+    "publisher": "MHRA",
+    "legal_basis": "Human Medicines Regulations 2012, Schedule 20, Parts II and III"
+  },
+  "evidence_assessment": {
+    "assertion_type": "RESTRICTION",
+    "assertion_state": "PRESENT",
+    "confidence_level": "HIGH",
+    "scope": "UK internal-use herbal medicines; maximum single dose 600 mg and maximum daily dose 1800 mg"
+  },
+  "validation_results": {
+    "case_tests_passed": 8,
+    "case_tests_failed": 0,
+    "resolved_outcome_status": "SELECTED",
+    "engine_evidence_attached": false,
+    "locked": false
+  },
+  "approval_status": {
+    "approved": true,
+    "approval_date": "2026-08-01",
+    "production_ready_ground_truth": true
+  }
+}

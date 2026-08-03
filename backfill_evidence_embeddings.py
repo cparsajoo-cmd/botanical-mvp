@@ -38,7 +38,11 @@ from embedding_service import (
     fetch_existing_content_hashes,
     upsert_evidence_embeddings,
 )
-from evidence_embedding_text import build_evidence_embedding_text, compute_content_hash
+from evidence_embedding_text import (
+    build_evidence_embedding_text,
+    compute_content_hash,
+    is_proxy_or_excluded_record,
+)
 
 
 @dataclass
@@ -54,6 +58,7 @@ class LoadDiagnostics:
             skipped_missing_record_id
             + skipped_duplicate_record_id
             + skipped_missing_plant_id
+            + skipped_proxy_or_excluded_record
             + skipped_empty_embedding_text
             + skipped_by_user_filter   (0 for an unfiltered run)
             + yielded_embeddable_records
@@ -68,6 +73,7 @@ class LoadDiagnostics:
     skipped_missing_record_id: int = 0
     skipped_duplicate_record_id: int = 0
     skipped_missing_plant_id: int = 0
+    skipped_proxy_or_excluded_record: int = 0
     skipped_empty_embedding_text: int = 0
     skipped_by_user_filter: int = 0
     yielded_embeddable_records: int = 0
@@ -77,6 +83,7 @@ class LoadDiagnostics:
             self.skipped_missing_record_id
             + self.skipped_duplicate_record_id
             + self.skipped_missing_plant_id
+            + self.skipped_proxy_or_excluded_record
             + self.skipped_empty_embedding_text
             + self.skipped_by_user_filter
             + self.yielded_embeddable_records
@@ -93,6 +100,7 @@ class LoadDiagnostics:
             f"skipped_missing_record_id={self.skipped_missing_record_id} "
             f"skipped_duplicate_record_id={self.skipped_duplicate_record_id} "
             f"skipped_missing_plant_id={self.skipped_missing_plant_id} "
+            f"skipped_proxy_or_excluded_record={self.skipped_proxy_or_excluded_record} "
             f"skipped_empty_embedding_text={self.skipped_empty_embedding_text} "
             f"skipped_by_user_filter={self.skipped_by_user_filter} "
             f"yielded_embeddable_records={self.yielded_embeddable_records} "
@@ -328,6 +336,27 @@ def _iter_embeddable_records(
                 diagnostics.skipped_by_user_filter += 1
             continue
 
+        source_type_value = _clean_text(_first(row, "Source_Type", "source_type"))
+        evidence_type_value = _clean_text(_first(row, "Evidence_Type", "evidence_type"))
+        if is_proxy_or_excluded_record(source_type_value, evidence_type_value):
+            # Evaluated explicitly, BEFORE build_evidence_embedding_text(),
+            # so a proxy/composition/protection-source record (ChEBI,
+            # patent/literature, DailyMed label proxy) is never mislabeled
+            # as "empty text" just because build_evidence_embedding_text()
+            # also happens to return "" for it -- these records can carry
+            # abundant Scientific_Name/Target_Indication/Study_Type/
+            # Source_Title/Notes/Source_Raw_Text text; they are excluded on
+            # POLICY (not efficacy evidence), not because they lack text.
+            print(
+                f"[backfill_evidence_embeddings] evidence_record_id={record_id!r}: "
+                "excluded as a proxy/composition/protection source, not "
+                f"embedded as efficacy evidence -- Source_Type={source_type_value!r} "
+                f"Evidence_Type={evidence_type_value!r}."
+            )
+            if diagnostics is not None:
+                diagnostics.skipped_proxy_or_excluded_record += 1
+            continue
+
         tier1 = " ".join(filter(None, [
             _clean_text(_first(row, "Target_Indication", "target_indication")),
             _clean_text(_first(row, "Extracted_Indication", "extracted_indication")),
@@ -360,8 +389,8 @@ def _iter_embeddable_records(
                 row, "Preparation", "preparation", "Extraction_Method", "extraction_method",
                 "Dosage_Form", "dosage_form", "Administration_Route", "administration_route",
             )),
-            "source_type": _clean_text(_first(row, "Source_Type", "source_type")),
-            "evidence_type": _clean_text(_first(row, "Evidence_Type", "evidence_type")),
+            "source_type": source_type_value,
+            "evidence_type": evidence_type_value,
             # General, non-disease-specific fallback fields -- used by
             # build_evidence_embedding_text() ONLY when every field above
             # is empty (e.g. a record whose plant_id resolves but whose
@@ -372,7 +401,7 @@ def _iter_embeddable_records(
             # for exactly when this tier is used.
             "fallback_plant_id": plant_id,
             "fallback_source_title": _clean_text(_first(row, "Source_Title", "source_title", "Title", "title")),
-            "fallback_source_type": _clean_text(_first(row, "Source_Type", "source_type")),
+            "fallback_source_type": source_type_value,
             "fallback_pmid": _clean_text(_first(row, "PMID", "pmid")),
             "fallback_doi": _clean_text(_first(row, "DOI", "doi")),
             "fallback_nct_id": _clean_text(_first(row, "NCT_ID", "nct_id")),
@@ -380,6 +409,12 @@ def _iter_embeddable_records(
         }
         text = build_evidence_embedding_text(embedding_record)
         if not text:
+            # is_proxy_or_excluded_record() was already ruled out above, so
+            # reaching here with empty text means the record genuinely has
+            # no usable content in any tier, not that it was excluded on
+            # policy grounds -- see LoadDiagnostics for why the distinction
+            # matters (these are two different production issues with two
+            # different fixes).
             if diagnostics is not None:
                 diagnostics.skipped_empty_embedding_text += 1
             _log_empty_embedding_text_columns(record_id, row)

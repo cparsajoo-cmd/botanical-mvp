@@ -79,6 +79,58 @@ def _truly_empty_row(record_id, plant_id=10) -> dict:
     return {"Evidence_Record_ID": str(record_id), "Plant_ID": plant_id}
 
 
+def _excluded_label_row(record_id, plant_id=10) -> dict:
+    """A DailyMed / safety-label record with ABUNDANT primary text --
+    Scientific_Name, Target_Indication, Study_Type, Evidence_Level,
+    Source_Title, Notes, Source_Raw_Text are all populated. Must be
+    classified as excluded-by-policy, never as empty text: none of that
+    text is ever missing, it's the record TYPE that's excluded (a
+    composition/label proxy, not efficacy evidence)."""
+    return {
+        "Evidence_Record_ID": str(record_id),
+        "Plant_ID": plant_id,
+        "Scientific_Name": "Ginkgo biloba",
+        "Target_Indication": "Cognitive decline",
+        "Study_Type": "Label",
+        "Evidence_Level": "Label",
+        "Source_Title": "DailyMed structured product label",
+        "Notes": "Multi-ingredient label text",
+        "Source_Raw_Text": "Full label raw text goes here.",
+        "Source_Type": "dailymed",
+        "Evidence_Type": "safety/label",
+    }
+
+
+def _excluded_patent_row(record_id, plant_id=10) -> dict:
+    """A patent/literature record, also with abundant primary text --
+    same point as _excluded_label_row but for the other exclusion path
+    (Source_Type rather than Evidence_Type)."""
+    return {
+        "Evidence_Record_ID": str(record_id),
+        "Plant_ID": plant_id,
+        "Scientific_Name": "Ginkgo biloba",
+        "Target_Indication": "Cognitive decline",
+        "Study_Type": "Patent",
+        "Source_Title": "Patent covering an extraction method",
+        "Notes": "Protection landscape note",
+        "Source_Type": "patent/literature",
+    }
+
+
+def _excluded_chebi_row(record_id, plant_id=10) -> dict:
+    """A ChEBI chemical-ontology record -- Evidence_Type-based exclusion,
+    also with abundant text."""
+    return {
+        "Evidence_Record_ID": str(record_id),
+        "Plant_ID": plant_id,
+        "Scientific_Name": "Ginkgo biloba",
+        "Study_Type": "Chemical ontology",
+        "Source_Title": "ChEBI chemical composition entry",
+        "Source_Type": "chebi",
+        "Evidence_Type": "chemical composition",
+    }
+
+
 # ---------------------------------------------------------------------------
 # 1) Diagnostic counters must reconcile exactly for a full, unfiltered run
 # ---------------------------------------------------------------------------
@@ -93,6 +145,8 @@ def test_diagnostics_reconcile_across_every_skip_reason():
         {"Evidence_Record_ID": "5", "Scientific_Name": "Ginkgo biloba"},  # missing Plant_ID
         _truly_empty_row(6),  # empty even after fallback
         _bare_citation_row(7),  # recovered by the fallback
+        _excluded_label_row(8),  # excluded by policy, despite abundant text
+        _excluded_patent_row(9),  # excluded by policy, despite abundant text
     ]
     engine = _Engine(rows)
     diagnostics = LoadDiagnostics()
@@ -105,6 +159,7 @@ def test_diagnostics_reconcile_across_every_skip_reason():
     assert diagnostics.skipped_missing_record_id == 1
     assert diagnostics.skipped_duplicate_record_id == 1
     assert diagnostics.skipped_missing_plant_id == 1
+    assert diagnostics.skipped_proxy_or_excluded_record == 2  # records 8, 9
     assert diagnostics.skipped_empty_embedding_text == 1  # record 6 only
     assert diagnostics.skipped_by_user_filter == 0
     assert diagnostics.yielded_embeddable_records == 4  # records 1, 2, 3, 7
@@ -132,6 +187,38 @@ def test_diagnostics_reconcile_at_scale_21806_rows():
     assert diagnostics.skipped_duplicate_record_id == 0
     assert diagnostics.skipped_missing_plant_id == 0
     assert diagnostics.skipped_empty_embedding_text == 0
+    assert diagnostics.skipped_proxy_or_excluded_record == 0
+    assert diagnostics.reconciles()
+
+
+def test_diagnostics_reconcile_at_scale_with_exclusions_mixed_in():
+    """Same production scale (21806 rows), but with a realistic mix of
+    excluded (label/patent) records interleaved -- counters must still
+    reconcile exactly, and none of the excluded records leak into
+    skipped_empty_embedding_text or yielded_embeddable_records."""
+    rows = []
+    for i in range(1, 21807):
+        if i % 7 == 0:
+            rows.append(_excluded_label_row(i, plant_id=(i % 50) + 1))
+        elif i % 11 == 0:
+            rows.append(_excluded_patent_row(i, plant_id=(i % 50) + 1))
+        else:
+            rows.append(_full_row(i, plant_id=(i % 50) + 1))
+    expected_excluded = sum(1 for i in range(1, 21807) if i % 7 == 0 or i % 11 == 0)
+    expected_yielded = 21806 - expected_excluded
+
+    engine = _Engine(rows)
+    diagnostics = LoadDiagnostics()
+
+    yielded = list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    assert diagnostics.iterator_input_rows == 21806
+    assert diagnostics.skipped_proxy_or_excluded_record == expected_excluded
+    assert diagnostics.skipped_empty_embedding_text == 0
+    assert diagnostics.yielded_embeddable_records == expected_yielded
+    assert len(yielded) == expected_yielded
     assert diagnostics.reconciles()
 
 
@@ -274,3 +361,107 @@ def test_iter_embeddable_records_recovers_bare_citation_records():
     assert "Plant ID: 10" in text  # supplements the PMID, doesn't stand alone
     assert diagnostics.skipped_empty_embedding_text == 0
     assert diagnostics.yielded_embeddable_records == 1
+
+
+# ---------------------------------------------------------------------------
+# 4) Exclusion classification bug fix: an excluded (proxy/composition/
+#    protection-source) record must never be counted or logged as "empty
+#    text", even though build_evidence_embedding_text() also happens to
+#    return "" for it. is_proxy_or_excluded_record() is now evaluated
+#    explicitly, BEFORE build_evidence_embedding_text() is even called.
+# ---------------------------------------------------------------------------
+
+def test_dailymed_label_record_with_abundant_text_is_counted_as_excluded_not_empty():
+    """The exact production symptom: a DailyMed/safety-label record logged
+    non-empty Scientific_Name, Target_Indication, Study_Type,
+    Evidence_Level, Source_Title, Notes, and Source_Raw_Text -- it must be
+    classified as excluded-by-policy, never as empty text."""
+    engine = _Engine([_excluded_label_row(1)])
+    diagnostics = LoadDiagnostics()
+
+    yielded = list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    assert yielded == []
+    assert diagnostics.skipped_proxy_or_excluded_record == 1
+    assert diagnostics.skipped_empty_embedding_text == 0  # never mislabeled
+    assert diagnostics.reconciles()
+
+
+def test_patent_literature_record_is_counted_as_excluded_not_empty():
+    engine = _Engine([_excluded_patent_row(1)])
+    diagnostics = LoadDiagnostics()
+
+    yielded = list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    assert yielded == []
+    assert diagnostics.skipped_proxy_or_excluded_record == 1
+    assert diagnostics.skipped_empty_embedding_text == 0
+    assert diagnostics.reconciles()
+
+
+def test_chebi_record_is_counted_as_excluded_not_empty():
+    engine = _Engine([_excluded_chebi_row(1)])
+    diagnostics = LoadDiagnostics()
+
+    yielded = list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    assert yielded == []
+    assert diagnostics.skipped_proxy_or_excluded_record == 1
+    assert diagnostics.skipped_empty_embedding_text == 0
+    assert diagnostics.reconciles()
+
+
+def test_genuinely_empty_non_excluded_record_is_still_counted_as_empty():
+    """The other direction of the same fix: a record that is NOT excluded
+    (no recognized Source_Type/Evidence_Type) and genuinely has no usable
+    text anywhere must still land in skipped_empty_embedding_text, not
+    skipped_proxy_or_excluded_record."""
+    engine = _Engine([_truly_empty_row(1)])
+    diagnostics = LoadDiagnostics()
+
+    yielded = list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    assert yielded == []
+    assert diagnostics.skipped_empty_embedding_text == 1
+    assert diagnostics.skipped_proxy_or_excluded_record == 0
+    assert diagnostics.reconciles()
+
+
+def test_excluded_records_never_reach_build_evidence_embedding_text_as_empty(monkeypatch, capsys):
+    """The exclusion log line must report evidence_record_id, Source_Type,
+    Evidence_Type, and an explicit exclusion reason -- not the generic
+    empty-columns message."""
+    engine = _Engine([_excluded_label_row(99)])
+    diagnostics = LoadDiagnostics()
+
+    list(_iter_embeddable_records(
+        engine, plant_filter=None, record_id_filter=set(), diagnostics=diagnostics,
+    ))
+
+    output = capsys.readouterr().out
+    assert "evidence_record_id='99'" in output
+    assert "excluded as a proxy/composition/protection source" in output
+    assert "Source_Type='dailymed'" in output
+    assert "Evidence_Type='safety/label'" in output
+    assert "empty embedding text" not in output  # never the generic empty-text message
+
+
+def test_load_diagnostics_log_line_and_reconciliation_include_exclusion_counter():
+    diagnostics = LoadDiagnostics(
+        iterator_input_rows=5,
+        skipped_missing_record_id=1,
+        skipped_proxy_or_excluded_record=2,
+        skipped_empty_embedding_text=1,
+        yielded_embeddable_records=1,
+    )
+    assert diagnostics.accounted_for() == 5
+    assert diagnostics.reconciles()
+    assert "skipped_proxy_or_excluded_record=2" in diagnostics.as_log_line()

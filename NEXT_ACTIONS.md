@@ -60,11 +60,11 @@ Actionable work only. Completed items live in `PROJECT_STATUS.md`, not here. Eve
 - **Acceptance criteria:** `VALIDATION_PROTOCOL.md` §14.2 updated with an adopted (not just implemented) policy, plus a version bump and Change History entry.
 
 ### NA-006 — TD-001 batch technical-debt review
-- **Priority:** Medium-term
-- **Description:** Reassess TD-001 (Case 004's EMA-sourced preparation/population fields) once ~10–15 Gold Cases exist. Currently 6 exist.
-- **Dependencies:** ~4–9 additional Gold Cases (relative to the current 6, to reach the stated 10–15 target).
+- **Priority:** Immediate (upgraded 2026-08-03 — threshold reached, see below)
+- **Description:** Reassess TD-001 (Case 004's EMA-sourced preparation/population fields) once ~10–15 Gold Cases exist.
+- **Dependencies:** None — **16 Gold Cases now exist (001, 003–017), which is at/above the stated ~10–15 threshold.** This item is no longer blocked and should move to the top of the queue.
 - **Estimated effort:** UNKNOWN.
-- **Current status:** Not due yet — threshold not reached.
+- **Current status:** **Due now.** Previously marked "not due yet" when the repository's own count (6) was stale; reconciled 2026-08-03 against the actual 16 case files on disk (see `BENCHMARK_PROGRESS.md` §2 and `PROJECT_STATUS.md` §11).
 - **Owner:** UNKNOWN.
 - **Acceptance criteria:** `TECHNICAL_DEBT.md` reviewed as a batch (per its own stated review policy), TD-001 either resolved, re-deferred with updated reasoning, or formally closed.
 
@@ -73,13 +73,27 @@ Actionable work only. Completed items live in `PROJECT_STATUS.md`, not here. Eve
 ## Long-Term
 
 ### NA-007 — Extend Gold Case coverage to untested domains and states
-- **Priority:** Long-term
-- **Description:** `case_006_source_suitability_screening.md` documents these coverage gaps as of its writing: `ReferenceDomain.IDENTITY_QUALITY` and `REGULATORY_STATUS` entirely untested (Case 006 has since covered `SAFETY` and Case 007 has since covered `PREPARATION_SPEC`, narrowing but not closing this gap); `AssertionType` values beyond `SUPPORTS_INDICATION`/`CONTRAINDICATION`/`PREPARATION_SPECIFICATION` untested; `AssertionState.NOT_STATED` untested.
-- **Dependencies:** New Gold Case curation work (source screening → claim extraction → engine evidence → execution), following the same process documented for Cases 001–007.
+- **Priority:** Long-term (domain gaps below closed 2026-08-03; remaining scope narrowed)
+- **Description:** Originally: `ReferenceDomain.IDENTITY_QUALITY` and `REGULATORY_STATUS` entirely untested; `AssertionType` values beyond `SUPPORTS_INDICATION`/`CONTRAINDICATION`/`PREPARATION_SPECIFICATION` untested; `AssertionState.NOT_STATED` untested.
+  - ✅ **CLOSED**: `IDENTITY_QUALITY` — covered by Case 013 (Echinacea purpurea) and Case 017 (Matricaria chamomilla).
+  - ✅ **CLOSED**: `REGULATORY_STATUS` — covered by Case 016 (Piper methysticum).
+  - ✅ **Partially closed**: `AssertionType` — `INTERACTION` (Case 014) and `IDENTITY_CONFIRMATION`/`PROHIBITION` (Cases 013/016/017) now exercised, in addition to the original three.
+  - ⬜ **Still open**: `AssertionState.NOT_STATED` — untested across all 16 cases.
+  - ⬜ **Still open**: no taxon tested across all 5 `ReferenceDomain` values (Ginkgo biloba closest, at 3 of 5).
+- **Dependencies:** New Gold Case curation work (source screening → claim extraction → engine evidence → execution), following the same process documented for Cases 001–017.
 - **Estimated effort:** UNKNOWN — no per-case effort estimate is recorded anywhere in-repo.
-- **Current status:** Not started for the remaining gaps (IDENTITY_QUALITY, REGULATORY_STATUS, NOT_STATED, and most AssertionType values).
+- **Current status:** Narrowed. Remaining scope is `AssertionState.NOT_STATED` coverage and additional `AssertionType` diversity, not full domains.
 - **Owner:** UNKNOWN.
 - **Acceptance criteria:** New Gold Case(s) built, locked, and reflected in `BENCHMARK_PROGRESS.md`.
+
+### NA-010 — Remove ambiguity around the superseded Case 008 draft
+- **Priority:** Short-term (newly identified 2026-08-03)
+- **Description:** `gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py` (non-canonical, domain INDICATION_EVIDENCE) was replaced by `gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py` (canonical, domain PREPARATION_SPEC) per `CASES_008_009_010_012_CORRECTION_REPORT.md`, but the old file and its test `test_case_008_indicationevidence.py` remain at repository root with no in-file warning. This is a live import risk: any future code, test, or curator that references "Case 008" by filename guesswork could pick up the wrong one.
+- **Dependencies:** None.
+- **Estimated effort:** Small. Per repository convention (no deletions), the fix is: (1) add a short module-level docstring warning to the top of the superseded file stating it is non-canonical and pointing to the replacement, (2) add both files to `.github/legacy-files.txt` for the existing archival workflow to pick up, (3) re-run `repo_dependency_audit.py validate` to confirm neither file is reachable from production before archiving.
+- **Current status:** Not started.
+- **Owner:** UNKNOWN.
+- **Acceptance criteria:** Superseded file either clearly marked non-canonical in its own docstring or moved via the existing `archive-legacy.yml` workflow; `QUALITY_RECORDS_INDEX.json`'s `superseded_artifacts` entry updated to reflect whichever remediation was chosen.
 
 ### NA-008 — Corpus/Retrieval Validation phase (END_TO_END scope)
 - **Priority:** Long-term

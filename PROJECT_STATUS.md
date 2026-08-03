@@ -26,7 +26,7 @@ UNKNOWN. No `.git` directory is present in this snapshot (verified — `ls -la .
 ## 4. Overall Project Status
 
 - Production platform: functioning single-pipeline Streamlit app per `ARCHITECTURE.md`, with a documented, not-yet-executed legacy-file archival step (Section 9 below) and several explicitly-acknowledged stubs/gaps (Section 10).
-- Validation program: **6 real Reference-Grounded Gold Cases built** (case IDs 001, 003, 004, 005, 006, 007 — there is no Case 002; see Section 8), spanning 3 of 5 `ReferenceDomain` values. Protocol document is in draft pending explicit sign-off.
+- Validation program: **16 real Reference-Grounded Gold Cases built** (case IDs 001, 003–017 — there is no Case 002; see Section 8), spanning **5 of 5** `ReferenceDomain` values (updated 2026-08-03; this section previously understated the count as 6, which predated Cases 008–017 — see `NEXT_ACTIONS.md` and `BENCHMARK_PROGRESS.md` for full reconciliation detail). Protocol document is in draft pending explicit sign-off.
 
 ## 5. Current Priorities
 
@@ -55,13 +55,25 @@ No other prioritization ranking (e.g., "next Gold Case," "next Sprint") is state
 - Phase 1: `GoldCase` data model (`gold_case.py`) — per-reference-per-domain applicability (v3 correction #5).
 - Phase 2: real-engine execution bridge (`gold_case_execution.py`, `execute_gold_case_against_engine()`), locked via `test_gold_case_execution.py` and `test_structural_leakage_boundary.py`.
 - Phase 3 / Phase 4: `agreement_eligibility.py`, `evaluation_run.py` — the Prospective Claim-to-Decision Mapping (adopted into protocol as Section 14, v0.3).
-- 6 Reference-Grounded Gold Cases built (see Section 8 / `BENCHMARK_PROGRESS.md` for full detail):
+- 16 Reference-Grounded Gold Cases built (see Section 8 / `BENCHMARK_PROGRESS.md` for full detail; reconciled 2026-08-03):
   - Case 001 — Melissa officinalis (Indication/Evidence, sleep)
   - Case 003 — Matricaria chamomilla (Indication/Evidence, sleep) — no Case 002 exists
   - Case 004 — Ginkgo biloba (Indication/Evidence, cognitive impairment)
   - Case 005 — Cimicifuga racemosa (Indication/Evidence, menopausal symptoms)
   - Case 006 — Hypericum perforatum (Safety/Contraindication) — first Safety-domain case
-  - Case 007 — Valeriana officinalis (Preparation Spec) — first Preparation-Spec-domain case, ground-truth-only (no engine execution attached; domain not eligible for whole-case agreement per Protocol §14.1)
+  - Case 007 — Valeriana officinalis (Preparation Spec) — first Preparation-Spec-domain case, ground-truth-only
+  - Case 008 — Ginkgo biloba, folium (Preparation Spec) — rebuilt 2026-08-01 from a superseded, non-canonical draft; see `NEXT_ACTIONS.md` for the leftover-file cleanup item
+  - Case 009 — Melissa officinalis, folium (Indication/Evidence, mental stress)
+  - Case 010 — Passiflora incarnata, herba (Indication/Evidence, mental stress)
+  - Case 011 — Matricaria chamomilla (Indication/Evidence, generalized anxiety disorder) — corrected 2026-08-01 from an invalid SAFETY-domain draft
+  - Case 012 — Lavandula angustifolia, aetheroleum (Indication/Evidence, sleep)
+  - Case 013 — Echinacea purpurea (Identity/Quality) — first Identity/Quality-domain case, governed by Kew Plants of the World Online
+  - Case 014 — Ginkgo biloba, folium (Safety/Interaction with dabigatran, severity MODERATE)
+  - Case 015 — Hypericum perforatum, herba (Preparation Spec)
+  - Case 016 — Piper methysticum (Regulatory Status/Prohibition) — first Regulatory-Status-domain case, governed by UK MHRA
+  - Case 017 — Matricaria chamomilla (Identity/Quality) — second Identity/Quality-domain case, governed by Kew Plants of the World Online
+
+  With Cases 013, 016, and 017, **all 5 `ReferenceDomain` values are now covered** (previously only 3 of 5 — Identity/Quality and Regulatory Status were open gaps).
 
 ## 7. Remaining Milestones
 
@@ -97,6 +109,8 @@ See `BENCHMARK_PROGRESS.md` for full detail. Summary:
 
 ## 11. Gold Case Statistics
 
+**Reconciled 2026-08-03 — this table previously stopped at Case 007 and understated the program by 10 cases.** Full table, verified directly against each case file's own dataclass fields (not against secondary documents):
+
 | # | Case ID | Taxon | Domain | Assertion Type | Assertion State | Governing Source Type |
 |---|---|---|---|---|---|---|
 | 001 | `refgrounded_001_melissa_officinalis_sleep` | Melissa officinalis | Indication/Evidence | Supports indication | PRESENT | EMA_HMPC |
@@ -105,22 +119,33 @@ See `BENCHMARK_PROGRESS.md` for full detail. Summary:
 | 005 | `refgrounded_005_cimicifuga_racemosa_menopausal` | Cimicifuga racemosa | Indication/Evidence | Supports indication | INSUFFICIENT | SYSTEMATIC_REVIEW |
 | 006 | `refgrounded_006_hypericum_perforatum_safety_interaction` | Hypericum perforatum | Safety | Contraindication | PRESENT | EMA_HMPC |
 | 007 | `refgrounded_007_valeriana_officinalis_preparation_spec` | Valeriana officinalis | Preparation Spec | Preparation specification | PRESENT | EMA_HMPC |
+| 008 | `refgrounded_008_ginkgo_biloba_preparation_spec` | Ginkgo biloba | Preparation Spec | Preparation specification | PRESENT | EMA_HMPC |
+| 009 | `refgrounded_009_melissa_officinalis_mental_stress` | Melissa officinalis | Indication/Evidence | Supports indication | PRESENT | EMA_HMPC |
+| 010 | `refgrounded_010_passiflora_incarnata_mental_stress` | Passiflora incarnata | Indication/Evidence | Supports indication | PRESENT | EMA_HMPC |
+| 011 | `refgrounded_011_matricaria_chamomilla_indication_evidence` | Matricaria chamomilla | Indication/Evidence | Supports indication | PRESENT | SYSTEMATIC_REVIEW |
+| 012 | `refgrounded_012_lavandula_angustifolia_sleep` | Lavandula angustifolia | Indication/Evidence | Supports indication | PRESENT | EMA_HMPC |
+| 013 | `refgrounded_013_echinacea_purpurea_identity_quality` | Echinacea purpurea | Identity/Quality | Identity confirmation | PRESENT | TAXONOMIC_AUTHORITY |
+| 014 | `refgrounded_014_ginkgo_biloba_safety_interaction` | Ginkgo biloba | Safety | Interaction (severity MODERATE) | PRESENT | EMA_HMPC |
+| 015 | `refgrounded_015_hypericum_perforatum_preparation_spec` | Hypericum perforatum | Preparation Spec | Preparation specification | PRESENT | EMA_HMPC |
+| 016 | `refgrounded_016_piper_methysticum_regulatory_prohibition` | Piper methysticum | Regulatory Status | Prohibition | PRESENT | NATIONAL_REGULATORY |
+| 017 | `refgrounded_017_matricaria_chamomilla_identity_quality` | Matricaria chamomilla | Identity/Quality | Identity confirmation | PRESENT | TAXONOMIC_AUTHORITY |
 
-Rows 001/004/005/006/007 sourced from each case file's own header comments (`grep`-verified against `DatasetSplit`/`CurationStatus`/`ReferenceDomain`/`GoldCaseKind` declarations in each file); Case 003's table row is sourced from `case_006_source_suitability_screening.md`'s own existing-coverage table (Section 1), which was itself built by reading the Case 003 file directly.
+Rows 001–007 sourced as previously documented (see prior revision in version control). Rows 008–017 verified 2026-08-03 by reading each case file's `_build_claim()`/`_build_reference()` dataclass construction directly (not from `QUALITY_RECORDS_INDEX.json`, which had two stale entries — see that file's own `index_metadata.reconciliation_note` for detail).
 
-- Domains covered: Indication/Evidence (4 cases), Safety (1 case), Preparation Spec (1 case).
-- Domains not yet covered by any Gold Case: Identity/Quality, Regulatory Status (per `case_006_source_suitability_screening.md`, Section 1's documented gap list).
-- `AssertionType` values other than `SUPPORTS_INDICATION`, `CONTRAINDICATION`, and `PREPARATION_SPECIFICATION` are untested (same source).
-- `AssertionState.NOT_STATED` is untested (same source).
-- No case has produced a `SELECTED` `SAFETY`/`SERIOUS`/`PRESENT` outcome as of the last documented check in `case_006_source_suitability_screening.md` — meaning `safety_serious_false_negative_rate` had, as of that document, presumably never left `NOT_COMPUTABLE`. Whether Case 006 (SAFETY/PRESENT) changed this is **PENDING** — not independently re-verified in this documentation pass; see `NEXT_ACTIONS.md`.
+- Domains covered: Indication/Evidence (8 cases: 001, 003, 004, 005, 009, 010, 011, 012), Safety (2 cases: 006, 014), Preparation Spec (3 cases: 007, 008, 015), Identity/Quality (2 cases: 013, 017), Regulatory Status (1 case: 016).
+- **All 5 `ReferenceDomain` values are now covered** — the Identity/Quality and Regulatory Status gaps recorded here as of the prior revision are closed.
+- `AssertionType` values now exercised: `SUPPORTS_INDICATION`, `CONTRAINDICATION`, `PREPARATION_SPECIFICATION`, `INTERACTION`, `IDENTITY_CONFIRMATION`, `PROHIBITION`. Other `AssertionType` values remain untested.
+- `AssertionState.NOT_STATED` remains untested (all 16 cases use PRESENT, ABSENT, CONDITIONAL, or INSUFFICIENT).
+- Case 006 (SAFETY/CONTRAINDICATION/PRESENT) and Case 014 (SAFETY/INTERACTION/PRESENT/MODERATE) both exist now, so `safety_serious_false_negative_rate` almost certainly has data to compute from — but this was **not independently re-run in this pass**; still PENDING per NA-004 until `evaluation_run.py` is actually executed against the current case set.
 
 ## 12. Frozen Gold Cases
 
-Cases 001, 003, 004, 005, and 006 are each described in their own module docstrings as not constructing `EngineEvidenceInput`/execution logic in the same file (a deliberate separation, "Leakage Rule 9.1"), with Case 003 and Case 006 having a documented separate engine-evidence-run file (`case_003_engine_evidence_run.py`, `case_006_engine_evidence_run.py`). Whether each case's Ground Truth layer is *formally* "frozen" (e.g., a repository convention, a specific field, or just a documentary convention) is **PENDING/UNKNOWN** — no single `frozen: true`-style flag was found during this pass; case files describe themselves informally as not to be edited (e.g., Case 003's own docstring: "gold_case_reference_grounded_003_matricaria_chamomilla.py is frozen"). A full, verified freeze inventory was not completed in this documentation pass — see `NEXT_ACTIONS.md`.
+Cases 001, 003, 004, 005, and 006 are each described in their own module docstrings as not constructing `EngineEvidenceInput`/execution logic in the same file (a deliberate separation, "Leakage Rule 9.1"), with Case 003 and Case 006 having a documented separate engine-evidence-run file (`case_003_engine_evidence_run.py`, `case_006_engine_evidence_run.py`). Cases 007–017 follow the same separation convention (each declares `EngineEvidenceInput`/`engine_evidence_attached=false` deliberately absent) but none of Cases 007–017 has a separate engine-evidence-run file yet — meaning no whole-case engine execution/agreement has been run for any of them. Whether each case's Ground Truth layer is *formally* "frozen" (e.g., a repository convention, a specific field, or just a documentary convention) is **PENDING/UNKNOWN** — no single `frozen: true`-style flag was found during this pass; case files describe themselves informally as not to be edited (e.g., Case 003's own docstring: "gold_case_reference_grounded_003_matricaria_chamomilla.py is frozen"). A full, verified freeze inventory across all 16 cases was not completed in this documentation pass — see `NEXT_ACTIONS.md`.
 
 ## 13. Abandoned Gold Cases
 
-- **Case 002 (Passiflora)** — referenced only in passing, as "Access-Blocked" (`Prospective_Claim_to_Decision_Mapping_Proposal.md`, line 119: "Case 002 (Passiflora, Access-Blocked): unaffected, same reason.") and confirmed absent as a file (`case_006_source_suitability_screening.md`: "note: no Case 002 file exists"). No dedicated record of why it was abandoned (beyond "Access-Blocked") was found in this repository snapshot. This is the only confirmed abandoned/skipped case number.
+- **Case 002 (Passiflora)** — referenced only in passing, as "Access-Blocked" (`Prospective_Claim_to_Decision_Mapping_Proposal.md`, line 119: "Case 002 (Passiflora, Access-Blocked): unaffected, same reason.") and confirmed absent as a file (`case_006_source_suitability_screening.md`: "note: no Case 002 file exists"). No dedicated record of why it was abandoned (beyond "Access-Blocked") was found in this repository snapshot. This is the only confirmed abandoned/skipped case *number*.
+- **Superseded (not abandoned, but not canonical) — Case 008's original draft.** `gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py` (domain INDICATION_EVIDENCE, hard-coded per `CASES_008_009_010_012_CORRECTION_REPORT.md`) was replaced 2026-08-01 by `gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py` (domain PREPARATION_SPEC). Unlike Case 002, the old file was never deleted and its test (`test_case_008_indicationevidence.py`) still exists at repository root. This is a distinct category from "abandoned" — it is a live, importable, non-canonical file sitting alongside the real Case 008. See NA-010 in `NEXT_ACTIONS.md`.
 
 ## 14. Technical Debt Summary
 

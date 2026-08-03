@@ -52,6 +52,21 @@ Based on each case file's own self-description ("first," "second," "third," etc.
 6. Case 006 (Hypericum perforatum) — "Phase 6, Case 006... The fifth real... case, and the FIRST case in this program in ReferenceDomain.SAFETY." Preceded by a documented, supervisor-approved two-pass source-suitability screening.
 7. Case 007 (Valeriana officinalis) — first `PREPARATION_SPEC`-domain case. Its exact relative position versus Case 006 (before/after) was not independently re-verified against internal cross-references in this pass — recorded here in file-number order, not confirmed construction order.
 
+**2026-08-03 reconciliation note:** the section above (items 1–7) was the full record as of the previous `PROJECT_STATUS.md`/`BENCHMARK_PROGRESS.md` pass. Cases 008–017 were built after that pass but the summary documents were never updated to reflect them — this is itself the specific staleness this reconciliation pass fixes. Continuing the construction record, per each case file's own docstring/correction report, all dated **2026-08-01** in `CASES_008_009_010_012_CORRECTION_REPORT.md` and `CASE_011_CORRECTION_REPORT.md` (Cases 013–017 have no separate correction report — they were built canonical on first pass, per their own docstrings and `QUALITY_RECORDS_INDEX.json`):
+
+8. Case 008 (Ginkgo biloba, folium) — **rebuilt** 2026-08-01. The first attempt (`gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py`, generated 2026-07-30 by the autonomous pipeline, domain INDICATION_EVIDENCE) was a hard-coded, non-canonical draft. It was replaced by `gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py` (domain PREPARATION_SPEC, EMA/HMPC/321097/2012). The original file was never deleted — see `NEXT_ACTIONS.md` NA-010.
+9. Case 009 (Melissa officinalis, folium, mental stress) — corrected 2026-08-01; original used an unrecognized "Journal Article" `source_type`, replaced with EMA/HMPC/310761/2013.
+10. Case 010 (Passiflora incarnata, herba, mental stress) — corrected 2026-08-01; same class of fix, replaced with EMA/275240/2014.
+11. Case 011 (Matricaria chamomilla, generalized anxiety disorder) — corrected 2026-08-01; original incorrectly represented a tolerability observation as a `SUPPORTS_INDICATION` claim inside `ReferenceDomain.SAFETY`. Corrected to `ReferenceDomain.INDICATION_EVIDENCE`, governed by Hieu et al. 2019 (PMID 31006899). Note: no standalone `case_011_quality_record.json` exists on disk — see `QUALITY_RECORDS_INDEX.json`'s `known_gaps`.
+12. Case 012 (Lavandula angustifolia, aetheroleum, sleep) — corrected 2026-08-01; same class of fix as 009/010, replaced with EMA/HMPC/530968/2012.
+13. Case 013 (Echinacea purpurea) — first `IDENTITY_QUALITY`-domain case, governed by Kew Plants of the World Online (POWO).
+14. Case 014 (Ginkgo biloba, folium) — first case using `AssertionType.INTERACTION` (dabigatran etexilate, severity MODERATE), governed by EMA/HMPC/321097/2012 §4.5.
+15. Case 015 (Hypericum perforatum, herba) — second `PREPARATION_SPEC`-domain case, governed by EMA/HMPC/7695/2021.
+16. Case 016 (Piper methysticum) — first `REGULATORY_STATUS`-domain case, first use of `AssertionType.PROHIBITION`, governed by UK MHRA (SI 2002/3170).
+17. Case 017 (Matricaria chamomilla) — second `IDENTITY_QUALITY`-domain case, governed by Kew POWO.
+
+With Case 017, the program reaches **16 canonical cases** (001, 003–017) — see `BENCHMARK_PROGRESS.md` for the full, reconciled table.
+
 ## Documentation Additions — This Pass
 
 **UNKNOWN date** (this documentation pass itself; record the actual date manually when known):

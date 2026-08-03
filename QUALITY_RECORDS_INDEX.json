@@ -1,9 +1,11 @@
 {
   "index_metadata": {
-    "version": "1.0",
+    "version": "1.1",
     "created_timestamp": "2026-07-30T19:00:00Z",
+    "last_reconciled_timestamp": "2026-08-03T00:00:00Z",
     "description": "Permanent audit trail for Botanical R&D Decision Intelligence Platform gold cases",
-    "purpose": "Machine-readable quality monitoring and compliance tracking"
+    "purpose": "Machine-readable quality monitoring and compliance tracking",
+    "reconciliation_note": "v1.1 reconciles this index against the actual on-disk case_XXX_quality_record.json files and the actual gold_case_reference_grounded_XXX_*.py files as of 2026-08-03. Two errors from v1.0 are corrected here: (1) Case 8's domain was recorded as INDICATION_EVIDENCE, but the canonical Case 8 file (gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py) is domain PREPARATION_SPEC — the INDICATION_EVIDENCE file is a superseded, non-canonical artifact, see 'superseded_artifacts' below. (2) Case 11's domain was recorded as SAFETY; no case_011_quality_record.json file exists on disk to support this, and the actual case file plus CASE_011_CORRECTION_REPORT.md both show Case 11 was corrected to domain INDICATION_EVIDENCE. Case 11 is therefore listed under 'known_gaps' below, not fabricated as an entry here, until a real case_011_quality_record.json is produced."
   },
   "quality_record_inventory": [
     {
@@ -20,133 +22,163 @@
     },
     {
       "case_number": 8,
-      "case_id": "refgrounded_008_ginkgo_biloba_indication_evidence",
+      "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
       "taxon": "Ginkgo biloba L.",
-      "domain": "INDICATION_EVIDENCE",
+      "domain": "PREPARATION_SPEC",
       "record_file": "case_008_quality_record.json",
-      "approval_status": "APPROVED",
-      "approval_date": "2026-07-30",
-      "defects_found": 0,
-      "corrections_applied": 0,
-      "governance_compliant": true
+      "approval_status": "CORRECTED_ACTIVE",
+      "source_type": "EMA_HMPC",
+      "resolution_status": "SELECTED",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "correction_date": "2026-08-01",
+      "governance_compliant": true,
+      "note": "Replaces a non-canonical, hard-coded INDICATION_EVIDENCE draft. See 'superseded_artifacts' below."
     },
     {
       "case_number": 9,
-      "case_id": "refgrounded_009_melissa_officinalis_indication_evidence",
+      "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
       "taxon": "Melissa officinalis L.",
       "domain": "INDICATION_EVIDENCE",
       "record_file": "case_009_quality_record.json",
-      "approval_status": "APPROVED",
-      "approval_date": "2026-07-30",
-      "defects_found": 3,
-      "corrections_applied": 3,
-      "self_audit_performed": true,
+      "approval_status": "CORRECTED_ACTIVE",
+      "source_type": "EMA_HMPC",
+      "resolution_status": "SELECTED",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "correction_date": "2026-08-01",
       "governance_compliant": true
     },
     {
       "case_number": 10,
-      "case_id": "refgrounded_010_passiflora_incarnata_indication_evidence",
+      "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
       "taxon": "Passiflora incarnata L.",
       "domain": "INDICATION_EVIDENCE",
       "record_file": "case_010_quality_record.json",
-      "approval_status": "APPROVED",
-      "approval_date": "2026-07-30",
-      "defects_found": 0,
-      "corrections_applied": 0,
-      "reference_implementation": true,
-      "governance_compliant": true
-    },
-    {
-      "case_number": 11,
-      "case_id": "refgrounded_011_matricaria_chamomilla_safety_evidence",
-      "taxon": "Matricaria chamomilla L.",
-      "domain": "SAFETY",
-      "record_file": "case_011_quality_record.json",
-      "approval_status": "APPROVED",
-      "approval_date": "2026-07-30",
-      "defects_found": 0,
-      "corrections_applied": 0,
-      "self_audit_performed": true,
-      "governance_first_case": "governance_rule_1_documented_self_review",
+      "approval_status": "CORRECTED_ACTIVE",
+      "source_type": "EMA_HMPC",
+      "resolution_status": "SELECTED",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "correction_date": "2026-08-01",
       "governance_compliant": true
     },
     {
       "case_number": 12,
-      "case_id": "refgrounded_012_lavandula_angustifolia_indication_evidence",
-      "taxon": "Lavandula angustifolia L.",
+      "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+      "taxon": "Lavandula angustifolia Mill.",
       "domain": "INDICATION_EVIDENCE",
       "record_file": "case_012_quality_record.json",
+      "approval_status": "CORRECTED_ACTIVE",
+      "source_type": "EMA_HMPC",
+      "resolution_status": "SELECTED",
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "correction_date": "2026-08-01",
+      "governance_compliant": true
+    },
+    {
+      "case_number": 13,
+      "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+      "taxon": "Echinacea purpurea (L.) Moench",
+      "domain": "IDENTITY_QUALITY",
+      "record_file": "case_013_quality_record.json",
+      "approval_status": "REFERENCE_CURATED",
+      "source_type": "TAXONOMIC_AUTHORITY",
+      "resolution_status": null,
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "correction_date": null,
+      "generated_timestamp": "2026-08-01T08:00:00+02:00",
+      "governance_compliant": true,
+      "note": "First IDENTITY_QUALITY-domain case in the program."
+    },
+    {
+      "case_number": 14,
+      "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+      "taxon": "Ginkgo biloba L.",
+      "domain": "SAFETY",
+      "record_file": "case_014_quality_record.json",
+      "approval_status": "REFERENCE_CURATED",
+      "source_type": "EMA_HMPC",
+      "resolution_status": null,
+      "assertion_type": "INTERACTION",
+      "severity": "MODERATE",
+      "engine_evidence_attached": false,
+      "generated_timestamp": "2026-08-01T08:30:00+02:00",
+      "governance_compliant": true
+    },
+    {
+      "case_number": 15,
+      "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+      "taxon": "Hypericum perforatum L.",
+      "domain": "PREPARATION_SPEC",
+      "record_file": "case_015_quality_record.json",
       "approval_status": "APPROVED",
-      "approval_date": "2026-07-30",
+      "source_type": "EMA_HMPC",
+      "tests_passed": 8,
+      "tests_failed": 0,
+      "engine_evidence_attached": false,
+      "approval_date": "2026-08-01",
+      "governance_compliant": true
+    },
+    {
+      "case_number": 16,
+      "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+      "taxon": "Piper methysticum G.Forst.",
+      "domain": "REGULATORY_STATUS",
+      "record_file": "case_016_quality_record.json",
+      "approval_status": "REFERENCE_CURATED",
+      "source_type": "NATIONAL_REGULATORY",
+      "assertion_type": "PROHIBITION",
+      "resolution_status": "SELECTED",
+      "tests_passed": 8,
+      "tests_failed": 0,
       "defects_found": 0,
       "corrections_applied": 0,
-      "self_audit_performed": true,
-      "governance_first_case": "governance_rule_2_json_quality_records",
+      "engine_evidence_attached": false,
+      "generated_timestamp": "2026-08-01T16:20:00+02:00",
+      "governance_compliant": true,
+      "note": "First REGULATORY_STATUS-domain case in the program."
+    },
+    {
+      "case_number": 17,
+      "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+      "taxon": "Matricaria chamomilla L.",
+      "domain": "IDENTITY_QUALITY",
+      "record_file": "case_017_quality_record.json",
+      "approval_status": "REFERENCE_CURATED",
+      "source_type": "TAXONOMIC_AUTHORITY",
+      "assertion_type": "IDENTITY_CONFIRMATION",
+      "resolution_status": "SELECTED",
+      "defects_found": 0,
+      "corrections_applied": 0,
+      "engine_evidence_attached": false,
+      "generated_timestamp": "2026-08-01T16:55:00+02:00",
       "governance_compliant": true
     }
   ],
-  "audit_summary": {
-    "total_cases": 6,
-    "total_approved": 6,
-    "total_rejected": 0,
-    "approval_rate_percent": 100.0,
-    "total_defects_found": 3,
-    "total_corrections_applied": 3,
-    "cases_requiring_self_audit": 2,
-    "cases_with_self_audit_performed": 2,
-    "self_audit_success_rate_percent": 100.0
+  "known_gaps": {
+    "description": "Cases with no standalone case_XXX_quality_record.json file on disk. These cases are NOT less valid than the ones above — quality-record generation was simply adopted as a standard practice starting around Case 008 and was never retroactively applied to the earlier cases. Do not infer approval_status for these from this index; consult each case file's own docstring, PROJECT_STATUS.md, and BENCHMARK_PROGRESS.md instead.",
+    "case_numbers_without_quality_record_file": [1, 3, 4, 5, 6, 11],
+    "case_11_specific_note": "case_011_quality_record.json does not exist. The v1.0 index fabricated an entry for Case 11 with domain=SAFETY, tests_passed=null-equivalent fields, and no backing file. The actual, corrected Case 11 (gold_case_reference_grounded_011_matricaria_chamomilla_indication_evidence.py) is domain INDICATION_EVIDENCE per CASE_011_CORRECTION_REPORT.md. Recommended action: generate a real case_011_quality_record.json following the same template as Cases 9/10/12, then add a proper entry here."
   },
-  "quality_metrics": {
-    "five_standards_compliance": {
-      "cases_passing_all_five_standards": 6,
-      "cases_passing_four_standards": 0,
-      "cases_passing_three_or_fewer": 0,
-      "compliance_rate_percent": 100.0
-    },
-    "validation_pipeline": {
-      "cases_passing_all_suites": 6,
-      "baseline_test_compliance": "8/8 all cases",
-      "regression_test_compliance": "7/7 all cases",
-      "mutation_detection_rate": "100.0% all cases",
-      "exit_code_zero_percent": 100.0
-    },
-    "phase_1_integrity": {
-      "frozen_code_modifications": 0,
-      "validation_pipeline_modifications": 0,
-      "test_framework_modifications": 0,
-      "integrity_breaches": 0
-    }
-  },
-  "governance_implementation": {
-    "governance_rule_1": {
-      "title": "Documented self-review before case completion",
-      "effective_case": 11,
-      "status": "IMPLEMENTED",
-      "compliance": "100% (Cases 11-12)"
-    },
-    "governance_rule_2": {
-      "title": "JSON Quality Records for permanent audit trail",
-      "effective_case": 12,
-      "status": "IMPLEMENTED",
-      "compliance": "100% (Case 12)"
-    }
-  },
-  "audit_trail_completeness": {
-    "backfilled_records": 5,
-    "prospective_records": 1,
-    "total_records": 6,
-    "archive_status": "COMPLETE"
-  },
-  "automated_monitoring": {
-    "query_interface": "JSON records in quality_records/ directory",
-    "filtering_capabilities": [
-      "by case_number",
-      "by taxon",
-      "by domain",
-      "by approval_status",
-      "by defects_found",
-      "by governance_compliance"
-    ],
-    "monitoring_enabled": true
+  "superseded_artifacts": {
+    "description": "Files that remain on disk but are no longer the canonical version of a numbered case. Per repository convention, superseded files are not deleted, only flagged. These should be added to a legacy/archival list (see .github/legacy-files.txt and repo_dependency_audit.py) rather than left ambiguously alongside the canonical file.",
+    "items": [
+      {
+        "file": "gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py",
+        "status": "SUPERSEDED_NON_CANONICAL",
+        "superseded_by": "gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py",
+        "reason": "CASES_008_009_010_012_CORRECTION_REPORT.md (2026-08-01): rebuilt from a non-canonical, hard-coded INDICATION_EVIDENCE draft to a canonical EMA-sourced PREPARATION_SPEC case.",
+        "associated_test_file": "test_case_008_indicationevidence.py",
+        "risk": "File naming makes it easy to import or reference the wrong Case 008 by mistake; both files currently coexist at repository root with no in-repo warning on the superseded file itself."
+      }
+    ]
   }
 }

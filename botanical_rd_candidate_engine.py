@@ -5032,22 +5032,34 @@ class BotanicalRDCandidateEngine:
         The full source wording is preserved separately in EMA_HMPC_Detail.
         This function deliberately does not upgrade an inventory match into a
         monograph claim unless the source text explicitly says monograph.
+
+        PHASE 2B FIX: this used to run its own ad hoc, order-sensitive
+        substring checks, which had a real bug — the negative check
+        only recognized "not found"/"not listed"/"no match", so the
+        real connector's actual not-found text, "Not in HMPC inventory
+        (as of 2021 snapshot)", never matched it and fell through to
+        the "hmpc inventory" substring check instead, which DOES match
+        (that text contains "hmpc inventory" as a substring) —
+        producing "Listed in HMPC inventory" for a plant that was
+        explicitly NOT found. That is the exact EMA_HMPC_Status vs
+        EMA_HMPC_Detail contradiction observed for real plants in a
+        live Market Analysis run. Fixed by delegating to
+        classify_ema_hmpc_signal() (standard_evidence_builder.py) — the
+        same shared, already-tested primitive _market_status() and
+        build_regulatory_record() use — instead of maintaining a third,
+        independently-ordered set of substring rules here.
         """
-        text = str(value or "").strip()
-        low = text.lower()
-        if not text:
+        if not value:
             return "Not verified"
-        if "not found" in low or "not listed" in low or "no match" in low:
-            return "Not found in HMPC inventory"
-        if "monograph" in low and "available" in low:
-            return "HMPC monograph available"
-        if "assessment report" in low and "available" in low:
-            return "HMPC assessment available"
-        if "listed in hmpc inventory" in low or "hmpc inventory" in low:
-            return "Listed in HMPC inventory"
-        if "not yet verified" in low or "not evaluated" in low:
-            return "Not verified"
-        return text if len(text) <= 80 else "EMA/HMPC information available"
+        signal = classify_ema_hmpc_signal(value)
+        return {
+            "inventory_listed": "Listed in HMPC inventory",
+            "monograph_exists": "HMPC monograph available",
+            "traditional_use": "Traditional-use status",
+            "searched_not_found": "Not found in HMPC inventory",
+            "source_unavailable": "Source unavailable",
+            "unknown": "Not verified",
+        }[signal]
 
     def _eu_regulatory_status(self, plant):
         curated = self._curated_evidence_for(plant)
@@ -5058,6 +5070,7 @@ class BotanicalRDCandidateEngine:
                 "EMA_HMPC_Status": self._compact_ema_status(ema_detail),
                 "EMA_HMPC_Detail": ema_detail,
                 "EMA_Source": source,
+                "EMA_HMPC_Match_Category": "manually_curated",
                 "WHO_Status": curated.get("who_status", "Not independently verified"),
                 "WHO_Source": source,
                 "ESCOP_Status": curated.get("escop_status", "Not independently verified"),
@@ -5078,6 +5091,7 @@ class BotanicalRDCandidateEngine:
                     "EMA_HMPC_Status": self._compact_ema_status(ema_detail),
                     "EMA_HMPC_Detail": ema_detail,
                     "EMA_Source": ema_source,
+                    "EMA_HMPC_Match_Category": r.get("Taxonomic_Match_Status", "unknown"),
                     "WHO_Status": who_status,
                     "WHO_Source": r.get("WHO_Source", "No independent WHO lookup configured"),
                     "ESCOP_Status": escop_status,
@@ -5095,6 +5109,7 @@ class BotanicalRDCandidateEngine:
             "EMA_HMPC_Status": "Not verified",
             "EMA_HMPC_Detail": "Not yet verified",
             "EMA_Source": source,
+            "EMA_HMPC_Match_Category": "source_unavailable",
             "WHO_Status": "Not independently verified",
             "WHO_Source": "No independent WHO lookup configured",
             "ESCOP_Status": "Not independently verified",
@@ -5193,6 +5208,7 @@ class BotanicalRDCandidateEngine:
                 "Region_of_Origin": snap["region"],
                 "EMA_HMPC_Status": reg["EMA_HMPC_Status"],
                 "EMA_HMPC_Detail": reg.get("EMA_HMPC_Detail", reg["EMA_HMPC_Status"]),
+                "EMA_HMPC_Match_Category": reg.get("EMA_HMPC_Match_Category", "unknown"),
                 "EMA_Source": reg.get("EMA_Source", reg.get("Source", "")),
                 "WHO_Status": reg["WHO_Status"],
                 "WHO_Source": reg.get("WHO_Source", ""),

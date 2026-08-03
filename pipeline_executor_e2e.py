@@ -19,12 +19,18 @@ import io
 from contextlib import redirect_stdout, redirect_stderr
 
 # Add repo to path
+# NOTE (2026-08-03): this file moved from the repository root into
+# gold_cases/. The original fallback below used Path(__file__).parent,
+# which pointed at the repo root when this file lived there; it now
+# needs .parent.parent to still reach the repo root from inside
+# gold_cases/. The primary repo_path branch (a sibling "repo/" checkout
+# layout) is left exactly as it was.
 repo_path = Path(__file__).parent.parent / "repo" / "botanical-mvp-main"
 if repo_path.exists():
     sys.path.insert(0, str(repo_path))
 else:
-    # Fallback
-    sys.path.insert(0, str(Path(__file__).parent))
+    # Fallback: repository root, two levels up from gold_cases/
+    sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     from gold_case_pipeline_state_machine import (

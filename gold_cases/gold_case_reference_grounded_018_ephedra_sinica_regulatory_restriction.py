@@ -4,11 +4,21 @@ Governing source: UK Medicines and Healthcare products Regulatory Agency
 (MHRA), "Banned and restricted herbal ingredients for medicinal use",
 implementing Human Medicines Regulations 2012, Schedule 20, Parts II and III.
 
-The case evaluates a narrow UK medicinal-product restriction: internal-use
-herbal medicines containing Ephedra sinica are subject to a maximum single
-dose of 600 mg and a maximum daily dose of 1800 mg under the stated schedule.
-The case does not generalize this UK rule to foods, food supplements, other
-Ephedra species not named by the source, or other jurisdictions.
+The case evaluates a narrow UK medicinal-product supply-channel restriction.
+For herbal medicines supplied following a one-to-one consultation with a
+practitioner outside registered pharmacy premises, Ephedra sinica is limited
+to 600 mg per dose and 1800 mg per 24 hours. If either threshold is exceeded,
+the medicine is not absolutely prohibited; it may only be supplied from
+registered pharmacy premises by or under the supervision of a pharmacist.
+
+The MHRA source describes this as "internal use". ValidationUnit currently has
+no generic "internal use" route value, so this case maps internal medicinal use
+to route_of_administration="Oral" for applicability. That mapping is explicit
+and must not be read as a verbatim route statement from the source.
+
+The case does not generalize this UK rule to foods, food supplements, external
+use, other jurisdictions, or an absolute maximum dose across all lawful supply
+channels.
 """
 from __future__ import annotations
 
@@ -25,7 +35,7 @@ from assertion_vocabulary import (
     TransformationType,
 )
 from field_provenance import FieldProvenance, VerificationStatus
-from gold_case import GoldCase, GoldCaseReference, RiskStratum
+from gold_case import GoldCase, GoldCaseReference
 from reference_claim import ExtractionConfidence, NormalizedEvidenceText, ReferenceClaim
 from reference_descriptor import ReferenceDescriptor
 from resolved_expected_outcome import resolve_expected_outcomes
@@ -52,7 +62,7 @@ def _build_validation_unit() -> ValidationUnit:
         preparation=None,
         route_of_administration="Oral",
         indication=None,
-        population="General population",
+        population=None,
         jurisdiction="UK",
     )
 
@@ -67,7 +77,7 @@ def _build_reference_descriptor() -> ReferenceDescriptor:
         taxon="Ephedra sinica Stapf",
         plant_part=None,
         preparation=None,
-        population="General population",
+        population=None,
         claim_type=None,
         indication_scope=[],
         route_scope=["Oral"],
@@ -80,8 +90,8 @@ def _build_reference_claim() -> ReferenceClaim:
         domain=ReferenceDomain.REGULATORY_STATUS,
         assertion_type=AssertionType.RESTRICTION,
         subject=(
-            "UK maximum-dose restriction for internal-use herbal medicines "
-            "containing Ephedra sinica"
+            "UK dose thresholds determining practitioner versus pharmacy "
+            "supply of internal-use herbal medicines containing Ephedra sinica"
         ),
         assertion_state=AssertionState.PRESENT,
         severity=None,
@@ -90,10 +100,11 @@ def _build_reference_claim() -> ReferenceClaim:
         evidence_text=NormalizedEvidenceText(
             original_text=_EVIDENCE_EXCERPT,
             normalized_text=(
-                "In the UK, internal-use herbal medicines containing Ephedra "
-                "sinica are restricted to a maximum single dose of 600 mg and "
-                "a maximum daily dose of 1800 mg under Schedule 20 Parts II "
-                "and III."
+                "In the UK, herbal medicines containing Ephedra sinica may be "
+                "supplied following a one-to-one practitioner consultation at "
+                "doses not exceeding 600 mg per dose and 1800 mg per 24 hours. "
+                "If either threshold is exceeded, supply is limited to "
+                "registered pharmacy premises by or under pharmacist supervision."
             ),
             transformation_type=TransformationType.NORMALIZED_TERMINOLOGY,
             transformation_version="case018-ephedra-regulatory-v1",
@@ -102,9 +113,11 @@ def _build_reference_claim() -> ReferenceClaim:
         extraction_confidence=ExtractionConfidence(
             level=ExtractionConfidenceLevel.HIGH,
             basis=(
-                "Direct current MHRA regulatory table naming Ephedra sinica, "
-                "the applicable legal category, and explicit maximum single "
-                "and daily doses for internal use."
+                "Direct current MHRA guidance names Ephedra sinica, gives the "
+                "600 mg single-dose and 1800 mg daily-dose thresholds, and "
+                "explains that exceeding the Part 2 thresholds changes the "
+                "lawful supply channel to registered pharmacy premises rather "
+                "than creating an absolute prohibition."
             ),
             extractor_type="human_curator",
             extractor_version="case018-v1",
@@ -144,7 +157,7 @@ def build_gold_case_refgrounded_018_ephedra_sinica_regulatory_restriction() -> G
     case = GoldCase(
         case_id="refgrounded_018_ephedra_sinica_regulatory_restriction",
         validation_unit=unit,
-        risk_strata=[RiskStratum.CLEAN_BASELINE],
+        risk_strata=[],
         references=[gref],
         case_provenance=_build_case_provenance(),
         kind=GoldCaseKind.REFERENCE_GROUNDED,

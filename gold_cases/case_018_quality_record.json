@@ -2,7 +2,7 @@
   "metadata": {
     "version": "1.0",
     "audit_trail_entry": true,
-    "generated_timestamp": "2026-08-01T16:45:00+02:00"
+    "generated_timestamp": "2026-08-03T18:15:00+02:00"
   },
   "case_information": {
     "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
@@ -20,10 +20,11 @@
     "assertion_type": "RESTRICTION",
     "assertion_state": "PRESENT",
     "confidence_level": "HIGH",
-    "scope": "UK internal-use herbal medicines; maximum single dose 600 mg and maximum daily dose 1800 mg"
+    "scope": "UK internal-use herbal medicines: practitioner supply at or below 600 mg per dose and 1800 mg per day; above either threshold, registered-pharmacy supply under pharmacist supervision is required.",
+    "interpretation": "Supply-channel restriction, not absolute dose prohibition."
   },
   "validation_results": {
-    "case_tests_passed": 8,
+    "case_tests_passed": 9,
     "case_tests_failed": 0,
     "resolved_outcome_status": "SELECTED",
     "engine_evidence_attached": false,
@@ -31,7 +32,17 @@
   },
   "approval_status": {
     "approved": true,
-    "approval_date": "2026-08-01",
+    "approval_date": "2026-08-03",
     "production_ready_ground_truth": true
+  },
+  "correction_record": {
+    "corrected_on": "2026-08-03",
+    "issues_corrected": [
+      "Removed overstatement that 600 mg/1800 mg are absolute maximum permitted doses.",
+      "Recorded pharmacy-supply pathway when thresholds are exceeded.",
+      "Removed unsupported General population metadata.",
+      "Documented internal use to Oral platform mapping.",
+      "Removed CLEAN_BASELINE risk stratum."
+    ]
   }
 }

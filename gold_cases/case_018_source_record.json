@@ -6,9 +6,11 @@
   "source_type": "NATIONAL_REGULATORY",
   "official_url": "https://www.gov.uk/government/publications/list-of-banned-or-restricted-herbal-ingredients-for-medicinal-use/banned-and-restricted-herbal-ingredients",
   "publication_date": "2014-12-18",
-  "retrieval_date": "2026-08-01",
+  "retrieval_date": "2026-08-03",
   "legal_basis": "Human Medicines Regulations 2012, Schedule 20, Parts II and III",
-  "locator": "Table row for Ephedra sinica and related Ephedra species",
-  "verified_excerpt": "600 mg (MD), 1800 mg (MDD)",
-  "verification_status": "CURATOR_VERIFIED"
+  "locator": "Legislation explanation for Schedule 20 Part 2 and table row for Ephedra sinica",
+  "verified_excerpt": "Part 2 permits practitioner supply at or below 600 mg (MD) and 1800 mg (MDD); if exceeded, supply is limited to registered pharmacy premises by or under pharmacist supervision.",
+  "verification_status": "CURATOR_VERIFIED",
+  "interpretation_note": "These figures are supply-channel thresholds, not an absolute prohibition or universal maximum across all lawful supply routes.",
+  "route_mapping_note": "MHRA uses the term internal use; the case maps this to Oral because the platform route vocabulary has no generic internal-use value."
 }

@@ -33,7 +33,11 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
-from standard_evidence_builder import build_scientific_evidence, normalize_missing_value
+from standard_evidence_builder import (
+    build_scientific_evidence,
+    normalize_missing_value,
+    classify_ema_hmpc_signal,
+)
 from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -3712,11 +3716,11 @@ class BotanicalRDCandidateEngine:
         market_landscape()'s own, separately-verified results.
 
         "Conflicting market evidence": when two of this function's OWN
-        signals disagree — e.g. EMA_Status says "Yes" (a regulatory
-        monograph exists) but the same evidence text explicitly says
-        the product has been discontinued/withdrawn. That's a genuine,
-        detectable disagreement between two real, present signals, not
-        a guess.
+        signals disagree — e.g. EMA_Status shows genuine EMA/HMPC
+        recognition (inventory listing, monograph, or traditional-use
+        support) but the same evidence text explicitly says the product
+        has been discontinued/withdrawn. That's a genuine, detectable
+        disagreement between two real, present signals, not a guess.
 
         "Search incomplete": distinguishes "a live search ran this
         session but returned nothing about this SPECIFIC candidate"
@@ -3730,20 +3734,19 @@ class BotanicalRDCandidateEngine:
         ema = self._pick(alt, ["EMA_Status"])
         text = self._norm(evidence)
 
-        # Phase A / Sprint 5 bug fix: the real ema_regulatory_connector.py
-        # never returns the literal string "Yes" — its actual output is
-        # descriptive, e.g. "Listed in HMPC inventory as 'X' — see source
-        # PDF for monograph status" (see that module's
-        # search_regulatory_sources_real()). The previous "ema == 'Yes'"
-        # check could therefore only ever be satisfied by the legacy
-        # fabricated 4-plant stub's hardcoded value (regulatory_connector.py's
-        # REGULATORY_DB, now excluded from production — see Phase A Issue 2
-        # below) — never by a real EMA inventory match on any other plant.
-        # _ema_listed() recognizes both the real connector's actual prefix
-        # and the legacy literal value (kept only so any already-stored
-        # historical evidence data with that old value still degrades
-        # gracefully, not because new data should ever produce it again).
-        ema_listed = self._ema_listed(ema)
+        # Phase 2A (regulatory-normalization audit) — classify the raw
+        # EMA_Status text via the one shared helper in
+        # standard_evidence_builder.py (classify_ema_hmpc_signal),
+        # instead of the previous single boolean (_ema_listed()). The
+        # boolean could only ever answer "is this genuinely listed in
+        # the HMPC inventory", which this function then (incorrectly,
+        # pre-Phase-2A) treated as equivalent to "a regulatory monograph
+        # exists" — the exact overstatement classify_ema_hmpc_signal()
+        # exists to prevent. _ema_listed() itself is untouched below
+        # (still used/tested independently) — this function no longer
+        # relies on it for the monograph-vs-inventory distinction.
+        ema_signal = classify_ema_hmpc_signal(ema)
+        ema_recognized = ema_signal in ("inventory_listed", "monograph_exists", "traditional_use")
 
         # Narrow, multi-word phrase patterns — not bare words like
         # "product" or "market", which show up constantly in text that
@@ -3770,11 +3773,26 @@ class BotanicalRDCandidateEngine:
         # something else in the SAME evidence asserts the product is
         # gone/unavailable. Checked first — this is more informative to
         # surface than picking one side and silently discarding the other.
-        if (ema_listed or commercial_signal) and discontinued_signal:
+        if (ema_recognized or commercial_signal) and discontinued_signal:
             return "Conflicting market evidence"
 
-        if ema_listed:
+        if ema_signal == "monograph_exists":
             return "Regulatory monograph exists"
+
+        if ema_signal == "traditional_use":
+            return "Traditional-use status"
+
+        if ema_signal == "inventory_listed":
+            # Phase 2A — deliberately NOT "Regulatory monograph exists".
+            # Being listed in EMA/HMPC's assessment inventory means the
+            # substance has been formally proposed/prioritized for
+            # monograph assessment; it does not by itself mean a
+            # monograph has been adopted, that traditional-use or
+            # well-established-use status applies, or that the product
+            # is authorized/approved. Mirrors
+            # MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED
+            # in data_contracts.py.
+            return "Listed in EMA HMPC inventory — monograph not established"
 
         if commercial_signal:
             return "Commercial evidence reported, not independently verified"

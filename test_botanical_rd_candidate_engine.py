@@ -38,6 +38,7 @@ needed.
 """
 
 import pandas as pd
+import pytest
 
 try:
     import pytest
@@ -582,10 +583,15 @@ def test_market_status_recognizes_a_real_commercial_phrase():
     assert status == "Commercial evidence reported, not independently verified"
 
 
-def test_market_status_ema_yes_maps_to_regulatory_monograph():
+def test_market_status_ema_yes_maps_to_inventory_listed_not_monograph():
+    # Phase 2A correction: the legacy stub's literal "Yes" means only
+    # "genuinely listed in the HMPC assessment inventory" — it must
+    # NOT be upgraded to "Regulatory monograph exists" (inventory
+    # presence is a narrower claim than a published monograph).
     engine = make_engine([], similar_groups={})
     status = engine._market_status(alt={"EMA_Status": "Yes"}, evidence="", market="EU")
-    assert status == "Regulatory monograph exists"
+    assert status == "Listed in EMA HMPC inventory — monograph not established"
+    assert status != "Regulatory monograph exists"
 
 
 def test_market_status_never_silently_returns_the_old_string():
@@ -1636,15 +1642,37 @@ def test_ema_listed_rejects_not_found_and_not_verified_states():
     assert eng.BotanicalRDCandidateEngine._ema_listed(None) is False
 
 
-def test_market_status_regulatory_monograph_reachable_via_real_connector_format():
-    # THE bug this fix addresses: before the fix, this exact scenario
-    # (a real EMA connector match, not the legacy stub) could NEVER
-    # produce "Regulatory monograph exists" — only the literal "Yes"
-    # from the fabricated stub could.
+def test_market_status_real_connector_inventory_hit_is_inventory_listed_not_monograph():
+    # Phase 2A correction: a real EMA connector inventory match (the
+    # actual search_regulatory_sources_real() output format, which
+    # itself contains the word "monograph" only as a hedge — "...see
+    # source PDF for monograph status") must classify as inventory
+    # presence, never as an affirmative monograph claim.
     engine = make_engine([], similar_groups={})
     alt_row = {"EMA_Status": "Listed in HMPC inventory as 'Melissae folium' — see source PDF for monograph status"}
     result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result == "Listed in EMA HMPC inventory — monograph not established"
+    assert result != "Regulatory monograph exists"
+
+
+def test_market_status_genuine_monograph_text_still_reaches_monograph_exists():
+    # A genuinely affirmative monograph claim — independent of the
+    # inventory-listing boolean — must still be reachable. This is the
+    # generic, non-menopause-specific proof that Phase 2A narrowed the
+    # rule rather than disabling the "Regulatory monograph exists"
+    # status entirely.
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "EMA HMPC monograph adopted and published for this substance"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
     assert result == "Regulatory monograph exists"
+
+
+def test_market_status_traditional_use_text_maps_to_traditional_use_not_monograph():
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "Traditional-use registration granted"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result == "Traditional-use status"
+    assert result != "Regulatory monograph exists"
 
 
 def test_market_status_not_in_inventory_stays_honestly_unestablished():
@@ -1652,7 +1680,64 @@ def test_market_status_not_in_inventory_stays_honestly_unestablished():
     alt_row = {"EMA_Status": "Not in HMPC inventory (as of 2021 snapshot)"}
     result = engine._market_status(alt=alt_row, evidence="", market="EU")
     assert result != "Regulatory monograph exists"
+    assert result != "Listed in EMA HMPC inventory — monograph not established"
     assert result in {"Search not performed", "Search incomplete"}
+
+
+def test_market_status_source_unavailable_text_never_upgraded_to_monograph():
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "Could not check EMA's inventory this time: timeout"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result not in {
+        "Regulatory monograph exists",
+        "Listed in EMA HMPC inventory — monograph not established",
+        "Traditional-use status",
+    }
+
+
+def test_market_status_ambiguous_free_text_never_upgraded_to_monograph():
+    engine = make_engine([], similar_groups={})
+    alt_row = {"EMA_Status": "Some unrecognized free-text status nobody wrote a rule for"}
+    result = engine._market_status(alt=alt_row, evidence="", market="EU")
+    assert result not in {
+        "Regulatory monograph exists",
+        "Listed in EMA HMPC inventory — monograph not established",
+        "Traditional-use status",
+    }
+
+
+def test_market_status_no_regulatory_data_never_upgraded_to_monograph():
+    engine = make_engine([], similar_groups={})
+    result = engine._market_status(alt={}, evidence="", market="EU")
+    assert result not in {"Regulatory monograph exists", "Listed in EMA HMPC inventory — monograph not established"}
+
+
+# ---------------------------------------------------------------------
+# Phase 2A — generic regression coverage for classify_ema_hmpc_signal()
+# itself (standard_evidence_builder.py). Deliberately parameterized over
+# synthetic text fragments only — no plant name, indication, or dosage
+# form appears anywhere below, per the audit's generality requirement.
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "raw_text,expected_signal",
+    [
+        ("Listed in HMPC inventory as 'Genus speciosa' — see source PDF for monograph status", "inventory_listed"),
+        ("Yes", "inventory_listed"),
+        ("HMPC monograph available for this substance", "monograph_exists"),
+        ("Well-established use monograph adopted", "traditional_use"),
+        ("Traditional use registration on file", "traditional_use"),
+        ("Not in HMPC inventory (as of 2021 snapshot)", "searched_not_found"),
+        ("Not found", "searched_not_found"),
+        ("Could not check EMA's inventory this time: connection error", "source_unavailable"),
+        ("Not yet verified", "unknown"),
+        ("", "unknown"),
+        (None, "unknown"),
+        ("completely unrelated free text about something else", "unknown"),
+    ],
+)
+def test_classify_ema_hmpc_signal_generic_matrix(raw_text, expected_signal):
+    from standard_evidence_builder import classify_ema_hmpc_signal
+    assert classify_ema_hmpc_signal(raw_text) == expected_signal
 
 
 

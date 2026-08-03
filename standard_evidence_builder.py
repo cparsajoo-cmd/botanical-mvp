@@ -762,6 +762,88 @@ def build_scientific_evidence_presentation_payload(scientific_evidence_by_id):
 
 
 # ======================================================================
+# Phase 2A (regulatory-normalization audit) — classify_ema_hmpc_signal()
+#
+# WHY THIS EXISTS
+# botanical_rd_candidate_engine._market_status() independently classifies
+# a raw EMA_Status text fragment (the field, not a full evidence row —
+# it never has access to Source_Type, so it cannot use the
+# Source_Type=="Regulatory" eligibility gate build_regulatory_record()
+# below relies on). Before Phase 2A, that classification treated ANY
+# genuine "listed in HMPC inventory" match as "Regulatory monograph
+# exists" — the exact overstatement build_regulatory_record() was
+# already written to avoid (see _REGULATORY_EVIDENCE_LEVEL_TO_STATUS
+# below: inventory presence maps to REGULATORY_ASSESSMENT_INVENTORY_LISTED,
+# never to a monograph-exists status). This function is the smallest
+# shared piece of that same distinction, extracted so both call sites
+# use one narrow, tested rule for "what does this EMA/HMPC text
+# actually claim" rather than two independently-maintained ones.
+#
+# SCOPE: text classification only — a raw regulatory-signal string in,
+# one semantic category out. It does not build a RegulatoryRecord, does
+# not require Source_Type, and does not decide MarketVerificationStatus
+# on its own (build_regulatory_record() still owns that, for the rows
+# it is eligible to see). Deliberately generic: matches on structural
+# text patterns only, never a plant name, indication, or dosage form.
+# ======================================================================
+
+def classify_ema_hmpc_signal(raw_text) -> str:
+    """Classify a raw EMA/HMPC regulatory-status text fragment (e.g. the
+    EMA_Status field produced by ema_regulatory_connector.py, or the
+    legacy stub's literal "Yes") into one semantic category:
+
+      - "monograph_exists"    — an explicit, affirmative monograph claim
+      - "traditional_use"     — traditional-use / well-established-use
+                                  regulatory support mentioned
+      - "inventory_listed"    — listed in the HMPC assessment inventory
+                                  only; NOT a monograph claim
+      - "searched_not_found"  — explicitly checked, not present
+      - "source_unavailable"  — the lookup itself failed/couldn't run
+      - "unknown"             — empty, unrecognized, or explicitly
+                                  unverified text
+
+    NEVER upgrades inventory presence to "monograph_exists" — that is
+    the one specific overstatement this function exists to prevent.
+    Order matters: negative/hedged states are checked before any
+    affirmative keyword, so a phrase like the real connector's "...see
+    source PDF for monograph status" (a caveat, not a claim) is
+    classified by its actual "listed in HMPC inventory" structure, not
+    by the incidental later appearance of the word "monograph".
+    """
+    if not raw_text:
+        return "unknown"
+    text = str(raw_text).strip().lower()
+    if not text:
+        return "unknown"
+
+    if any(p in text for p in ("not in hmpc inventory", "not found", "not listed", "no match")):
+        return "searched_not_found"
+
+    if any(p in text for p in ("live fetch failed", "lookup unavailable", "could not check", "could not fetch")):
+        return "source_unavailable"
+
+    if any(p in text for p in ("not yet verified", "not evaluated", "not independently verified")):
+        return "unknown"
+
+    # Structural match on the real connector's actual inventory-hit
+    # format, and the legacy stub's literal value — checked BEFORE the
+    # generic "monograph" keyword below, because the real connector's
+    # genuine inventory-hit text itself contains the word "monograph"
+    # only as a hedge ("...see source PDF for monograph status"), never
+    # as an affirmative claim.
+    if text == "yes" or text.startswith("listed in hmpc inventory") or "listed in hmpc inventory" in text:
+        return "inventory_listed"
+
+    if "traditional use" in text or "traditional-use" in text or "well-established use" in text or "well established use" in text:
+        return "traditional_use"
+
+    if "monograph" in text:
+        return "monograph_exists"
+
+    return "unknown"
+
+
+# ======================================================================
 # Task 14.1 — build_regulatory_record()
 #
 # WHY THIS LIVES HERE, NOT A NEW MODULE

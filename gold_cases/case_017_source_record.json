@@ -1,0 +1,17 @@
+{
+  "verification_status": "CURATOR_VERIFIED",
+  "publisher": "Royal Botanic Gardens, Kew",
+  "database": "Plants of the World Online",
+  "document_title": "Matricaria chamomilla L.",
+  "source_type": "TAXONOMIC_AUTHORITY",
+  "taxon_lsid": "urn:lsid:ipni.org:names:154715-2",
+  "official_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:154715-2/general-information",
+  "synonym_url": "https://powo.science.kew.org/taxon/192583-1",
+  "verified_locator": "Accepted-status line and Synonyms section",
+  "verified_evidence": [
+    "This species is accepted.",
+    "Chamomilla recutita (L.) Rauschert is a synonym of Matricaria chamomilla."
+  ],
+  "retrieval_date": "2026-08-01",
+  "retrieval_method": "Official Kew POWO taxon and synonym pages"
+}

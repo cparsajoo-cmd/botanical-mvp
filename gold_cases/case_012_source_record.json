@@ -1,0 +1,10 @@
+{
+  "case_number": 12,
+  "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+  "source_type": "EMA_HMPC",
+  "official_source": "EMA/HMPC/530968/2012; monograph EMA/HMPC/143181/2010",
+  "official_landing_page": "https://www.ema.europa.eu/en/medicines/herbal/lavandulae-aetheroleum",
+  "retrieval_date": "2026-08-01",
+  "verification_status": "VERIFIED_FROM_OFFICIAL_EMA_PAGE",
+  "correction_note": "Replaced unrecognized Journal Article source_type with official EMA/HMPC sleep claim."
+}

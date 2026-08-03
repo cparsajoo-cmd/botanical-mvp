@@ -1,0 +1,13 @@
+{
+  "case_number": 8,
+  "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+  "taxon": "Ginkgo biloba L.",
+  "domain": "PREPARATION_SPEC",
+  "approval_status": "CORRECTED_ACTIVE",
+  "source_type": "EMA_HMPC",
+  "resolution_status": "SELECTED",
+  "tests_passed": 5,
+  "tests_failed": 0,
+  "engine_evidence_attached": false,
+  "correction_date": "2026-08-01"
+}

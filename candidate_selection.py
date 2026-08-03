@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from general_indication_relevance import normalize_text as _norm
+import botanical_taxonomy as _taxonomy
 
 
 # --- Origins ----------------------------------------------------------------
@@ -96,19 +97,28 @@ SHORTFALL_DEDUPLICATION_REDUCED_COUNT = "deduplication_reduced_count"
 def canonicalize_plant_name(name: object, alias_lookup: Optional[dict] = None) -> str:
     """Canonicalize a plant name string.
 
-    ``alias_lookup`` is an optional ``{normalized_alias: canonical_name}``
-    mapping (e.g. built from the platform's plants table); when a match is
-    found the canonical scientific name is used, otherwise the input is
-    trimmed and returned as-is.
+    Two steps:
+    1. ``alias_lookup`` is an optional ``{normalized_alias: canonical_name}``
+       mapping (e.g. built from the platform's plants table); when a match
+       is found, that canonical name is used as the starting point.
+    2. The result is then resolved through botanical_taxonomy.py's
+       taxonomic synonym mapping (e.g. Cimicifuga racemosa -> Actaea
+       racemosa), so deduplication always uses the ACCEPTED scientific
+       name regardless of which synonym any individual origin submitted.
+       This runs even when ``alias_lookup`` found nothing, so a raw
+       taxonomic synonym is still canonicalized on its own.
+
+    An input with no match anywhere is trimmed and returned as-is.
     """
     raw = str(name or "").strip()
     if not raw:
         return ""
+    candidate = raw
     if alias_lookup:
-        canonical = alias_lookup.get(_norm(raw))
-        if canonical:
-            return str(canonical).strip()
-    return raw
+        mapped = alias_lookup.get(_norm(raw))
+        if mapped:
+            candidate = str(mapped).strip()
+    return _taxonomy.accepted_name(candidate)
 
 
 @dataclass
@@ -120,12 +130,19 @@ class CandidateRecord:
     score_components: dict = field(default_factory=dict)
     sources: Tuple[str, ...] = ()
     notes: str = ""
+    # The name as originally submitted, before alias/taxonomic
+    # canonicalization -- preserved so a synonym collapse (e.g. Cimicifuga
+    # racemosa -> Actaea racemosa) never loses which original name each
+    # contributing origin actually used. See merge_candidates().
+    submitted_name: str = ""
 
     def __post_init__(self) -> None:
         if not self.evidence_status:
             self.evidence_status = _ORIGIN_DEFAULT_STATUS.get(
                 self.origin, STATUS_PENDING_VALIDATION
             )
+        if not self.submitted_name:
+            self.submitted_name = self.name
 
 
 def make_candidate(
@@ -139,6 +156,7 @@ def make_candidate(
     alias_lookup: Optional[dict] = None,
 ) -> Optional[CandidateRecord]:
     """Build one CandidateRecord. Returns None for an empty/unusable name."""
+    raw = str(name or "").strip()
     canonical = canonicalize_plant_name(name, alias_lookup)
     if not canonical:
         return None
@@ -151,6 +169,7 @@ def make_candidate(
         score_components=dict(score_components or {}),
         sources=tuple(sources or ()),
         notes=notes,
+        submitted_name=raw,
     )
 
 
@@ -191,12 +210,14 @@ def merge_candidates(candidates: Iterable[Optional[CandidateRecord]]) -> List[Ca
         )
         best = group[0]
         contributing_origins = sorted({r.origin for r in group})
+        contributing_original_names = sorted({r.submitted_name for r in group if r.submitted_name})
         all_sources = tuple(dict.fromkeys(s for r in group for s in r.sources))
         combined_score = best.score
         if len(contributing_origins) > 1:
             combined_score += min(3.0, (len(contributing_origins) - 1) * 1.5)
         merged_components = dict(best.score_components)
         merged_components["contributing_origins"] = contributing_origins
+        merged_components["contributing_original_names"] = contributing_original_names
         merged.append(CandidateRecord(
             name=best.name,
             origin=best.origin,
@@ -205,6 +226,7 @@ def merge_candidates(candidates: Iterable[Optional[CandidateRecord]]) -> List[Ca
             score_components=merged_components,
             sources=all_sources,
             notes=best.notes,
+            submitted_name=best.submitted_name,
         ))
 
     merged.sort(key=lambda r: (-_STATUS_RANK.get(r.evidence_status, 0), -r.score, r.name.lower()))
@@ -293,6 +315,9 @@ def select_candidates(
                 "evidence_status": r.evidence_status,
                 "sources": list(r.sources),
                 "contributing_origins": r.score_components.get("contributing_origins", [r.origin]),
+                "contributing_original_names": r.score_components.get(
+                    "contributing_original_names", [r.submitted_name]
+                ),
             }
             for r in deduped
         },

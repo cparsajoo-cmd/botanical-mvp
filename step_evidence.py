@@ -144,9 +144,19 @@ def render_evidence_step(inputs):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Requested", int(requested or 0))
         c2.metric("Reference seeds", len(seed_list or []))
-        c3.metric("Literature-supported/discovered", len(discovered_list or []))
+        # This is the RAW discovery count (online_discovered_plants) -- it
+        # is deliberately NOT labelled as a validated count. Directly vs.
+        # indirectly SUPPORTED counts (computed from candidate_records,
+        # which carry a real per-plant evidence_status) are shown
+        # separately below whenever candidate_records is available.
+        c3.metric("Literature-discovered candidates", len(discovered_list or []))
         c4.metric("Final candidates", len(final_list or []))
         c5.metric("Collection completed", diagnostics.get("collection_completed_plant_count", 0))
+
+        if candidate_records:
+            d1, d2 = st.columns(2)
+            d1.metric("Directly supported", len(directly_supported))
+            d2.metric("Indirectly supported", len(indirectly_supported))
 
         if shortfall:
             st.error(
@@ -159,7 +169,7 @@ def render_evidence_step(inputs):
 
         st.write("**1. Reference/database seed plants** _(not yet indication-validated)_")
         st.write(", ".join(seed_list) if seed_list else "None")
-        st.write("**2. Literature-supported/discovered plants**")
+        st.write("**2. Literature-discovered candidates**")
         if candidate_records:
             st.write(
                 "_Directly supported (clinical/systematic-review literature):_ "
@@ -171,7 +181,9 @@ def render_evidence_step(inputs):
             )
         else:
             # Backward compatibility: no per-candidate evidence_status
-            # breakdown available for this research_output shape.
+            # breakdown available for this research_output shape. This is
+            # the RAW discovery list -- not asserted here as validated.
+            st.caption("Raw discovery count; per-candidate support level not available for this session.")
             st.write(", ".join(discovered_list) if discovered_list else "None")
         st.write("**3. Ranked fallback candidates available**")
         st.write(", ".join(fallback_list) if fallback_list else "None")

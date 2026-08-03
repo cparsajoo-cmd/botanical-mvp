@@ -262,6 +262,74 @@ def _dosage_compatibility(row: pd.Series, dosage_form: str) -> str:
         return "Compatible"
     return "Unknown"
 
+
+# ---------------------------------------------------------------------------
+# General preparation-applicability distinction (additive to, not a
+# replacement for, _dosage_compatibility() above -- that function's output
+# stays untouched so every existing caller/test keeps working). This is a
+# stricter, controlled four-value vocabulary that never treats a different
+# preparation as automatically applicable to the requested dosage form.
+# ---------------------------------------------------------------------------
+
+PREP_DIRECT_MATCH = "direct_match"
+PREP_COMPATIBLE_BUT_INDIRECT = "compatible_but_indirect"
+PREP_INCOMPATIBLE = "incompatible"
+PREP_NOT_REPORTED = "not_reported"
+
+# Preparation "families". Two entries in the SAME family are treated as a
+# direct match for each other (e.g. "infusion" evidence directly supports an
+# "infusion" request; "tea" and "aqueous extract" evidence do too, since
+# they are the same preparation type in practice). Two entries in
+# DIFFERENT families are never automatically a direct match -- standardized
+# extracts, isolated isoflavones, oils, capsules and foods must not be
+# treated as automatically applicable to an infusion (or vice versa).
+_PREPARATION_FAMILY_TERMS = {
+    "infusion": ("infusion", "tea", "tisane", "aqueous extract", "water extract", "decoction"),
+    "oil": ("essential oil", "volatile oil"),
+    "capsule": ("capsule", "tablet", "softgel"),
+    "extract": (
+        "standardized extract", "standardised extract", "hydroalcoholic extract",
+        "isolated isoflavone", "isoflavone extract", "extract",
+    ),
+    "food": ("food", "functional food", "fortified food"),
+}
+
+
+def _preparation_family(text: str) -> str:
+    normalized = _norm(text)
+    for family, terms in _PREPARATION_FAMILY_TERMS.items():
+        if any(term in normalized for term in terms):
+            return family
+    return normalized  # unrecognized text is its own (unmatched) family
+
+
+def _preparation_applicability_row(row: pd.Series, dosage_form: str) -> str:
+    """Row-level preparation-applicability class for the SELECTED dosage form.
+
+    Returns one of PREP_DIRECT_MATCH, PREP_COMPATIBLE_BUT_INDIRECT,
+    PREP_INCOMPATIBLE, PREP_NOT_REPORTED. Evidence generated under a
+    DIFFERENT preparation family than the one requested (e.g. a
+    standardized-extract or capsule study being considered for an infusion
+    product) is never returned as PREP_DIRECT_MATCH -- at best it is
+    PREP_COMPATIBLE_BUT_INDIRECT, i.e. held for preparation-specific
+    confirmation rather than treated as automatically applicable.
+    """
+    selected = _norm(dosage_form)
+    if not selected:
+        return PREP_NOT_REPORTED
+
+    if _dosage_compatibility(row, dosage_form) == "Mismatch":
+        return PREP_INCOMPATIBLE
+
+    extraction = _norm(row.get("Extraction_Method", ""))
+    if not extraction:
+        return PREP_NOT_REPORTED
+
+    if selected in extraction or _preparation_family(selected) == _preparation_family(extraction):
+        return PREP_DIRECT_MATCH
+
+    return PREP_COMPATIBLE_BUT_INDIRECT
+
 def _row_classification(row: pd.Series, dosage_form: str) -> tuple[str, list[str], dict[str, bool | str]]:
     direct = _has_direct_evidence(row)
     target = _has_supported_target(row)
@@ -1379,19 +1447,34 @@ def build_plant_candidate_shortlist(
             else:
                 plant_status = "Exploratory"
                 reasons_note = "direct indication relevance is present, but the evidence base is not yet sufficient"
-        elif indication_mode == "Mechanistic empirical":
-            # A strong, replicated mechanism can justify R&D prioritisation, but
-            # only when it is candidate-specific and backed by multiple records.
-            if (
-                indication_points >= 18.0
-                and evq_points >= 18.0
-                and empirical_rows >= 2
-                and traceable_count >= 2
-            ):
-                plant_status = "Shortlist"
-            else:
+        elif indication_mode in {"Mechanistic empirical", "Mechanistic inference only"}:
+            # PROBLEM 2 fix: indication relevance is a TRIAGE GATE, not
+            # merely one additive score among several. Both of these modes
+            # are "Low relevance" -- mechanism/target similarity without
+            # direct candidate-specific indication evidence. However much
+            # evidence volume or replication accumulates, that alone must
+            # NEVER promote a Low-relevance candidate into the primary
+            # shortlist (general fix, not menopause-specific). It may still
+            # be surfaced as an exploratory hypothesis, but only when the
+            # mechanistic rationale is explicit -- a real supported
+            # target/mechanism is present, not merely an inferred or
+            # generic one -- and the evidence gap is stated.
+            explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
+            if explicit_mechanistic_rationale:
                 plant_status = "Exploratory"
-                reasons_note = "the indication link is mechanistic and does not yet meet the replicated-evidence gate"
+                reasons_note = (
+                    f"indication relevance is Low ({indication_mode}); mechanism/target "
+                    "similarity alone does not qualify for the primary shortlist -- "
+                    "flagged as an exploratory hypothesis requiring direct, "
+                    "indication-specific validation before further prioritisation"
+                )
+            else:
+                plant_status = "Excluded"
+                reasons_note = (
+                    "indication relevance is Low and no explicit supported "
+                    "target/mechanism is present, so even an exploratory "
+                    "hypothesis is not justified"
+                )
         else:
             plant_status = "Exploratory"
             reasons_note = "only weak, indirect, or inferred indication relevance was found"
@@ -1405,6 +1488,71 @@ def build_plant_candidate_shortlist(
         elif dosage_summary == "Mismatch":
             plant_status = "Excluded"
             reasons_note = "available evidence uses a preparation that does not match the selected dosage form"
+
+        # --- Problem 2 additive diagnostics -------------------------------
+        # Direct- vs mechanistic-support row counts, read from the same
+        # authoritative per-row relevance used above wherever available, so
+        # this reporting layer cannot disagree with the gate that already
+        # decided plant_status.
+        if _group_has_authoritative_relevance(group):
+            row_match_types = group.apply(lambda r: _row_authoritative_relevance(r)[0], axis=1)
+            direct_evidence_count = int(row_match_types.isin(_MATCH_STRONG).sum())
+            mechanistic_evidence_count = int(row_match_types.isin(_MATCH_SUPPORTIVE).sum())
+        else:
+            direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
+            mechanistic_evidence_count = max(
+                0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
+            )
+
+        prep_classes = group.apply(lambda r: _preparation_applicability_row(r, dosage_form), axis=1)
+        preparation_specific_evidence_count = int((prep_classes == PREP_DIRECT_MATCH).sum())
+        if PREP_DIRECT_MATCH in prep_classes.values:
+            preparation_applicability_class = PREP_DIRECT_MATCH
+        elif PREP_COMPATIBLE_BUT_INDIRECT in prep_classes.values:
+            preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+        elif set(prep_classes.values) == {PREP_INCOMPATIBLE}:
+            preparation_applicability_class = PREP_INCOMPATIBLE
+        else:
+            preparation_applicability_class = PREP_NOT_REPORTED
+
+        if plant_hard_stop or safety_reg_points <= 0.0:
+            relevance_gate_result = "failed_safety"
+        elif not indication_requested:
+            relevance_gate_result = "not_applicable"
+        elif indication_points == 0.0:
+            relevance_gate_result = "failed_no_relevance"
+        elif indication_tier in ("High relevance", "Medium relevance"):
+            relevance_gate_result = "passed_direct"
+        elif indication_tier == "Low relevance":
+            relevance_gate_result = (
+                "passed_indirect_exploratory_only" if plant_status != "Excluded"
+                else "failed_no_relevance"
+            )
+        else:
+            relevance_gate_result = "failed_no_relevance"
+
+        _EVIDENCE_ROUTE_BY_MODE = {
+            "Direct human/clinical": "direct_clinical",
+            "Direct human/clinical; result direction unavailable": "direct_clinical",
+            "Direct human mixed": "direct_clinical_mixed",
+            "Direct human null/negative": "direct_clinical_null",
+            "Direct preclinical": "direct_preclinical",
+            "Direct but limited": "direct_limited",
+            "Direct candidate-specific": "direct_candidate_specific",
+            "Mechanistic empirical": "mechanistic_only",
+            "Mechanistic inference only": "mechanistic_only",
+            "Indirect candidate-specific": "indirect_candidate_specific",
+            "Not evaluated": "not_evaluated",
+            "None": "none",
+        }
+        evidence_route = _EVIDENCE_ROUTE_BY_MODE.get(str(indication_mode), "unclassified")
+
+        triage_gate_reasons = (
+            f"Relevance: {indication_tier} (route={evidence_route}); "
+            f"Gate: {relevance_gate_result}; "
+            f"Preparation: {preparation_applicability_class}; "
+            + (reasons_note or "passed all scientific triage gates")
+        )
 
         overall_score = round(
             indication_points + evq_points + cq_points + mech_points
@@ -1523,6 +1671,13 @@ def build_plant_candidate_shortlist(
             "Row_Level_Reasons": _join(group.get("Scientific_Triage_Reasons", []), 10),
             "Selected_Indication": indication,
             "Selected_Dosage_Form": dosage_form,
+            "Relevance_Gate_Result": relevance_gate_result,
+            "Evidence_Route": evidence_route,
+            "Direct_Indication_Evidence_Count": direct_evidence_count,
+            "Mechanistic_Evidence_Count": mechanistic_evidence_count,
+            "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
+            "Preparation_Applicability_Class": preparation_applicability_class,
+            "Triage_Gate_Reasons": triage_gate_reasons,
         })
 
     summary = pd.DataFrame(rows)

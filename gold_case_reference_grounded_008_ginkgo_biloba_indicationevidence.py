@@ -1,5 +1,16 @@
 """gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py
 
+⚠️ SUPERSEDED / NON-CANONICAL (flagged 2026-08-03) ⚠️
+This file was replaced 2026-08-01 by
+gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py
+(domain PREPARATION_SPEC, EMA/HMPC/321097/2012) per
+CASES_008_009_010_012_CORRECTION_REPORT.md. This file is a hard-coded,
+non-canonical draft and is NOT part of the 16-case Reference-Grounded
+Gold Case set documented in PROJECT_STATUS.md / BENCHMARK_PROGRESS.md.
+It was not deleted per repository convention against deleting files —
+see NEXT_ACTIONS.md NA-010 for the pending archival decision.
+Do not treat "Case 008" claims below as canonical.
+
 GOLD CASE 008: Ginkgo biloba L. (leaf) for cognitive impairment indication
 
 Domain: INDICATION_EVIDENCE

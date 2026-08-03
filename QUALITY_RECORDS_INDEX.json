@@ -177,7 +177,8 @@
         "superseded_by": "gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py",
         "reason": "CASES_008_009_010_012_CORRECTION_REPORT.md (2026-08-01): rebuilt from a non-canonical, hard-coded INDICATION_EVIDENCE draft to a canonical EMA-sourced PREPARATION_SPEC case.",
         "associated_test_file": "test_case_008_indicationevidence.py",
-        "risk": "File naming makes it easy to import or reference the wrong Case 008 by mistake; both files currently coexist at repository root with no in-repo warning on the superseded file itself."
+        "risk": "File naming makes it easy to import or reference the wrong Case 008 by mistake.",
+        "remediation_2026_08_03": "A 'SUPERSEDED / NON-CANONICAL' warning was added to the top docstring of both this file and its test, pointing to the canonical replacement. Verified zero functional impact via py_compile and pytest (both test suites still pass). Neither file was moved, archived, or deleted -- final archival disposition is still an open decision, see NEXT_ACTIONS.md NA-010."
       }
     ]
   }

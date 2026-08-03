@@ -87,13 +87,14 @@ Actionable work only. Completed items live in `PROJECT_STATUS.md`, not here. Eve
 - **Acceptance criteria:** New Gold Case(s) built, locked, and reflected in `BENCHMARK_PROGRESS.md`.
 
 ### NA-010 — Remove ambiguity around the superseded Case 008 draft
-- **Priority:** Short-term (newly identified 2026-08-03)
+- **Priority:** Short-term (newly identified 2026-08-03; partially resolved same day)
 - **Description:** `gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py` (non-canonical, domain INDICATION_EVIDENCE) was replaced by `gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py` (canonical, domain PREPARATION_SPEC) per `CASES_008_009_010_012_CORRECTION_REPORT.md`, but the old file and its test `test_case_008_indicationevidence.py` remain at repository root with no in-file warning. This is a live import risk: any future code, test, or curator that references "Case 008" by filename guesswork could pick up the wrong one.
-- **Dependencies:** None.
-- **Estimated effort:** Small. Per repository convention (no deletions), the fix is: (1) add a short module-level docstring warning to the top of the superseded file stating it is non-canonical and pointing to the replacement, (2) add both files to `.github/legacy-files.txt` for the existing archival workflow to pick up, (3) re-run `repo_dependency_audit.py validate` to confirm neither file is reachable from production before archiving.
-- **Current status:** Not started.
-- **Owner:** UNKNOWN.
-- **Acceptance criteria:** Superseded file either clearly marked non-canonical in its own docstring or moved via the existing `archive-legacy.yml` workflow; `QUALITY_RECORDS_INDEX.json`'s `superseded_artifacts` entry updated to reflect whichever remediation was chosen.
+- **What was done (2026-08-03):** Verified with the repository's own `repo_dependency_audit.py` that neither file is production-active (the case file classifies as a legacy candidate; the test file classifies as test-only). Added an explicit "SUPERSEDED / NON-CANONICAL" warning to the top docstring of both files, pointing to the canonical replacement. Confirmed via `python3 -m py_compile` and `pytest test_case_008_indicationevidence.py` (12/12 passed) and `pytest test_case_008_ginkgo_biloba_preparation_spec.py` (5/5 passed) that this was a zero-risk, docstring-only change — no imports, classes, or test outcomes changed. Re-ran `repo_dependency_audit.py summary` before/after to confirm the production/test/legacy counts (90/142/131) were unaffected.
+- **What was deliberately NOT done:** The superseded file was **not** added to `.github/legacy-files.txt`, because that list currently contains zero `test_*.py` entries — it appears to be a convention specifically for archiving dead *production* source modules, not test files, and adding a test file to it would be new, undiscussed behavior for the existing `archive-legacy.yml` workflow. The case file itself *could* be added (it is a legitimate legacy candidate per the audit tool), but was left out pending a decision on the test file, since archiving one without the other leaves the same ambiguity in a different form.
+- **Remaining decision (owner: supervisor):** whether to (a) leave both files as-is with just the docstring warning, (b) add just the case file to `legacy-files.txt` and separately delete or repurpose the orphaned test, or (c) establish a new convention for archiving superseded test files and add both. No action taken on this until decided.
+- **Current status:** Partially resolved — ambiguity risk mitigated via warning docstrings; final archival disposition still open.
+- **Owner:** Hamid / supervisor (per repository convention, deletions and legacy-list changes require explicit sign-off).
+- **Acceptance criteria:** Supervisor decision recorded; if archival is chosen, `archive-legacy.yml` run and `QUALITY_RECORDS_INDEX.json`'s `superseded_artifacts` entry updated to match.
 
 ### NA-008 — Corpus/Retrieval Validation phase (END_TO_END scope)
 - **Priority:** Long-term

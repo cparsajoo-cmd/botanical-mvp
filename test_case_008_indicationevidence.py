@@ -1,5 +1,14 @@
 """test_case_008_indicationevidence.py
 
+⚠️ SUPERSEDED / NON-CANONICAL (flagged 2026-08-03) ⚠️
+This tests the superseded, non-canonical draft of Case 008
+(gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py).
+The canonical Case 008 is gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py
+(domain PREPARATION_SPEC). See NEXT_ACTIONS.md NA-010 for the pending
+archival decision. This test still runs under pytest and is not
+currently broken, but its subject file is not part of the canonical
+16-case Gold Case set.
+
 Test suite for Gold Case 008: Ginkgo biloba L. (INDICATION_EVIDENCE)
 
 Tests validate:

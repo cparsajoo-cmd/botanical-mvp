@@ -4,7 +4,10 @@ Single authoritative function: build_evidence_embedding_text(). Both the
 backfill script and any future re-embedding path must call this and only
 this, so the text an embedding was computed from is always reproducible
 from the record alone -- which is what makes content_hash-based
-re-embedding-only-on-change possible at all.
+re-embedding-only-on-change possible at all. This includes its
+citation/identity-only fallback tier (used only when every primary field
+is empty) -- that fallback lives here too, not in a second function
+elsewhere, so there is still only one place text is ever assembled from.
 
 This module has NO network dependency and NO disease-specific vocabulary.
 It only assembles already-extracted field values into a labeled string.
@@ -82,6 +85,19 @@ def build_evidence_embedding_text(record: Mapping[str, object]) -> str:
     (patent landscape, ChEBI, DailyMed label proxy) returns an empty
     string -- callers must skip embedding such records entirely rather than
     embed a placeholder, so they never contribute a false efficacy match.
+
+    If every field above is empty (e.g. a record whose plant_id resolves
+    but whose related ``plants`` row wasn't found/joined, and which
+    carries no indication/outcome/study text of any kind), this function
+    falls back to a general, non-disease-specific reference/citation text
+    built ONLY from already-persisted identity fields: ``fallback_plant_id``,
+    ``fallback_source_title``, ``fallback_source_type``, ``fallback_pmid``,
+    ``fallback_doi``, ``fallback_nct_id``, ``fallback_source_url``. Every
+    part of that fallback is a direct, unmodified copy of a persisted
+    field -- nothing is inferred, summarized, or invented, and no
+    disease-specific vocabulary is introduced. A caller that doesn't
+    supply any ``fallback_*`` key gets exactly the previous behavior (an
+    empty string when the primary fields are all empty).
     """
     if is_proxy_or_excluded_record(
         record.get("source_type"), record.get("evidence_type")
@@ -97,7 +113,26 @@ def build_evidence_embedding_text(record: Mapping[str, object]) -> str:
         _labeled("Preparation", record.get("preparation")),
         _labeled("Source text", record.get("tier3_text")),
     ]
-    return "\n".join(p for p in parts if p)
+    text = "\n".join(p for p in parts if p)
+    if text:
+        return text
+
+    # A bare plant_id is not, on its own, meaningful embedding content --
+    # it must only ever supplement at least one genuine identity/citation
+    # field below, never stand alone as "the" content for a record.
+    identity_parts = [
+        _labeled("Source", record.get("fallback_source_title")),
+        _labeled("Source type", record.get("fallback_source_type")),
+        _labeled("PMID", record.get("fallback_pmid")),
+        _labeled("DOI", record.get("fallback_doi")),
+        _labeled("NCT ID", record.get("fallback_nct_id")),
+        _labeled("Source URL", record.get("fallback_source_url")),
+    ]
+    if not any(identity_parts):
+        return ""
+
+    fallback_parts = [_labeled("Plant ID", record.get("fallback_plant_id"))] + identity_parts
+    return "\n".join(p for p in fallback_parts if p)
 
 
 def compute_content_hash(embedding_text: str) -> str:

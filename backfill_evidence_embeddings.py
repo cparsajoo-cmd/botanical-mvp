@@ -15,11 +15,20 @@ skipped, so re-running after a partial failure only (re-)processes what
 did not complete last time.
 
 Prints exact statistics: scanned, skipped, embedded, updated, failed.
+
+Also prints a row-count diagnostics line (see LoadDiagnostics below) that
+must reconcile exactly for a full, unfiltered run: it exists to answer,
+for one concrete run, precisely which stage between the Supabase loader
+and the final embeddable set drops rows and why -- see the 2026-08
+investigation into why only 11195 of 21806 loaded evidence_records were
+ever scanned (root cause: most were skipped for having no text any of the
+existing tiers could produce -- see the fallback-text mechanism below).
 """
 from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 
 from embedding_service import (
     EMBEDDING_MODEL,
@@ -30,6 +39,65 @@ from embedding_service import (
     upsert_evidence_embeddings,
 )
 from evidence_embedding_text import build_evidence_embedding_text, compute_content_hash
+
+
+@dataclass
+class LoadDiagnostics:
+    """Row-count accounting across every stage between the Supabase loader
+    and the final set of records actually queued for embedding.
+
+    For a full run (no --plant / --evidence-record-id / --limit narrowing
+    the result), the following must hold exactly -- ``reconciles()``
+    checks it:
+
+        iterator_input_rows =
+            skipped_missing_record_id
+            + skipped_duplicate_record_id
+            + skipped_missing_plant_id
+            + skipped_empty_embedding_text
+            + skipped_by_user_filter   (0 for an unfiltered run)
+            + yielded_embeddable_records
+
+    If it doesn't hold, some row was dropped somewhere without being
+    counted -- that is itself a bug to find, not something to paper over.
+    """
+
+    raw_loader_rows: int = 0
+    engine_evidence_records_rows: int = 0
+    iterator_input_rows: int = 0
+    skipped_missing_record_id: int = 0
+    skipped_duplicate_record_id: int = 0
+    skipped_missing_plant_id: int = 0
+    skipped_empty_embedding_text: int = 0
+    skipped_by_user_filter: int = 0
+    yielded_embeddable_records: int = 0
+
+    def accounted_for(self) -> int:
+        return (
+            self.skipped_missing_record_id
+            + self.skipped_duplicate_record_id
+            + self.skipped_missing_plant_id
+            + self.skipped_empty_embedding_text
+            + self.skipped_by_user_filter
+            + self.yielded_embeddable_records
+        )
+
+    def reconciles(self) -> bool:
+        return self.iterator_input_rows == self.accounted_for()
+
+    def as_log_line(self) -> str:
+        return (
+            f"raw_loader_rows={self.raw_loader_rows} "
+            f"engine_evidence_records_rows={self.engine_evidence_records_rows} "
+            f"iterator_input_rows={self.iterator_input_rows} "
+            f"skipped_missing_record_id={self.skipped_missing_record_id} "
+            f"skipped_duplicate_record_id={self.skipped_duplicate_record_id} "
+            f"skipped_missing_plant_id={self.skipped_missing_plant_id} "
+            f"skipped_empty_embedding_text={self.skipped_empty_embedding_text} "
+            f"skipped_by_user_filter={self.skipped_by_user_filter} "
+            f"yielded_embeddable_records={self.yielded_embeddable_records} "
+            f"reconciles={self.reconciles()}"
+        )
 
 
 def _canonical_id_key(value) -> str:
@@ -71,26 +139,48 @@ def _canonical_id_key(value) -> str:
     return text
 
 
-def _build_engine():
+def _build_engine(diagnostics: LoadDiagnostics | None = None):
     """Real production engine, backed by Supabase. Imported lazily so this
     module can be imported (e.g. by tests) without requiring Supabase
-    credentials to be configured."""
+    credentials to be configured.
+
+    When ``diagnostics`` is supplied, records ``raw_loader_rows`` (the row
+    count load_evidence_records_df() itself returned) and
+    ``engine_evidence_records_rows`` (the row count actually held on
+    ``engine.evidence_records_df`` right after construction) -- this is
+    what proves or disproves whether BotanicalRDCandidateEngine.__init__
+    mutates, filters, deduplicates, or replaces the supplied DataFrame:
+    ``_load_supabase_df`` (see botanical_rd_candidate_engine.py) treats an
+    explicitly-passed DataFrame as authoritative and only ever
+    ``.copy()``s it via ``_to_dataframe`` -- verified by inspection, and
+    the two counters below make that verifiable at runtime for a real
+    Supabase-backed run too, not just by reading the source.
+    """
     from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
     import supabase_data
 
-    return BotanicalRDCandidateEngine(
+    # strict=True: a backfill run must fail loudly (raising
+    # IncompletePaginationError, which surfaces as a failed GitHub Actions
+    # run) rather than silently proceeding to embed a partial
+    # evidence_records dataset if pagination can't complete.
+    evidence_records_df = supabase_data.load_evidence_records_df(strict=True)
+    if diagnostics is not None:
+        diagnostics.raw_loader_rows = len(evidence_records_df)
+
+    engine = BotanicalRDCandidateEngine(
         evidence_df=supabase_data.load_scientific_evidence_df(),
         candidate_data=[],
         use_live_search=False,
         plant_compounds_df=supabase_data.load_plant_compounds_df(),
         compound_profiles_df=supabase_data.load_compound_profiles_df(),
         scientific_evidence_df=supabase_data.load_scientific_evidence_df(),
-        # strict=True: a backfill run must fail loudly (raising
-        # IncompletePaginationError, which surfaces as a failed GitHub
-        # Actions run) rather than silently proceeding to embed a partial
-        # evidence_records dataset if pagination can't complete.
-        evidence_records_df=supabase_data.load_evidence_records_df(strict=True),
+        evidence_records_df=evidence_records_df,
     )
+
+    if diagnostics is not None:
+        diagnostics.engine_evidence_records_rows = len(engine.evidence_records_df)
+
+    return engine
 
 
 def _clean_text(value) -> str:
@@ -124,7 +214,50 @@ def _first(row, *names):
     return None
 
 
-def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filter: set):
+# Columns inspected to explain WHY a record's primary embedding text (and
+# fallback reference text) both came out empty -- printed once per such
+# record so a real run's log says exactly which persisted fields were
+# empty, instead of just "skipped".
+_EMPTY_TEXT_DIAGNOSTIC_COLUMNS = [
+    ("Scientific_Name", "scientific_name"),
+    ("Target_Indication", "target_indication"),
+    ("Extracted_Indication", "extracted_indication"),
+    ("Primary_Outcome", "primary_outcome"),
+    ("Result_Direction", "result_direction"),
+    ("Mechanism", "mechanism"),
+    ("Study_Type", "study_type"),
+    ("Evidence_Level", "evidence_level"),
+    ("Source_Title", "source_title"),
+    ("Abstract", "abstract"),
+    ("Notes", "notes"),
+    ("Source_Raw_Text", "source_raw_text"),
+    ("PMID", "pmid"),
+    ("DOI", "doi"),
+    ("NCT_ID", "nct_id"),
+]
+
+
+def _log_empty_embedding_text_columns(record_id: str, row) -> None:
+    empty_cols = [
+        label for label, alt in _EMPTY_TEXT_DIAGNOSTIC_COLUMNS
+        if not _clean_text(_first(row, label, alt))
+    ]
+    present_cols = [
+        label for label, alt in _EMPTY_TEXT_DIAGNOSTIC_COLUMNS
+        if _clean_text(_first(row, label, alt))
+    ]
+    print(
+        f"[backfill_evidence_embeddings] evidence_record_id={record_id!r}: "
+        "empty embedding text even after the reference-text fallback -- "
+        f"empty columns: {', '.join(empty_cols) if empty_cols else '(none)'}; "
+        f"non-empty columns: {', '.join(present_cols) if present_cols else '(none)'}"
+    )
+
+
+def _iter_embeddable_records(
+    engine, *, plant_filter: str | None, record_id_filter: set,
+    diagnostics: LoadDiagnostics | None = None,
+):
     """Yield canonical persisted ``evidence_records`` rows for embedding.
 
     Backfill storage must be keyed only by the real ``evidence_records.id``.
@@ -139,10 +272,16 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
     ``evidence_record_id`` and ``plant_id`` are both yielded as their
     canonical STRING representation (see ``_canonical_id_key``) and are
     never converted to ``int`` in this module.
+
+    When ``diagnostics`` is supplied, every row is accounted for by
+    exactly one counter on it -- see ``LoadDiagnostics.reconciles()``.
     """
     evidence_df = getattr(engine, "evidence_records_df", None)
     if evidence_df is None or getattr(evidence_df, "empty", True):
         return
+
+    if diagnostics is not None:
+        diagnostics.iterator_input_rows = len(evidence_df)
 
     canonical_filter = {
         key for key in (_canonical_id_key(v) for v in (record_id_filter or set()))
@@ -156,20 +295,28 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
 
         if not record_id:
             print("[backfill_evidence_embeddings] Skipping row: no canonical evidence_record_id.")
+            if diagnostics is not None:
+                diagnostics.skipped_missing_record_id += 1
             continue
         if record_id in seen_record_ids:
             # Defensive against duplicated REST/join rows. One persisted PK
             # must produce exactly one embedding row per model/version.
+            if diagnostics is not None:
+                diagnostics.skipped_duplicate_record_id += 1
             continue
         seen_record_ids.add(record_id)
 
         if canonical_filter and record_id not in canonical_filter:
+            if diagnostics is not None:
+                diagnostics.skipped_by_user_filter += 1
             continue
         if not plant_id:
             print(
                 "[backfill_evidence_embeddings] Skipping evidence record "
                 f"{record_id!r}: no canonical plant_id could be resolved."
             )
+            if diagnostics is not None:
+                diagnostics.skipped_missing_plant_id += 1
             continue
 
         plant_name = _clean_text(_first(
@@ -177,6 +324,8 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
             "Botanical", "botanical", "Common_Name", "common_name",
         ))
         if plant_filter and plant_filter.strip().lower() not in plant_name.lower():
+            if diagnostics is not None:
+                diagnostics.skipped_by_user_filter += 1
             continue
 
         tier1 = " ".join(filter(None, [
@@ -213,10 +362,31 @@ def _iter_embeddable_records(engine, *, plant_filter: str | None, record_id_filt
             )),
             "source_type": _clean_text(_first(row, "Source_Type", "source_type")),
             "evidence_type": _clean_text(_first(row, "Evidence_Type", "evidence_type")),
+            # General, non-disease-specific fallback fields -- used by
+            # build_evidence_embedding_text() ONLY when every field above
+            # is empty (e.g. a record whose plant_id resolves but whose
+            # `plants` join found no scientific_name, and which carries no
+            # indication/outcome/study text of any kind). Every value here
+            # is a direct, unmodified copy of an already-persisted field;
+            # nothing is inferred or invented. See evidence_embedding_text.py
+            # for exactly when this tier is used.
+            "fallback_plant_id": plant_id,
+            "fallback_source_title": _clean_text(_first(row, "Source_Title", "source_title", "Title", "title")),
+            "fallback_source_type": _clean_text(_first(row, "Source_Type", "source_type")),
+            "fallback_pmid": _clean_text(_first(row, "PMID", "pmid")),
+            "fallback_doi": _clean_text(_first(row, "DOI", "doi")),
+            "fallback_nct_id": _clean_text(_first(row, "NCT_ID", "nct_id")),
+            "fallback_source_url": _clean_text(_first(row, "Source_URL", "source_url")),
         }
         text = build_evidence_embedding_text(embedding_record)
         if not text:
+            if diagnostics is not None:
+                diagnostics.skipped_empty_embedding_text += 1
+            _log_empty_embedding_text_columns(record_id, row)
             continue
+
+        if diagnostics is not None:
+            diagnostics.yielded_embeddable_records += 1
         yield record_id, plant_id, plant_name, text
 
 
@@ -262,13 +432,27 @@ def run_backfill(
     engine=None,
 ) -> BackfillStats:
     stats = BackfillStats()
-    engine = engine or _build_engine()
+    diagnostics = LoadDiagnostics()
+
+    if engine is None:
+        engine = _build_engine(diagnostics=diagnostics)
+    else:
+        # Caller supplied the engine directly (e.g. tests): _build_engine()
+        # never ran, so raw_loader_rows stays 0 (not meaningful here) --
+        # engine_evidence_records_rows is still recorded from what was
+        # supplied, and the iterator-level counters below still populate
+        # normally.
+        supplied_df = getattr(engine, "evidence_records_df", None)
+        diagnostics.engine_evidence_records_rows = 0 if supplied_df is None else len(supplied_df)
+
+    stats.diagnostics = diagnostics
     record_id_filter = record_id_filter or set()
 
     candidates: list[tuple[str, str, str, str, str]] = []  # (id, plant_id, plant, text, hash)
     seen_candidate_ids: set[str] = set()
     for record_id, plant_id, plant_name, text in _iter_embeddable_records(
         engine, plant_filter=plant_filter, record_id_filter=record_id_filter,
+        diagnostics=diagnostics,
     ):
         if record_id in seen_candidate_ids:
             continue
@@ -277,6 +461,11 @@ def run_backfill(
         content_hash = compute_content_hash(text)
         candidates.append((record_id, plant_id, plant_name, text, content_hash))
         if limit and len(candidates) >= limit:
+            # NOTE: cuts the generator off early, so diagnostics for this
+            # run will NOT reconcile (iterator_input_rows reflects every
+            # row available, not just the ones actually visited before the
+            # break) -- reconciliation is only guaranteed for a full,
+            # unlimited run.
             break
 
     if not candidates:
@@ -359,6 +548,12 @@ def main(argv=None) -> int:
         batch_size=args.batch_size,
     )
 
+    diagnostics = getattr(stats, "diagnostics", None)
+    if diagnostics is not None:
+        print(f"[backfill_evidence_embeddings] diagnostics: {diagnostics.as_log_line()}")
+
+    # NOTE: the workflow greps for a line matching ^scanned= -- keep this
+    # exact format/position (start of line) unchanged.
     print(f"scanned={stats.scanned} skipped={stats.skipped} embedded={stats.embedded} "
           f"updated={stats.updated} failed={stats.failed}")
     if stats.failures:

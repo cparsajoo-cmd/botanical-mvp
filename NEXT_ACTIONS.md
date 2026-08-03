@@ -60,13 +60,30 @@ Actionable work only. Completed items live in `PROJECT_STATUS.md`, not here. Eve
 - **Acceptance criteria:** `VALIDATION_PROTOCOL.md` §14.2 updated with an adopted (not just implemented) policy, plus a version bump and Change History entry.
 
 ### NA-006 — TD-001 batch technical-debt review
-- **Priority:** Immediate (upgraded 2026-08-03 — threshold reached, see below)
+- **Priority:** Completed 2026-08-03
 - **Description:** Reassess TD-001 (Case 004's EMA-sourced preparation/population fields) once ~10–15 Gold Cases exist.
-- **Dependencies:** None — **16 Gold Cases now exist (001, 003–017), which is at/above the stated ~10–15 threshold.** This item is no longer blocked and should move to the top of the queue.
-- **Estimated effort:** UNKNOWN.
-- **Current status:** **Due now.** Previously marked "not due yet" when the repository's own count (6) was stale; reconciled 2026-08-03 against the actual 16 case files on disk (see `BENCHMARK_PROGRESS.md` §2 and `PROJECT_STATUS.md` §11).
-- **Owner:** UNKNOWN.
-- **Acceptance criteria:** `TECHNICAL_DEBT.md` reviewed as a batch (per its own stated review policy), TD-001 either resolved, re-deferred with updated reasoning, or formally closed.
+- **What was found:** The remediation TD-001 speculated about (a named field-provenance flag) was **already built and applied** to all 5 affected cases (001, 003, 004, 005, 006) via `field_provenance.py`'s `FieldProvenance`/`case_provenance` mechanism — this had simply never been reflected back into `TECHNICAL_DEBT.md`. Confirmed the gap does not recur in any of Cases 007–017. Full detail in `TECHNICAL_DEBT.md`'s TD-001 entry, "BATCH REASSESSMENT — 2026-08-03" section.
+- **Current status:** Done. TD-001 downgraded from "unaddressed" to "mechanism-remediated, disclosed, unverified." Two residual items spun out: TD-002 (new technical-debt entry, see `TECHNICAL_DEBT.md`) and NA-011 (below).
+- **Owner:** N/A — review completed.
+- **Acceptance criteria:** Met — `TECHNICAL_DEBT.md` reviewed as a batch and updated with findings.
+
+### NA-012 — Protocol decision: must preparation/population come from the governing source itself?
+- **Priority:** Medium-term (spun out of NA-006/TD-001's 2026-08-03 batch reassessment)
+- **Description:** `TECHNICAL_DEBT.md`'s TD-001 disclosed (via `FieldProvenance`, now applied to all of Cases 001/003/004/005/006) that `validation_unit.preparation`/`.population` on several cases is sourced from a document other than the governing claim's own source (typically: claim from a systematic review, posology from an EMA monograph). The `FieldProvenance` mechanism makes this honest and inspectable but does not settle whether it should be *allowed* as standing protocol, versus requiring preparation/population to be derived from the governing source specifically (even when that source, like a systematic review, has no single standardized posology the way a monograph does).
+- **Dependencies:** None — this is a protocol-level judgment call, not blocked on more cases (the 5 relevant cases already exist and are fully disclosed).
+- **Estimated effort:** UNKNOWN — protocol-level decision, not a coding task.
+- **Current status:** Open.
+- **Owner:** Hamid (protocol-level decisions are his to make per the repository's stated review structure — same standing as NA-005's `CONDITIONAL` mapping decision).
+- **Acceptance criteria:** `VALIDATION_PROTOCOL.md` updated with an adopted policy on this question, plus a version bump and Change History entry; `TECHNICAL_DEBT.md`'s TD-001 entry marked fully closed once the policy question is settled (it is currently only mechanism-remediated, not policy-resolved).
+
+### NA-011 — Curator verification pass over the 5 UNVERIFIED FieldProvenance disclosures
+- **Priority:** Medium-term (newly identified 2026-08-03, via NA-006/TD-002)
+- **Description:** Cases 001, 003, 004, 005, and 006 each carry a `FieldProvenance` entry disclosing that `validation_unit.preparation`/`.population` comes from a document other than the governing claim's own source. All 5 are `verification_status=UNVERIFIED`, `curator=None`. This is a review task (a second qualified reviewer reading the disclosure and either confirming it or flagging a problem), not a coding task.
+- **Dependencies:** A reviewer with the `ReviewerRole` (see `user_roles.py`) appropriate to sign off — not specified further in-repo.
+- **Estimated effort:** Small per case (5 cases total) — review-only, no code change expected unless a reviewer finds an actual problem with one of the 5 disclosed source splits.
+- **Current status:** Not started.
+- **Owner:** UNKNOWN — whoever holds curator/reviewer responsibility per `user_roles.py`.
+- **Acceptance criteria:** Each of the 5 `FieldProvenance` entries updated to `curator=<a ReviewerRole>` and `verification_status` moved to `CURATOR_VERIFIED` or `SECOND_REVIEWER_VERIFIED`, or a specific problem is raised and handled as its own item if a reviewer disagrees with any of the 5 disclosed sourcing choices.
 
 ---
 

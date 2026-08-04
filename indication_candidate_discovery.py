@@ -804,12 +804,6 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         records = _records_for_plant(engine, plant, evidence_index)
         _section_add("records_for_plant", time.perf_counter() - _t)
         _evidence_records_examined += len(records)
-        # Safety and interaction evidence is plant-wide, not indication-bound.
-        # Build it once from every plant-specific record, while efficacy
-        # relevance below remains restricted to the selected indication.
-        _t = time.perf_counter()
-        plant_safety = _aggregate_plant_safety(records, plant)
-        _section_add("safety_aggregate", time.perf_counter() - _t)
 
         for record in records:
             if "relevance" not in record:
@@ -846,6 +840,27 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 )
                 _print_loop_profile(f"{_plants_processed}/{_total_candidate_plants}")
             continue
+
+        # Phase 2E (performance correction — item 1 only): moved from
+        # before the relevance gate above to here, immediately after it.
+        # Safety/interaction evidence is still plant-wide, not
+        # indication-bound, and is still computed exactly once per
+        # RETAINED plant (never once per evidence record, never
+        # recomputed inside the evidence_units loop below) — only the
+        # ORDER changed. Per the Phase 2D performance audit,
+        # _aggregate_plant_safety() was the single most expensive
+        # section (41.13s / 27.8% of total loop time in the real
+        # 2,119-plant log) and was running for every candidate plant
+        # BEFORE the relevance gate, even though its result is only
+        # ever read below, for plants that pass the gate — i.e. it ran
+        # in full for the ~91% of plants (1,937 of 2,119 in that log)
+        # that get skipped by the `continue` above and never reach
+        # this line. No relevance rule, threshold, match type, or
+        # candidate inclusion/exclusion changed — this is strictly a
+        # reordering of two already-existing, unmodified blocks.
+        _t = time.perf_counter()
+        plant_safety = _aggregate_plant_safety(records, plant)
+        _section_add("safety_aggregate", time.perf_counter() - _t)
 
         # Preserve record-level granularity.  The previous implementation
         # collapsed every source for a plant into one synthetic row, assigned

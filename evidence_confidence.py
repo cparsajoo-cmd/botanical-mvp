@@ -196,6 +196,18 @@ PROTOCOL_STUDY_DESIGN_CONFIDENCE_CAP = 10.0
 
 _DIRECTION_NOT_POSITIVE_VALUES = {"null", "negative", "unclear"}
 
+# Phase 1 follow-up — direct use of the already-interpreted
+# Evidence_Quality value. These factors are intentionally small and only
+# affect Evidence_Confidence; they never alter R&D_Opportunity_Score,
+# evidence contribution, or Decision_Class. Unknown/unrecognised values
+# preserve backward-compatible behaviour.
+QUALITY_CONFIDENCE_MULTIPLIER = {
+    "high": 1.0,
+    "moderate": 0.95,
+    "low": 0.85,
+    "unknown": 1.0,
+}
+
 
 # =====================================================================
 # Task 10.1 — methodological-quality modifiers. See the module
@@ -313,6 +325,7 @@ def compute_evidence_confidence(
     evidence_applicability: Optional[str] = None,
     is_completed_study: Optional[bool] = None,
     study_design: Optional[str] = None,
+    evidence_quality: Optional[str] = None,
 ) -> float:
     """Returns a 0-100 confidence score. See module docstring for the
     documented weight tables this is built from.
@@ -328,7 +341,8 @@ def compute_evidence_confidence(
     its pre-Task-10.1 behavior.
 
     evidence_direction / evidence_applicability / is_completed_study /
-    study_design (Phase 1 follow-up, all optional, default None — no
+    study_design / evidence_quality (Phase 1 follow-up, all optional,
+    default None — no
     change to any existing caller's behavior unless supplied): the
     matching fields from evidence_interpretation.interpret_evidence().
     When supplied, these stop Evidence_Confidence from being inflated
@@ -361,6 +375,11 @@ def compute_evidence_confidence(
         base = min(base, NOT_COMPLETED_STUDY_CONFIDENCE_CAP)
     if study_design == "clinical_trial_protocol":
         base = min(base, PROTOCOL_STUDY_DESIGN_CONFIDENCE_CAP)
+
+    if evidence_quality is not None:
+        base *= QUALITY_CONFIDENCE_MULTIPLIER.get(
+            str(evidence_quality).strip().lower(), 1.0
+        )
 
     return round(min(100.0, max(0.0, base)), 1)
 

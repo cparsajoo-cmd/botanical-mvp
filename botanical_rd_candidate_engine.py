@@ -1364,6 +1364,7 @@ class BotanicalRDCandidateEngine:
                         evidence_applicability=evidence_interpretation_result.evidence_applicability,
                         is_completed_study=evidence_interpretation_result.is_completed_study,
                         study_design=evidence_interpretation_result.study_design,
+                        evidence_quality=evidence_interpretation_result.evidence_quality,
                     )
                     confidence_note = confidence_adjusted_framing_note(
                         rd_opportunity_score=score,

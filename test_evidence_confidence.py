@@ -470,3 +470,73 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"\nALL TESTS PASSED ({len(passed)}/{len(passed)}).\n")
         sys.exit(0)
+
+
+# ---------------------------------------------------------------------
+# Phase 1 follow-up — direct Evidence_Quality modifier
+# ---------------------------------------------------------------------
+def test_evidence_quality_high_keeps_confidence_unchanged():
+    baseline = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False
+    )
+    with_high = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_quality="high",
+    )
+    assert with_high == baseline
+
+
+def test_evidence_quality_moderate_slightly_reduces_confidence():
+    baseline = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False
+    )
+    with_moderate = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_quality="moderate",
+    )
+    assert with_moderate == round(baseline * 0.95, 1)
+    assert with_moderate < baseline
+
+
+def test_evidence_quality_low_reduces_confidence():
+    baseline = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False
+    )
+    with_low = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_quality="low",
+    )
+    assert with_low == round(baseline * 0.85, 1)
+    assert with_low < baseline
+
+
+def test_evidence_quality_unknown_preserves_backward_compatibility():
+    baseline = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False
+    )
+    with_unknown = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_quality="unknown",
+    )
+    assert with_unknown == baseline
+
+
+def test_omitting_evidence_quality_preserves_previous_behaviour_exactly():
+    omitted = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_text="A double-blind, placebo-controlled trial with n = 250 patients.",
+        evidence_direction="positive",
+        evidence_applicability="direct_reported",
+        is_completed_study=True,
+        study_design="randomized_controlled_trial",
+    )
+    explicit_none = compute_evidence_confidence(
+        "Clinical trial", "Clinical / human evidence", False,
+        evidence_text="A double-blind, placebo-controlled trial with n = 250 patients.",
+        evidence_direction="positive",
+        evidence_applicability="direct_reported",
+        is_completed_study=True,
+        study_design="randomized_controlled_trial",
+        evidence_quality=None,
+    )
+    assert omitted == explicit_none == 100.0

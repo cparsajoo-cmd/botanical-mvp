@@ -9,6 +9,7 @@ import pandas as pd
 
 from concentration_normalizer import parse_concentration, format_concentration_info
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
+from scientific_phrase_matcher import has_phrase_match
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from grade_certainty_classifier import classify_grade_certainty
@@ -4547,26 +4548,18 @@ class BotanicalRDCandidateEngine:
         # word window doesn't count as positive evidence — "no clinical
         # trials have been conducted" and "insufficient human studies"
         # should not be scored the same as an actual reported trial.
-        negation_cues = (
-            "no ", "not ", "lack of ", "lacks ", "insufficient ",
-            "absence of ", "without ", "none found", "no evidence of ",
-            "no direct ", "unproven", "unconfirmed", "no reported ",
-        )
+        # Negation handling itself now lives in scientific_phrase_matcher
+        # (NEGATION_CUES there), used by _has_term below.
 
         def _has_term(terms):
-            for term in terms:
-                # Word-boundary match, not a bare substring search — a
-                # short term like "ema" otherwise matches inside
-                # unrelated words ("hematology", "remain"). Same bug
-                # class as the anti-X collision already fixed for
-                # DB_ACTIVITY_SAFETY_TERMS elsewhere in this file.
-                pattern = re.compile(r"\b" + re.escape(term) + r"\b")
-                for match in pattern.finditer(text):
-                    window_start = max(0, match.start() - 40)
-                    preceding = text[window_start:match.start()]
-                    if not any(cue in preceding[-25:] for cue in negation_cues):
-                        return True
-            return False
+            # Delegates to the shared scientific_phrase_matcher utility
+            # instead of a local \bTERM\b-only regex. Fix for the proven
+            # plural-form bug (\bclinical trial\b did not match "clinical
+            # trials") — see scientific_phrase_matcher.py. Word-boundary
+            # and negation-aware behavior are otherwise unchanged from
+            # before (negation_aware=True is the shared utility's
+            # default).
+            return has_phrase_match(text, terms)
 
         if _has_term(clinical_terms):
             return "Clinical / human evidence"

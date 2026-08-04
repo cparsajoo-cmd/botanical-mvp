@@ -17,6 +17,7 @@ from typing import Iterable
 import pandas as pd
 
 from indication_semantics import resolve_indication_semantics
+from scientific_phrase_matcher import phrase_present
 from general_indication_relevance import (
     ENGINE_VERSION as _RELEVANCE_ENGINE_VERSION,
     MATCH_EXACT_INDICATION,
@@ -388,13 +389,26 @@ def _evidence_points(group: pd.DataFrame) -> float:
         if col in group.columns
         for v in group[col].dropna().tolist()
     )
-    if "meta-analysis" in text or "systematic review" in text:
+    # Word-boundary + simple-plural aware matching via the shared
+    # scientific_phrase_matcher utility, replacing bare substring checks.
+    # Fix for the proven false-positive bug: "clinical" as a plain
+    # substring matched inside "preclinical" (itself a value
+    # _evidence_level() produces), incorrectly triggering the 26-point
+    # clinical/human branch for preclinical-only evidence. See
+    # scientific_phrase_matcher.py. negation_aware=False preserves this
+    # function's original behavior of not doing any negation handling —
+    # only the substring/word-boundary mechanism changes here.
+    if phrase_present(text, "meta-analysis") or phrase_present(text, "systematic review"):
         return 30.0
-    if "random" in text or "clinical" in text or "human" in text:
+    if (
+        phrase_present(text, "random")
+        or phrase_present(text, "clinical")
+        or phrase_present(text, "human")
+    ):
         return 26.0
-    if "animal" in text or "in vivo" in text:
+    if phrase_present(text, "animal") or phrase_present(text, "in vivo"):
         return 18.0
-    if "in vitro" in text or "cell" in text:
+    if phrase_present(text, "in vitro") or phrase_present(text, "cell"):
         return 12.0
     if group["Direct_Evidence_Present"].any():
         return 10.0

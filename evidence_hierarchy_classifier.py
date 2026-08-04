@@ -34,8 +34,9 @@ wants the enum can do EvidenceHierarchyLevel(classify_evidence_hierarchy(text)))
 
 from __future__ import annotations
 
-import re
 from typing import Optional
+
+from scientific_phrase_matcher import has_phrase_match
 
 # Ordered strongest to weakest. Checked in this order so that if a text
 # mentions markers for more than one tier (e.g. a discussion section
@@ -74,29 +75,20 @@ _TIERS = [
     ]),
 ]
 
-# Same negation-cue list used by the engine's existing safety-flag
-# extraction (_extract_flags_negation_aware) — "no clinical trials have
-# been conducted" must not classify as Clinical trial evidence.
-_NEGATION_CUES = (
-    "no ", "not ", "lack of ", "lacks ", "insufficient ",
-    "absence of ", "without ", "none found", "no evidence of ",
-    "no direct ", "unproven", "unconfirmed", "no reported ",
-)
+# Negation handling ("no clinical trials have been conducted" must not
+# classify as Clinical trial evidence) now lives in the shared
+# scientific_phrase_matcher module (NEGATION_CUES there), used by
+# _has_term below.
 
 
 def _has_term(text: str, terms: list[str]) -> bool:
-    for term in terms:
-        # Word-boundary match, not a bare substring search — short terms
-        # like "ema" or "rct" otherwise match inside unrelated words
-        # (e.g. "ema" inside "remain"). Same class of bug as the
-        # engine's existing anti-X collision fix (DB_ACTIVITY_SAFETY_TERMS).
-        pattern = re.compile(r"\b" + re.escape(term) + r"\b")
-        for match in pattern.finditer(text):
-            window_start = max(0, match.start() - 40)
-            preceding = text[window_start:match.start()]
-            if not any(cue in preceding[-25:] for cue in _NEGATION_CUES):
-                return True
-    return False
+    # Delegates to the shared scientific_phrase_matcher utility instead
+    # of a local \bTERM\b-only regex. Fix for the proven plural-form bug
+    # (\bclinical trial\b did not match "clinical trials") — see
+    # scientific_phrase_matcher.py. Word-boundary behavior (short terms
+    # like "ema" or "rct" not matching inside unrelated words) and
+    # negation-aware behavior are otherwise unchanged from before.
+    return has_phrase_match(text, terms)
 
 
 def classify_evidence_hierarchy(text: Optional[str]) -> Optional[str]:

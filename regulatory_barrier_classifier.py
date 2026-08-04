@@ -27,9 +27,10 @@ folded into Decision_Class.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+from scientific_phrase_matcher import find_phrase_matches
 
 _BARRIER_TYPES = [
     ("Prohibited / banned", [
@@ -55,14 +56,10 @@ _BARRIER_TYPES = [
     ]),
 ]
 
-# Same negation-cue list already used throughout this codebase
-# (evidence_hierarchy_classifier.py, negative_evidence_classifier.py) —
-# "not banned", "no import restriction" must not be flagged as the
-# barrier they mention.
-_NEGATION_CUES = (
-    "no ", "not ", "lack of ", "lacks ", "without ", "none found",
-    "no evidence of ", "unproven", "unconfirmed", "no longer",
-)
+# Negation handling ("not banned", "no import restriction" must not be
+# flagged as the barrier they mention) now lives in the shared
+# scientific_phrase_matcher module (NEGATION_CUES there), used by
+# _matches below.
 
 
 @dataclass
@@ -73,16 +70,14 @@ class RegulatoryBarrierResult:
 
 
 def _matches(text: str, terms: list) -> list:
-    matched = []
-    for term in terms:
-        pattern = re.compile(r"\b" + re.escape(term) + r"\b")
-        for match in pattern.finditer(text):
-            window_start = max(0, match.start() - 30)
-            preceding = text[window_start:match.start()]
-            if not any(cue in preceding[-25:] for cue in _NEGATION_CUES):
-                matched.append(term)
-                break
-    return matched
+    # Delegates to the shared scientific_phrase_matcher utility instead
+    # of a local \bTERM\b-only regex. Fix for the proven plural-form bug
+    # (e.g. \bcontrolled substance\b did not match "controlled
+    # substances") — see scientific_phrase_matcher.py. Word-boundary
+    # behavior and negation-aware behavior are otherwise unchanged from
+    # before; the lookback window narrows from 40/25 to 30/25 chars here,
+    # same as the original local implementation.
+    return find_phrase_matches(text, terms, lookback=30, negation_window=25)
 
 
 def classify_regulatory_barriers(text: Optional[str]) -> RegulatoryBarrierResult:

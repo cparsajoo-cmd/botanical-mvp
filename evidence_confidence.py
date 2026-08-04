@@ -157,6 +157,45 @@ NEGATIVE_EVIDENCE_CONFIDENCE_MULTIPLIER = 0.4
 LOW_CONFIDENCE_THRESHOLD = 30
 HIGH_OPPORTUNITY_THRESHOLD = 62
 
+# ---------------------------------------------------------------------
+# Phase 1 follow-up — Study_Design / Evidence_Direction /
+# Evidence_Applicability / is_completed_study awareness
+# (evidence_interpretation.py). Additive only: every constant below is
+# used ONLY when a caller explicitly supplies the corresponding new
+# keyword argument to compute_evidence_confidence(); a caller that
+# doesn't (every pre-existing caller) gets the exact same return value
+# as before this section existed.
+#
+# DIRECTION_NOT_POSITIVE_CONFIDENCE_MULTIPLIER: when the underlying
+# evidence's reported outcome direction is "null", "negative", or
+# "unclear", confidence must not be inflated purely because the text
+# also contains a study-type phrase like "clinical trial" — this
+# multiplier undercuts the tier-based base score the same way
+# NEGATIVE_EVIDENCE_CONFIDENCE_MULTIPLIER already does for the older,
+# coarser Has_Negative_Evidence signal. Only applied when
+# has_negative_evidence hasn't already reduced this exact base score,
+# so a genuinely negative finding is never double-penalized by two
+# independent classifiers agreeing with each other.
+DIRECTION_NOT_POSITIVE_CONFIDENCE_MULTIPLIER = 0.5
+
+# CONTEXTUAL_OR_FUTURE_CONFIDENCE_CAP /
+# NOT_COMPLETED_STUDY_CONFIDENCE_CAP / PROTOCOL_STUDY_DESIGN_CONFIDENCE_CAP:
+# a future/planned mention, an incomplete study, or a trial
+# protocol/registration record is not entitled to more confidence than
+# the weakest hierarchy tier that actually reports real evidence
+# ("Occurrence / analytical chemistry only" = 10 above) — these three
+# checks are deliberately redundant (any one of
+# Evidence_Applicability == "contextual_or_future",
+# is_completed_study is False, or
+# Study_Design == "clinical_trial_protocol" is sufficient on its own)
+# so a contextual/future mention cannot slip past this cap via only
+# one of the three signals being supplied.
+CONTEXTUAL_OR_FUTURE_CONFIDENCE_CAP = 10.0
+NOT_COMPLETED_STUDY_CONFIDENCE_CAP = 10.0
+PROTOCOL_STUDY_DESIGN_CONFIDENCE_CAP = 10.0
+
+_DIRECTION_NOT_POSITIVE_VALUES = {"null", "negative", "unclear"}
+
 
 # =====================================================================
 # Task 10.1 — methodological-quality modifiers. See the module
@@ -270,6 +309,10 @@ def compute_evidence_confidence(
     evidence_level: str,
     has_negative_evidence: bool,
     evidence_text: Optional[str] = None,
+    evidence_direction: Optional[str] = None,
+    evidence_applicability: Optional[str] = None,
+    is_completed_study: Optional[bool] = None,
+    study_design: Optional[str] = None,
 ) -> float:
     """Returns a 0-100 confidence score. See module docstring for the
     documented weight tables this is built from.
@@ -283,6 +326,18 @@ def compute_evidence_confidence(
     negative-evidence multiplier. When omitted, or when no real tier
     was classified, this function's return value is unchanged from
     its pre-Task-10.1 behavior.
+
+    evidence_direction / evidence_applicability / is_completed_study /
+    study_design (Phase 1 follow-up, all optional, default None — no
+    change to any existing caller's behavior unless supplied): the
+    matching fields from evidence_interpretation.interpret_evidence().
+    When supplied, these stop Evidence_Confidence from being inflated
+    by a bare study-type phrase ("clinical trial") when the underlying
+    evidence's actual reported direction is null/negative/unclear, and
+    cap confidence near the weakest real-evidence tier for any
+    future/planned/protocol/registration-only mention. See the
+    constants immediately above this function for the exact documented
+    values.
     """
     base = CONFIDENCE_BY_HIERARCHY_TIER.get(evidence_hierarchy_detail)
     if base is None:
@@ -293,6 +348,19 @@ def compute_evidence_confidence(
 
     if has_negative_evidence:
         base = base * NEGATIVE_EVIDENCE_CONFIDENCE_MULTIPLIER
+    elif evidence_direction in _DIRECTION_NOT_POSITIVE_VALUES:
+        # Only reached when the older Has_Negative_Evidence classifier
+        # didn't already reduce this base score — avoids double-
+        # penalizing a finding both classifiers independently agree is
+        # not positive.
+        base = base * DIRECTION_NOT_POSITIVE_CONFIDENCE_MULTIPLIER
+
+    if evidence_applicability == "contextual_or_future":
+        base = min(base, CONTEXTUAL_OR_FUTURE_CONFIDENCE_CAP)
+    if is_completed_study is False:
+        base = min(base, NOT_COMPLETED_STUDY_CONFIDENCE_CAP)
+    if study_design == "clinical_trial_protocol":
+        base = min(base, PROTOCOL_STUDY_DESIGN_CONFIDENCE_CAP)
 
     return round(min(100.0, max(0.0, base)), 1)
 

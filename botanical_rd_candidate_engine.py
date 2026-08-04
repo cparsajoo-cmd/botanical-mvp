@@ -115,6 +115,8 @@ OUTPUT_COLUMNS = [
     "Evidence_Hierarchy_Detail",
     "Study_Design",
     "Evidence_Direction",
+    "Evidence_Quality",
+    "Evidence_Applicability",
     "Has_Negative_Evidence",
     "Negative_Evidence_Types",
     "Market_Status",
@@ -1179,6 +1181,8 @@ class BotanicalRDCandidateEngine:
                     )
                     study_design = evidence_interpretation_result.study_design
                     evidence_direction = evidence_interpretation_result.evidence_direction
+                    evidence_quality_label = evidence_interpretation_result.evidence_quality
+                    evidence_applicability_label = evidence_interpretation_result.evidence_applicability
                     evidence_direction_contribution = (
                         evidence_interpretation_result.contribution
                     )
@@ -1356,6 +1360,10 @@ class BotanicalRDCandidateEngine:
                         evidence_level=evidence_level,
                         has_negative_evidence=negative_evidence.is_negative,
                         evidence_text=raw_evidence,
+                        evidence_direction=evidence_interpretation_result.evidence_direction,
+                        evidence_applicability=evidence_interpretation_result.evidence_applicability,
+                        is_completed_study=evidence_interpretation_result.is_completed_study,
+                        study_design=evidence_interpretation_result.study_design,
                     )
                     confidence_note = confidence_adjusted_framing_note(
                         rd_opportunity_score=score,
@@ -1516,6 +1524,8 @@ class BotanicalRDCandidateEngine:
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
                             "Study_Design": study_design,
                             "Evidence_Direction": evidence_direction,
+                            "Evidence_Quality": evidence_quality_label,
+                            "Evidence_Applicability": evidence_applicability_label,
                             "Has_Negative_Evidence": negative_evidence.is_negative,
                             "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,

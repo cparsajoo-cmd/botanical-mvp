@@ -379,3 +379,217 @@ def test_evidence_direction_allowed_values_only():
 def test_study_design_and_evidence_direction_are_output_columns():
     assert "Study_Design" in eng.OUTPUT_COLUMNS
     assert "Evidence_Direction" in eng.OUTPUT_COLUMNS
+
+
+# ---------------------------------------------------------------------
+# Follow-up audit — defect #4: Evidence_Quality / Evidence_Applicability
+# must also be stored as their own output columns, not just left inside
+# the internal EvidenceInterpretation object.
+# ---------------------------------------------------------------------
+def test_evidence_quality_and_applicability_are_output_columns():
+    assert "Evidence_Quality" in eng.OUTPUT_COLUMNS
+    assert "Evidence_Applicability" in eng.OUTPUT_COLUMNS
+
+
+# ---------------------------------------------------------------------
+# Follow-up audit — defect #1: a clinical trial PROTOCOL must never be
+# treated as a completed study, regardless of which trial design it's
+# a protocol FOR.
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("text", [
+    "Protocol for a randomized controlled trial.",
+    "Protocol for an RCT.",
+    "Registered clinical trial protocol.",
+    "Clinical trial protocol",
+    "Study protocol",
+    "Protocol paper",
+    "Protocol article",
+    "Registered protocol",
+    "Trial registration",
+    "Study registration",
+    "Protocol for a randomized trial",
+])
+def test_protocol_variants_are_never_completed_clinical_evidence(text):
+    interp = interpret_evidence(text)
+    assert interp.study_design == STUDY_DESIGN_CLINICAL_TRIAL_PROTOCOL
+    assert interp.evidence_applicability == APPLICABILITY_CONTEXTUAL_OR_FUTURE
+    assert interp.is_completed_study is False
+    assert interp.evidence_direction == DIRECTION_UNCLEAR
+    assert interp.contribution == 0
+
+
+def test_protocol_for_an_rct_specifically():
+    interp = interpret_evidence("Protocol for an RCT.")
+    assert interp.study_design == STUDY_DESIGN_CLINICAL_TRIAL_PROTOCOL
+    assert interp.is_completed_study is False
+    assert interp.contribution == 0
+
+
+def test_registered_clinical_trial_protocol_specifically():
+    interp = interpret_evidence("Registered clinical trial protocol.")
+    assert interp.study_design == STUDY_DESIGN_CLINICAL_TRIAL_PROTOCOL
+    assert interp.evidence_applicability == APPLICABILITY_CONTEXTUAL_OR_FUTURE
+    assert interp.is_completed_study is False
+
+
+# ---------------------------------------------------------------------
+# Follow-up audit — defect #2: expanded RCT phrasing must classify as
+# STUDY_DESIGN_RCT, but a review merely discussing an RCT must not.
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("text", [
+    "randomized trial",
+    "randomised trial",
+    "randomized placebo-controlled trial",
+    "randomised placebo-controlled trial",
+    "randomized double-blind trial",
+    "randomised double-blind trial",
+    "double blind randomized trial",
+    "double blind randomised trial",
+    "double-blind randomized clinical trial",
+    "double-blind randomised clinical trial",
+])
+def test_expanded_rct_phrasing_is_classified_as_rct(text):
+    assert classify_study_design(text) == STUDY_DESIGN_RCT
+
+
+def test_bare_randomized_trial_design():
+    assert classify_study_design("randomized trial") == STUDY_DESIGN_RCT
+
+
+def test_randomized_placebo_controlled_trial_design():
+    assert classify_study_design("randomized placebo-controlled trial") == STUDY_DESIGN_RCT
+
+
+def test_double_blind_randomized_clinical_trial_design():
+    assert classify_study_design("double-blind randomized clinical trial") == STUDY_DESIGN_RCT
+
+
+def test_review_discussing_a_randomized_trial_stays_review_after_rct_expansion():
+    # Same case as the earlier review test, re-verified after widening
+    # the RCT phrase list — review priority must still win.
+    text = "This review discusses a randomized trial that reported improvement."
+    assert classify_study_design(text) == STUDY_DESIGN_REVIEW
+    assert classify_study_design(text) != STUDY_DESIGN_RCT
+
+
+# ---------------------------------------------------------------------
+# Follow-up audit — defect #3: Evidence_Confidence must consult the new
+# Study_Design/Evidence_Direction/Evidence_Applicability/
+# is_completed_study fields, end to end through the real engine.
+# ---------------------------------------------------------------------
+def test_evidence_confidence_uses_new_fields_end_to_end():
+    from evidence_confidence import compute_evidence_confidence
+
+    def confidence_for(text):
+        interp = interpret_evidence(text)
+        return compute_evidence_confidence(
+            evidence_hierarchy_detail="Clinical trial",
+            evidence_level="Clinical / human evidence",
+            has_negative_evidence=False,
+            evidence_text=text,
+            evidence_direction=interp.evidence_direction,
+            evidence_applicability=interp.evidence_applicability,
+            is_completed_study=interp.is_completed_study,
+            study_design=interp.study_design,
+        )
+
+    positive_confidence = confidence_for(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    null_confidence = confidence_for(
+        "A randomized controlled trial found no significant difference from placebo."
+    )
+    negative_confidence = confidence_for("A clinical trial failed to demonstrate efficacy.")
+    future_confidence = confidence_for("Clinical trial is needed.")
+    protocol_confidence = confidence_for("Clinical trial protocol suggests a benefit.")
+
+    assert positive_confidence == 85.0
+    assert null_confidence < positive_confidence
+    assert negative_confidence < positive_confidence
+    assert future_confidence <= 10.0
+    assert protocol_confidence <= 10.0
+
+
+def test_no_significant_difference_from_placebo_in_a_randomized_trial():
+    interp = interpret_evidence("No significant difference from placebo in a randomized trial.")
+    assert interp.evidence_direction == DIRECTION_NULL
+
+
+def test_trial_failed_to_demonstrate_efficacy():
+    interp = interpret_evidence("Trial failed to demonstrate efficacy.")
+    assert interp.evidence_direction == DIRECTION_NEGATIVE
+
+
+# ---------------------------------------------------------------------
+# Regression — every core Phase 1 behavior must still hold after the
+# protocol/RCT-detection expansion above.
+# ---------------------------------------------------------------------
+def test_regression_positive_rct_still_positive():
+    text = "A randomized controlled trial demonstrated significant improvement."
+    assert classify_study_design(text) == STUDY_DESIGN_RCT
+    direction, *_ = classify_evidence_direction(text)
+    assert direction == DIRECTION_POSITIVE
+    assert interpret_evidence(text).contribution == pytest.approx(24.0)
+
+
+def test_regression_negative_rct_still_negative():
+    text = "A randomized controlled trial failed to demonstrate efficacy."
+    direction, *_ = classify_evidence_direction(text)
+    assert direction == DIRECTION_NEGATIVE
+    assert interpret_evidence(text).contribution == pytest.approx(-12.0)
+
+
+def test_regression_null_rct_still_null():
+    text = "A randomized controlled trial found no significant difference from placebo."
+    direction, *_ = classify_evidence_direction(text)
+    assert direction == DIRECTION_NULL
+    assert interpret_evidence(text).contribution == 0
+
+
+def test_regression_mixed_rct_still_mixed():
+    text = (
+        "A randomized controlled trial found the primary endpoint was "
+        "not significant, although some secondary outcomes improved."
+    )
+    direction, *_ = classify_evidence_direction(text)
+    assert direction == DIRECTION_MIXED
+    assert interpret_evidence(text).contribution == pytest.approx(6.0)
+
+
+def test_regression_animal_study_still_animal_study():
+    assert classify_study_design(
+        "An animal model study in mice showed reduced inflammation."
+    ) == STUDY_DESIGN_ANIMAL_STUDY
+
+
+def test_regression_in_vitro_still_in_vitro():
+    assert classify_study_design(
+        "An in vitro study showed enzyme inhibition."
+    ) == STUDY_DESIGN_IN_VITRO_STUDY
+
+
+def test_regression_future_mention_still_contextual():
+    interp = interpret_evidence("A clinical trial is needed to evaluate efficacy.")
+    assert interp.evidence_applicability == APPLICABILITY_CONTEXTUAL_OR_FUTURE
+    assert interp.contribution == 0
+
+
+def test_regression_protocol_still_contextual():
+    interp = interpret_evidence("This is a clinical trial protocol for evaluating chamomile.")
+    assert interp.study_design == STUDY_DESIGN_CLINICAL_TRIAL_PROTOCOL
+    assert interp.evidence_applicability == APPLICABILITY_CONTEXTUAL_OR_FUTURE
+    assert interp.contribution == 0
+
+
+def test_regression_review_still_review():
+    text = "This review discusses a randomized trial that reported improvement."
+    assert classify_study_design(text) == STUDY_DESIGN_REVIEW
+
+
+def test_regression_conflicting_evidence_still_mixed():
+    text = (
+        "One trial found the treatment significantly improved symptoms, "
+        "while another trial reported the treatment worsened outcomes."
+    )
+    direction, *_ = classify_evidence_direction(text)
+    assert direction == DIRECTION_MIXED

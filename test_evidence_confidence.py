@@ -321,6 +321,121 @@ def test_compute_evidence_confidence_default_evidence_text_is_none():
     assert sig.parameters["evidence_text"].default is None
 
 
+# ---------------------------------------------------------------------
+# Phase 1 follow-up (evidence_interpretation.py awareness) — Study_Design /
+# Evidence_Direction / Evidence_Applicability / is_completed_study must
+# now be able to influence Evidence_Confidence, on top of the existing
+# Evidence_Level/hierarchy-tier logic above (which stays completely
+# unchanged for any caller that doesn't pass the new keywords — see the
+# backward-compatibility tests already above this section).
+# ---------------------------------------------------------------------
+from evidence_interpretation import interpret_evidence
+
+
+def _confidence_from_text(
+    text,
+    evidence_level="Clinical / human evidence",
+    evidence_hierarchy_detail="Clinical trial",
+    has_negative_evidence=False,
+):
+    """Runs the real interpret_evidence() -> compute_evidence_confidence()
+    path, exactly as botanical_rd_candidate_engine.py now wires them
+    together, rather than hand-picking direction/applicability values."""
+    interp = interpret_evidence(text)
+    confidence = compute_evidence_confidence(
+        evidence_hierarchy_detail=evidence_hierarchy_detail,
+        evidence_level=evidence_level,
+        has_negative_evidence=has_negative_evidence,
+        evidence_text=text,
+        evidence_direction=interp.evidence_direction,
+        evidence_applicability=interp.evidence_applicability,
+        is_completed_study=interp.is_completed_study,
+        study_design=interp.study_design,
+    )
+    return confidence, interp
+
+
+def test_evidence_confidence_decreases_for_protocol():
+    baseline, _ = _confidence_from_text(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    protocol_confidence, interp = _confidence_from_text(
+        "Protocol for a randomized controlled trial."
+    )
+    assert interp.study_design == "clinical_trial_protocol"
+    assert interp.is_completed_study is False
+    assert protocol_confidence < baseline
+    assert protocol_confidence <= 10.0
+
+
+def test_evidence_confidence_decreases_for_future_trial():
+    baseline, _ = _confidence_from_text(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    future_confidence, interp = _confidence_from_text(
+        "A clinical trial is needed to evaluate efficacy."
+    )
+    assert interp.evidence_applicability == "contextual_or_future"
+    assert future_confidence < baseline
+    assert future_confidence <= 10.0
+
+
+def test_evidence_confidence_decreases_for_null_rct():
+    positive_confidence, _ = _confidence_from_text(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    null_confidence, interp = _confidence_from_text(
+        "A randomized controlled trial found no significant difference from placebo."
+    )
+    assert interp.evidence_direction == "null"
+    assert null_confidence < positive_confidence
+
+
+def test_evidence_confidence_decreases_for_negative_rct():
+    positive_confidence, _ = _confidence_from_text(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    negative_confidence, interp = _confidence_from_text(
+        "A clinical trial failed to demonstrate efficacy."
+    )
+    assert interp.evidence_direction == "negative"
+    assert negative_confidence < positive_confidence
+
+
+def test_evidence_confidence_not_inflated_by_bare_clinical_trial_phrase_when_direction_unclear():
+    # "Clinical trial protocol suggests..." contains the phrase
+    # "clinical trial" but is neither a completed study nor a positive
+    # finding — confidence must not reach anywhere near the 85-point
+    # "Clinical trial" tier baseline.
+    confidence, interp = _confidence_from_text("Clinical trial protocol suggests a benefit.")
+    assert interp.study_design == "clinical_trial_protocol"
+    assert confidence <= 10.0
+
+
+def test_evidence_confidence_positive_rct_is_unaffected_by_new_signals():
+    # A genuinely positive, completed RCT must still score at the full
+    # "Clinical trial" tier baseline (85) — the new signals must never
+    # penalize a real, positive, completed study.
+    confidence, interp = _confidence_from_text(
+        "A randomized controlled trial demonstrated significant improvement."
+    )
+    assert interp.evidence_direction == "positive"
+    assert interp.is_completed_study is True
+    assert confidence == 85.0
+
+
+def test_compute_evidence_confidence_backward_compatible_without_new_kwargs():
+    # No evidence_direction/evidence_applicability/is_completed_study/
+    # study_design supplied at all -> identical to the function's
+    # behavior before this section existed.
+    confidence = compute_evidence_confidence(
+        evidence_hierarchy_detail="Clinical trial",
+        evidence_level="Clinical / human evidence",
+        has_negative_evidence=False,
+    )
+    assert confidence == 85.0
+
+
 if __name__ == "__main__":
     import sys
 

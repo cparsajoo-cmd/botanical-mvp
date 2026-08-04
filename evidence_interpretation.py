@@ -307,9 +307,20 @@ _PROTOCOL_PHRASES = [
     "clinical trial protocol",
     "study protocol",
     "trial protocol",
+    "protocol paper",
+    "protocol article",
+    "registered protocol",
+    "registered clinical trial protocol",
     "registration-only record",
     "registered on clinicaltrials.gov",
     "trial registration",
+    "study registration",
+    "protocol for a randomized controlled trial",
+    "protocol for a randomised controlled trial",
+    "protocol for a randomized trial",
+    "protocol for a randomised trial",
+    "protocol for an rct",
+    "protocol for a trial",
 ]
 
 _REVIEW_PHRASES = [
@@ -324,9 +335,19 @@ _REVIEW_PHRASES = [
 _RCT_PHRASES = [
     "randomized controlled trial",
     "randomised controlled trial",
+    "randomized placebo-controlled trial",
+    "randomised placebo-controlled trial",
+    "randomized double-blind trial",
+    "randomised double-blind trial",
     "double-blind placebo-controlled trial",
     "double-blind randomized trial",
+    "double-blind randomised trial",
     "double blind randomized trial",
+    "double blind randomised trial",
+    "double-blind randomized clinical trial",
+    "double-blind randomised clinical trial",
+    "randomized trial",
+    "randomised trial",
 ]
 
 _CLINICAL_TRIAL_PHRASES = [
@@ -335,8 +356,6 @@ _CLINICAL_TRIAL_PHRASES = [
     "human trial",
     "human study",
     "the trial",
-    "randomized trial",
-    "randomised trial",
     "primary endpoint",
     "secondary outcome",
     "secondary outcomes",

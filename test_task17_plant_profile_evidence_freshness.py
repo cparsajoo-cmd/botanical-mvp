@@ -374,7 +374,7 @@ def test_decision_engine_version_unchanged():
     # Task 17 itself does not touch the version; Phase 2A later bumped
     # it separately (1.0.0 -> 1.0.1) for an unrelated regulatory fix.
     import botanical_rd_candidate_engine as eng
-    assert eng.DECISION_ENGINE_VERSION == "1.0.1"
+    assert eng.DECISION_ENGINE_VERSION == "1.0.2"
 
 
 def test_page_never_references_decision_engine_version():

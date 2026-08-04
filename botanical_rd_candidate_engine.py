@@ -238,7 +238,33 @@ OUTPUT_COLUMNS = [
 # component (+2) — a real, small R&D_Opportunity_Score change for any
 # inventory-listed-only candidate. Genuine monograph/traditional-use
 # text is unaffected and still reaches the same scores as before.
-DECISION_ENGINE_VERSION = "1.0.1"
+# 1.0.2 — Phase 2D-A (canonical EMA connector wiring): _market_status()
+# now consumes a per-run cached canonical EMA/HMPC connector result
+# (self._canonical_regulatory_by_plant) instead of always seeing an
+# empty EMA_Status. Concretely, for real data today, only two of the
+# canonical categories are actually reachable through the live
+# connector (verified_synonym/pharmacopoeial tables are still empty):
+#   - exact_species_match -> Market_Status = "Listed in EMA HMPC
+#     inventory — monograph not established" (was: "Search not
+#     performed"/"Search incomplete")
+#   - parsing_failed/source_unavailable -> Market_Status = "Source
+#     unavailable" (new, distinct value; was collapsing into "Search
+#     not performed")
+# _score_candidate()'s market-signal component is UNCHANGED in value
+# for both (neither string matches the "regulatory monograph"/
+# "traditional-use" substring check, so both still fall to the same
+# market_neutral_default as before) — so R&D_Opportunity_Score itself
+# does not change for real data today. However, Market_Status the
+# STRING does change, which has one confirmed real downstream effect:
+# white_space_classifier.NO_SEARCH_MARKET_STATES does not include
+# "Listed in EMA HMPC inventory — monograph not established", so a
+# plant that used to read as "no market search happened" (blocking
+# Regulatory White Space) can now read as "a search happened, and
+# didn't confirm a monograph" (making Regulatory White Space reachable
+# for that plant where it wasn't before). White_Space_Type itself was
+# NOT modified — this is a real behavior change caused only by
+# white_space_classifier.py now receiving a more informative input.
+DECISION_ENGINE_VERSION = "1.0.2"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -642,6 +668,21 @@ class BotanicalRDCandidateEngine:
         # run() gets a valid empty dict rather than an AttributeError.
         self.scientific_evidence_index = {}
 
+        # Phase 2D-A — default before run() has built the real
+        # per-plant canonical EMA/HMPC cache (see run()'s unconditional
+        # rebuild step, right before _market_status() is first used).
+        # Empty, never None/missing, so _market_status() (via a
+        # defensive getattr(self, "_canonical_regulatory_by_plant", {}))
+        # and any test/caller constructing an engine via __new__()
+        # without __init__() stay safe rather than hitting an
+        # AttributeError. Keyed by exact Scientific_Name string;
+        # each value is _eu_regulatory_status()'s own full structured
+        # result dict (EMA_HMPC_Match_Category, EMA_HMPC_Status,
+        # EMA_HMPC_Detail, EMA_Source, ...) — never reduced to just the
+        # compact display string, so _market_status() never has to
+        # re-derive the match category from text.
+        self._canonical_regulatory_by_plant = {}
+
         # Real Supabase tables (806 / 310 / 47 records as of the last known
         # snapshot) are the primary data source. Any of them can be passed
         # in explicitly (e.g. for tests); otherwise they're fetched live.
@@ -940,6 +981,29 @@ class BotanicalRDCandidateEngine:
                 "alt_target_norms": [self._norm(t) for t in alt_targets],
                 "row": alt,
             })
+
+        # Phase 2D-A — the canonical EMA/HMPC regulatory-status cache
+        # for this run() call ONLY. Rebuilt unconditionally every time
+        # (never carried over from a prior run() call on the same
+        # engine instance — see this attribute's __init__ default and
+        # comment for why that matters when step_rd_candidates.py's
+        # @st.cache_resource-cached engine handles multiple
+        # indication/market changes on one instance). One
+        # _eu_regulatory_status() call per UNIQUE alt-plant name here,
+        # not per candidate row/compound match — alt_candidate_records
+        # above already deduplicated rows down to (plant × compound)
+        # combinations, so this is a second, coarser dedup down to just
+        # (plant). _eu_regulatory_status() itself does not hit the
+        # network beyond the first call in this process:
+        # ema_regulatory_connector._get_inventory() is
+        # @lru_cache(maxsize=1), so every call here after the very
+        # first is a pure in-memory lookup. Reuses the existing
+        # canonical connector path only — no new parser, matcher, or
+        # normalization layer.
+        unique_alt_plants = {rec["alt_plant"] for rec in alt_candidate_records}
+        self._canonical_regulatory_by_plant = {
+            plant: self._eu_regulatory_status(plant) for plant in unique_alt_plants
+        }
 
         # Index alt-candidates by exact compound name and by chemical
         # class, so matching a single reference compound is a couple of
@@ -3770,18 +3834,53 @@ class BotanicalRDCandidateEngine:
         ema = self._pick(alt, ["EMA_Status"])
         text = self._norm(evidence)
 
-        # Phase 2A (regulatory-normalization audit) — classify the raw
-        # EMA_Status text via the one shared helper in
-        # standard_evidence_builder.py (classify_ema_hmpc_signal),
-        # instead of the previous single boolean (_ema_listed()). The
-        # boolean could only ever answer "is this genuinely listed in
-        # the HMPC inventory", which this function then (incorrectly,
-        # pre-Phase-2A) treated as equivalent to "a regulatory monograph
-        # exists" — the exact overstatement classify_ema_hmpc_signal()
-        # exists to prevent. _ema_listed() itself is untouched below
-        # (still used/tested independently) — this function no longer
-        # relies on it for the monograph-vs-inventory distinction.
-        ema_signal = classify_ema_hmpc_signal(ema)
+        # Phase 2D-A — PRIMARY source is now the canonical EMA/HMPC
+        # connector result, cached once per unique plant per run() call
+        # (see run()'s unconditional rebuild of
+        # self._canonical_regulatory_by_plant, right after
+        # alt_candidate_records is built). alt["EMA_Status"] itself is
+        # always "" here (Phase 2C's _candidate_frame() neutralization)
+        # — classify_ema_hmpc_signal(ema) below is kept ONLY as the
+        # harmless, byte-for-byte-unchanged fallback path for whatever
+        # this plant's canonical lookup didn't resolve, not reclassified
+        # or reparsed from any display string. getattr() guards callers/
+        # tests that construct this engine via __new__() without
+        # __init__() (so the attribute may not exist at all).
+        canonical = getattr(self, "_canonical_regulatory_by_plant", {}).get(
+            self._pick(alt, ["Scientific_Name"])
+        ) or {}
+        canonical_category = canonical.get("EMA_HMPC_Match_Category")
+        canonical_compact_status = canonical.get("EMA_HMPC_Status")
+
+        if canonical_category in (
+            "exact_species_match", "verified_synonym_match", "verified_pharmacopoeial_name_match",
+        ):
+            # A confident species-level (or verified synonym/
+            # pharmacopoeial-name) match. Still does NOT imply
+            # monograph status unless the connector's OWN compact
+            # status independently says so — never inferred from the
+            # match category alone.
+            if canonical_compact_status == "HMPC monograph available":
+                ema_signal = "monograph_exists"
+            elif canonical_compact_status == "Traditional-use status":
+                ema_signal = "traditional_use"
+            else:
+                ema_signal = "inventory_listed"
+        elif canonical_category in ("parsing_failed", "source_unavailable"):
+            # A genuine connector/source failure must never collapse
+            # into "searched, not found" — that would silently claim a
+            # completed negative search that never actually happened.
+            ema_signal = "source_unavailable"
+        else:
+            # genus_only_match / related_species_only / ambiguous_match
+            # / searched_not_found / manually_curated / unknown / no
+            # canonical entry at all for this plant — none of these
+            # may ever upgrade to a listed/monograph/traditional-use
+            # claim here. Falls through to the pre-Phase-2D-A behavior
+            # (classify_ema_hmpc_signal on alt["EMA_Status"], which is
+            # always "" -> "unknown" -> no recognition), unchanged.
+            ema_signal = classify_ema_hmpc_signal(ema)
+
         ema_recognized = ema_signal in ("inventory_listed", "monograph_exists", "traditional_use")
 
         # Narrow, multi-word phrase patterns — not bare words like
@@ -3829,6 +3928,18 @@ class BotanicalRDCandidateEngine:
             # MarketVerificationStatus.REGULATORY_ASSESSMENT_INVENTORY_LISTED
             # in data_contracts.py.
             return "Listed in EMA HMPC inventory — monograph not established"
+
+        if ema_signal == "source_unavailable":
+            # Phase 2D-A — a genuine connector/source failure
+            # (parsing_failed or source_unavailable from the canonical
+            # cache), kept distinct from "Search not performed"/
+            # "Search incomplete" below: those mean no search was
+            # attempted (or attempted-but-empty-for-this-candidate);
+            # this means a search WAS attempted and the source itself
+            # failed. Reuses MarketVerificationStatus.SOURCE_UNAVAILABLE
+            # (data_contracts.py) — already-defined vocabulary, not a
+            # new value.
+            return "Source unavailable"
 
         if commercial_signal:
             return "Commercial evidence reported, not independently verified"

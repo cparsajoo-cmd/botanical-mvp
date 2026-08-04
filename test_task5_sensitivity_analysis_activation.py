@@ -20,7 +20,8 @@ file proves:
      run()'s result_df. UI behavior is unchanged.
   3. Non-regression: scoring, ranking, gates, confidence, Decision_Class,
      and OUTPUT_COLUMNS are otherwise exactly what they were before
-     Task 5 was ever added (55 columns, not 57).
+     Task 5 was ever added, plus the four intentional Phase 1 evidence
+     interpretation columns (59 columns total).
 
 WHAT THIS DELIBERATELY DOES NOT COVER
 The internal correctness of fragility_report()/build_robustness_analysis()
@@ -62,12 +63,12 @@ def test_output_columns_count_matches_pre_task_5_baseline():
     # check against a real run() result; this is the OUTPUT_COLUMNS
     # list itself.
     #
-    # Bumped 55 -> 57 by the Phase 1 evidence-direction audit fix:
-    # Study_Design and Evidence_Direction are new, independent, additive
-    # OUTPUT_COLUMNS entries (see evidence_interpretation.py and
-    # test_gate_layer.py's matching bump). Decision_Engine_Version stays
-    # the last column either way.
-    assert len(eng.OUTPUT_COLUMNS) == 57
+    # Bumped 55 -> 59 by the Phase 1 evidence-direction audit fix:
+    # Study_Design, Evidence_Direction, Evidence_Quality, and
+    # Evidence_Applicability are new, independent, additive OUTPUT_COLUMNS
+    # entries (see evidence_interpretation.py and test_gate_layer.py's
+    # matching bump). Decision_Engine_Version stays the last column.
+    assert len(eng.OUTPUT_COLUMNS) == 59
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 

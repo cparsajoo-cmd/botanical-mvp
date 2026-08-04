@@ -2530,6 +2530,33 @@ class BotanicalRDCandidateEngine:
         for item in self.candidate_data:
             row = dict(item)
 
+            # Phase 2C (regulatory single-source-of-truth cleanup) —
+            # neutralize any EMA_Status this candidate-data row might
+            # carry, unconditionally, regardless of source. The ONLY
+            # consumer of a candidate row's "EMA_Status" is
+            # _market_status() (via self._pick(alt, ["EMA_Status"])),
+            # which exists specifically to reflect the CANONICAL EMA
+            # connector's result — never a second, independently
+            # maintained regulatory judgment. _candidates_from_plant_
+            # compounds() (the live/Supabase candidate path) already
+            # sets this to "" for exactly that reason; this makes
+            # GLOBAL_PLANT_CANDIDATES's hardcoded per-plant "Yes"/"No"
+            # values (the local_fallback path, used only when Supabase
+            # data is unavailable) behave identically instead of
+            # silently overriding the real connector for whichever
+            # plants that hardcoded reference happens to cover.
+            #
+            # Deliberately done HERE, not in global_plant_candidate_
+            # database.py itself: that file's EMA_Status field is also
+            # read independently by global_candidate_ranking_engine.py's
+            # own, separate candidate-ranking score (a different,
+            # already-scoped pipeline this phase must not touch) — so
+            # the underlying data is left completely intact, and is
+            # only ever neutralized at this one boundary, where a
+            # candidate row becomes an "alt" input to this engine's
+            # regulatory-status function.
+            row["EMA_Status"] = ""
+
             row["Known_Active_Compounds"] = "; ".join(
                 item.get("Known_Active_Compounds", [])
             )

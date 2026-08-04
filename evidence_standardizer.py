@@ -90,8 +90,18 @@ def standardize_extracted_record(extracted, source_metadata):
             normalized["LLM_Safety_Signal"] = llm.get("safety_signal", "")
             normalized["LLM_Reason"] = llm.get("reason", "")
 
+            # Phase 2C (regulatory single-source-of-truth cleanup) — an
+            # LLM's subjective "does this text seem EMA-relevant?"
+            # judgment must never become a regulatory conclusion
+            # (EMA_Status). It becomes a text-mention annotation only,
+            # same as evidence_extractor.py's keyword-based detector —
+            # the ONE canonical source for whether a plant is actually
+            # listed in EMA's HMPC inventory remains
+            # ema_regulatory_connector.py, consumed via
+            # botanical_rd_candidate_engine._market_status()/
+            # _eu_regulatory_status().
             if llm.get("ema_relevance", "").lower() == "yes":
-                normalized["EMA_Status"] = "Yes"
+                normalized["Regulatory_Reference_Detected"] = True
 
             if llm.get("who_relevance", "").lower() == "yes":
                 normalized["WHO_Status"] = "Yes"

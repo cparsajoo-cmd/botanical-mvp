@@ -231,6 +231,7 @@ def _format_regulatory_intelligence_section(row: pd.Series, market) -> list:
         market_status=row.get("Market_Status"),
         market=market,
         us_status=us_uk_status.get("us_status"),
+        market_landscape_ema_match_category=row.get("EMA_HMPC_Match_Category"),
     )
 
     lines = [

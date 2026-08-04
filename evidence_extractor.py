@@ -90,6 +90,19 @@ def extract_evidence_from_text(text):
         "WHO_Status": "",
         "ESCOP_Status": "",
 
+        # Phase 2C (regulatory single-source-of-truth cleanup) — this
+        # field is a TEXT-MENTION ANNOTATION only: "this publication's
+        # text mentions EMA/HMPC somewhere". It is NOT a regulatory
+        # finding and must never be read as one. Whether a plant is
+        # actually listed in EMA's HMPC inventory is decided in exactly
+        # one place: ema_regulatory_connector.py's live connector,
+        # surfaced via botanical_rd_candidate_engine._market_status()/
+        # _eu_regulatory_status(). This module has no access to that
+        # connector and must not guess a regulatory conclusion from
+        # incidental keyword co-occurrence in a PubMed abstract or
+        # similar free text.
+        "Regulatory_Reference_Detected": False,
+
         "Clinical_Level": "Not found",
         "Clinical_RCT_Count": 0,
         "Meta_Level": "Not found",
@@ -247,15 +260,16 @@ def extract_evidence_from_text(text):
         record["Target_Indication"] = detected_indications[0]
 
     # Regulatory
-    # Task 14.2 — EMA/HMPC detection now uses the dedicated
-    # word-boundary-aware matcher (defined above), not the generic
-    # substring _contains() check other keyword groups below still
-    # use unmodified. Passed `raw` (not the pre-lowered `lower`)
-    # since contains_ema_hmpc_reference() does its own case-insensitive
-    # matching internally — same net effect, clearer call-site intent.
+    # Task 14.2 established the word-boundary-aware matcher below.
+    # Phase 2C: this NO LONGER writes a regulatory conclusion
+    # (EMA_Status). It only records that the text mentions EMA/HMPC —
+    # an annotation about the PUBLICATION, not a finding about the
+    # PLANT. The one and only place that determines whether a plant is
+    # actually listed in EMA's HMPC inventory is the real connector
+    # (ema_regulatory_connector.py), consumed via
+    # botanical_rd_candidate_engine._market_status()/_eu_regulatory_status().
     if contains_ema_hmpc_reference(raw):
-        record["EMA_Status"] = "Yes"
-        record["Regulatory_Status"] = "EMA/HMPC evidence detected"
+        record["Regulatory_Reference_Detected"] = True
 
     if _contains(lower, ["who monograph", "world health organization"]):
         record["WHO_Status"] = "Yes"

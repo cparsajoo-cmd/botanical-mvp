@@ -9,6 +9,14 @@ STANDARD_FIELDS = {
     "EMA_Status": "",
     "WHO_Status": "",
     "ESCOP_Status": "",
+    # Phase 2C (regulatory single-source-of-truth cleanup) — a
+    # text-mention annotation ("this publication's text mentions
+    # EMA/HMPC somewhere"), never a regulatory finding. Added to this
+    # allowlist so evidence_extractor.py's/evidence_standardizer.py's
+    # annotation (Rule 2 of the Phase 2C audit) actually survives this
+    # normalization step instead of being silently dropped the way
+    # Evidence_Level once was (see the comment in evidence_standardizer.py).
+    "Regulatory_Reference_Detected": False,
     "Clinical_Level": "",
     "Clinical_RCT_Count": 0,
     "Meta_Level": "",

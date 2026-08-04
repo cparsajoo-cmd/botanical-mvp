@@ -126,13 +126,20 @@ def test_record_containing_schema_does_not_receive_ema_positive_status():
     assert record["Regulatory_Status"] == ""
 
 
-def test_record_with_genuine_ema_hmpc_mention_still_receives_ema_positive_status():
+def test_record_with_genuine_ema_hmpc_mention_produces_annotation_not_regulatory_status():
+    # Phase 2C (regulatory single-source-of-truth cleanup): a genuine
+    # EMA/HMPC text mention is a PUBLICATION annotation now, never a
+    # regulatory conclusion (EMA_Status). The one and only source for
+    # whether a plant is actually listed in EMA's HMPC inventory is
+    # ema_regulatory_connector.py, consumed via
+    # botanical_rd_candidate_engine._market_status()/_eu_regulatory_status().
     record = extract_evidence_from_text(
         "The European Medicines Agency (EMA) HMPC committee reviewed "
         "Valeriana officinalis for traditional-use monograph status."
     )
-    assert record["EMA_Status"] == "Yes"
-    assert record["Regulatory_Status"] == "EMA/HMPC evidence detected"
+    assert record["Regulatory_Reference_Detected"] is True
+    assert record["EMA_Status"] == ""
+    assert record["Regulatory_Status"] == ""
 
 
 def test_who_and_escop_outputs_remain_unchanged():
@@ -159,12 +166,14 @@ def test_extract_evidence_from_text_input_not_mutated():
 
 def test_both_who_and_ema_can_be_detected_independently_in_the_same_text():
     """Confirms the fix didn't accidentally couple EMA detection to
-    WHO/ESCOP detection or vice versa."""
+    WHO/ESCOP detection or vice versa. Phase 2C: EMA detection is now
+    the Regulatory_Reference_Detected annotation, not EMA_Status."""
     text = (
         "European Medicines Agency review and a separate WHO monograph "
         "both support traditional use; ESCOP guidance concurs."
     )
     record = extract_evidence_from_text(text)
-    assert record["EMA_Status"] == "Yes"
+    assert record["Regulatory_Reference_Detected"] is True
+    assert record["EMA_Status"] == ""
     assert record["WHO_Status"] == "Yes"
     assert record["ESCOP_Status"] == "Yes"

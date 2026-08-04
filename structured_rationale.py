@@ -1303,9 +1303,72 @@ REGULATORY_INTELLIGENCE_LIMITATIONS = [
 ]
 
 
-def _regulatory_data_quality(market_landscape_ema_status: Optional[str], market_landscape_regulatory_source: Optional[str]) -> str:
-    """Provenance of whatever regulatory status is being shown — never
-    fabricated, always traceable to a real category."""
+
+# Phase 2C (regulatory single-source-of-truth cleanup) — canonical
+# EMA_HMPC_Match_Category (from ema_regulatory_connector.py via
+# botanical_rd_candidate_engine._eu_regulatory_status(), Phase 2B) to
+# the labels this module already used to derive by re-interpreting the
+# EMA_HMPC_Status STRING with its own .startswith() checks. Preferred
+# whenever a caller supplies the category; the old string-based logic
+# remains only as a fallback for callers that have not been updated to
+# pass it yet (e.g. older test fixtures), never as a second,
+# independently maintained interpretation of a fresh connector result.
+_MATCH_CATEGORY_EMA_STATUS_LABEL = {
+    "exact_species_match": "Present in EMA HMPC inventory (proposed/prioritized for assessment — not a confirmed monograph)",
+    "verified_synonym_match": "Present in EMA HMPC inventory (proposed/prioritized for assessment — not a confirmed monograph)",
+    "verified_pharmacopoeial_name_match": "Present in EMA HMPC inventory (proposed/prioritized for assessment — not a confirmed monograph)",
+    "genus_only_match": "Genus present in EMA HMPC inventory; species-level match not confirmed",
+    "related_species_only": "A different species of the same genus is in the inventory; this species was not found",
+    "ambiguous_match": "Conflicting inventory signals for this genus; not resolved with confidence",
+    "searched_not_found": "Not found in EMA HMPC inventory",
+    "parsing_failed": "Not available — inventory document could not be parsed",
+    "source_unavailable": "Not available — inventory lookup failed",
+}
+
+_MATCH_CATEGORY_MATURITY = {
+    "exact_species_match": "Verified",
+    "verified_synonym_match": "Verified",
+    "verified_pharmacopoeial_name_match": "Verified",
+    "genus_only_match": "Verified",
+    "related_species_only": "Verified",
+    "ambiguous_match": "Partially verified",
+    "searched_not_found": "Verified",
+    "manually_curated": "Verified",
+    "parsing_failed": "Insufficient information",
+    "source_unavailable": "Insufficient information",
+    "unknown": "Insufficient information",
+}
+
+_MATCH_CATEGORY_DATA_QUALITY = {
+    "exact_species_match": "Verified connector (live EMA HMPC inventory lookup)",
+    "verified_synonym_match": "Verified connector (live EMA HMPC inventory lookup, via verified synonym)",
+    "verified_pharmacopoeial_name_match": "Verified connector (live EMA HMPC inventory lookup, via verified pharmacopoeial name)",
+    "genus_only_match": "Verified connector (live EMA HMPC inventory lookup)",
+    "related_species_only": "Verified connector (live EMA HMPC inventory lookup)",
+    "ambiguous_match": "Verified connector (live EMA HMPC inventory lookup, ambiguous result)",
+    "searched_not_found": "Verified connector (live EMA HMPC inventory lookup)",
+    "manually_curated": "Static regulatory reference (curated, manually verified for a small known set of plants)",
+    "parsing_failed": "Unavailable — inventory document could not be parsed",
+    "source_unavailable": "Unavailable — inventory lookup failed",
+    "unknown": "Unavailable — lookup did not resolve",
+}
+
+
+def _regulatory_data_quality(
+    market_landscape_ema_status: Optional[str],
+    market_landscape_regulatory_source: Optional[str],
+    market_landscape_ema_match_category: Optional[str] = None,
+) -> str:
+    """Provenance of whatever regulatory status is being shown.
+
+    Phase 2C: prefers market_landscape_ema_match_category (the
+    canonical connector's own structured verdict) when supplied. Falls
+    back to the pre-Phase-2C string-interpretation logic only when a
+    caller hasn't been updated to pass it yet.
+    """
+    if market_landscape_ema_match_category in _MATCH_CATEGORY_DATA_QUALITY:
+        return _MATCH_CATEGORY_DATA_QUALITY[market_landscape_ema_match_category]
+
     if not market_landscape_ema_status:
         return "Unavailable — market/patent landscape enrichment was not run for this result."
     source = market_landscape_regulatory_source or ""
@@ -1316,10 +1379,18 @@ def _regulatory_data_quality(market_landscape_ema_status: Optional[str], market_
     return "Unavailable — lookup did not resolve"
 
 
-def _regulatory_maturity(market_landscape_ema_status: Optional[str]) -> str:
+def _regulatory_maturity(
+    market_landscape_ema_status: Optional[str],
+    market_landscape_ema_match_category: Optional[str] = None,
+) -> str:
     """Maturity of the AVAILABLE regulatory evidence — never defined as
-    "EMA status" itself (Sprint 5's explicit correction: this is about
-    how resolved the lookup is, not a proxy score for the plant)."""
+    "EMA status" itself.
+
+    Phase 2C: prefers market_landscape_ema_match_category when supplied.
+    """
+    if market_landscape_ema_match_category in _MATCH_CATEGORY_MATURITY:
+        return _MATCH_CATEGORY_MATURITY[market_landscape_ema_match_category]
+
     if not market_landscape_ema_status or market_landscape_ema_status in {"Not yet verified", ""}:
         return "Insufficient information"
     if (
@@ -1331,7 +1402,20 @@ def _regulatory_maturity(market_landscape_ema_status: Optional[str]) -> str:
     return "Partially verified"
 
 
-def _regulatory_ema_status_label(market_landscape_ema_status: Optional[str]) -> str:
+def _regulatory_ema_status_label(
+    market_landscape_ema_status: Optional[str],
+    market_landscape_ema_match_category: Optional[str] = None,
+) -> str:
+    """Phase 2C: prefers market_landscape_ema_match_category (the
+    canonical connector's own structured verdict, including
+    genus_only_match/related_species_only/ambiguous_match — categories
+    the old string-only version below could not distinguish) when
+    supplied. Falls back to the pre-Phase-2C .startswith() string
+    interpretation only for callers that have not been updated yet.
+    """
+    if market_landscape_ema_match_category in _MATCH_CATEGORY_EMA_STATUS_LABEL:
+        return _MATCH_CATEGORY_EMA_STATUS_LABEL[market_landscape_ema_match_category]
+
     if not market_landscape_ema_status or market_landscape_ema_status == "Not yet verified":
         return "Not available"
     if market_landscape_ema_status.startswith("Listed in HMPC inventory"):
@@ -1376,6 +1460,7 @@ def build_regulatory_intelligence(
     market_status: Optional[str],
     market: Optional[str],
     us_status: Optional[str] = None,
+    market_landscape_ema_match_category: Optional[str] = None,
 ) -> dict:
     """Sprint 5, Phase B — the Regulatory Intelligence structured
     object. A pure post-processing interpretation layer: never
@@ -1391,11 +1476,23 @@ def build_regulatory_intelligence(
     looked up here (this stays a pure formatting/interpretation
     function, not a second place regulatory_frameworks.py is read
     from).
+
+    market_landscape_ema_match_category (Phase 2C, optional, default
+    None — no change to any existing caller's behavior that doesn't
+    pass it): the canonical EMA_HMPC_Match_Category the real connector
+    itself assigned (exact_species_match/genus_only_match/
+    related_species_only/ambiguous_match/searched_not_found/
+    parsing_failed/source_unavailable/manually_curated — see
+    ema_regulatory_connector.py). When supplied, this is the single
+    source of truth this function's labels/maturity/data-quality are
+    derived from; the older market_landscape_ema_status STRING
+    interpretation below is kept only as a fallback for callers that
+    have not been updated to pass the category yet.
     """
-    ema_status = _regulatory_ema_status_label(market_landscape_ema_status)
+    ema_status = _regulatory_ema_status_label(market_landscape_ema_status, market_landscape_ema_match_category)
     us_status_label = _regulatory_us_status_label(us_status)
-    data_quality = _regulatory_data_quality(market_landscape_ema_status, market_landscape_regulatory_source)
-    maturity = _regulatory_maturity(market_landscape_ema_status)
+    data_quality = _regulatory_data_quality(market_landscape_ema_status, market_landscape_regulatory_source, market_landscape_ema_match_category)
+    maturity = _regulatory_maturity(market_landscape_ema_status, market_landscape_ema_match_category)
 
     traditional_use_status = (
         "Detected in evidence text (not independently verified)"

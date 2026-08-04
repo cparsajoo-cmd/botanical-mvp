@@ -759,6 +759,38 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     _validation_calls = 0
     _PROGRESS_EVERY = 200
 
+    # Narrowly-scoped inner-loop diagnostic pass (per-section cumulative
+    # call counts and elapsed seconds). Diagnostic-only: no thresholds,
+    # counts, or behavior are read from these values anywhere.
+    _SECTION_ORDER = (
+        "records_for_plant", "safety_aggregate", "relevance",
+        "dedup_sort", "characteristics", "safety_extraction",
+        "normalization", "validation", "row_build",
+    )
+    _section_calls = {name: 0 for name in _SECTION_ORDER}
+    _section_seconds = {name: 0.0 for name in _SECTION_ORDER}
+
+    def _section_add(name, elapsed):
+        _section_calls[name] += 1
+        _section_seconds[name] += elapsed
+
+    def _print_loop_profile(label):
+        detail_lines = [
+            f"  plants_processed={_plants_processed}/{_total_candidate_plants}, "
+            f"evidence_records_examined={_evidence_records_examined}, "
+            f"relevant_records_retained={_relevant_records_retained}, "
+            f"output_rows={len(rows)}, "
+            f"elapsed={time.perf_counter() - _loop_start:.3f}"
+        ]
+        for name in _SECTION_ORDER:
+            calls = _section_calls[name]
+            total = _section_seconds[name]
+            avg_ms = (total / calls * 1000.0) if calls else 0.0
+            detail_lines.append(
+                f"  {name}: calls={calls} total={total:.3f} avg_ms={avg_ms:.2f}"
+            )
+        print(f"[PERF] loop profile {label}\n" + "\n".join(detail_lines), flush=True)
+
     for _, item in candidates.iterrows():
         _plants_processed += 1
         plant = engine._pick(item, ["Scientific_Name", "scientific_name", "Plant", "plant"])
@@ -768,18 +800,24 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         indications = engine._pick(item, ["Indications_Text", "Indications", "indication"])
         targets = engine._pick(item, ["Known_Targets", "target", "mechanism"])
         compounds = engine._split_compound_terms(engine._pick(item, ["Known_Active_Compounds", "compound_name"]))
+        _t = time.perf_counter()
         records = _records_for_plant(engine, plant, evidence_index)
+        _section_add("records_for_plant", time.perf_counter() - _t)
         _evidence_records_examined += len(records)
         # Safety and interaction evidence is plant-wide, not indication-bound.
         # Build it once from every plant-specific record, while efficacy
         # relevance below remains restricted to the selected indication.
+        _t = time.perf_counter()
         plant_safety = _aggregate_plant_safety(records, plant)
+        _section_add("safety_aggregate", time.perf_counter() - _t)
 
         for record in records:
             if "relevance" not in record:
+                _t = time.perf_counter()
                 record["relevance"] = _score(
                     record, record.get("tier1_text", ""), record.get("tier2_text", ""), record.get("tier3_text", ""),
                 )
+                _section_add("relevance", time.perf_counter() - _t)
                 _records_scored_for_relevance += 1
 
         direct_records = [r for r in records if r["relevance"].match_type in _MATCH_STRONG]
@@ -790,7 +828,9 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         # No embedding is attempted here: profile fields (Indications_Text/
         # Known_Targets) have no evidence_record_id to join an embedding
         # match to, so this always scores via the deterministic engine only.
+        _t = time.perf_counter()
         profile_relevance = _score(None, indications, targets, "")
+        _section_add("relevance", time.perf_counter() - _t)
         _records_scored_for_relevance += 1
         profile_direct = profile_relevance.match_type in _MATCH_STRONG
         profile_mechanistic = profile_relevance.match_type in _MATCH_SUPPORTIVE
@@ -804,6 +844,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     f"output_rows={len(rows)}, "
                     f"elapsed={time.perf_counter() - _loop_start:.3f}"
                 )
+                _print_loop_profile(f"{_plants_processed}/{_total_candidate_plants}")
             continue
 
         # Preserve record-level granularity.  The previous implementation
@@ -815,11 +856,13 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         # source count honestly.
         relevant_records: list[dict] = []
         seen_relevant: set[tuple[str, str, str]] = set()
+        _t = time.perf_counter()
         for record in direct_records + mechanism_records:
             key = (_norm(record.get("record_id")), _norm(record.get("source")), _norm(record.get("text")))
             if key not in seen_relevant:
                 seen_relevant.add(key)
                 relevant_records.append(record)
+        _section_add("dedup_sort", time.perf_counter() - _t)
         _relevant_records_retained += len(relevant_records)
 
         evidence_units: list[dict | None] = relevant_records or [None]
@@ -830,6 +873,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             record_mechanistic = bool(record and record_relevance.match_type in _MATCH_SUPPORTIVE)
             profile_only = record is None
 
+            _t = time.perf_counter()
             characteristics = (
                 _record_evidence_characteristics(engine, record)
                 if record is not None else {
@@ -841,6 +885,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     "negative": False,
                 }
             )
+            _section_add("characteristics", time.perf_counter() - _t)
             level = characteristics["level"]
             hierarchy = characteristics["hierarchy"]
             human = characteristics["human"]
@@ -866,6 +911,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 # protective/negated toxicity, other botanicals and retractions.
                 structured_safety = structured_interactions = structured_reassurance = ""
                 structured_status = "not_assessed"
+                _t = time.perf_counter()
                 if safety_findings or interactions:
                     structured_result = extract_structured_safety_interactions(
                         safety_findings, interactions, plant_name=plant,
@@ -885,6 +931,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     )
                 )
                 _safety_extraction_calls += 1
+                _section_add("safety_extraction", time.perf_counter() - _t)
                 safety_findings = structured_safety or source_safety
                 interactions = structured_interactions or source_interactions
                 safety_reassurance = structured_reassurance or source_reassurance
@@ -928,8 +975,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     "Source_Record_IDs": record_id,
                     "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
                 }
+                _t = time.perf_counter()
                 _normalized_fields = normalize_evidence_record(_phase5_row)
                 _normalization_calls += 1
+                _section_add("normalization", time.perf_counter() - _t)
+                _t = time.perf_counter()
                 _validation_result = validate_evidence_record(
                     _phase5_row,
                     plant_name=plant,
@@ -938,6 +988,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     normalized_fields=_normalized_fields,
                 )
                 _validation_calls += 1
+                _section_add("validation", time.perf_counter() - _t)
                 normalization_summary = "; ".join(
                     f"{name}={field.verification_status}"
                     for name, field in _normalized_fields.items()
@@ -1018,6 +1069,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 f"{plant} is retained only as a profile-derived hypothesis; no plant-specific empirical record linked to the requested indication was found."
             )
 
+            _t = time.perf_counter()
             row = {col: "" for col in OUTPUT_COLUMNS}
             row.update({
                 "Reference_Plant": INDICATION_CENTRIC_REFERENCE_LABEL,
@@ -1116,6 +1168,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "GRADE_Certainty_Rationale": "Record-level grading required.",
             })
             rows.append(row)
+            _section_add("row_build", time.perf_counter() - _t)
 
         if _plants_processed % _PROGRESS_EVERY == 0:
             _perf(
@@ -1125,6 +1178,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 f"output_rows={len(rows)}, "
                 f"elapsed={time.perf_counter() - _loop_start:.3f}"
             )
+            _print_loop_profile(f"{_plants_processed}/{_total_candidate_plants}")
 
     _perf(
         f"indication loop done plants_processed={_plants_processed}/{_total_candidate_plants}, "
@@ -1138,6 +1192,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         f"elapsed={time.perf_counter() - _loop_start:.3f} "
         f"(cumulative={time.perf_counter() - _t0:.3f})"
     )
+    _print_loop_profile("final")
 
     if not rows:
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))

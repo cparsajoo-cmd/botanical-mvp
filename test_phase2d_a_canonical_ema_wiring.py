@@ -196,6 +196,79 @@ def test_no_canonical_entry_for_plant_falls_back_to_pre_existing_behavior():
 
 
 # ---------------------------------------------------------------------
+# 2b. manually_curated — must read the compact status explicitly,
+# never infer inventory presence from the category alone.
+# ---------------------------------------------------------------------
+
+def _curated_record(compact_status):
+    return {
+        "EMA_HMPC_Status": compact_status,
+        "EMA_HMPC_Detail": compact_status,
+        "EMA_Source": "Curated (seed_data.SLEEP_TEA_EVIDENCE) — manually verified",
+        "EMA_HMPC_Match_Category": "manually_curated",
+    }
+
+
+def test_manually_curated_monograph_available_reaches_monograph_exists():
+    engine = make_engine([])
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Genusia speciosa": _curated_record("HMPC monograph available")
+    }
+    result = engine._market_status(alt=_make_alt_row(), evidence="", market="EU")
+    assert result == "Regulatory monograph exists"
+
+
+def test_manually_curated_traditional_use_status_reaches_traditional_use_status():
+    engine = make_engine([])
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Genusia speciosa": _curated_record("Traditional-use status")
+    }
+    result = engine._market_status(alt=_make_alt_row(), evidence="", market="EU")
+    assert result == "Traditional-use status"
+
+
+def test_manually_curated_confirmed_inventory_only_reaches_listed_status():
+    engine = make_engine([])
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Genusia speciosa": _curated_record("Listed in HMPC inventory")
+    }
+    result = engine._market_status(alt=_make_alt_row(), evidence="", market="EU")
+    assert result == "Listed in EMA HMPC inventory — monograph not established"
+
+
+@pytest.mark.parametrize("compact_status", ["Not verified", "", None, "Source unavailable"])
+def test_manually_curated_unverified_or_ambiguous_produces_no_positive_claim(compact_status):
+    engine = make_engine([])
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Genusia speciosa": _curated_record(compact_status)
+    }
+    result = engine._market_status(alt=_make_alt_row(), evidence="", market="EU")
+    assert result not in (
+        "Listed in EMA HMPC inventory — monograph not established",
+        "Regulatory monograph exists",
+        "Traditional-use status",
+    )
+
+
+def test_manually_curated_explicit_not_found_produces_no_listed_or_monograph_claim():
+    engine = make_engine([])
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Genusia speciosa": _curated_record("Not found in HMPC inventory")
+    }
+    result = engine._market_status(alt=_make_alt_row(), evidence="", market="EU")
+    assert result not in (
+        "Listed in EMA HMPC inventory — monograph not established",
+        "Regulatory monograph exists",
+        "Traditional-use status",
+    )
+
+
+# ---------------------------------------------------------------------
 # 3. Public signature unchanged.
 # ---------------------------------------------------------------------
 
@@ -265,7 +338,7 @@ def test_run_builds_one_canonical_lookup_per_unique_plant(monkeypatch):
 
     # "Alternativia speciosa" appears twice in the candidate data
     # (two compounds) but must only be looked up once.
-    assert call_log.count("Alternativia speciosa") <= 1
+    assert call_log.count("Alternativia speciosa") == 1
     assert len(call_log) == len(set(call_log))
 
 
@@ -325,3 +398,28 @@ def test_run_activates_canonical_listed_status_end_to_end(monkeypatch):
     alt_rows = result_df[result_df["Alternative_Plant"] == "Alternativia speciosa"]
     assert not alt_rows.empty
     assert (alt_rows["Market_Status"] == "Listed in EMA HMPC inventory — monograph not established").all()
+
+
+def test_run_activates_manually_curated_traditional_use_end_to_end(monkeypatch):
+    rows = [
+        dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
+             indication="Test indication", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia",
+             indication="", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    engine.use_live_search = False
+
+    def fake_eu_status(plant):
+        if plant == "Alternativia speciosa":
+            return _curated_record("Traditional-use status")
+        return dict(CANONICAL_RESULT_TEMPLATES["searched_not_found"])
+
+    monkeypatch.setattr(engine, "_eu_regulatory_status", fake_eu_status)
+
+    result_df = engine.run(indication="Test indication", dosage_form="tea", market="EU")
+    alt_rows = result_df[result_df["Alternative_Plant"] == "Alternativia speciosa"]
+    assert not alt_rows.empty
+    assert (alt_rows["Market_Status"] == "Traditional-use status").all()

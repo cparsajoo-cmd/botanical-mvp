@@ -3866,6 +3866,28 @@ class BotanicalRDCandidateEngine:
                 ema_signal = "traditional_use"
             else:
                 ema_signal = "inventory_listed"
+        elif canonical_category == "manually_curated":
+            # Phase 2D-A correction — the hand-curated/manually-verified
+            # path (seed_data.py, via _curated_evidence_for()) is a
+            # genuine canonical source too, just not a live connector
+            # match. Unlike the three confident-match categories above,
+            # a "manually_curated" entry is NOT by itself evidence of
+            # inventory presence — the curator may equally well have
+            # recorded "not found" or left it unverified. So this
+            # branch must read canonical_compact_status explicitly for
+            # every case, never default to "inventory_listed" the way
+            # the confident-match branch above safely can.
+            if canonical_compact_status == "HMPC monograph available":
+                ema_signal = "monograph_exists"
+            elif canonical_compact_status == "Traditional-use status":
+                ema_signal = "traditional_use"
+            elif canonical_compact_status == "Listed in HMPC inventory":
+                ema_signal = "inventory_listed"
+            else:
+                # "Not found in HMPC inventory", "Source unavailable",
+                # "Not verified", empty, or any other/unrecognized
+                # compact status -> no positive regulatory claim.
+                ema_signal = "unknown"
         elif canonical_category in ("parsing_failed", "source_unavailable"):
             # A genuine connector/source failure must never collapse
             # into "searched, not found" — that would silently claim a
@@ -3873,10 +3895,10 @@ class BotanicalRDCandidateEngine:
             ema_signal = "source_unavailable"
         else:
             # genus_only_match / related_species_only / ambiguous_match
-            # / searched_not_found / manually_curated / unknown / no
-            # canonical entry at all for this plant — none of these
-            # may ever upgrade to a listed/monograph/traditional-use
-            # claim here. Falls through to the pre-Phase-2D-A behavior
+            # / searched_not_found / unknown / no canonical entry at
+            # all for this plant — none of these may ever upgrade to a
+            # listed/monograph/traditional-use claim here. Falls
+            # through to the pre-Phase-2D-A behavior
             # (classify_ema_hmpc_signal on alt["EMA_Status"], which is
             # always "" -> "unknown" -> no recognition), unchanged.
             ema_signal = classify_ema_hmpc_signal(ema)

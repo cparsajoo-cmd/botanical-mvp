@@ -11,6 +11,7 @@ from concentration_normalizer import parse_concentration, format_concentration_i
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from scientific_phrase_matcher import has_phrase_match
 from negative_evidence_classifier import classify_negative_evidence
+from evidence_interpretation import interpret_evidence
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from grade_certainty_classifier import classify_grade_certainty
 from decision_class_ah import classify_decision_ah
@@ -112,6 +113,8 @@ OUTPUT_COLUMNS = [
     "Candidate_Evidence_Strength_Tier",
     "Evidence_Level",
     "Evidence_Hierarchy_Detail",
+    "Study_Design",
+    "Evidence_Direction",
     "Has_Negative_Evidence",
     "Negative_Evidence_Types",
     "Market_Status",
@@ -1161,6 +1164,25 @@ class BotanicalRDCandidateEngine:
                     evidence_hierarchy_detail = classify_evidence_hierarchy(raw_evidence)
                     negative_evidence = classify_negative_evidence(raw_evidence)
 
+                    # Phase 1 (audit: Study_Design vs Evidence_Direction
+                    # must be independent) — see evidence_interpretation.py
+                    # for the full rationale. Study_Design and
+                    # Evidence_Direction are stored as their own columns
+                    # below; evidence_direction_contribution is the ONLY
+                    # value this feeds into _score_candidate(), and only
+                    # replaces the Clinical-evidence tier's contribution
+                    # (Regulatory/Preclinical/General-literature tier
+                    # weights are untouched — out of Phase 1 scope).
+                    evidence_interpretation_result = interpret_evidence(
+                        raw_evidence,
+                        clinical_weight=self.scoring_config.evidence_clinical,
+                    )
+                    study_design = evidence_interpretation_result.study_design
+                    evidence_direction = evidence_interpretation_result.evidence_direction
+                    evidence_direction_contribution = (
+                        evidence_interpretation_result.contribution
+                    )
+
                     extraction = self._best_extraction(
                         alt, raw_evidence, alt_plant=alt_plant, matched_compound=matched_compound,
                     )
@@ -1275,6 +1297,7 @@ class BotanicalRDCandidateEngine:
                         evidence_level=evidence_level,
                         compound_plant_count=compound_plant_count,
                         target_specificity=target_specificity,
+                        evidence_direction_contribution=evidence_direction_contribution,
                     )
 
                     decision = self._decision_class(
@@ -1491,6 +1514,8 @@ class BotanicalRDCandidateEngine:
                             "Candidate_Evidence_Strength_Tier": candidate_evidence_strength_tier,
                             "Evidence_Level": evidence_level,
                             "Evidence_Hierarchy_Detail": evidence_hierarchy_detail or "Unclassified",
+                            "Study_Design": study_design,
+                            "Evidence_Direction": evidence_direction,
                             "Has_Negative_Evidence": negative_evidence.is_negative,
                             "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,
@@ -3509,8 +3534,21 @@ class BotanicalRDCandidateEngine:
         evidence_level="No direct evidence",
         compound_plant_count=0,
         target_specificity=None,
+        evidence_direction_contribution=None,
     ):
         """Returns (score, components).
+
+        evidence_direction_contribution: optional override for the
+        "Evidence quality" component's Clinical-evidence tier only (see
+        evidence_interpretation.py, Phase 1). When evidence_level is
+        "Clinical / human evidence" and this is not None, it REPLACES
+        the flat evidence_clinical weight so that a negative/null/
+        unclear/future-mention clinical study can no longer earn the
+        same positive contribution as a genuinely positive, completed
+        RCT. Left as None (the default), behavior is IDENTICAL to
+        before this parameter existed — every other evidence tier
+        (Regulatory / Preclinical / General literature / No direct
+        evidence) is completely untouched by this parameter.
 
         score: R&D_Opportunity_Score (0-100). See evidence_confidence.py
         for the SEPARATE Evidence_Confidence score (audit 4.16) — this
@@ -3670,7 +3708,16 @@ class BotanicalRDCandidateEngine:
             "General literature signal": self.scoring_config.evidence_general_literature,
             "No direct evidence": self.scoring_config.evidence_none,
         }
-        evidence_component = evidence_points.get(evidence_level, 0)
+        if evidence_level == "Clinical / human evidence" and evidence_direction_contribution is not None:
+            # Phase 1: the study's reported OUTCOME DIRECTION (positive/
+            # negative/null/mixed/unclear — see evidence_interpretation.py)
+            # determines this tier's contribution instead of the flat
+            # weight, so a failed/null/future/protocol "clinical trial"
+            # mention can no longer score identically to a genuinely
+            # positive, completed RCT.
+            evidence_component = evidence_direction_contribution
+        else:
+            evidence_component = evidence_points.get(evidence_level, 0)
         score += evidence_component
         components["Evidence quality"] = evidence_component
 

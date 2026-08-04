@@ -399,17 +399,40 @@ def _evidence_points(group: pd.DataFrame) -> float:
     # function's original behavior of not doing any negation handling —
     # only the substring/word-boundary mechanism changes here.
     if phrase_present(text, "meta-analysis") or phrase_present(text, "systematic review"):
-        return 30.0
-    if (
+        base = 30.0
+    elif (
         phrase_present(text, "random")
         or phrase_present(text, "clinical")
         or phrase_present(text, "human")
     ):
-        return 26.0
-    if phrase_present(text, "animal") or phrase_present(text, "in vivo"):
-        return 18.0
-    if phrase_present(text, "in vitro") or phrase_present(text, "cell"):
-        return 12.0
+        base = 26.0
+    elif phrase_present(text, "animal") or phrase_present(text, "in vivo"):
+        base = 18.0
+    elif phrase_present(text, "in vitro") or phrase_present(text, "cell"):
+        base = 12.0
+    elif group["Direct_Evidence_Present"].any():
+        base = 10.0
+    else:
+        return 0.0
+
+    # Phase 1 follow-up (engine audit, "Study_Design vs Evidence_Direction"):
+    # everything above says WHAT KIND of evidence this is; it says nothing
+    # about what it actually FOUND. Without this, a negative/null-only
+    # evidence pool earned the exact same Scientific_Triage_Score as a
+    # genuinely positive one purely because it also contained the word
+    # "clinical"/"randomized" — this function's sibling, _evidence_quality()
+    # (which drives Overall_Score/R&D_Opportunity_Score below), already
+    # guards against this via _outcome_profile()'s outcome_multiplier; this
+    # reuses that exact same, already-tested signal so the two evidence
+    # scores in this module can no longer disagree about outcome direction.
+    outcomes = _outcome_profile(group)
+    if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
+        outcome_multiplier = 0.55
+    elif outcomes["positive"] > 0 and (outcomes["null"] + outcomes["harmful"] + outcomes["mixed"]) > 0:
+        outcome_multiplier = 0.80
+    else:
+        outcome_multiplier = 1.0
+    return round(base * outcome_multiplier, 1)
     if group["Direct_Evidence_Present"].any():
         return 10.0
     return 0.0

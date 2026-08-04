@@ -61,7 +61,13 @@ def test_output_columns_count_matches_pre_task_5_baseline():
     # column-count assertion for the authoritative version of this
     # check against a real run() result; this is the OUTPUT_COLUMNS
     # list itself.
-    assert len(eng.OUTPUT_COLUMNS) == 55
+    #
+    # Bumped 55 -> 57 by the Phase 1 evidence-direction audit fix:
+    # Study_Design and Evidence_Direction are new, independent, additive
+    # OUTPUT_COLUMNS entries (see evidence_interpretation.py and
+    # test_gate_layer.py's matching bump). Decision_Engine_Version stays
+    # the last column either way.
+    assert len(eng.OUTPUT_COLUMNS) == 57
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 

@@ -482,7 +482,14 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # module's docstring and test_task5_sensitivity_analysis_activation.py
     # for the single-source-of-truth this run() output no longer
     # duplicates.
-    assert len(result.columns) == 55
+    #
+    # Bumped 55 -> 57 by the Phase 1 evidence-direction audit fix
+    # (evidence_interpretation.py): Study_Design and Evidence_Direction
+    # are new, independent, additive output columns — Study_Design vs
+    # Evidence_Direction was required to be stored separately rather
+    # than folded into an existing column. Same "legitimate, expected
+    # change to this lock" pattern as every prior bump above.
+    assert len(result.columns) == 57
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns

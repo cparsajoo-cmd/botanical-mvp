@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +15,14 @@ from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
     get_scientific_evidence_by_ids,
 )
+
+
+# TEMPORARY DIAGNOSTIC INSTRUMENTATION (performance audit — runtime hang
+# in indication-centric Candidate Discovery). Prints only; no behavior
+# change. See the "Run Candidate Discovery" button handler below.
+def _perf(msg):
+    print(f"[PERF] {msg}", flush=True)
+
 
 
 def _unique_nonempty(values):
@@ -881,9 +891,13 @@ def render_rd_candidates_step(inputs):
 
     if st.button("Run Candidate Discovery", type="primary", key="run_step3_candidates"):
         try:
+            _perf_t0 = time.perf_counter()
+            _perf(f"build_engine start discovery_mode={discovery_mode!r} indication={indication!r}")
             engine = _build_engine(_get_evidence_df(), use_live_search=use_live_search)
+            _perf(f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f}")
 
             with st.spinner("Discovering and scoring R&D candidates..."):
+                _perf_t_run = time.perf_counter()
                 result_df = engine.run(
                     indication=indication,
                     dosage_form=dosage_form,
@@ -892,6 +906,11 @@ def render_rd_candidates_step(inputs):
                     reference_compound=reference_compound,
                     discovery_mode=discovery_mode,
                 )
+                _perf(
+                    f"engine.run() done rows={0 if result_df is None else len(result_df)} "
+                    f"elapsed={time.perf_counter() - _perf_t_run:.3f} "
+                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                )
 
             st.session_state["rd_candidates_df"] = result_df
             # Any previously prepared CSV bytes belong to the former run.
@@ -899,11 +918,18 @@ def render_rd_candidates_step(inputs):
             st.session_state.pop("rd_triage_audit_csv_bytes", None)
 
             if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+                _perf_t_shortlist = time.perf_counter()
                 plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
                     result_df,
                     indication=indication,
                     dosage_form=dosage_form,
                     max_candidates=50,
+                )
+                _perf(
+                    f"build_plant_candidate_shortlist() done "
+                    f"plants={0 if plant_summary_df is None else len(plant_summary_df)} "
+                    f"elapsed={time.perf_counter() - _perf_t_shortlist:.3f} "
+                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                 )
                 st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
                 st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
@@ -912,18 +938,30 @@ def render_rd_candidates_step(inputs):
                 # downloaded report are built from THIS, not from result_df
                 # directly, so they can never disagree with the shortlist
                 # above about which plant is the top candidate.
+                _perf_t_merge = time.perf_counter()
                 st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
                     result_df, plant_summary_df
+                )
+                _perf(
+                    f"merge_authoritative_scores() done "
+                    f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
+                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                 )
                 # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
                 # decision run, from the same report_ready_df just built.
                 # Both the downloaded report and the persisted decision
                 # record read this exact dict — see build_decision_metadata()'s
                 # own docstring.
+                _perf_t_decision = time.perf_counter()
                 st.session_state["rd_decision_metadata"] = build_decision_metadata(
                     st.session_state["rd_report_ready_df"],
                     indication=indication, dosage_form=dosage_form, market=market,
                     discovery_mode=_detect_discovery_mode(result_df),
+                )
+                _perf(
+                    f"build_decision_metadata() done "
+                    f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
+                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                 )
 
                 counts = (
@@ -943,6 +981,7 @@ def render_rd_candidates_step(inputs):
                 # lightweight rerun. This prevents Streamlit from appearing stuck
                 # after the success message while it continues formatting thousands
                 # of raw rows below the fold.
+                _perf(f"st.rerun() about to be called total_elapsed={time.perf_counter() - _perf_t0:.3f}")
                 st.rerun()
             else:
                 st.session_state.pop("rd_candidate_plant_summary_df", None)
@@ -980,22 +1019,29 @@ def render_rd_candidates_step(inputs):
         plant_summary_df = st.session_state.get("rd_candidate_plant_summary_df")
         triage_audit_df = st.session_state.get("rd_candidate_triage_audit_df")
         if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
+            _perf_t0_fallback = time.perf_counter()
+            _perf("fallback-path build_plant_candidate_shortlist() start (session_state was empty)")
             plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
                 result_df,
                 indication=indication,
                 dosage_form=dosage_form,
                 max_candidates=50,
             )
+            _perf(f"fallback-path build_plant_candidate_shortlist() done elapsed={time.perf_counter() - _perf_t0_fallback:.3f}")
             st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
             st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+            _perf_t_merge_fallback = time.perf_counter()
             st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
                 result_df, plant_summary_df
             )
+            _perf(f"fallback-path merge_authoritative_scores() done elapsed={time.perf_counter() - _perf_t_merge_fallback:.3f}")
+            _perf_t_decision_fallback = time.perf_counter()
             st.session_state["rd_decision_metadata"] = build_decision_metadata(
                 st.session_state["rd_report_ready_df"],
                 indication=indication, dosage_form=dosage_form, market=market,
                 discovery_mode=_detect_discovery_mode(result_df),
             )
+            _perf(f"fallback-path build_decision_metadata() done elapsed={time.perf_counter() - _perf_t_decision_fallback:.3f}")
         report_ready_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(report_ready_df, pd.DataFrame):
             report_ready_df = merge_authoritative_scores(result_df, plant_summary_df)

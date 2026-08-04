@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import json
 import ast
+import time
 from typing import Iterable
 import pandas as pd
 
@@ -54,6 +55,14 @@ except Exception as _embedding_import_exc:  # pragma: no cover - environment-dep
 
     def match_evidence_embeddings(*args, **kwargs):
         return []
+
+# TEMPORARY DIAGNOSTIC INSTRUMENTATION (performance audit — indication-
+# centric Candidate Discovery runtime hang). Prints only; no behavior
+# change. See discover_indication_candidates() and
+# _build_plant_evidence_index() for where this is used.
+def _perf(msg: str) -> None:
+    print(f"[PERF] {msg}", flush=True)
+
 
 # Post-Phase-5-review correction: OUTPUT_COLUMNS (imported below from
 # botanical_rd_candidate_engine.py) predates Phase 5 and does not list
@@ -417,6 +426,7 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
     This function performs one linear pass over each active evidence store and
     produces O(1) exact-name lookups for the scoring loop.
     """
+    _t_start = time.perf_counter()
     index: dict[str, list[dict]] = {}
     frames = (
         getattr(engine, "evidence_df", pd.DataFrame()),
@@ -428,11 +438,14 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
         "Botanical", "botanical", "Common_Name", "common_name",
     )
     seen_by_plant: dict[str, set[tuple[str, str, str]]] = {}
+    _rows_examined = 0
+    _rows_retained = 0
 
     for frame in frames:
         if not isinstance(frame, pd.DataFrame) or frame.empty:
             continue
         for idx, row in frame.iterrows():
+            _rows_examined += 1
             row_plant = _pick_from_row(engine, row, list(plant_cols))
             plant_key = _norm(row_plant)
             if not plant_key:
@@ -447,6 +460,7 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
             if dedupe_key in plant_seen:
                 continue
             plant_seen.add(dedupe_key)
+            _rows_retained += 1
             index.setdefault(plant_key, []).append({
                 "text": text,
                 "source": source,
@@ -508,6 +522,11 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                     _pick_from_row(engine, row, ["Evidence_Type", "evidence_type", "Evidence_Level", "evidence_level"]),
                 ) if t),
             })
+    _perf(
+        f"_build_plant_evidence_index done rows_examined={_rows_examined} "
+        f"rows_retained={_rows_retained} plants_indexed={len(index)} "
+        f"elapsed={time.perf_counter() - _t_start:.3f}"
+    )
     return index
 
 
@@ -646,8 +665,13 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence."""
     from botanical_rd_candidate_engine import OUTPUT_COLUMNS
 
+    _t0 = time.perf_counter()
+    _perf(f"discover_indication_candidates start indication={indication!r} dosage_form={dosage_form!r} market={market!r}")
+
     candidates = engine._candidate_frame()
+    _perf(f"engine._candidate_frame() done candidate_plants={len(candidates)} elapsed={time.perf_counter() - _t0:.3f}")
     if candidates.empty:
+        _perf(f"discover_indication_candidates done (empty candidates) elapsed={time.perf_counter() - _t0:.3f}")
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
 
     # Build ONE corpus-adaptive relevance profile for this query from the
@@ -661,9 +685,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     # the corpus-adaptive engine finds no match at all; it never overrides
     # a corpus-adaptive match and is never required.
     evidence_index = _build_plant_evidence_index(engine)
+    _t_profile = time.perf_counter()
     relevance_profile = build_indication_profile(
         indication, corpus_texts_from_records(evidence_index),
     )
+    _perf(f"build_indication_profile() done elapsed={time.perf_counter() - _t_profile:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
     assist_family = _resolve_indication_terms(indication)
     assist_terms: tuple[str, ...] = tuple(dict.fromkeys(
         (*assist_family[0], *assist_family[1])
@@ -675,16 +701,26 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     # unavailable, migration not yet applied) degrades to fallback_mode
     # rather than raising -- Step 5 must keep working with the deterministic
     # engine alone when embeddings are unavailable.
+    _t_embed = time.perf_counter()
     query_embedding = embed_query(indication)
+    _perf(
+        f"embed_query() done have_embedding={bool(query_embedding)} "
+        f"elapsed={time.perf_counter() - _t_embed:.3f} (cumulative={time.perf_counter() - _t0:.3f})"
+    )
     embedding_fallback_reason = "" if query_embedding else (
         "embedding provider unavailable" if not _EMBEDDING_INFRA_IMPORTED
         else "query embedding failed or OPENAI_API_KEY not configured"
     )
     embedding_by_record_id: dict[str, float] = {}
     if query_embedding:
+        _t_vector_search = time.perf_counter()
         rpc_matches = match_evidence_embeddings(
             query_embedding, match_count=500,
             embedding_model=EMBEDDING_MODEL, embedding_version=EMBEDDING_VERSION,
+        )
+        _perf(
+            f"match_evidence_embeddings() done matches={len(rpc_matches)} "
+            f"elapsed={time.perf_counter() - _t_vector_search:.3f} (cumulative={time.perf_counter() - _t0:.3f})"
         )
         for match in rpc_matches:
             rid = match.get("evidence_record_id")
@@ -712,7 +748,19 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
     rows = []
 
+    _loop_start = time.perf_counter()
+    _total_candidate_plants = len(candidates)
+    _plants_processed = 0
+    _evidence_records_examined = 0
+    _records_scored_for_relevance = 0
+    _relevant_records_retained = 0
+    _safety_extraction_calls = 0
+    _normalization_calls = 0
+    _validation_calls = 0
+    _PROGRESS_EVERY = 200
+
     for _, item in candidates.iterrows():
+        _plants_processed += 1
         plant = engine._pick(item, ["Scientific_Name", "scientific_name", "Plant", "plant"])
         if not plant:
             continue
@@ -721,6 +769,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         targets = engine._pick(item, ["Known_Targets", "target", "mechanism"])
         compounds = engine._split_compound_terms(engine._pick(item, ["Known_Active_Compounds", "compound_name"]))
         records = _records_for_plant(engine, plant, evidence_index)
+        _evidence_records_examined += len(records)
         # Safety and interaction evidence is plant-wide, not indication-bound.
         # Build it once from every plant-specific record, while efficacy
         # relevance below remains restricted to the selected indication.
@@ -731,6 +780,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 record["relevance"] = _score(
                     record, record.get("tier1_text", ""), record.get("tier2_text", ""), record.get("tier3_text", ""),
                 )
+                _records_scored_for_relevance += 1
 
         direct_records = [r for r in records if r["relevance"].match_type in _MATCH_STRONG]
         mechanism_records = [r for r in records if r["relevance"].match_type in _MATCH_SUPPORTIVE]
@@ -741,10 +791,19 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
         # Known_Targets) have no evidence_record_id to join an embedding
         # match to, so this always scores via the deterministic engine only.
         profile_relevance = _score(None, indications, targets, "")
+        _records_scored_for_relevance += 1
         profile_direct = profile_relevance.match_type in _MATCH_STRONG
         profile_mechanistic = profile_relevance.match_type in _MATCH_SUPPORTIVE
 
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
+            if _plants_processed % _PROGRESS_EVERY == 0:
+                _perf(
+                    f"indication loop {_plants_processed}/{_total_candidate_plants} plants, "
+                    f"evidence_records_examined={_evidence_records_examined}, "
+                    f"relevant_records_retained={_relevant_records_retained}, "
+                    f"output_rows={len(rows)}, "
+                    f"elapsed={time.perf_counter() - _loop_start:.3f}"
+                )
             continue
 
         # Preserve record-level granularity.  The previous implementation
@@ -761,6 +820,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             if key not in seen_relevant:
                 seen_relevant.add(key)
                 relevant_records.append(record)
+        _relevant_records_retained += len(relevant_records)
 
         evidence_units: list[dict | None] = relevant_records or [None]
         for record in evidence_units:
@@ -810,6 +870,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     structured_result = extract_structured_safety_interactions(
                         safety_findings, interactions, plant_name=plant,
                     )
+                    _safety_extraction_calls += 1
                     structured_safety = "; ".join(structured_result["adverse_events"])
                     structured_interactions = "; ".join(structured_result["interactions"])
                     structured_reassurance = "; ".join(structured_result["safety_reassurance"])
@@ -823,6 +884,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                         plant_name=plant,
                     )
                 )
+                _safety_extraction_calls += 1
                 safety_findings = structured_safety or source_safety
                 interactions = structured_interactions or source_interactions
                 safety_reassurance = structured_reassurance or source_reassurance
@@ -867,6 +929,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     "Study_Model": "Human" if human else ("Animal" if preclinical else ""),
                 }
                 _normalized_fields = normalize_evidence_record(_phase5_row)
+                _normalization_calls += 1
                 _validation_result = validate_evidence_record(
                     _phase5_row,
                     plant_name=plant,
@@ -874,6 +937,7 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                     dosage_form=dosage_form,
                     normalized_fields=_normalized_fields,
                 )
+                _validation_calls += 1
                 normalization_summary = "; ".join(
                     f"{name}={field.verification_status}"
                     for name, field in _normalized_fields.items()
@@ -1052,6 +1116,28 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "GRADE_Certainty_Rationale": "Record-level grading required.",
             })
             rows.append(row)
+
+        if _plants_processed % _PROGRESS_EVERY == 0:
+            _perf(
+                f"indication loop {_plants_processed}/{_total_candidate_plants} plants, "
+                f"evidence_records_examined={_evidence_records_examined}, "
+                f"relevant_records_retained={_relevant_records_retained}, "
+                f"output_rows={len(rows)}, "
+                f"elapsed={time.perf_counter() - _loop_start:.3f}"
+            )
+
+    _perf(
+        f"indication loop done plants_processed={_plants_processed}/{_total_candidate_plants}, "
+        f"evidence_records_examined={_evidence_records_examined}, "
+        f"records_scored_for_relevance={_records_scored_for_relevance}, "
+        f"relevant_records_retained={_relevant_records_retained}, "
+        f"safety_extraction_calls={_safety_extraction_calls}, "
+        f"normalization_calls={_normalization_calls}, "
+        f"validation_calls={_validation_calls}, "
+        f"output_rows={len(rows)}, "
+        f"elapsed={time.perf_counter() - _loop_start:.3f} "
+        f"(cumulative={time.perf_counter() - _t0:.3f})"
+    )
 
     if not rows:
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))

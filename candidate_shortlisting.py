@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import json
+import time
 from collections import Counter
 from typing import Iterable
 
@@ -90,6 +91,13 @@ _APPLICABILITY_MISMATCH_TERMS = (
     "mismatch", "not applicable", "incompatible", "wrong dosage",
     "different dosage form", "not direct for selected product",
 )
+
+
+# TEMPORARY DIAGNOSTIC INSTRUMENTATION (performance audit —
+# build_plant_candidate_shortlist() runtime). Prints only; no behavior
+# change. See build_plant_candidate_shortlist() below.
+def _perf(msg):
+    print(f"[PERF] {msg}", flush=True)
 
 
 def _norm(value: object) -> str:
@@ -1307,7 +1315,12 @@ def build_plant_candidate_shortlist(
     if "Alternative_Plant" not in raw_df.columns:
         return pd.DataFrame(), raw_df.copy()
 
+    _t0 = time.perf_counter()
+    _perf(f"build_plant_candidate_shortlist start rows={len(raw_df)}")
+
+    _t = time.perf_counter()
     audit = raw_df.copy()
+    _perf(f"dataframe_copy done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
     statuses: list[str] = []
     reasons: list[str] = []
     direct_values: list[bool] = []
@@ -1317,6 +1330,9 @@ def build_plant_candidate_shortlist(
     hard_values: list[bool] = []
     negative_values: list[bool] = []
 
+    _t = time.perf_counter()
+    _row_classification_count = 0
+    _ROW_PROGRESS_EVERY = 2000
     for _, row in audit.iterrows():
         status, row_reasons, flags = _row_classification(row, dosage_form)
         statuses.append(status)
@@ -1327,7 +1343,18 @@ def build_plant_candidate_shortlist(
         dosage_values.append(str(flags["dosage"]))
         hard_values.append(bool(flags["hard_stop"]))
         negative_values.append(bool(flags["negative"]))
+        _row_classification_count += 1
+        if _row_classification_count % _ROW_PROGRESS_EVERY == 0:
+            _perf(
+                f"row_classification loop {_row_classification_count}/{len(audit)} rows, "
+                f"elapsed={time.perf_counter() - _t:.3f}"
+            )
+    _perf(
+        f"row_classification loop done rows={_row_classification_count} "
+        f"elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})"
+    )
 
+    _t = time.perf_counter()
     audit["Scientific_Triage_Status"] = statuses
     audit["Scientific_Triage_Reasons"] = reasons
     audit["Direct_Evidence_Present"] = direct_values
@@ -1336,13 +1363,57 @@ def build_plant_candidate_shortlist(
     audit["Dosage_Form_Compatibility"] = dosage_values
     audit["Hard_Stop_Present"] = hard_values
     audit["Negative_Evidence_Present"] = negative_values
+    _perf(f"column_assign done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
 
     rows: list[dict[str, object]] = []
-    for plant, group in audit.groupby("Alternative_Plant", sort=False, dropna=False):
+
+    # Narrowly-scoped per-plant-loop diagnostic pass (per-section
+    # cumulative call counts and elapsed seconds), mirroring the
+    # instrumentation already added to
+    # indication_candidate_discovery.discover_indication_candidates().
+    # Diagnostic-only: no thresholds, counts, or behavior are read from
+    # these values anywhere.
+    _PLANT_SECTION_ORDER = (
+        "plant_row_filter", "aggregation", "scoring",
+        "decision_gates", "row_append",
+    )
+    _plant_section_calls = {name: 0 for name in _PLANT_SECTION_ORDER}
+    _plant_section_seconds = {name: 0.0 for name in _PLANT_SECTION_ORDER}
+
+    def _plant_section_add(name, elapsed):
+        _plant_section_calls[name] += 1
+        _plant_section_seconds[name] += elapsed
+
+    _plants_processed = 0
+    _PLANT_PROGRESS_EVERY = 50
+
+    def _print_plant_loop_profile(label, total_plants_label):
+        detail_lines = [
+            f"  plants_processed={_plants_processed}{total_plants_label}, "
+            f"output_rows_so_far={len(rows)}, "
+            f"elapsed={time.perf_counter() - _t_grouping_loop:.3f}"
+        ]
+        for name in _PLANT_SECTION_ORDER:
+            calls = _plant_section_calls[name]
+            total = _plant_section_seconds[name]
+            avg_ms = (total / calls * 1000.0) if calls else 0.0
+            detail_lines.append(
+                f"  {name}: calls={calls} total={total:.3f} avg_ms={avg_ms:.2f}"
+            )
+        print(f"[PERF] plant loop profile {label}\n" + "\n".join(detail_lines), flush=True)
+
+    _t = time.perf_counter()
+    _grouped = audit.groupby("Alternative_Plant", sort=False, dropna=False)
+    _perf(f"grouping (groupby call) done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
+
+    _t_grouping_loop = time.perf_counter()
+    for plant, group in _grouped:
         plant = str(plant or "").strip()
         if not plant or plant.lower() == "nan":
             continue
+        _plants_processed += 1
 
+        _t = time.perf_counter()
         shortlist_rows = group[group["Scientific_Triage_Status"] == "Shortlist"]
         exploratory_rows = group[group["Scientific_Triage_Status"] == "Exploratory"]
         usable = shortlist_rows if not shortlist_rows.empty else exploratory_rows
@@ -1367,7 +1438,9 @@ def build_plant_candidate_shortlist(
             plant_status = "Exploratory"
         else:
             plant_status = "Excluded"
+        _plant_section_add("plant_row_filter", time.perf_counter() - _t)
 
+        _t = time.perf_counter()
         evidence_points = _evidence_points(group)
         target_points = min(20.0, 5.0 * int(group["Supported_Target_or_Mechanism"].sum()))
         compound_points = min(15.0, 5.0 * len(distinctive_compounds))
@@ -1378,6 +1451,7 @@ def build_plant_candidate_shortlist(
         reference_points = min(5.0, 2.5 * len(references))
         negative_penalty = 10.0 if group["Negative_Evidence_Present"].any() else 0.0
         generic_penalty = 10.0 if len(distinctive_compounds) == 0 else 0.0
+        _plant_section_add("aggregation", time.perf_counter() - _t)
 
         triage_score = max(
             0.0,
@@ -1397,6 +1471,7 @@ def build_plant_candidate_shortlist(
             triage_score = min(74.0, round(triage_score * 0.75, 1))
 
         # --- Requirement 8: transparent weighted score (0-100) -------------
+        _t = time.perf_counter()
         (
             indication_points,
             indication_tier,
@@ -1408,11 +1483,13 @@ def build_plant_candidate_shortlist(
         mech_points, mech_tier = _mechanism_support(group)
         safety_reg_points, safety_reg_tier = _safety_regulatory(group)
         novelty_points, novelty_tier = _novelty_market(group)
+        _plant_section_add("scoring", time.perf_counter() - _t)
 
         # Final plant-level decision gates. Mechanism similarity is supporting
         # evidence only: it cannot create a Shortlist recommendation without
         # direct candidate-specific indication evidence and adequate evidence
         # quality/traceability.
+        _t = time.perf_counter()
         indication_requested = bool(_norm(indication))
         reasons_note = None
         base_plant_status = plant_status
@@ -1488,7 +1565,9 @@ def build_plant_candidate_shortlist(
         elif dosage_summary == "Mismatch":
             plant_status = "Excluded"
             reasons_note = "available evidence uses a preparation that does not match the selected dosage form"
+        _plant_section_add("decision_gates", time.perf_counter() - _t)
 
+        _t = time.perf_counter()
         # --- Problem 2 additive diagnostics -------------------------------
         # Direct- vs mechanistic-support row counts, read from the same
         # authoritative per-row relevance used above wherever available, so
@@ -1679,13 +1758,28 @@ def build_plant_candidate_shortlist(
             "Preparation_Applicability_Class": preparation_applicability_class,
             "Triage_Gate_Reasons": triage_gate_reasons,
         })
+        _plant_section_add("row_append", time.perf_counter() - _t)
+
+        if _plants_processed % _PLANT_PROGRESS_EVERY == 0:
+            _print_plant_loop_profile(
+                f"{_plants_processed}", f"/~{audit['Alternative_Plant'].nunique()}"
+            )
+
+    _perf(
+        f"plant loop done plants_processed={_plants_processed}, output_rows={len(rows)} "
+        f"elapsed={time.perf_counter() - _t_grouping_loop:.3f} (cumulative={time.perf_counter() - _t0:.3f})"
+    )
+    _print_plant_loop_profile("final", f"/~{_plants_processed}")
 
     summary = pd.DataFrame(rows)
     if summary.empty:
         return summary, audit
 
+    _t = time.perf_counter()
     summary = _prune_near_duplicate_congeners(summary)
+    _perf(f"prune_near_duplicate_congeners done rows={len(summary)} elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
 
+    _t = time.perf_counter()
     status_order = pd.Categorical(
         summary["Scientific_Triage_Status"],
         categories=["Shortlist", "Exploratory", "Excluded"],
@@ -1695,13 +1789,18 @@ def build_plant_candidate_shortlist(
         ["_status_order", "Overall_Score", "Traceable_Source_Count", "Distinctive_Compound_Count"],
         ascending=[True, False, False, False],
     ).drop(columns=["_status_order"]).reset_index(drop=True)
+    _perf(f"sorting done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
 
+    _t = time.perf_counter()
     if max_candidates and max_candidates > 0:
         # Keep all excluded candidates in the audit; cap only the primary
         # plant-centric decision table.
         primary = summary[summary["Scientific_Triage_Status"] != "Excluded"].head(max_candidates)
         excluded = summary[summary["Scientific_Triage_Status"] == "Excluded"]
         summary = pd.concat([primary, excluded], ignore_index=True)
+    _perf(f"filtering_cap done rows={len(summary)} elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
+
+    _perf(f"build_plant_candidate_shortlist done total_elapsed={time.perf_counter() - _t0:.3f} output_rows={len(summary)}")
 
     return summary, audit
 

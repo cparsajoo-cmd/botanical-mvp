@@ -264,7 +264,26 @@ OUTPUT_COLUMNS = [
 # for that plant where it wasn't before). White_Space_Type itself was
 # NOT modified — this is a real behavior change caused only by
 # white_space_classifier.py now receiving a more informative input.
-DECISION_ENGINE_VERSION = "1.0.2"
+# 1.0.3 — Phase 2D-B (performance rollback/refinement of 1.0.2): 1.0.2's
+# unbounded per-run canonical-EMA-cache build (self.
+# _canonical_regulatory_by_plant populated for every unique alt-plant,
+# potentially 1,000-2,000+) caused a confirmed Streamlit CPU-throttling
+# regression in default Candidate Discovery — see the Phase 2D
+# performance audit. That automatic build was removed; default
+# Candidate Discovery no longer performs ANY canonical EMA/HMPC
+# lookups (0, not "up to 30" — Option B, opt-in only, was chosen; see
+# run()'s Phase 2D-B comment for why the bounded-final-set Option A
+# was rejected: it would make Market_Status inconsistent with the
+# Market_Status _score_candidate() actually scored). Market_Status
+# reverts to exactly its pre-1.0.2 behavior (the canonical branches in
+# _market_status() are unreachable again by default, not removed).
+# Canonical EMA/HMPC data remains available exactly as it was before
+# 1.0.2: through the separate, explicitly-capped (max_plants=30)
+# enrich_candidates_with_market_landscape() action, in the
+# Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
+# unless a caller explicitly populates
+# self._canonical_regulatory_by_plant before calling run().
+DECISION_ENGINE_VERSION = "1.0.3"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -668,9 +687,10 @@ class BotanicalRDCandidateEngine:
         # run() gets a valid empty dict rather than an AttributeError.
         self.scientific_evidence_index = {}
 
-        # Phase 2D-A — default before run() has built the real
-        # per-plant canonical EMA/HMPC cache (see run()'s unconditional
-        # rebuild step, right before _market_status() is first used).
+        # Phase 2D-A / 2D-B — default, and (as of 2D-B's performance
+        # correction) the value default Candidate Discovery keeps
+        # throughout run() — see run()'s Phase 2D-B comment for why
+        # the unbounded per-run rebuild Phase 2D-A added was removed.
         # Empty, never None/missing, so _market_status() (via a
         # defensive getattr(self, "_canonical_regulatory_by_plant", {}))
         # and any test/caller constructing an engine via __new__()
@@ -680,7 +700,12 @@ class BotanicalRDCandidateEngine:
         # result dict (EMA_HMPC_Match_Category, EMA_HMPC_Status,
         # EMA_HMPC_Detail, EMA_Source, ...) — never reduced to just the
         # compact display string, so _market_status() never has to
-        # re-derive the match category from text.
+        # re-derive the match category from text. A caller that wants
+        # canonical EMA data in Market_Status (rather than only in the
+        # separate Market_Landscape_EMA_HMPC_* columns from
+        # enrich_candidates_with_market_landscape()) may still populate
+        # this dict explicitly before calling run() — the consuming
+        # logic in _market_status() is intentionally still fully wired.
         self._canonical_regulatory_by_plant = {}
 
         # Real Supabase tables (806 / 310 / 47 records as of the last known
@@ -982,28 +1007,46 @@ class BotanicalRDCandidateEngine:
                 "row": alt,
             })
 
-        # Phase 2D-A — the canonical EMA/HMPC regulatory-status cache
-        # for this run() call ONLY. Rebuilt unconditionally every time
-        # (never carried over from a prior run() call on the same
-        # engine instance — see this attribute's __init__ default and
-        # comment for why that matters when step_rd_candidates.py's
-        # @st.cache_resource-cached engine handles multiple
-        # indication/market changes on one instance). One
-        # _eu_regulatory_status() call per UNIQUE alt-plant name here,
-        # not per candidate row/compound match — alt_candidate_records
-        # above already deduplicated rows down to (plant × compound)
-        # combinations, so this is a second, coarser dedup down to just
-        # (plant). _eu_regulatory_status() itself does not hit the
-        # network beyond the first call in this process:
-        # ema_regulatory_connector._get_inventory() is
-        # @lru_cache(maxsize=1), so every call here after the very
-        # first is a pure in-memory lookup. Reuses the existing
-        # canonical connector path only — no new parser, matcher, or
-        # normalization layer.
-        unique_alt_plants = {rec["alt_plant"] for rec in alt_candidate_records}
-        self._canonical_regulatory_by_plant = {
-            plant: self._eu_regulatory_status(plant) for plant in unique_alt_plants
-        }
+        # Phase 2D-B (performance correction) — Phase 2D-A built
+        # self._canonical_regulatory_by_plant HERE, unconditionally,
+        # for every unique alt-plant (potentially 1,000-2,000+, per the
+        # "Dr. Duke's" scale noted elsewhere in this file). That is
+        # exactly the unbounded-lookup cost
+        # enrich_candidates_with_market_landscape()'s own docstring
+        # (below) already warned against avoiding: "NOT called by
+        # run() itself ... baking that into every default run without
+        # review is exactly the unreviewed cost/latency change earlier
+        # passes ... deliberately avoided." Phase 2D-A violated that
+        # principle and caused a confirmed Streamlit CPU-throttling
+        # regression (see the Phase 2D performance audit).
+        #
+        # DESIGN DECISION (Option B, per the audit): canonical EMA
+        # enrichment stays opt-in via the pre-existing, separate,
+        # explicitly-capped enrich_candidates_with_market_landscape()
+        # path (max_plants=30 by default) — NOT built automatically
+        # here. Option A (enrich only the bounded final
+        # shortlist/top-candidates set, after row generation) was
+        # considered and rejected: Market_Status already flows into
+        # _score_candidate()'s market-signal component DURING row
+        # generation, before any "final candidates" selection exists.
+        # Patching Market_Status for only a bounded subset AFTER
+        # scoring would make the displayed Market_Status inconsistent
+        # with the Market_Status the score was actually computed from
+        # — exactly the "internal inconsistency" this correction must
+        # avoid, and _score_candidate() is explicitly out of scope to
+        # touch or re-run in this phase.
+        #
+        # self._canonical_regulatory_by_plant therefore stays at its
+        # __init__ default ({}) throughout default Candidate Discovery.
+        # _market_status()'s canonical-aware branches (Phase 2D-A,
+        # including the manually_curated correction) are left fully
+        # intact — they simply have no cached entries to find, so every
+        # lookup falls through to the pre-Phase-2D-A behavior, byte-
+        # for-byte. The architecture is preserved; only the automatic,
+        # unbounded population of it is removed. Canonical EMA/HMPC
+        # data still reaches the user through the separate
+        # Market_Landscape_EMA_HMPC_* columns via the opt-in "Enrich
+        # with market/patent landscape" button, unchanged.
 
         # Index alt-candidates by exact compound name and by chemical
         # class, so matching a single reference compound is a couple of

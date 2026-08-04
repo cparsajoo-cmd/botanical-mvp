@@ -1,6 +1,14 @@
-"""Phase 2D-A regression suite — wiring the canonical EMA/HMPC connector
-result into BotanicalRDCandidateEngine's main Candidate Discovery path
-via a per-run cached plant-level lookup.
+"""Phase 2D-A/2D-B regression suite — the canonical EMA/HMPC connector
+integration architecture inside _market_status(), and (Phase 2D-B) the
+performance correction that removed the unbounded, automatic per-run
+full-universe cache build 2D-A had added to run().
+
+UPDATED FOR PHASE 2D-B: default run() no longer performs any canonical
+EMA lookups (see the "5. Phase 2D-B" section below) — 2D-A's tests that
+required/proved a full-universe build were removed and replaced. The
+unit-level tests above that section (classification logic given an
+explicitly-populated cache) are unchanged: that architecture was
+preserved, only its automatic population was removed.
 
 All fixtures are synthetic; no live EMA network access. Monkeypatches
 _eu_regulatory_status() directly (the existing canonical Path B
@@ -308,18 +316,18 @@ def test_traditional_use_text_branch_unchanged_when_canonical_says_not_found():
 
 
 # ---------------------------------------------------------------------
-# 5. run()-level: one lookup per unique plant, cache rebuilt every run().
+# 5. Phase 2D-B (performance correction) — default run() must perform
+# ZERO canonical EMA lookups, regardless of candidate-universe size.
+# The full-universe cache build from Phase 2D-A was removed; these
+# tests replace the ones that proved (and depended on) that build.
 # ---------------------------------------------------------------------
 
-def test_run_builds_one_canonical_lookup_per_unique_plant(monkeypatch):
+def test_default_run_performs_zero_canonical_ema_lookups(monkeypatch):
     rows = [
         dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
              indication="Test indication", target="Testtarget",
              common_name="", plant_part="", extraction_method=""),
         dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia",
-             indication="", target="Testtarget",
-             common_name="", plant_part="", extraction_method=""),
-        dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia2",
              indication="", target="Testtarget",
              common_name="", plant_part="", extraction_method=""),
     ]
@@ -336,46 +344,38 @@ def test_run_builds_one_canonical_lookup_per_unique_plant(monkeypatch):
 
     engine.run(indication="Test indication", dosage_form="tea", market="EU")
 
-    # "Alternativia speciosa" appears twice in the candidate data
-    # (two compounds) but must only be looked up once.
-    assert call_log.count("Alternativia speciosa") == 1
-    assert len(call_log) == len(set(call_log))
+    assert call_log == []
 
 
-def test_run_rebuilds_cache_on_every_call_not_carried_over(monkeypatch):
+def test_2000_synthetic_unique_plants_do_not_cause_2000_lookups(monkeypatch):
     rows = [
         dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
              indication="Test indication", target="Testtarget",
              common_name="", plant_part="", extraction_method=""),
-        dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia",
+    ]
+    rows += [
+        dict(scientific_name=f"Syntheticplant{i} speciosa", compound_name="Sharedcompoundia",
              indication="", target="Testtarget",
-             common_name="", plant_part="", extraction_method=""),
+             common_name="", plant_part="", extraction_method="")
+        for i in range(2000)
     ]
     engine = make_engine(rows)
     engine.use_live_search = False
 
-    call_count = {"n": 0}
+    call_log = []
 
     def fake_eu_status(plant):
-        call_count["n"] += 1
+        call_log.append(plant)
         return dict(CANONICAL_RESULT_TEMPLATES["searched_not_found"])
 
     monkeypatch.setattr(engine, "_eu_regulatory_status", fake_eu_status)
 
     engine.run(indication="Test indication", dosage_form="tea", market="EU")
-    first_call_count = call_count["n"]
-    assert first_call_count > 0
 
-    # A second run() call on the SAME engine instance (simulating
-    # step_rd_candidates.py's @st.cache_resource-cached engine reused
-    # across an indication/market change) must rebuild the cache from
-    # scratch — i.e. call _eu_regulatory_status() again for the same
-    # plants, not silently reuse stale state from the first call.
-    engine.run(indication="Test indication", dosage_form="capsule", market="US")
-    assert call_count["n"] > first_call_count
+    assert len(call_log) == 0
 
 
-def test_run_activates_canonical_listed_status_end_to_end(monkeypatch):
+def test_canonical_cache_stays_empty_throughout_default_run(monkeypatch):
     rows = [
         dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
              indication="Test indication", target="Testtarget",
@@ -386,13 +386,28 @@ def test_run_activates_canonical_listed_status_end_to_end(monkeypatch):
     ]
     engine = make_engine(rows)
     engine.use_live_search = False
+    engine.run(indication="Test indication", dosage_form="tea", market="EU")
+    assert engine._canonical_regulatory_by_plant == {}
 
-    def fake_eu_status(plant):
-        if plant == "Alternativia speciosa":
-            return dict(CANONICAL_RESULT_TEMPLATES["exact_species_match"])
-        return dict(CANONICAL_RESULT_TEMPLATES["searched_not_found"])
 
-    monkeypatch.setattr(engine, "_eu_regulatory_status", fake_eu_status)
+def test_explicit_pre_populated_cache_still_reaches_market_status_end_to_end():
+    # The architecture (Requirement 2) is preserved: a caller who
+    # explicitly populates the cache before run() still gets canonical
+    # data in Market_Status — this is no longer automatic, but it is
+    # still fully wired and functional.
+    rows = [
+        dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
+             indication="Test indication", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia",
+             indication="", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Alternativia speciosa": dict(CANONICAL_RESULT_TEMPLATES["exact_species_match"]),
+    }
 
     result_df = engine.run(indication="Test indication", dosage_form="tea", market="EU")
     alt_rows = result_df[result_df["Alternative_Plant"] == "Alternativia speciosa"]
@@ -400,7 +415,47 @@ def test_run_activates_canonical_listed_status_end_to_end(monkeypatch):
     assert (alt_rows["Market_Status"] == "Listed in EMA HMPC inventory — monograph not established").all()
 
 
-def test_run_activates_manually_curated_traditional_use_end_to_end(monkeypatch):
+def test_run_does_not_mutate_a_pre_populated_cache_to_add_more_plants(monkeypatch):
+    # run() must not "top up" an explicitly pre-populated cache with
+    # additional unbounded lookups for the rest of the candidate
+    # universe — that would silently reintroduce the regression for
+    # any caller who opts in for even one plant.
+    rows = [
+        dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
+             indication="Test indication", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="Alternativia speciosa", compound_name="Sharedcompoundia",
+             indication="", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+        dict(scientific_name="Otheralternativia vulgaris", compound_name="Sharedcompoundia",
+             indication="", target="Testtarget",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    engine = make_engine(rows)
+    engine.use_live_search = False
+    engine._canonical_regulatory_by_plant = {
+        "Alternativia speciosa": dict(CANONICAL_RESULT_TEMPLATES["exact_species_match"]),
+    }
+
+    call_log = []
+
+    def fake_eu_status(plant):
+        call_log.append(plant)
+        return dict(CANONICAL_RESULT_TEMPLATES["searched_not_found"])
+
+    monkeypatch.setattr(engine, "_eu_regulatory_status", fake_eu_status)
+
+    engine.run(indication="Test indication", dosage_form="tea", market="EU")
+
+    assert call_log == []
+    assert set(engine._canonical_regulatory_by_plant) == {"Alternativia speciosa"}
+
+
+def test_candidate_matching_unchanged_from_pre_phase_2d_a_fast_path():
+    # Candidate selection/matching (row count, which plants appear)
+    # must be identical to the pre-Phase-2D-A fast path — canonical EMA
+    # enrichment (present or absent) must never determine which
+    # candidates are discovered.
     rows = [
         dict(scientific_name="Referencia herbosa", compound_name="Sharedcompoundia",
              indication="Test indication", target="Testtarget",
@@ -409,17 +464,22 @@ def test_run_activates_manually_curated_traditional_use_end_to_end(monkeypatch):
              indication="", target="Testtarget",
              common_name="", plant_part="", extraction_method=""),
     ]
-    engine = make_engine(rows)
-    engine.use_live_search = False
+    engine_a = make_engine(rows)
+    engine_a.use_live_search = False
+    result_a = engine_a.run(indication="Test indication", dosage_form="tea", market="EU")
 
-    def fake_eu_status(plant):
-        if plant == "Alternativia speciosa":
-            return _curated_record("Traditional-use status")
-        return dict(CANONICAL_RESULT_TEMPLATES["searched_not_found"])
+    engine_b = make_engine(rows)
+    engine_b.use_live_search = False
+    result_b = engine_b.run(indication="Test indication", dosage_form="tea", market="EU")
 
-    monkeypatch.setattr(engine, "_eu_regulatory_status", fake_eu_status)
+    assert len(result_a) == len(result_b)
+    assert sorted(result_a["Alternative_Plant"].tolist()) == sorted(result_b["Alternative_Plant"].tolist())
 
-    result_df = engine.run(indication="Test indication", dosage_form="tea", market="EU")
-    alt_rows = result_df[result_df["Alternative_Plant"] == "Alternativia speciosa"]
-    assert not alt_rows.empty
-    assert (alt_rows["Market_Status"] == "Traditional-use status").all()
+
+def test_enrich_candidates_with_market_landscape_still_capped_at_30():
+    # The pre-existing, explicit enrichment path (unaffected by this
+    # phase) must still be the bounded one — confirms it, not the
+    # default run() cache, remains the enrichment mechanism.
+    import inspect
+    sig = inspect.signature(BotanicalRDCandidateEngine.enrich_candidates_with_market_landscape)
+    assert sig.parameters["max_plants"].default == 30

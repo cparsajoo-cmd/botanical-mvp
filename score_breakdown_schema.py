@@ -87,6 +87,69 @@ COMPONENT_TO_DIMENSIONS = {
 }
 
 
+# ======================================================================
+# PHASE 2 — score-contribution duplicate guard.
+#
+# See PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md section 3e: no existing
+# structure tracks score contributions per individual evidence item (only
+# pre-aggregated {component_name: value} totals, parsed above). Wiring
+# this into botanical_rd_candidate_engine.py's frozen scoring internals
+# is out of scope for this phase (no modification to the core scoring
+# function is permitted). This is therefore minimal, additive,
+# backward-compatible infrastructure only: a small utility any caller
+# that DOES build a per-evidence contribution list (present or future)
+# can use to guarantee the same evidence is never counted twice for the
+# same score component, without changing any weight or formula.
+#
+# score_identity (see standard_evidence_schema.py's module docstring)
+# is deliberately a (evidence_identity, component) PAIR, not a property
+# of EvidenceRecord alone — the same evidence CAN legitimately count
+# toward two different, genuinely different components.
+# ======================================================================
+
+
+def score_contribution_key(evidence_identity: str, component_name: str) -> str:
+    """Stable, JSON-serializable key identifying "this evidence already
+    contributed to this score component". Built from a
+    deduplication_engine.compute_evidence_identity() string plus the
+    component name (e.g. one of CANONICAL_SECTIONS /
+    INDICATION_CANONICAL_SECTIONS / AUTHORITATIVE_CANONICAL_SECTIONS
+    above), hashed with the same deterministic SHA-256 helper used for
+    evidence identity itself — never Python's randomized hash().
+    """
+    from deduplication_engine import stable_identity_hash
+
+    return stable_identity_hash(f"{evidence_identity}||{component_name}")
+
+
+def dedupe_score_contributions(contributions) -> list:
+    """Given an iterable of contribution dicts, each with at least
+    "evidence_identity" and "component" keys, returns a new list with
+    duplicate (evidence_identity, component) pairs removed — first
+    occurrence wins. Ranking/weights/values are never modified; this
+    only removes exact repeats of the same evidence counting toward the
+    same component (e.g. the same article surfacing once via PubMed and
+    once via Europe PMC, both attempting to contribute to "Evidence
+    quality"). A contribution missing either key is left in the output
+    unchanged (nothing to dedupe it against) rather than dropped
+    silently.
+    """
+    seen = set()
+    result = []
+    for contribution in contributions or []:
+        evidence_identity = contribution.get("evidence_identity") if isinstance(contribution, dict) else None
+        component = contribution.get("component") if isinstance(contribution, dict) else None
+        if evidence_identity is None or component is None:
+            result.append(contribution)
+            continue
+        key = score_contribution_key(evidence_identity, component)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(contribution)
+    return result
+
+
 def parse_score_breakdown(breakdown) -> dict:
     """Reverses a Score_Breakdown value back into a {name: float} dict.
 

@@ -1,0 +1,53 @@
+-- migrations/0006_add_dose_preparation.sql
+-- PHASE 2 (review round 5) -- adds the two columns needed to close the
+-- Evidence-identity / persistence gap found in the round-4 final audit:
+-- deduplication_engine.compute_evidence_identity()/
+-- evidence_contexts_equivalent() have compared "dose" and "preparation"
+-- since round 1, but no evidence_records column ever existed to persist
+-- either value, so both always compared as empty on the database side --
+-- letting a genuinely different Evidence (same article, different dose or
+-- preparation) go undetected as a NON-duplicate that should have stayed
+-- two rows in some cases, and, more importantly, letting a real duplicate
+-- with a populated dose/preparation on the new side always be treated as
+-- distinct from an existing row that could never carry that value.
+--
+-- HOW TO APPLY
+-- Same situation as every other migration in this directory: no migration
+-- runner exists in this repository (see ARCHITECTURE.md's "Known
+-- oddities"). Run this file by hand in the Supabase SQL editor against
+-- the `evidence_records` table.
+--
+-- SAFE TO RUN MULTIPLE TIMES / SAFE TO DEFER
+-- Both columns use IF NOT EXISTS, are nullable, and have no default that
+-- changes any existing row's meaning -- identical discipline to
+-- migrations/0002_extend_evidence_records.sql. database.py's
+-- save_evidence_record() and _fetch_evidence_identity_candidates() both
+-- tolerate this migration NOT being applied yet (see
+-- _OPTIONAL_EVIDENCE_COLUMNS / the PGRST204 schema-fallback retry both
+-- already use for every other optional column) -- rows written before
+-- this migration is applied, and rows written to a deployment where it is
+-- never applied, both keep working; dose/preparation simply never
+-- participate in identity comparisons on that deployment (documented as a
+-- limitation in PHASE2_EVIDENCE_IMPLEMENTATION_REPORT.md's round 5
+-- addendum -- never silently treated as a false duplicate).
+--
+-- WHY TWO SEPARATE COLUMNS, NOT A REUSE OF extraction_method
+-- "preparation" (how the herbal material was prepared for the STUDIED
+-- evidence item -- e.g. infusion vs. tincture vs. capsule) and
+-- "extraction_method" (a compound-extraction/solvent concept, tracked
+-- historically on the separate plant_compounds table, per
+-- standard_evidence_builder.py's own documented reasoning) are NOT the
+-- same scientific concept and must never be merged -- see
+-- standard_evidence_schema.py's _LEGACY_FIELD_MAP comment for the same
+-- reasoning applied at the Python layer.
+--
+-- WHY TEXT, NOT A CONSTRAINED ENUM
+-- No connector or extraction step in this repository currently produces
+-- either value in a controlled vocabulary; forcing one now would either
+-- reject real data or silently coerce it. Same discipline as every other
+-- free-text evidentiary field on this table (e.g. population,
+-- primary_outcome).
+
+ALTER TABLE evidence_records
+    ADD COLUMN IF NOT EXISTS dose         TEXT,
+    ADD COLUMN IF NOT EXISTS preparation  TEXT;

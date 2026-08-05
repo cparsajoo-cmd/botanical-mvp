@@ -112,6 +112,8 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 
 from database import _missing_postgrest_column
+from deduplication_engine import compute_evidence_identity
+from score_breakdown_schema import parse_score_breakdown
 
 DECISION_RECORD_TABLE_NAME = "decision_records"
 
@@ -168,6 +170,25 @@ _PERSISTED_RECORD_FIELDS = [
     # decision_records path for this field. None on any record
     # persisted before this field existed.
     "grade_certainty", "grade_certainty_rationale",
+    # PHASE 2 (review round, issue 2) — the raw Score_Breakdown value
+    # CandidateAssessment already carries (data_contracts.py's
+    # `score_breakdown` field) was never persisted before this change.
+    # Additive only: reads an existing field verbatim, computes/changes
+    # no score, weight, or ranking. This is what makes
+    # _build_score_context() below possible without inventing any new
+    # upstream computation.
+    "score_breakdown",
+    # PHASE 2 (review round 3, issue 3) — DERIVED, not a raw
+    # CandidateAssessment field. Listed here anyway so this allowlist
+    # stays the single, complete statement of "every key a persisted
+    # record can contain" — see _serialize_record(), which computes
+    # this one key specially via _build_score_context(). Deliberately
+    # named "score_context", not "score_contributions": see
+    # _build_score_context()'s docstring for why a per-component
+    # structure was REMOVED in this review round (it implied a causal
+    # link — "this evidence drove this component's score" — the engine
+    # does not actually provide).
+    "score_context",
 ]
 
 
@@ -177,17 +198,155 @@ def _new_analysis_id() -> str:
     return str(uuid.uuid4())
 
 
-def _serialize_record(record) -> dict:
+def _serialize_record(record, evidence_df=None) -> dict:
     """Reads ONLY the allowlisted fields already present on a
     validated CandidateAssessment — no new computation, no
-    recalculation of any field."""
+    recalculation of any field — EXCEPT the additive `score_context`
+    key (also listed in _PERSISTED_RECORD_FIELDS, so this remains the
+    single complete statement of every key a persisted record can
+    contain), which is DERIVED (never recomputed scoring) from two
+    already-persisted fields on the very same allowlist
+    (`score_breakdown`, `applicability_summary`); see
+    _build_score_context()'s docstring for exactly what it does and
+    does not do, and PHASE2_EVIDENCE_IMPLEMENTATION_REPORT.md section 3
+    for why this is deliberately candidate-level, not per-component.
+    """
     if is_dataclass(record) and not isinstance(record, type):
         as_dict = asdict(record)
     elif isinstance(record, dict):
         as_dict = record
     else:
         as_dict = {}
-    return {field: as_dict.get(field) for field in _PERSISTED_RECORD_FIELDS}
+    serialized = {
+        field: as_dict.get(field)
+        for field in _PERSISTED_RECORD_FIELDS
+        if field != "score_context"
+    }
+    serialized["score_context"] = _build_score_context(as_dict, evidence_df)
+    return serialized
+
+
+def _build_score_context(as_dict: dict, evidence_df) -> dict:
+    """PHASE 2 (review round 3, issue 3) — REPLACES this module's
+    original `_build_score_contributions()`.
+
+    WHY THE ORIGINAL SHAPE WAS WRONG
+    The original delivery attached the SAME evidence_record_ids to
+    EVERY score component, wrapped in a `{"component": ..., "value":
+    ..., "evidence_record_ids": [...], ...}` list. Even with the
+    granularity caveat documented in prose, that SHAPE itself implies a
+    causal link a reader (or any downstream code) could reasonably
+    take at face value: "this evidence backed THIS component." No such
+    per-component attribution exists anywhere in
+    botanical_rd_candidate_engine.py — see
+    PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md section 3e. A data shape that
+    LOOKS like fine-grained traceability but isn't is worse than no
+    shape at all; the review round 3 audit correctly identified this as
+    fabricated structure, not honest metadata.
+
+    WHAT THIS FUNCTION ACTUALLY DOES, STATED PLAINLY
+    Returns ONE candidate-level structure — never one entry per
+    component:
+
+        {
+            "score_breakdown": {<component>: <value>, ...},
+            "candidate_evidence_record_ids": [...],
+            "candidate_evidence_identities": [...],
+            "attribution_level": "candidate",
+            "component_attribution_available": False,
+        }
+
+    `score_breakdown` here is the SAME already-computed value, merely
+    parsed into a dict via the existing
+    score_breakdown_schema.parse_score_breakdown() for readability —
+    not recomputed. `candidate_evidence_record_ids` is Task 12.1's
+    existing `applicability_summary["evidence_record_ids"]`, READ
+    VERBATIM (order preserved, nothing added, nothing removed).
+    `candidate_evidence_identities` is the SAME list, each id mapped
+    through deduplication_engine.compute_evidence_identity() (when
+    `evidence_df` is available) and then reduced to distinct values —
+    this is legitimate, honest deduplication: catching the case where
+    the SAME article reached this candidate through two different
+    evidence_records rows (e.g. PubMed and Europe PMC each
+    independently saved) collapses to one identity in this list. It is
+    NOT claimed to prevent duplicate SCORE — the score itself was
+    already computed upstream by the frozen scoring engine before this
+    module ever sees the record; this list is read-time/persist-time
+    metadata about the evidence set, not a scoring-time guard.
+    `attribution_level` and `component_attribution_available` exist so
+    no downstream consumer of this JSON blob can mistake "candidate-
+    level" for "per-component" — the second field is hard-coded False,
+    never conditionally True, because no scoring-engine change was made
+    in this phase.
+
+    WHAT THIS DOES NOT DO, STATED PLAINLY (see the implementation
+    report for the full discussion)
+    - Does NOT prevent a duplicate evidence row from contributing twice
+      to the ORIGINAL score_breakdown value itself — that value was
+      already computed by botanical_rd_candidate_engine.py before this
+      record ever reaches this module. Duplicate ARTICLE/EVIDENCE
+      prevention BEFORE scoring happens at the database/read-time layer
+      (database._find_existing_evidence_by_identity()/
+      _find_existing_evidence_by_fuzzy_title(),
+      deduplication_engine.deduplicate_evidence()) — see the
+      implementation report's explicit "before scoring" vs. "inside
+      scoring" distinction.
+    - Does NOT attribute any evidence to any individual component.
+    - Does NOT call score_breakdown_schema.dedupe_score_contributions()
+      — that utility remains available, tested, and unused in
+      production; using it here would require exactly the fabricated
+      per-component pairing this function was rewritten to remove.
+
+    WHEN THIS RETURNS EMPTY-ISH VALUES
+    - No `score_breakdown` on the record -> `score_breakdown: {}`,
+      empty id/identity lists.
+    - No `applicability_summary`/`evidence_record_ids` -> empty id/
+      identity lists (never fabricated ids).
+    - `evidence_df` not supplied -> `candidate_evidence_identities`
+      falls back to the raw evidence_record_id strings themselves
+      (id-level distinctness only, not article-level — documented as a
+      limitation in the implementation report).
+    """
+    score_breakdown = as_dict.get("score_breakdown")
+    components = parse_score_breakdown(score_breakdown)
+
+    applicability_summary = as_dict.get("applicability_summary") or {}
+    evidence_record_ids = list(applicability_summary.get("evidence_record_ids") or [])
+
+    id_to_identity = {}
+    if evidence_df is not None and evidence_record_ids:
+        try:
+            id_column = evidence_df["Evidence_Record_ID"].astype(str)
+            for record_id in evidence_record_ids:
+                matches = evidence_df[id_column == str(record_id)]
+                if not matches.empty:
+                    id_to_identity[record_id] = compute_evidence_identity(
+                        matches.iloc[0].to_dict()
+                    )
+        except Exception:
+            # Defensive only — an unexpected evidence_df shape must
+            # degrade to id-level identity below, never raise and never
+            # block persistence of the rest of the decision record.
+            id_to_identity = {}
+
+    seen_identities = set()
+    deduped_ids = []
+    deduped_identities = []
+    for record_id in evidence_record_ids:
+        identity = id_to_identity.get(record_id, str(record_id))
+        if identity in seen_identities:
+            continue
+        seen_identities.add(identity)
+        deduped_ids.append(record_id)
+        deduped_identities.append(identity)
+
+    return {
+        "score_breakdown": components,
+        "candidate_evidence_record_ids": deduped_ids,
+        "candidate_evidence_identities": deduped_identities,
+        "attribution_level": "candidate",
+        "component_attribution_available": False,
+    }
 
 
 def _resolve_scoring_config_version(records: list):
@@ -230,8 +389,18 @@ def persist_decision_record(
     analysis_id: str = None,
     supabase_client=None,
     decision_metadata: dict = None,
+    evidence_df=None,
 ) -> dict:
     """The ONE write function this module exists to provide.
+
+    evidence_df (PHASE 2 review round, issue 2; optional, default None,
+    every pre-existing caller unaffected): the same evidence DataFrame
+    the calling page already has in hand (e.g. step_rd_candidates.py's
+    _get_evidence_df()), passed through so _build_score_contributions()
+    can compute article-level evidence_identity for each candidate's
+    evidence_record_ids instead of only id-level identity. See
+    _build_score_contributions()'s docstring for exactly what changes
+    when this is/isn't supplied.
 
     Persists a completed, already-validated set of CandidateAssessment
     records (candidate_output_adapter.validate_result_df()'s output)
@@ -290,7 +459,7 @@ def persist_decision_record(
         "indication": indication,
         "project_id": project_id,
         "candidate_count": len(records),
-        "records": json.dumps([_serialize_record(r) for r in records], default=str),
+        "records": json.dumps([_serialize_record(r, evidence_df) for r in records], default=str),
     }
     if decision_metadata:
         for field in _OPTIONAL_METADATA_COLUMNS:

@@ -129,14 +129,21 @@ def test_existing_persisted_fields_remain_unchanged():
         "gate_results", "scoring_config_version",
     }
     assert expected_pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
-    # Four new fields added since (applicability_summary, Task 12.1;
+    # Six new fields added since (applicability_summary, Task 12.1;
     # decision_engine_version, Task 15; grade_certainty and
     # grade_certainty_rationale, closing the result_df ->
     # CandidateAssessment -> decision_records path for GRADE
-    # certainty), nothing removed.
+    # certainty; score_breakdown and score_context, PHASE 2
+    # review round issue 2 — score_breakdown is an existing
+    # CandidateAssessment field persisted verbatim for the first time,
+    # score_context is derived from it plus applicability_summary,
+    # never a raw field read off the record — see
+    # decision_record_persistence._build_score_context()),
+    # nothing removed.
     assert set(_PERSISTED_RECORD_FIELDS) - expected_pre_task_12_1_fields == {
         "applicability_summary", "decision_engine_version",
         "grade_certainty", "grade_certainty_rationale",
+        "score_breakdown", "score_context",
     }
 
 

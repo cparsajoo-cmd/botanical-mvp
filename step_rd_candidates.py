@@ -1246,6 +1246,13 @@ def render_rd_candidates_step(inputs):
                     decision_record_summary = persist_decision_record(
                         records, indication=indication, project_id=f"{indication}-{market}",
                         decision_metadata=st.session_state.get("rd_decision_metadata"),
+                        # PHASE 2 (review round, issue 2) — the same
+                        # evidence_df already loaded for this page,
+                        # passed through so persist_decision_record()'s
+                        # score_contributions can compute article-level
+                        # evidence identity (not just raw database ids)
+                        # for duplicate-score-contribution detection.
+                        evidence_df=_get_evidence_df(),
                     )
                     if decision_record_summary["status"] == "persisted":
                         st.session_state["rd_last_decision_record_id"] = decision_record_summary["analysis_id"]

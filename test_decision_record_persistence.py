@@ -459,16 +459,19 @@ def test_existing_persisted_fields_remain_unchanged_after_applicability_summary_
         "rd_opportunity_score", "decision_class", "evidence_confidence",
         "gate_results", "scoring_config_version",
     }
-    # Every pre-existing field is still there, and exactly four fields
-    # have been added since (applicability_summary, Task 12.1;
-    # decision_engine_version, Task 15; grade_certainty and
-    # grade_certainty_rationale, closing the previously-broken
-    # result_df -> CandidateAssessment -> decision_records path for
-    # GRADE certainty) — nothing removed, nothing else silently changed.
+    # Every pre-existing field is still there, and six fields have been
+    # added since (applicability_summary, Task 12.1; decision_engine_version,
+    # Task 15; grade_certainty and grade_certainty_rationale, closing the
+    # previously-broken result_df -> CandidateAssessment -> decision_records
+    # path for GRADE certainty; score_breakdown and score_context,
+    # PHASE 2 review round issue 2 — see
+    # decision_record_persistence._build_score_context()) — nothing
+    # removed, nothing else silently changed.
     assert pre_task_12_1_fields.issubset(set(_PERSISTED_RECORD_FIELDS))
     assert set(_PERSISTED_RECORD_FIELDS) - pre_task_12_1_fields == {
         "applicability_summary", "decision_engine_version",
         "grade_certainty", "grade_certainty_rationale",
+        "score_breakdown", "score_context",
     }
 
     gate_results = {"safety": {"gate_name": "safety", "status": "passed", "reason": "x", "evidence": "y"}}

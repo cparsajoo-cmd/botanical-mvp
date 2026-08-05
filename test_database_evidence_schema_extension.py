@@ -19,8 +19,10 @@ class _FakeTable:
         self.name = name
         self.harness = harness
         self._pending_insert_payload = None
+        self._is_select = False
 
     def select(self, *a, **kw):
+        self._is_select = True
         return self
 
     def eq(self, *a, **kw):
@@ -34,17 +36,33 @@ class _FakeTable:
         return self
 
     def execute(self):
-        return self.harness._execute(self.name, self._pending_insert_payload)
+        return self.harness._execute(self.name, self._pending_insert_payload, self._is_select)
 
 
 class FakeSupabase:
     """Minimal fluent-chain double for supabase-py, just enough to drive
     save_evidence_record(): every `select` (existing-source / existing-
-    plant lookup) reports "not found" so the function always takes the
-    create path, and every `insert` returns a canned id — except
-    evidence_records inserts, which are recorded (and can be made to
-    raise a PGRST204-shaped error, via evidence_insert_behavior) so
-    tests can inspect exactly what payload this Phase 2 change sends."""
+    plant / Phase 2 identity lookup) reports "not found" so the function
+    always takes the create path, and every `insert` returns a canned id
+    — except evidence_records inserts, which are recorded (and can be
+    made to raise a PGRST204-shaped error, via evidence_insert_behavior)
+    so tests can inspect exactly what payload this Phase 2 change sends.
+
+    PHASE 2 update: _FakeTable now tracks whether a `select()` was ever
+    called on the chain, so a read-only lookup against evidence_records
+    (added by database._find_existing_evidence_by_identity(), the new
+    insert-time DOI/PMID/NCT_ID identity check) is recognized as a
+    select and reported "not found", exactly like the pre-existing
+    sources/plants select lookups — instead of being misread as an
+    insert of a None payload. This does not change what any test
+    asserts about the recorded insert payload; it only makes this fake
+    correctly distinguish "no rows returned by a query" from "an insert
+    call", which real supabase-py always distinguishes structurally
+    (select() vs insert() are different chain entry points) but this
+    simplified double previously conflated for evidence_records because
+    only one execute() call against that table existed before this
+    phase.
+    """
 
     def __init__(self, evidence_insert_behavior=None):
         self.inserted_evidence_payloads = []
@@ -53,7 +71,10 @@ class FakeSupabase:
     def table(self, name):
         return _FakeTable(name, self)
 
-    def _execute(self, name, insert_payload):
+    def _execute(self, name, insert_payload, is_select=False):
+        if is_select:
+            return _FakeResult([])  # "not found" -> caller falls through
+
         if name in ("sources", "plants"):
             if insert_payload is None:
                 return _FakeResult([])  # "not found" -> caller creates one

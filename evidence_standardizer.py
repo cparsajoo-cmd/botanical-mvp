@@ -1,5 +1,6 @@
 from source_ingestion_engine import normalize_source_record
 from standard_evidence_builder import build_standard_evidence
+from standard_evidence_schema import canonicalize_evidence_record
 
 try:
     from llm_extractor import extract_evidence_with_llm
@@ -56,6 +57,16 @@ def standardize_extracted_record(extracted, source_metadata):
         "Adverse_Events", "Interactions_Structured", "Effect_Size", "P_Value",
         "Administration_Route", "Plant_Part", "Extraction_Method", "Duration",
         "Mechanism", "Target", "Data_Quality_Score",
+        # PHASE 2 audit finding (PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md
+        # section 3c) — multi_source_collector._save_records_from_connector()
+        # sets these three on `record` before calling this function, but
+        # source_ingestion_engine.STANDARD_FIELDS never carried them, so
+        # normalize_source_record() silently dropped them, same class of
+        # bug already fixed above for Evidence_Level/PMID/DOI/etc. No
+        # persistence column consumes these today (see database.py), so
+        # this only stops the silent drop before storage; it does not by
+        # itself add a new evidence_records column.
+        "Source_Authority_Weight", "Source_Priority", "Source_Category",
     ):
         if record.get(_source_field) not in (None, "", [], {}):
             normalized[_source_field] = record[_source_field]
@@ -117,4 +128,13 @@ def standardize_extracted_record(extracted, source_metadata):
 
     standardized = build_standard_evidence(normalized)
 
-    return standardized
+    # PHASE 2 (review round, issue 1) — every record this function
+    # returns now genuinely passes through the canonical EvidenceRecord
+    # adapter before reaching any caller. canonicalize_evidence_record()
+    # round-trips through EvidenceRecord.from_legacy_dict()/
+    # .to_legacy_dict(): field-name normalization, None-vs-missing
+    # discipline, and first_author derivation all actually run here in
+    # production, not merely in a test that calls the adapter directly.
+    # Return shape is unchanged (still a legacy-compatible dict) — no
+    # caller of standardize_extracted_record() needs to change.
+    return canonicalize_evidence_record(standardized)

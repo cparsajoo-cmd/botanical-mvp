@@ -1,5 +1,14 @@
 import pandas as pd
 from supabase_client import get_supabase_client
+from standard_evidence_schema import canonicalize_evidence_record
+from deduplication_engine import (
+    normalize_doi,
+    normalize_pmid,
+    normalize_trial_registration,
+    articles_equivalent,
+    evidence_contexts_equivalent,
+    get_first_present,
+)
 
 # ======================================================================
 # Task 10.2 — REQUIRED SUPABASE SCHEMA CHANGE (not performed by this
@@ -83,6 +92,10 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     "plant_part", "extraction_method", "duration",
     "effect_size", "p_value", "adverse_events", "interactions_structured",
     "safety_findings", "data_quality_score",
+    # PHASE 2 (review round 5) — migrations/0006_add_dose_preparation.sql.
+    # See that file's header for why these are two separate columns, and
+    # why "preparation" is never conflated with "extraction_method".
+    "dose", "preparation",
 }
 
 
@@ -168,17 +181,267 @@ def _get_or_create_plant(supabase, scientific_name, common_name):
     return plant_result.data[0]["id"]
 
 
+def _fetch_evidence_identity_candidates(supabase, plant_id, indication, dosage_form,
+                                         id_field, id_value):
+    """PHASE 2 (review round 3, issue 1 fix; review round 5, dose/
+    preparation fix) — fetches every existing evidence_records row that
+    shares the same plant_id/indication/dosage_form AND the same strong
+    identifier (doi/pmid/nct_id, or a matched source_id) as the new
+    record, WITH the fields needed to compute a real
+    evidence_contexts_equivalent() comparison (not just the row id).
+
+    This replaces the old single .limit(1) lookup, which stopped at
+    "same DOI + same plant/indication/dosage_form" and silently treated
+    that as a duplicate — collapsing genuinely different Evidence
+    (different outcome, direction, population, dose, preparation, etc.)
+    from the same article. Now the caller must additionally confirm an
+    evidence_contexts_equivalent() match on one of the returned
+    candidates before treating anything as a duplicate.
+
+    Returns:
+      - a list of candidate row dicts (possibly empty — no candidates
+        found at all, which is a normal, non-ambiguous "no duplicate
+        possible" result)
+      - None if the query could not be resolved at all (e.g. the
+        doi/pmid/nct_id column itself doesn't exist on this deployment)
+        — the caller MUST treat None as "cannot determine, therefore
+        not a duplicate" (never silently collapse on missing data).
+
+    plant_part/dose/preparation are fetched when available but are
+    OPTIONAL columns (_OPTIONAL_EVIDENCE_COLUMNS; dose/preparation added
+    by migrations/0006_add_dose_preparation.sql). On an older deployment
+    missing one or more of them, this retries with progressively fewer
+    optional columns (never a query that removes a REQUIRED column, and
+    never silently reinterpreted as "not found" — a missing optional
+    column just means that one dimension always compares as "" on both
+    sides for that deployment; the other, always-present dimensions —
+    outcome, direction, population, study_type, notes — still fully gate
+    the comparison, so this never manufactures a false duplicate).
+    """
+    base_columns = ["id", "population", "primary_outcome", "result_direction", "study_type", "notes"]
+    optional_columns = ["plant_part", "dose", "preparation"]
+
+    def _run(columns):
+        return (
+            supabase.table("evidence_records")
+            .select(", ".join(columns))
+            .eq("plant_id", plant_id)
+            .eq("target_indication", indication or "")
+            .eq("dosage_form", dosage_form or "")
+            .eq(id_field, id_value)
+            .limit(50)
+            .execute()
+        )
+
+    remaining_optional = list(optional_columns)
+    for _ in range(len(optional_columns) + 1):
+        try:
+            result = _run(base_columns + remaining_optional)
+            return result.data or []
+        except Exception as exc:
+            missing = _missing_postgrest_column(exc)
+            if missing in ("doi", "pmid", "nct_id", "source_id", "plant_id",
+                           "target_indication", "dosage_form"):
+                # A REQUIRED column is missing — this deployment cannot
+                # answer the query at all; never silently proceed.
+                return None
+            if missing in remaining_optional:
+                remaining_optional.remove(missing)
+                continue
+            raise
+    return None
+
+
+def _find_existing_evidence_by_identity(supabase, plant_id, species, doi, pmid, nct_id,
+                                         indication, dosage_form, new_record):
+    """PHASE 2 (review round 3, issue 1 fix) — TWO-PHASE insert-time
+    dedup using the canonical DOI/PMID/Trial-Registration identity,
+    queried BEFORE the pre-existing URL/title-based
+    _find_existing_source() lookup.
+
+    Phase 1: find candidate ARTICLE rows sharing the same DOI/PMID/NCT_ID
+    (via _fetch_evidence_identity_candidates(), scoped to the same
+    plant/indication/dosage_form to keep the query bounded — see that
+    function's docstring).
+
+    Phase 2: only treat a candidate as a duplicate when
+    deduplication_engine.evidence_contexts_equivalent() says the new
+    record and that candidate describe the same scientific context
+    (population/primary_outcome/result_direction/study_type/notes/
+    plant_part, plus the already-known plant/indication/dosage_form —
+    all already guaranteed equal by the phase-1 query filter). This
+    deliberately does NOT re-derive or re-compare article identity here
+    (i.e., does not call compute_evidence_identity() and compare the
+    full string) — article equivalence was already established in
+    phase 1 by the exact DOI/PMID/NCT_ID match, and re-deriving a
+    title+year+author-based article key from a candidate row that has
+    no author data available (evidence_records carries no author
+    column) would spuriously fail to match a record whose OWN new-side
+    first_author happens to be populated — a real bug caught during
+    review round 3 testing. evidence_contexts_equivalent() sidesteps
+    this by only ever comparing the non-article scientific dimensions.
+
+    Two Evidence rows about the same article, same plant, same
+    indication, same dosage form, but a different outcome or direction
+    or population, are NOT collapsed — this is exactly the distinction
+    article_identity vs. evidence_identity exists to preserve (see
+    PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md).
+
+    Degrades safely: returns None (falls through to the pre-existing
+    URL/title path) whenever no DOI/PMID/NCT_ID is present, the
+    identifier column doesn't exist yet on this deployment, or no
+    candidate's evidence context matches. On any ambiguity — a query
+    that cannot be resolved — the record is preferred to be KEPT (not
+    silently treated as a duplicate).
+    """
+    if not any([doi, pmid, nct_id]):
+        return None
+
+    if doi:
+        id_field, id_value = "doi", doi
+    elif pmid:
+        id_field, id_value = "pmid", pmid
+    else:
+        id_field, id_value = "nct_id", nct_id
+
+    candidates = _fetch_evidence_identity_candidates(
+        supabase, plant_id, indication, dosage_form, id_field, id_value
+    )
+    if candidates is None:
+        return None
+
+    for candidate in candidates:
+        candidate_row = {
+            "Scientific_Name": species,
+            "Target_Indication": indication,
+            "Dosage_Form": dosage_form,
+            "Population": candidate.get("population"),
+            "Primary_Outcome": candidate.get("primary_outcome"),
+            "Result_Direction": candidate.get("result_direction"),
+            "Study_Type": candidate.get("study_type"),
+            "Notes": candidate.get("notes"),
+            "Plant_Part": candidate.get("plant_part"),
+            "Dose": candidate.get("dose"),
+            "Preparation": candidate.get("preparation"),
+        }
+        if evidence_contexts_equivalent(new_record, candidate_row):
+            return candidate["id"]
+
+    return None
+
+
+def _find_existing_evidence_by_fuzzy_title(supabase, plant_id, species, indication, dosage_form,
+                                            article_title, publication_year, first_author, new_record):
+    """PHASE 2 (review round, issue 5; review round 3, issues 1 and 4) —
+    bounded insert-time fallback, used ONLY when save_evidence_record()
+    has no DOI/PMID/NCT_ID to check (_find_existing_evidence_by_identity()
+    above already covers the strong-identifier case).
+
+    NEVER a full-table scan: queries the `sources` table narrowed by
+    `year` when a publication year is known, always capped at a bounded
+    page size (`limit(200)`) even when it isn't; article-level candidate
+    matching runs in Python via articles_equivalent() — the SAME
+    function read-time dedup uses, so the two policies cannot drift
+    apart.
+
+    REVIEW ROUND 3, ISSUE 4 — first author honesty: the `sources` table
+    has no author column at all, so `first_author` on the EXISTING side
+    of this comparison is always unavailable. articles_equivalent()
+    accounts for this itself (see its docstring): when an author cannot
+    be verified on both sides, it requires the stricter
+    FUZZY_TITLE_SIMILARITY_THRESHOLD_UNVERIFIED_AUTHOR instead of
+    silently skipping the author check. This function does not, and
+    must not, claim a title+year+author match here — it is a
+    title+year match with a raised bar, and is documented as such.
+
+    REVIEW ROUND 3, ISSUE 1 — once a fuzzy-equivalent article candidate
+    is found, this now ALSO fetches that candidate evidence row's
+    population/primary_outcome/result_direction/study_type/notes/
+    plant_part and requires evidence_contexts_equivalent() to agree
+    (the same non-article scientific-context comparison
+    _find_existing_evidence_by_identity() uses) before treating it as a
+    duplicate — a fuzzy-matched article with a genuinely different
+    outcome/direction/population is no longer collapsed.
+
+    Degrades to None (falls through to the pre-existing
+    _find_existing_source() URL/title path) when no article_title is
+    available, when the query itself fails, or when no candidate's
+    article AND evidence context both match.
+    """
+    if not article_title:
+        return None
+
+    query = supabase.table("sources").select("id, title, year")
+    if publication_year:
+        query = query.eq("year", publication_year)
+
+    try:
+        result = query.limit(200).execute()
+    except Exception:
+        return None
+
+    candidate_a = {
+        "article_title": article_title,
+        "publication_year": publication_year,
+        "first_author": first_author,
+    }
+
+    for source_row in (result.data or []):
+        candidate_b = {
+            "article_title": source_row.get("title"),
+            "publication_year": source_row.get("year"),
+            # No first_author key here — the `sources` table carries
+            # none; articles_equivalent() treats this as "unverifiable"
+            # and raises its similarity bar accordingly (see its
+            # docstring), rather than silently proceeding as if the
+            # author matched.
+        }
+        if not articles_equivalent(candidate_a, candidate_b):
+            continue
+
+        source_id = source_row.get("id")
+        if source_id is None:
+            continue
+
+        evidence_candidates = _fetch_evidence_identity_candidates(
+            supabase, plant_id, indication, dosage_form, "source_id", source_id
+        )
+        if not evidence_candidates:
+            continue
+
+        for candidate in evidence_candidates:
+            candidate_row = {
+                "Scientific_Name": species,
+                "Target_Indication": indication,
+                "Dosage_Form": dosage_form,
+                "Population": candidate.get("population"),
+                "Primary_Outcome": candidate.get("primary_outcome"),
+                "Result_Direction": candidate.get("result_direction"),
+                "Study_Type": candidate.get("study_type"),
+                "Notes": candidate.get("notes"),
+                "Plant_Part": candidate.get("plant_part"),
+                "Dose": candidate.get("dose"),
+                "Preparation": candidate.get("preparation"),
+            }
+            if evidence_contexts_equivalent(new_record, candidate_row):
+                return candidate["id"]
+
+    return None
+
+
 def save_evidence_record(record):
     supabase = get_supabase_client()
 
+    # PHASE 2 (review round, issue 1) — the canonical adapter genuinely
+    # runs here, in production, before any field of `record` is read.
+    # canonicalize_evidence_record() round-trips through
+    # EvidenceRecord.from_legacy_dict()/.to_legacy_dict(); the result is
+    # still a legacy-compatible dict (same keys downstream code already
+    # reads), so nothing below this line needed to change.
+    record = canonicalize_evidence_record(record)
+
     source_url = record.get("Source_URL", "")
     source_title = record.get("Source_Title", "")
-
-    existing_source_id = _find_existing_source(
-        supabase=supabase,
-        url=source_url,
-        title=source_title,
-    )
 
     # Architectural correctness fix (post-Phase-2 review): plant_id must be
     # resolved BEFORE the duplicate-evidence lookup, and included in it.
@@ -197,20 +460,105 @@ def save_evidence_record(record):
         common_name=record.get("Common_Name", ""),
     )
 
-    if existing_source_id:
-        existing_evidence = (
-            supabase.table("evidence_records")
-            .select("id")
-            .eq("plant_id", plant_id)
-            .eq("source_id", existing_source_id)
-            .eq("target_indication", record.get("Target_Indication", ""))
-            .eq("dosage_form", record.get("Dosage_Form", ""))
-            .limit(1)
-            .execute()
-        )
+    doi_norm = normalize_doi(record.get("DOI"))
+    pmid_norm = normalize_pmid(record.get("PMID"))
+    nct_norm = normalize_trial_registration(record.get("NCT_ID"))
 
-        if existing_evidence.data:
-            return existing_evidence.data[0]["id"]
+    # PHASE 2 — canonical identity check, BEFORE the pre-existing
+    # URL/title-based source lookup. See _find_existing_evidence_by_identity()
+    # docstring; purely additive, degrades to None (falls through to the
+    # unchanged legacy path below) whenever no DOI/PMID/NCT_ID is present
+    # or the columns don't exist yet on this deployment.
+    identity_match_id = _find_existing_evidence_by_identity(
+        supabase=supabase,
+        plant_id=plant_id,
+        species=record.get("Scientific_Name", ""),
+        doi=doi_norm,
+        pmid=pmid_norm,
+        nct_id=nct_norm,
+        indication=record.get("Target_Indication", ""),
+        dosage_form=record.get("Dosage_Form", ""),
+        new_record=record,
+    )
+    if identity_match_id is not None:
+        return identity_match_id
+
+    # PHASE 2 (review round, issue 5) — bounded title+year+author
+    # fallback, ONLY attempted when no strong identifier exists at all
+    # (mirrors the "insert-time" column of the priority table in
+    # PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md §5, now actually true for
+    # both insert-time and read-time).
+    if not any([doi_norm, pmid_norm, nct_norm]):
+        fuzzy_match_id = _find_existing_evidence_by_fuzzy_title(
+            supabase=supabase,
+            plant_id=plant_id,
+            species=record.get("Scientific_Name", ""),
+            indication=record.get("Target_Indication", ""),
+            dosage_form=record.get("Dosage_Form", ""),
+            article_title=record.get("Source_Title"),
+            publication_year=record.get("Source_Year"),
+            first_author=get_first_present(
+                record, "First_Author", "first_author", "Authors", "authors"
+            ),
+            new_record=record,
+        )
+        if fuzzy_match_id is not None:
+            return fuzzy_match_id
+
+    existing_source_id = _find_existing_source(
+        supabase=supabase,
+        url=source_url,
+        title=source_title,
+    )
+
+    # PHASE 2 (review round 4, legacy-bypass fix) — the pre-existing
+    # URL/title-based source lookup above is STILL used to find/reuse a
+    # `sources` row (that part is unchanged and correct: the same
+    # article should not get a second `sources` row just because a
+    # second Evidence context is being added for it). What changed:
+    # this legacy path used to ALSO decide Evidence duplication by
+    # itself, via a bare source_id+plant_id+indication+dosage_form
+    # lookup with no evidence-context comparison at all — exactly the
+    # same class of bug already fixed for the DOI/PMID/NCT_ID and fuzzy
+    # -title paths above, just left unfixed on this third, older path.
+    # It is now brought in line with those: candidates sharing this
+    # source_id are fetched with full context via the SAME
+    # _fetch_evidence_identity_candidates() helper the other two paths
+    # use (no new, parallel lookup logic), and a match is only returned
+    # when deduplication_engine.evidence_contexts_equivalent() agrees.
+    # A genuinely different Evidence context for the same article now
+    # correctly REUSES existing_source_id (no second `sources` row) but
+    # still INSERTS a new `evidence_records` row — see below.
+    if existing_source_id:
+        evidence_candidates = _fetch_evidence_identity_candidates(
+            supabase, plant_id, record.get("Target_Indication", ""),
+            record.get("Dosage_Form", ""), "source_id", existing_source_id,
+        )
+        if evidence_candidates:
+            for candidate in evidence_candidates:
+                candidate_row = {
+                    "Scientific_Name": record.get("Scientific_Name", ""),
+                    "Target_Indication": record.get("Target_Indication", ""),
+                    "Dosage_Form": record.get("Dosage_Form", ""),
+                    "Population": candidate.get("population"),
+                    "Primary_Outcome": candidate.get("primary_outcome"),
+                    "Result_Direction": candidate.get("result_direction"),
+                    "Study_Type": candidate.get("study_type"),
+                    "Notes": candidate.get("notes"),
+                    "Plant_Part": candidate.get("plant_part"),
+                    "Dose": candidate.get("dose"),
+                    "Preparation": candidate.get("preparation"),
+                }
+                if evidence_contexts_equivalent(record, candidate_row):
+                    return candidate["id"]
+        # No candidate matched (or the candidate query itself was
+        # ambiguous/unresolvable — _fetch_evidence_identity_candidates()
+        # returning None is handled identically to an empty list here:
+        # both mean "cannot confirm a duplicate," and per the review's
+        # explicit instruction, a false duplicate is more dangerous than
+        # a temporary duplicate, so the record is kept and a new
+        # evidence_records row is inserted below) — existing_source_id
+        # is still reused, just not treated as Evidence-duplicating.
 
     if existing_source_id:
         source_id = existing_source_id
@@ -321,6 +669,17 @@ def save_evidence_record(record):
         "interactions_structured": record.get("Interactions_Structured") or None,
         "safety_findings": record.get("Safety_Findings") or record.get("Safety_Findings_Raw") or None,
         "data_quality_score": record.get("Data_Quality_Score") or None,
+        # PHASE 2 (review round 5) — migrations/0006_add_dose_preparation.sql.
+        # Previously read and compared by
+        # deduplication_engine.compute_evidence_identity()/
+        # evidence_contexts_equivalent() since round 1, but never actually
+        # persisted anywhere — meaning the database side of every identity
+        # comparison always saw these as empty regardless of what the new
+        # record carried. "Preparation" is NEVER read from
+        # record.get("Extraction_Method") — the two are distinct concepts;
+        # see the migration file's header for the full reasoning.
+        "dose": record.get("Dose") or None,
+        "preparation": record.get("Preparation") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -447,6 +806,13 @@ def load_evidence_records():
             "Interactions_Structured": item.get("interactions_structured"),
             "Safety_Findings": item.get("safety_findings"),
             "Data_Quality_Score": item.get("data_quality_score"),
+            # PHASE 2 (review round 5) — migrations/0006_add_dose_preparation.sql.
+            # item.get(...) returns None for both an unmigrated table
+            # (column absent) and a migrated table with a genuinely null
+            # value — same degrade-safely behavior as every other Phase 2
+            # optional column above.
+            "Dose": item.get("dose"),
+            "Preparation": item.get("preparation"),
 
             # Task 10.2 — previously discarded on read (id was selected
             # implicitly via "*" but never mapped into the returned row

@@ -43,7 +43,6 @@ scientific_evidence_engine.py
 scoring_engine.py
 source_connectors.py
 source_pipeline.py
-standard_evidence_schema.py
 step_botanical_brain.py
 step_botanical_substitution.py
 step_discovery.py

@@ -100,25 +100,114 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
 
 
 def _missing_postgrest_column(exc):
-    """Extract a missing column name from a PostgREST PGRST204 error."""
-    text = str(exc)
-    if "PGRST204" not in text and "schema cache" not in text:
-        return None
+    """Return the missing column reported by PostgREST/PostgreSQL.
 
+    Supabase can expose the same stale-schema condition in two different
+    shapes depending on the operation and PostgREST version:
+
+    * ``PGRST204`` — the column is absent from PostgREST's schema cache,
+      typically worded as ``Could not find the 'column' column ...``.
+    * PostgreSQL ``42703`` — an undefined-column error, typically worded as
+      ``column evidence_records.column does not exist``.
+
+    The original fallback recognized only PGRST204, so a real 42703 response
+    caused every evidence insert to fail instead of dropping only the missing
+    optional field and retrying.  This parser handles both structured
+    ``APIError`` attributes/arguments and their string representations.
+    """
     import re
 
-    match = re.search(r"Could not find the ['\"]([^'\"]+)['\"] column", text)
-    return match.group(1) if match else None
+    parts = []
+    error_code = None
+
+    def _add(value):
+        if value is not None and value != "":
+            parts.append(str(value))
+
+    # Newer postgrest-py APIError objects expose structured attributes.
+    for attribute in ("message", "details", "hint"):
+        _add(getattr(exc, attribute, None))
+    error_code = getattr(exc, "code", None)
+    _add(error_code)
+
+    # Other versions keep the response dictionary in exc.args[0].
+    for argument in getattr(exc, "args", ()):
+        if isinstance(argument, dict):
+            if error_code is None:
+                error_code = argument.get("code")
+            for key in ("message", "details", "hint", "code"):
+                _add(argument.get(key))
+        else:
+            _add(argument)
+
+    # Always include str(exc): some exception wrappers expose no public
+    # structured attributes even though their representation contains them.
+    _add(exc)
+    text = "\n".join(parts)
+    normalized_code = str(error_code or "").strip().upper()
+
+    is_schema_cache_error = (
+        normalized_code == "PGRST204"
+        or "PGRST204" in text.upper()
+        or "SCHEMA CACHE" in text.upper()
+    )
+    is_undefined_column_error = (
+        normalized_code == "42703"
+        or bool(re.search(r"\b42703\b", text))
+    )
+
+    if not (is_schema_cache_error or is_undefined_column_error):
+        return None
+
+    # PostgREST schema-cache wording (PGRST204).
+    match = re.search(
+        r"Could\s+not\s+find\s+the\s+['\"]([^'\"]+)['\"]\s+column",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+
+    # PostgreSQL undefined-column wording (42703), accepting forms such as:
+    #   column evidence_records.dose does not exist
+    #   column "evidence_records"."dose" does not exist
+    #   column "evidence_records.dose" does not exist
+    match = re.search(
+        r"\bcolumn\s+"
+        r"((?:(?:\"[^\"]+\"|'[^']+'|[A-Za-z_][A-Za-z0-9_$]*)\.)*"
+        r"(?:\"[^\"]+\"|'[^']+'|[A-Za-z_][A-Za-z0-9_$]*))"
+        r"\s+does\s+not\s+exist\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    qualified_name = match.group(1)
+    identifiers = [
+        next(value for value in groups if value)
+        for groups in re.findall(
+            r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'|([A-Za-z_][A-Za-z0-9_$]*)',
+            qualified_name,
+        )
+    ]
+    if not identifiers:
+        return None
+
+    # A fully quoted token can itself contain qualification
+    # (e.g. "evidence_records.dose").  The last component is the column.
+    return identifiers[-1].split(".")[-1]
 
 
 def _insert_evidence_with_optional_schema_fallback(supabase, payload):
     """Insert an evidence row while tolerating an older Supabase schema.
 
-    The five Task-10.2 applicability fields are valuable when present, but
-    older deployments may not yet have those columns. PostgREST rejects the
-    whole row when any one field is unknown, so we retry after removing only
-    the missing optional applicability field. All legacy/core evidence fields
-    remain mandatory and continue to raise on schema errors.
+    Optional evidence-schema extensions are valuable when present, but an
+    older deployment may not yet have one or more of those columns. PostgREST
+    rejects the whole row when any one field is unknown, so we retry after
+    removing only the specific missing field when it is explicitly registered
+    in _OPTIONAL_EVIDENCE_COLUMNS. All legacy/core evidence fields remain
+    mandatory and continue to raise on schema errors.
     """
     current = dict(payload)
     removed = []

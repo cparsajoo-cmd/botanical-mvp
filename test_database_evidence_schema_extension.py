@@ -45,7 +45,7 @@ class FakeSupabase:
     plant / Phase 2 identity lookup) reports "not found" so the function
     always takes the create path, and every `insert` returns a canned id
     — except evidence_records inserts, which are recorded (and can be
-    made to raise a PGRST204-shaped error, via evidence_insert_behavior)
+    made to raise a PGRST204- or 42703-shaped error, via evidence_insert_behavior)
     so tests can inspect exactly what payload this Phase 2 change sends.
 
     PHASE 2 update: _FakeTable now tracks whether a `select()` was ever
@@ -150,6 +150,7 @@ def test_all_phase2_columns_are_registered_in_the_optional_fallback_set():
         "administration_route", "plant_part", "extraction_method",
         "duration", "effect_size", "p_value", "adverse_events",
         "interactions_structured", "data_quality_score",
+        "dose", "preparation",
     }
     assert phase2_columns <= database._OPTIONAL_EVIDENCE_COLUMNS
 
@@ -201,3 +202,67 @@ def test_load_evidence_records_returns_none_for_absent_phase2_columns_not_empty_
         rows = database.load_evidence_records()
     assert rows.iloc[0]["PMID"] is None
     assert rows.iloc[0]["Effect_Size"] is None
+
+
+def test_missing_column_parser_supports_postgresql_42703_supabase_shape():
+    """Regression for the production error returned by Supabase on 2026-08-05."""
+    exc = Exception({
+        "message": "column evidence_records.dose does not exist",
+        "code": "42703",
+        "hint": (
+            'Perhaps you meant to reference the column '
+            '"evidence_records.doi".'
+        ),
+        "details": None,
+    })
+    assert database._missing_postgrest_column(exc) == "dose"
+
+
+def test_insert_degrades_gracefully_for_postgresql_42703_missing_optional_column():
+    """A missing optional column must be removed and the insert retried."""
+    attempts = []
+
+    def behavior(fake_self, payload):
+        attempts.append(dict(payload))
+        if "dose" in payload:
+            raise Exception({
+                "message": "column evidence_records.dose does not exist",
+                "code": "42703",
+                "hint": (
+                    'Perhaps you meant to reference the column '
+                    '"evidence_records.doi".'
+                ),
+                "details": None,
+            })
+        fake_self.inserted_evidence_payloads.append(dict(payload))
+        return _FakeResult([{"id": 778}])
+
+    fake = FakeSupabase(evidence_insert_behavior=behavior)
+    with mock.patch("database.get_supabase_client", return_value=fake):
+        row_id = database.save_evidence_record(_base_record(Dose="500 mg"))
+
+    assert row_id == 778
+    assert len(attempts) == 2
+    assert attempts[0]["dose"] == "500 mg"
+    assert "dose" not in attempts[1]
+    assert "preparation" in attempts[1]
+
+
+def test_postgresql_42703_for_required_column_is_not_silently_swallowed():
+    """The fallback remains strict for core/required schema failures."""
+    def behavior(fake_self, payload):
+        raise Exception({
+            "message": "column evidence_records.plant_id does not exist",
+            "code": "42703",
+            "hint": None,
+            "details": None,
+        })
+
+    fake = FakeSupabase(evidence_insert_behavior=behavior)
+    with mock.patch("database.get_supabase_client", return_value=fake):
+        try:
+            database.save_evidence_record(_base_record())
+        except Exception as exc:
+            assert "plant_id" in str(exc)
+        else:
+            raise AssertionError("required-column 42703 must be re-raised")

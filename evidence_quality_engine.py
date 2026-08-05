@@ -88,30 +88,32 @@ def assess_evidence_quality(row):
         quality_score += 4
         quality_flags.append("Small clinical sample")
 
-    # Outcome direction
-    outcome_text = (
-        _lower(row.get("Result_Direction")) + " " +
-        _lower(row.get("Primary_Outcome")) + " " +
-        text
-    )
-
-    if any(x in outcome_text for x in ["significant improvement", "improved", "effective", "efficacy", "positive"]):
-        quality_score += 10
-        quality_flags.append("Positive outcome signal")
-
-    elif any(x in outcome_text for x in ["no significant", "not effective", "negative"]):
-        quality_score -= 10
-        quality_flags.append("Negative or non-significant outcome")
-
-    # Safety
-    if any(x in text for x in ["well tolerated", "safe", "no serious adverse"]):
-        quality_score += 6
-        quality_flags.append("Good safety signal")
-
-    elif any(x in text for x in ["adverse event", "contraindicated", "warning", "caution"]):
-        quality_score -= 5
-        quality_flags.append("Safety caution")
-
+    # PHASE 3 — outcome/safety-wording decoupling.
+    #
+    # Prior to Phase 3 this function added/subtracted points here based on
+    # whether the evidence text sounded positive ("improved", "effective")
+    # or negative ("no significant", "not effective") — see
+    # PHASE3_SOURCE_AUTHORITY_AUDIT.md §2.1 for the direct-from-code
+    # confirmation. That coupling is exactly what the Phase 3 brief
+    # prohibits: a negative RCT must remain a high-quality RCT; whether a
+    # study's OUTCOME was favorable is Evidence Direction's concern
+    # (evidence_interpretation.classify_evidence_direction /
+    # evidence_authority.direction_sign), never Evidence Quality's. This
+    # module never reached production scoring (its only caller,
+    # decision_engine.py, has no importer anywhere in the repository —
+    # see the audit), but the bug is fixed here anyway per the brief's
+    # explicit instruction, so no future caller inherits it.
+    #
+    # Outcome direction and safety-tolerability wording are therefore no
+    # longer read into `quality_score` at all. `Evidence_Quality_Score`/
+    # `_Class` below now reflect ONLY study-design/methodology signals
+    # (hierarchy, blinding, control, sample size) — never outcome
+    # polarity. A caller that also wants a direction-aware SIGNED
+    # contribution should combine this quality score with
+    # evidence_interpretation.classify_evidence_direction() /
+    # evidence_authority.signed_evidence_contribution() itself, exactly
+    # as candidate_shortlisting.py and botanical_rd_candidate_engine.py
+    # already do for their own (separate, live) quality paths.
     quality_score = max(0, min(int(quality_score), 100))
 
     if quality_score >= 75:

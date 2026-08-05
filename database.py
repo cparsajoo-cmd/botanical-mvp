@@ -96,6 +96,17 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     # See that file's header for why these are two separate columns, and
     # why "preparation" is never conflated with "extraction_method".
     "dose", "preparation",
+    # PHASE 3 — migrations/0007_add_source_authority.sql. Follows the SAME
+    # optional-column fallback as every field above: an unmigrated
+    # deployment simply never receives/returns these three, exactly like
+    # any other entry in this set (see PHASE3_SOURCE_AUTHORITY_AUDIT.md
+    # §1 for why Source Authority previously had NO persistence path at
+    # all — this is the fix). source_authority is the text label
+    # (evidence_authority.AUTHORITY_LABELS), source_authority_score its
+    # numeric factor (evidence_authority.AUTHORITY_FACTORS), and
+    # source_authority_reason the deterministic explanation string
+    # classify_source_authority() returned.
+    "source_authority", "source_authority_score", "source_authority_reason",
 }
 
 
@@ -769,6 +780,23 @@ def save_evidence_record(record):
         # see the migration file's header for the full reasoning.
         "dose": record.get("Dose") or None,
         "preparation": record.get("Preparation") or None,
+
+        # PHASE 3 (migrations/0007_add_source_authority.sql). Same
+        # `.get(key) or None` discipline as the Phase 2 structured fields
+        # directly above: an absent/empty value means exactly "not
+        # classified for this record", never a fabricated default. These
+        # are set by evidence_standardizer.standardize_extracted_record()
+        # via evidence_authority.classify_source_authority_from_row()
+        # before this function is ever called (canonicalize_evidence_record()
+        # at the top of this function also round-trips
+        # Source_Authority/_Score/_Reason through EvidenceRecord, so a
+        # caller that only ever set the legacy "Source_Authority_Weight"
+        # key still gets a value here via that field's Phase 3 redirect
+        # to source_authority_score — see standard_evidence_schema.py).
+        "source_authority": record.get("Source_Authority") or None,
+        "source_authority_score": record.get("Source_Authority_Score")
+        if record.get("Source_Authority_Score") not in (None, "") else None,
+        "source_authority_reason": record.get("Source_Authority_Reason") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -902,6 +930,14 @@ def load_evidence_records():
             # optional column above.
             "Dose": item.get("dose"),
             "Preparation": item.get("preparation"),
+
+            # PHASE 3 — same degrade-safely-to-None behavior (unmigrated
+            # table absent column vs. migrated table with a genuinely
+            # null value both read as None) as every Phase 2 optional
+            # field above.
+            "Source_Authority": item.get("source_authority"),
+            "Source_Authority_Score": item.get("source_authority_score"),
+            "Source_Authority_Reason": item.get("source_authority_reason"),
 
             # Task 10.2 — previously discarded on read (id was selected
             # implicitly via "*" but never mapped into the returned row

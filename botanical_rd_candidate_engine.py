@@ -12,6 +12,7 @@ from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from scientific_phrase_matcher import has_phrase_match
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_interpretation import interpret_evidence
+from evidence_authority import classify_source_authority_from_row
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from grade_certainty_classifier import classify_grade_certainty
 from decision_class_ah import classify_decision_ah
@@ -967,9 +968,12 @@ class BotanicalRDCandidateEngine:
             return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
         rows = []
-        evidence_index, evidence_source_index, evidence_applicability_index = (
-            self._build_evidence_text_index()
-        )
+        (
+            evidence_index,
+            evidence_source_index,
+            evidence_applicability_index,
+            evidence_authority_index,
+        ) = self._build_evidence_text_index()
 
         # Task 11.1 — built once per run(), exposed as an instance
         # attribute (self.scientific_evidence_index), NOT as a new
@@ -1153,12 +1157,15 @@ class BotanicalRDCandidateEngine:
                     if not matched_compound:
                         continue
 
-                    raw_evidence, evidence_source_ids = self._collect_raw_evidence(
-                        evidence_index=evidence_index,
-                        plant=alt_plant,
-                        compound=matched_compound,
-                        problem=problem,
-                        source_index=evidence_source_index,
+                    raw_evidence, evidence_source_ids, evidence_authority_factor = (
+                        self._collect_raw_evidence(
+                            evidence_index=evidence_index,
+                            plant=alt_plant,
+                            compound=matched_compound,
+                            problem=problem,
+                            source_index=evidence_source_index,
+                            authority_index=evidence_authority_index,
+                        )
                     )
 
                     has_real_evidence = bool(raw_evidence.strip())
@@ -1175,9 +1182,20 @@ class BotanicalRDCandidateEngine:
                     # replaces the Clinical-evidence tier's contribution
                     # (Regulatory/Preclinical/General-literature tier
                     # weights are untouched — out of Phase 1 scope).
+                    #
+                    # Phase 3, problem 1 — evidence_authority_factor is now
+                    # the REAL per-source Source Authority factor derived
+                    # from whichever evidence_df row(s) actually contributed
+                    # `raw_evidence` at this compound/problem/plant key (see
+                    # _collect_raw_evidence()), not a hardcoded 1.0. It can
+                    # only scale contribution's magnitude toward/away from
+                    # zero — never its sign — exactly like quality_factor
+                    # and applicability_factor already do inside
+                    # interpret_evidence().
                     evidence_interpretation_result = interpret_evidence(
                         raw_evidence,
                         clinical_weight=self.scoring_config.evidence_clinical,
+                        source_authority_factor=evidence_authority_factor,
                     )
                     study_design = evidence_interpretation_result.study_design
                     evidence_direction = evidence_interpretation_result.evidence_direction
@@ -2722,7 +2740,8 @@ class BotanicalRDCandidateEngine:
         return pd.DataFrame(rows)
 
     def _build_evidence_text_index(self):
-        """Returns (text_index, source_index, applicability_index).
+        """Returns (text_index, source_index, applicability_index,
+        authority_index).
 
         text_index: dict of normalized_key -> concatenated evidence
         text, used for Evidence_Level/safety-flag/hierarchy extraction.
@@ -2756,15 +2775,47 @@ class BotanicalRDCandidateEngine:
         there). Kept STRUCTURED (never folded into the free-text
         string) specifically so a candidate-level summary can read
         exact classifications/ids rather than re-parsing text.
+
+        authority_index: (Phase 3, problem 1). SAME normalized_key
+        structure again, mapping to a list of small structured dicts —
+        one per contributing self.evidence_df row — carrying that row's
+        Evidence_Record_ID/Source Authority label/factor (via
+        evidence_authority.classify_source_authority_from_row). See
+        _collect_raw_evidence() for how a single representative factor
+        is derived from this per row-set-that-actually-contributed-text.
         """
         index = defaultdict(str)
         source_index = defaultdict(list)
         applicability_index = defaultdict(list)
+        authority_index = defaultdict(list)
 
         def _record_source(key, row):
             url = self._pick(row, ["Source_URL", "source_url", "URL", "url"])
             if url:
                 source_index[key].append(url)
+
+        def _record_authority(key, row):
+            # Phase 3, problem 1 — real per-source Source Authority,
+            # SAME pattern as _record_applicability() just above: kept as
+            # a small structured entry (evidence_record_id/label/factor),
+            # never folded into the free-text string, so a downstream
+            # candidate row can look up which SPECIFIC row(s) actually
+            # backed this key's evidence text and how authoritative each
+            # one was — instead of guessing or defaulting every row to
+            # 1.0 regardless of whether an EMA/WHO/ESCOP/Cochrane source
+            # is actually present. Only evidence_df rows are classified
+            # here (they carry Source_Organization/Source_Type/
+            # Source_Category — the fields classify_source_authority_from_row
+            # actually reads); this does not redesign or widen scope
+            # beyond the existing index-building pass.
+            classification = classify_source_authority_from_row(row)
+            authority_index[key].append({
+                "evidence_record_id": self._pick(
+                    row, ["Evidence_Record_ID", "evidence_record_id"]
+                ) or None,
+                "authority_label": classification.label,
+                "authority_factor": classification.score,
+            })
 
         def _record_applicability(key, row):
             # Backward compatible with rows saved before Task 10.2 (or
@@ -2828,12 +2879,14 @@ class BotanicalRDCandidateEngine:
                     index[plant_key] += " " + text
                     _record_source(plant_key, row)
                     _record_applicability(plant_key, row)
+                    _record_authority(plant_key, row)
 
                 for compound in self._known_compounds_from_text(text):
                     compound_key = self._norm(compound)
                     index[compound_key] += " " + text
                     _record_source(compound_key, row)
                     _record_applicability(compound_key, row)
+                    _record_authority(compound_key, row)
 
         if not self.scientific_evidence_df.empty:
             text_columns = [
@@ -2882,7 +2935,7 @@ class BotanicalRDCandidateEngine:
             # this key's source list empty.
             source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
 
-        return index, source_index, applicability_index
+        return index, source_index, applicability_index, authority_index
 
     def _build_scientific_evidence_index(self):
         """Task 11.1 — evidence_record_id -> ScientificEvidence.
@@ -2967,6 +3020,7 @@ class BotanicalRDCandidateEngine:
         compound,
         problem,
         source_index=None,
+        authority_index=None,
     ):
         """Builds the evidence text used to determine Evidence_Level and
         safety flags for one candidate row, and (Gap 1) the specific
@@ -2991,15 +3045,43 @@ class BotanicalRDCandidateEngine:
         longer blended in unconditionally on every row regardless of
         whether it's actually relevant to the compound being evaluated.
 
-        Returns (text, source_ids) — source_ids empty list when
-        source_index isn't provided (keeps this callable exactly as
-        before for any other caller that only wants the text).
+        Returns (text, source_ids, authority_factor) — source_ids empty
+        list and authority_factor 1.0 (neutral, matches
+        interpret_evidence()'s own "no effect" default) when
+        source_index/authority_index aren't provided, so this callable
+        still works exactly as before for any caller that only wants
+        the text (Gap 1 backward compatibility preserved).
+
+        authority_factor (Phase 3, problem 1): the REAL per-source
+        Source Authority factor for whichever row(s) actually
+        contributed the returned text, not a hardcoded 1.0. Since
+        `text` itself can be a pooled blob from several rows at the
+        same key, the single most defensible, non-invented number to
+        represent it is the STRONGEST verified authority among the
+        rows that actually contributed — i.e. if a real EMA/WHO/ESCOP/
+        Cochrane/RCT source is genuinely among the contributors, that
+        drives the factor; if only Unknown-Source rows contributed,
+        the conservative Unknown factor is used, exactly as if a single
+        row had been classified directly. Never averaged/blended into a
+        value no single real row actually has, and never applied to
+        rows that did not contribute to this specific key's text.
         """
         source_index = source_index or {}
+        authority_index = authority_index or {}
         compound_clean = compound.split("[")[0].strip()
 
         compound_key = self._norm(compound_clean)
         problem_key = self._norm(problem)
+
+        def _strongest_authority_factor(keys):
+            entries = [
+                entry
+                for key in keys
+                for entry in authority_index.get(key, [])
+            ]
+            if not entries:
+                return 1.0
+            return max(entry["authority_factor"] for entry in entries)
 
         compound_text = evidence_index.get(compound_key, "")
         problem_text = evidence_index.get(problem_key, "")
@@ -3010,14 +3092,19 @@ class BotanicalRDCandidateEngine:
             sources = list(dict.fromkeys(
                 source_index.get(compound_key, []) + source_index.get(problem_key, [])
             ))
-            return primary[:6000], sources
+            authority_factor = _strongest_authority_factor((compound_key, problem_key))
+            return primary[:6000], sources, authority_factor
 
         # No compound-specific evidence found anywhere — fall back to
         # whatever's known about the plant in general, clearly weaker
         # but still better than treating it as zero evidence outright.
         plant_key = self._norm(plant)
         plant_text = evidence_index.get(plant_key, "")
-        return plant_text.strip()[:6000], list(dict.fromkeys(source_index.get(plant_key, [])))
+        return (
+            plant_text.strip()[:6000],
+            list(dict.fromkeys(source_index.get(plant_key, []))),
+            _strongest_authority_factor((plant_key,)),
+        )
 
     def _collect_applicability_items(self, applicability_index, plant, compound):
         """Task 10.2 — structured counterpart to _collect_raw_evidence().

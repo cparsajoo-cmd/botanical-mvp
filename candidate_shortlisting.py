@@ -17,6 +17,19 @@ from typing import Iterable
 import pandas as pd
 
 from indication_semantics import resolve_indication_semantics
+from evidence_authority import (
+    classify_source_authority_from_row,
+    source_authority_factor as _source_authority_factor,
+    summarize_authority_distribution,
+    weighted_evidence_strength,
+    signed_evidence_contribution,
+    AUTHORITY_UNKNOWN,
+    DIRECTION_POSITIVE,
+    DIRECTION_NEGATIVE,
+    DIRECTION_NULL,
+    DIRECTION_MIXED,
+    DIRECTION_UNCLEAR,
+)
 from scientific_phrase_matcher import phrase_present
 from general_indication_relevance import (
     ENGINE_VERSION as _RELEVANCE_ENGINE_VERSION,
@@ -420,11 +433,19 @@ def _evidence_points(group: pd.DataFrame) -> float:
     # about what it actually FOUND. Without this, a negative/null-only
     # evidence pool earned the exact same Scientific_Triage_Score as a
     # genuinely positive one purely because it also contained the word
-    # "clinical"/"randomized" — this function's sibling, _evidence_quality()
-    # (which drives Overall_Score/R&D_Opportunity_Score below), already
-    # guards against this via _outcome_profile()'s outcome_multiplier; this
-    # reuses that exact same, already-tested signal so the two evidence
-    # scores in this module can no longer disagree about outcome direction.
+    # "clinical"/"randomized". This outcome_multiplier is local to
+    # Scientific_Triage_Score (a separate, 0-100 triage/filtering score,
+    # NOT Evidence_Quality_Score/Overall_Score/R&D_Opportunity_Score —
+    # see build_plant_candidate_shortlist()). PHASE 3, problem 2 removed
+    # the equivalent step from this function's sibling, _evidence_quality()
+    # (which DOES drive Overall_Score/R&D_Opportunity_Score), because that
+    # score must be independent of Evidence_Direction per the Phase 3
+    # brief. Scientific_Triage_Score is a different, pre-existing
+    # component the brief explicitly said not to redesign ("component های
+    # دیگر ... را تغییر نده") — it intentionally keeps rewarding/penalizing
+    # by outcome direction for triage purposes, so the two scores in this
+    # module now deliberately differ on this point; they are not meant to
+    # agree.
     outcomes = _outcome_profile(group)
     if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
         outcome_multiplier = 0.55
@@ -901,22 +922,80 @@ def _indication_relevance_detail_legacy_fallback(
     return points, tier
 
 
+_DIRECTION_BY_RESULT_CATEGORY = {
+    "positive": DIRECTION_POSITIVE,
+    "harmful": DIRECTION_NEGATIVE,
+    "null": DIRECTION_NULL,
+    "mixed": DIRECTION_MIXED,
+    "unreported": DIRECTION_UNCLEAR,
+}
+
+# PHASE 3 — dampened authority multiplier, not a direct multiply.
+#
+# evidence_authority.AUTHORITY_FACTORS spans 0.15 (Blog) to 1.00 (EMA HMPC
+# Monograph), and AUTHORITY_UNKNOWN (the fallback for the large majority of
+# today's evidence, which carries no Source_Organization/Source_URL at the
+# candidate_shortlisting.py row shape — see PHASE3_SOURCE_AUTHORITY_AUDIT.md
+# §1.3 and classify_source_authority_from_row()'s docstring) is 0.50.
+# Multiplying `row_hierarchy_points` directly by that raw factor would cut
+# the DEFAULT case's score roughly in half — a de facto redesign of this
+# function's existing point scale, which the Phase 3 brief explicitly
+# prohibits ("Ranking Logic = بدون بازطراحی"). Instead, the raw factor is
+# compressed into a bounded [0.8725, 1.0] multiplier: an EMA/WHO/ESCOP/
+# Cochrane source (factor ~0.93-1.00) is scored at ~98.95-100% of its
+# unweighted hierarchy points; a genuinely low-authority source (Blog,
+# factor 0.15) is scored at ~87.25%; the default Unknown case (factor 0.50)
+# sits at 92.5% — a real, testable, direction-agnostic penalty/boost, but
+# never large enough to flip this function's existing point scale for the
+# common case where no organizational identity is available at all.
+def _authority_hierarchy_multiplier(factor: float) -> float:
+    return 0.85 + 0.15 * factor
+
+
 def _evidence_quality(
     group: pd.DataFrame,
     sources: list[str],
     references: list[str],
-) -> tuple[float, str]:
+) -> tuple[float, str, dict]:
     """Score record-level evidence quality without collapsing every source.
 
     Phase 5/Step 5 now emits one raw row per evidence record.  This function
     therefore scores the actual hierarchy mix and depth rather than assigning
     the strongest label found anywhere to one synthetic plant row.  Duplicate
-    identifiers are counted once, registry records without results do not earn
-    efficacy points, and contradictory/null findings reduce consistency.
+    identifiers are counted once and registry records without results do not
+    earn efficacy points. (PHASE 3 FOLLOW-UP: contradictory/null findings no
+    longer reduce the total here — see reproducibility_points/raw_total
+    below and Evidence_Conflict/Outcome_Consistency in the explain dict for
+    where that signal now lives instead.)
+
+    PHASE 3 — Source Authority is now integrated INSIDE this function's
+    existing 30.0 cap (never a new score component, per the brief's
+    "Source Authority را ترجیحاً داخل همان سقف موجود Evidence Quality ادغام
+    کن" instruction): each row's hierarchy points are scaled by a bounded
+    authority multiplier (see _authority_hierarchy_multiplier) before being
+    aggregated into `hierarchy_points`/`best`/`top_mean`. Authority never
+    touches the direction/consistency logic below — it only adjusts the
+    MAGNITUDE of each row's own quality contribution, exactly like the
+    pre-existing hierarchy classification itself.
+
+    PHASE 3, problem 2 — the `outcome_multiplier` step that previously
+    scaled the final capped total down whenever the evidence pool was
+    null/negative/mixed-heavy has been REMOVED: Evidence_Quality_Score
+    must be independent of Evidence_Direction (unsigned strength =
+    design x methodological quality x source authority x applicability
+    x independence/depth; direction only ever applies to the signed
+    per-row contribution surfaced in `explain`, never to this capped
+    total). See the removal site (search `raw_total = hierarchy_points`)
+    for the full rationale.
+
+    Returns (total, tier, explain) where `explain` is an additive
+    explainability dict (Phase 3 brief section 8) — never displayed by any
+    existing UI/Dashboard code, and never consumed by any other scoring
+    path; a pure diagnostic addition.
     """
     empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
     if empirical.empty:
-        return 0.0, "None"
+        return 0.0, "None", _empty_evidence_quality_explain()
 
     # One scientific source must not inflate the score merely because it entered
     # through multiple connectors or compound associations.
@@ -952,10 +1031,42 @@ def _evidence_quality(
             return 2.0, "analytical"
         return 3.0, "unclassified"
 
-    classified = [row_hierarchy_points(row) for _, row in empirical.iterrows()]
+    # PHASE 3 — per-row Source Authority classification (shared classifier;
+    # see evidence_authority.classify_source_authority_from_row) and
+    # explainability bookkeeping. Computed once per row, reused both for
+    # the authority-weighted hierarchy points below and for the
+    # aggregate-level explain dict this function now returns.
+    row_records = []
+    for idx, row in empirical.iterrows():
+        base_points, label = row_hierarchy_points(row)
+        authority = classify_source_authority_from_row(row)
+        authority_multiplier = _authority_hierarchy_multiplier(authority.score)
+        weighted_points = base_points * authority_multiplier
+        result_category = _result_category(row)
+        direction = _DIRECTION_BY_RESULT_CATEGORY.get(result_category, DIRECTION_UNCLEAR)
+        # Explainability-only strength/signed-contribution (does not feed
+        # `weighted_points`/the real 30.0-capped total above — see the
+        # docstring's "never consumed by any other scoring path").
+        quality_factor_for_explain = min(1.0, base_points / 18.0) if base_points > 0 else 0.0
+        strength = weighted_evidence_strength(quality_factor_for_explain, authority.score, 1.0)
+        signed_contribution = signed_evidence_contribution(strength, direction)
+        row_records.append({
+            "row_id": idx,
+            "base_points": base_points,
+            "label": label,
+            "authority_label": authority.label,
+            "authority_score": authority.score,
+            "authority_reason": authority.reason,
+            "weighted_points": weighted_points,
+            "direction": direction,
+            "signed_contribution": signed_contribution,
+            "source_record_ids": row.get("Source_Record_IDs", "") or row.get("Evidence_Source", ""),
+        })
+
+    classified = [(r["weighted_points"], r["label"]) for r in row_records]
     positive_scores = [points for points, _ in classified if points > 0]
     if not positive_scores:
-        return 0.0, "None"
+        return 0.0, "None", _build_evidence_quality_explain(row_records)
 
     # Hierarchy quality (max 18): 60% best study + 40% mean of the best
     # three independent studies.  A single review helps, but cannot make a
@@ -977,30 +1088,48 @@ def _evidence_quality(
     strata = {label for points, label in classified if points > 0}
     diversity_points = min(3.0, float(len(strata)))
 
-    # Consistency (max 2). Null/negative records are retained and visibly lower
-    # the score instead of being silently discarded.
-    negative_count = int(
-        empirical.get("Has_Negative_Evidence", pd.Series(False, index=empirical.index))
-        .fillna(False).astype(bool).sum()
+    # Reproducibility (max 2) — OUTCOME-AGNOSTIC, unlike the removed
+    # consistency_points below: rewards additional INDEPENDENT studies
+    # existing at all, regardless of what any of them found. This is the
+    # "استقلال منابع / تکرارپذیری طراحی" kind of consistency the Phase 3
+    # follow-up explicitly said may remain — it depends only on
+    # `independent_count` (source/record count, already de-duplicated
+    # above), never on Has_Negative_Evidence/direction/result category.
+    reproducibility_points = (
+        min(2.0, 0.5 * (independent_count - 1)) if independent_count > 1 else 0.0
     )
-    if independent_count <= 1:
-        consistency_points = 0.0
-    elif negative_count == 0:
-        consistency_points = min(2.0, 0.5 * (independent_count - 1))
-    elif negative_count < independent_count:
-        consistency_points = max(0.0, 1.0 - negative_count / independent_count)
-    else:
-        consistency_points = 0.0
 
-    raw_total = hierarchy_points + depth_points + diversity_points + consistency_points
-    outcomes = _outcome_profile(empirical)
-    if outcomes["positive"] == 0 and (outcomes["null"] + outcomes["harmful"]) > 0:
-        outcome_multiplier = 0.55
-    elif outcomes["positive"] > 0 and (outcomes["null"] + outcomes["harmful"] + outcomes["mixed"]) > 0:
-        outcome_multiplier = 0.80
-    else:
-        outcome_multiplier = 1.0
-    total = round(min(30.0, raw_total * outcome_multiplier), 1)
+    # PHASE 3 FOLLOW-UP — Direction must not reach Evidence_Quality_Score
+    # via ANY route, including indirectly through a "consistency" term.
+    # The previous `consistency_points` (removed here) computed
+    # `negative_count` from Has_Negative_Evidence and used it to zero out
+    # or shrink the score for negative/mixed-heavy pools — this was
+    # exactly the same category of bug as the already-removed
+    # outcome_multiplier, just reached through a different variable name.
+    # Outcome agreement/conflict is real, useful information, but belongs
+    # in diagnostics (explain), never in the capped 0-30 total. See
+    # _build_evidence_quality_explain()'s Evidence_Direction_Balance /
+    # Evidence_Conflict / Outcome_Consistency for where it now lives.
+
+    # PHASE 3, problem 2 — Evidence_Quality_Score must be independent of
+    # Evidence_Direction (unsigned strength = design x methodological
+    # quality x source authority x applicability x independence/depth;
+    # direction is applied separately, only to the SIGNED contribution
+    # used for explainability above — never to this capped total). The
+    # `outcome_multiplier` step that used to scale `raw_total` down for
+    # null/negative/mixed-heavy evidence pools was removed first; a
+    # SECOND, previously-missed route for the same bug — `consistency_points`
+    # deriving from `negative_count`/Has_Negative_Evidence — has now also
+    # been removed (see reproducibility_points above, which replaces it
+    # with an outcome-agnostic term). Whether the underlying studies found
+    # a positive, negative, null or mixed result must not itself change
+    # how much evidence quality/strength a candidate is credited with, via
+    # ANY term in this sum. Direction is still fully visible — via each
+    # row's `direction`/`signed_contribution`, and via the aggregate
+    # Evidence_Direction_Balance/Evidence_Conflict/Outcome_Consistency
+    # diagnostics — in the explain dict returned below, never in `total`.
+    raw_total = hierarchy_points + depth_points + diversity_points + reproducibility_points
+    total = round(min(30.0, raw_total), 1)
     if total >= 23:
         tier = "Strong"
     elif total >= 15:
@@ -1009,7 +1138,114 @@ def _evidence_quality(
         tier = "Weak"
     else:
         tier = "None"
-    return total, tier
+    return total, tier, _build_evidence_quality_explain(row_records)
+
+
+def _empty_evidence_quality_explain() -> dict:
+    return {
+        "authority_distribution": {},
+        "quality_design_distribution": {},
+        "positive_weighted_contribution": 0.0,
+        "negative_weighted_contribution": 0.0,
+        "null_weighted_contribution": 0.0,
+        "unknown_authority_count": 0,
+        "top_supporting_evidence": [],
+        "top_contradicting_evidence": [],
+        "evidence_direction_balance": {},
+        "evidence_conflict": False,
+        "outcome_consistency": 0.0,
+    }
+
+
+def _build_evidence_quality_explain(row_records: list[dict]) -> dict:
+    """PHASE 3 explainability (brief section 8) at the candidate-aggregate
+    level: authority distribution, quality/study-design distribution,
+    positive/negative/null weighted contribution, unknown-authority count,
+    and the top supporting/contradicting evidence. Built from the SAME
+    per-row numbers `_evidence_quality` actually computed above — never a
+    separately-invented narrative (per the brief's "Explainability باید از
+    همان اعدادی تولید شود که واقعاً scoring را اجرا کرده‌اند" instruction).
+
+    PHASE 3 FOLLOW-UP: `evidence_direction_balance`/`evidence_conflict`/
+    `outcome_consistency` are the diagnostics-only home for the outcome
+    signal that used to live inside `_evidence_quality`'s scored total
+    (first as `outcome_multiplier`, then as `consistency_points`). They
+    are computed here, from the SAME row_records/`direction` values the
+    positive/negative/null weighted contributions above already use —
+    never fed back into `raw_total`/`total` in `_evidence_quality`.
+    """
+    if not row_records:
+        return _empty_evidence_quality_explain()
+
+    authority_distribution = summarize_authority_distribution(
+        r["authority_label"] for r in row_records
+    )
+    quality_design_distribution: dict = {}
+    for r in row_records:
+        quality_design_distribution[r["label"]] = quality_design_distribution.get(r["label"], 0) + 1
+
+    positive_weighted = sum(
+        r["signed_contribution"] for r in row_records if r["signed_contribution"] > 0
+    )
+    negative_weighted = sum(
+        r["signed_contribution"] for r in row_records if r["signed_contribution"] < 0
+    )
+    null_weighted = sum(
+        r["signed_contribution"] for r in row_records if r["signed_contribution"] == 0
+    )
+    unknown_authority_count = sum(
+        1 for r in row_records if r["authority_label"] == AUTHORITY_UNKNOWN
+    )
+
+    supporting = sorted(
+        (r for r in row_records if r["signed_contribution"] > 0),
+        key=lambda r: r["signed_contribution"],
+        reverse=True,
+    )
+    contradicting = sorted(
+        (r for r in row_records if r["signed_contribution"] < 0),
+        key=lambda r: r["signed_contribution"],
+    )
+
+    def _summary(r: dict) -> dict:
+        return {
+            "source_record_ids": r["source_record_ids"],
+            "study_design_label": r["label"],
+            "authority_label": r["authority_label"],
+            "authority_score": r["authority_score"],
+            "direction": r["direction"],
+            "signed_contribution": round(r["signed_contribution"], 4),
+        }
+
+    # PHASE 3 FOLLOW-UP — diagnostics-only outcome signal (never scored).
+    direction_counts: dict = {}
+    for r in row_records:
+        direction_counts[r["direction"]] = direction_counts.get(r["direction"], 0) + 1
+    positive_count = sum(
+        1 for r in row_records if r["direction"] == DIRECTION_POSITIVE
+    )
+    negative_count = sum(
+        1 for r in row_records if r["direction"] == DIRECTION_NEGATIVE
+    )
+    evidence_conflict = positive_count > 0 and negative_count > 0
+    dominant_direction_count = max(direction_counts.values()) if direction_counts else 0
+    outcome_consistency = (
+        round(dominant_direction_count / len(row_records), 4) if row_records else 0.0
+    )
+
+    return {
+        "authority_distribution": authority_distribution,
+        "quality_design_distribution": quality_design_distribution,
+        "positive_weighted_contribution": round(positive_weighted, 4),
+        "negative_weighted_contribution": round(negative_weighted, 4),
+        "null_weighted_contribution": round(null_weighted, 4),
+        "unknown_authority_count": unknown_authority_count,
+        "top_supporting_evidence": [_summary(r) for r in supporting[:3]],
+        "top_contradicting_evidence": [_summary(r) for r in contradicting[:3]],
+        "evidence_direction_balance": direction_counts,
+        "evidence_conflict": evidence_conflict,
+        "outcome_consistency": outcome_consistency,
+    }
 
 def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
     """Supporting chemistry only; capped at 5% of the 100-point score."""
@@ -1515,7 +1751,7 @@ def build_plant_candidate_shortlist(
             indication_mode,
             indication_source_count,
         ) = _indication_relevance_detail(group, indication)
-        evq_points, evq_tier = _evidence_quality(group, sources, references)
+        evq_points, evq_tier, evq_explain = _evidence_quality(group, sources, references)
         cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
         mech_points, mech_tier = _mechanism_support(group)
         safety_reg_points, safety_reg_tier = _safety_regulatory(group)
@@ -1752,6 +1988,19 @@ def build_plant_candidate_shortlist(
             "Indication_Supporting_Source_Count": indication_source_count,
             "Candidate_Specific_Empirical_Row_Count": empirical_rows,
             "Evidence_Quality_Score": evq_points,
+            # PHASE 3 — additive explainability (brief section 8). New
+            # columns only; nothing above/below this line is renamed or
+            # removed, and no existing column's value changes because of
+            # these. UI/Dashboard are untouched per the brief's explicit
+            # scope limit ("UI و Dashboard را تغییر نده").
+            "Source_Authority_Distribution": evq_explain["authority_distribution"],
+            "Evidence_Quality_Design_Distribution": evq_explain["quality_design_distribution"],
+            "Positive_Weighted_Evidence_Contribution": evq_explain["positive_weighted_contribution"],
+            "Negative_Weighted_Evidence_Contribution": evq_explain["negative_weighted_contribution"],
+            "Null_Weighted_Evidence_Contribution": evq_explain["null_weighted_contribution"],
+            "Unknown_Authority_Evidence_Count": evq_explain["unknown_authority_count"],
+            "Top_Supporting_Evidence": evq_explain["top_supporting_evidence"],
+            "Top_Contradicting_Evidence": evq_explain["top_contradicting_evidence"],
             "Compound_Quality_Score": cq_points,
             "Mechanism_Support_Score": mech_points,
             "Safety_Regulatory_Score": safety_reg_points,

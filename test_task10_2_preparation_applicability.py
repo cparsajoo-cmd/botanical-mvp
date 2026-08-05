@@ -485,7 +485,7 @@ def test_build_evidence_text_index_excludes_platform_generated_fields():
         evidence_df=evidence_df,
         use_live_search=False,
     )
-    text_index, _source_index, applicability_index = engine._build_evidence_text_index()
+    text_index, _source_index, applicability_index, _authority_index = engine._build_evidence_text_index()
 
     all_text = " ".join(text_index.values())
     assert marker not in all_text

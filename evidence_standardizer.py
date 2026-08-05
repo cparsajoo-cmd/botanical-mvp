@@ -1,6 +1,7 @@
 from source_ingestion_engine import normalize_source_record
 from standard_evidence_builder import build_standard_evidence
 from standard_evidence_schema import canonicalize_evidence_record
+from evidence_authority import classify_source_authority_from_row
 
 try:
     from llm_extractor import extract_evidence_with_llm
@@ -127,6 +128,30 @@ def standardize_extracted_record(extracted, source_metadata):
             normalized["LLM_Reason"] = "LLM extraction failed: " + str(e)
 
     standardized = build_standard_evidence(normalized)
+
+    # PHASE 3 — Source Authority classification now actually runs at
+    # standardization time (the same boundary that already computes
+    # Study_Type/Result_Direction/Evidence_Level), using the single
+    # shared classifier in evidence_authority.py so this pipeline and
+    # candidate_shortlisting.py never diverge on how a source's authority
+    # is determined. `Source_Authority_Weight` (the pre-Phase-3
+    # connector-level float, still set by multi_source_collector.py from
+    # source_registry.py) is left untouched here and continues to flow
+    # through as backward-compatible passthrough metadata (see the
+    # preserved-fields loop above) — it is a coarser, connector-only
+    # signal and is superseded, not replaced in-place, by this
+    # metadata-aware classification.
+    #
+    # Never overwrites a value the record already explicitly carries
+    # (e.g. a test or an upstream step that already set Source_Authority)
+    # — only fills it in when genuinely absent, consistent with this
+    # module's "never guesses/never overwrites a reliable existing value"
+    # pattern used above for Evidence_Level.
+    if not standardized.get("Source_Authority"):
+        authority = classify_source_authority_from_row(standardized)
+        standardized["Source_Authority"] = authority.label
+        standardized["Source_Authority_Score"] = authority.score
+        standardized["Source_Authority_Reason"] = authority.reason
 
     # PHASE 2 (review round, issue 1) — every record this function
     # returns now genuinely passes through the canonical EvidenceRecord

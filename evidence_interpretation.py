@@ -536,12 +536,13 @@ def classify_evidence_quality(text: str, study_design: str) -> str:
 def interpret_evidence(
     text: Optional[str],
     clinical_weight: float = DEFAULT_CLINICAL_WEIGHT,
+    source_authority_factor: float = 1.0,
 ) -> EvidenceInterpretation:
     """Single entry point: interprets one evidence text and returns a
     Study_Design / Evidence_Direction / Evidence_Quality /
     Evidence_Applicability / contribution bundle, all independent of
     each other except that `contribution` is derived FROM direction,
-    quality, and applicability.
+    quality, applicability, and (Phase 3) source authority.
 
     `clinical_weight` is the base "Clinical / human evidence" weight
     (scoring_config.evidence_clinical in the engine, default 24) that
@@ -549,6 +550,29 @@ def interpret_evidence(
     Callers outside the Clinical tier (Regulatory / Preclinical /
     General literature) are unaffected by this module — Phase 1 is
     scoped to the Clinical-evidence tier only.
+
+    `source_authority_factor` (Phase 3, additive, defaults to 1.0 — i.e.
+    NO effect unless a caller explicitly supplies one) is the numeric
+    factor from evidence_authority.source_authority_factor(). Exactly
+    like `quality_factor` and `applicability_factor`, it can only SCALE
+    the magnitude of `contribution` toward zero — it is multiplied in
+    alongside them, never used to change `ratio`'s sign, and never
+    applied to `direction` itself. A negative-direction, high-authority
+    piece of evidence therefore becomes a LARGER-magnitude negative
+    contribution, never a positive one.
+
+    botanical_rd_candidate_engine.py's current call site does not pass
+    per-source authority data (its raw_evidence argument is a merged,
+    multi-source text blob assembled by _collect_raw_evidence() before
+    this function ever runs, with no per-source Source_Organization/
+    Source_URL preserved at that point) — see
+    PHASE3_SOURCE_AUTHORITY_IMPLEMENTATION.md's "محدودیت‌های باقی‌مانده"
+    for why wiring real per-source values through that specific call site
+    was left as a documented limitation rather than a redesign of
+    _collect_raw_evidence()'s aggregation. This parameter exists so that
+    call site (or any future one) CAN pass a real factor the moment
+    per-source metadata is available there, with zero behavior change for
+    every existing caller today.
     """
     study_design = classify_study_design(text)
     direction, pos_hits, null_hits, neg_hits = classify_evidence_direction(text)
@@ -560,7 +584,10 @@ def interpret_evidence(
     quality_factor = QUALITY_FACTOR.get(quality, 1.0)
     applicability_factor = APPLICABILITY_FACTOR.get(applicability, 1.0)
 
-    contribution = clinical_weight * ratio * quality_factor * applicability_factor
+    contribution = (
+        clinical_weight * ratio * quality_factor * applicability_factor
+        * source_authority_factor
+    )
 
     return EvidenceInterpretation(
         study_design=study_design,

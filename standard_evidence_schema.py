@@ -80,7 +80,33 @@ _LEGACY_FIELD_MAP = {
     "First_Author": "first_author",
     "Source_Year": "publication_year",
     "Source_Type": "source_type",
-    "Source_Authority_Weight": "source_authority",
+    # PHASE 3 — Source Authority / Evidence Quality integration. Prior to
+    # Phase 3, "Source_Authority_Weight" (the numeric 0.7-1.0 float set by
+    # multi_source_collector.py from source_registry.py's connector-level
+    # config) mapped directly onto `source_authority`, a field the Phase 3
+    # brief requires be kept as a text LABEL (e.g. "EMA HMPC Monograph"),
+    # not a numeric weight — see PHASE3_SOURCE_AUTHORITY_AUDIT.md §1 for
+    # the full trace of this pre-existing type mismatch (the field was
+    # typed Optional[str] but actually held a raw float at runtime, and
+    # was never persisted or read anywhere downstream regardless).
+    #
+    # Phase 3 resolution: "Source_Authority_Weight" now maps to the new
+    # NUMERIC canonical field `source_authority_score` instead — its
+    # correct semantic home — kept as a backward-compatible alias for any
+    # existing dict that still sets this legacy key. `source_authority`
+    # (the label) and `source_authority_reason` get their own, new legacy
+    # keys ("Source_Authority" / "Source_Authority_Reason") emitted going
+    # forward by evidence_authority.py-driven classification. Iteration
+    # order matters here: "Source_Authority_Score" is listed AFTER
+    # "Source_Authority_Weight" so that if a record ever legitimately
+    # carries both (new code writing the new key alongside the old one
+    # for transition safety), the newer, more specific key wins on
+    # from_legacy_dict() while to_legacy_dict() always emits the new key
+    # name (see _CANONICAL_TO_LEGACY's last-write-wins construction).
+    "Source_Authority_Weight": "source_authority_score",
+    "Source_Authority": "source_authority",
+    "Source_Authority_Score": "source_authority_score",
+    "Source_Authority_Reason": "source_authority_reason",
     "Study_Type": "study_design",
     "Result_Direction": "evidence_direction",
     "Evidence_Level": "evidence_quality",
@@ -228,7 +254,20 @@ class EvidenceRecord:
     first_author: Optional[str] = None
     publication_year: Optional[str] = None
     source_type: Optional[str] = None
+    # PHASE 3 — Source Authority. `source_authority` remains the text
+    # LABEL (e.g. "EMA HMPC Monograph", "Unknown Source" — see
+    # evidence_authority.AUTHORITY_LABELS), unchanged in type per the
+    # Phase 3 brief. `source_authority_score` and `source_authority_reason`
+    # are new, additive fields carrying the numeric factor
+    # (evidence_authority.AUTHORITY_FACTORS) and the deterministic
+    # human-readable rationale evidence_authority.classify_source_authority()
+    # returns. Kept as three separate fields rather than folding score/
+    # reason into `.extra` because both are first-class, always-expected
+    # outputs of the same classification call, not incidental passthrough
+    # data.
     source_authority: Optional[str] = None
+    source_authority_score: Optional[float] = None
+    source_authority_reason: Optional[str] = None
 
     # --- scientific classification (Phase 1 axes kept separate) ---
     study_design: Optional[str] = None

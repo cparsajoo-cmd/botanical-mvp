@@ -131,7 +131,7 @@
   },
   {
     "case_id": "smoke_direct_evidence_present",
-    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the minimum_evidence PASSED path with real located evidence text. 'expected' below was recorded by running this exact case through the engine, not independently derived.",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the minimum_evidence PASSED path with real located evidence text. 'expected' below was recorded by running this exact case through the engine, not independently derived. UPDATED (Phase 3, problem 1 fix): this case's evidence row carries no Source_Organization/Source_Type metadata, so once botanical_rd_candidate_engine.py started passing a REAL per-source Source Authority factor into interpret_evidence() (previously always a no-effect 1.0), its literature-fallback classification (peer-reviewed RCT wording, no organizational identity -> factor 0.80) legitimately lowers evidence_direction_contribution enough to change decision_class from 'Early-stage candidate; more evidence needed' to 'Low priority / insufficient data'. gate_status and decision_class_ah are unchanged. Intended effect of the fix, not a scoring regression -- re-recorded from the new engine output.",
     "rows": [
       {
         "scientific_name": "TestPlant",
@@ -160,7 +160,7 @@
         {
           "reference_plant": "TestPlant",
           "alternative_plant": "TestPlant",
-          "decision_class": "Early-stage candidate; more evidence needed",
+          "decision_class": "Low priority / insufficient data",
           "gate_status": {
             "safety": "not_evaluable",
             "identity": "passed",

@@ -79,7 +79,7 @@ def test_output_columns_count_matches_pre_task_5_baseline():
     #
     # Bumped 76 -> 77 by the correction round (2nd pass): Ranking_Partition
     # (design review item 2) is a new, additive column.
-    assert len(eng.OUTPUT_COLUMNS) == 77
+    assert len(eng.OUTPUT_COLUMNS) == 78
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 

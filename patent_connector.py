@@ -32,19 +32,19 @@ def search_patents(scientific_name, indication, dosage_form="", market="European
             "Target_Indication": indication,
             "Target_Market": market,
 
-            "Source_Type": "Patent/Literature",
-            "Source_Organization": "Patent proxy via CrossRef",
+            "Source_Type": "Bibliographic search proxy — NOT a patent database",
+            "Source_Organization": "CrossRef bibliographic proxy",
             "Source_Title": title,
             "Source_URL": url_out,
             "Source_Year": "",
 
             "Notes": f"Patent/protection landscape proxy search for {query}. Title: {title}",
 
-            "Publication_Type": "Patent/Commercial landscape",
-            "Evidence_Type": "Patent landscape",
-            "Study_Type": "Patent/Commercial",
-            "Study_Model": "Commercial/IP",
-            "Evidence_Level": "Supporting",
+            "Publication_Type": "Bibliographic proxy",
+            "Evidence_Type": "Patent keyword proxy — unverified",
+            "Study_Type": "Not scientific evidence",
+            "Study_Model": "Search proxy",
+            "Evidence_Level": "Not applicable",
 
             "EMA_Status": "",
             "WHO_Status": "",
@@ -69,8 +69,9 @@ def search_patents(scientific_name, indication, dosage_form="", market="European
             "Population": "",
             "Sample_Size": "",
             "Comparator": "",
-            "Primary_Outcome": "Patent/commercial opportunity signal",
-            "Result_Direction": "Supporting",
+            "Primary_Outcome": "CrossRef keyword hit only; not verified patent activity",
+            "Result_Direction": "Not applicable",
+            "Patent_Verification_Status": "PROXY_ONLY_NOT_PATENT_DATABASE",
         })
 
     return records

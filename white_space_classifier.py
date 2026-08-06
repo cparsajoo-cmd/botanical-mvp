@@ -81,6 +81,7 @@ def classify_white_space(
     evidence_confidence: float,
     market_status: str,
     use_live_search: bool,
+    regulatory_status: Optional[str] = None,
 ) -> Optional[str]:
     """Returns one of the 5 white-space type labels, or None if this
     row isn't a white-space candidate at all (a positive signal exists
@@ -111,9 +112,13 @@ def classify_white_space(
 
     scientific_white_space = use_live_search and not real_scientific_signal
     commercial_white_space = market_status == COMMERCIAL_WHITE_SPACE_STATE
+    # Phase 8: production callers pass regulatory_status separately.
+    # Legacy callers/tests that omit it retain pre-Phase-8 behavior.
+    regulatory_signal = market_status if regulatory_status is None else regulatory_status
+    regulatory_search_unknown = regulatory_signal in NO_SEARCH_MARKET_STATES
     regulatory_white_space = (
-        market_status not in POSITIVE_REGULATORY_STATES
-        and not no_market_search_signal
+        regulatory_signal not in POSITIVE_REGULATORY_STATES
+        and not regulatory_search_unknown
     )
 
     # 2) Industrial R&D White Space: the one label that actually

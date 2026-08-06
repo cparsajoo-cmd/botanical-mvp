@@ -344,6 +344,39 @@ class ScientificEvidence:
 
 
 @dataclass
+class MarketEvidence:
+    """Canonical Phase-8 market observation.
+
+    Deliberately separate from ScientificEvidence/RegulatoryRecord. A row may
+    describe a retail product, trend observation, or patent-database record,
+    but it must always carry source, market/query scope and retrieval time.
+    """
+    source: str
+    source_type: str
+    query: str
+    country_market: str
+    product_name: Optional[str] = None
+    brand: Optional[str] = None
+    plant_ingredient: Optional[str] = None
+    preparation: Optional[str] = None
+    dosage_form: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    availability: Optional[str] = None
+    review_count: Optional[int] = None
+    rating: Optional[float] = None
+    seller_retailer: Optional[str] = None
+    retrieval_timestamp: Optional[str] = None
+    source_url_or_id: Optional[str] = None
+    freshness: Optional[str] = None
+    confidence: Optional[float] = None
+    reliability: Optional[float] = None
+    source_record_id: Optional[str] = None
+    evidence_kind: str = "retail"
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
 class CommercialProduct:
     """An actual marketed product — per Phase 1 audit 4.5, deliberately
     NOT the same thing as "a plant name appeared in commercial-sounding

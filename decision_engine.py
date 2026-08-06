@@ -249,8 +249,10 @@ def analyze_evidence(
         regulatory_score = _regulatory_score(group)
         safety_score = _safety_score(group)
         novelty_score = _novelty_score(group)
-        market_score = 50
-        commercial_score = 50
+        # Phase 8: missing market/commercial data is not a positive prior.
+        # Real market scores are attached by MarketIntelligenceEngine.
+        market_score = 0
+        commercial_score = 0
 
         scores = {
             "Clinical_Score": clinical_score,

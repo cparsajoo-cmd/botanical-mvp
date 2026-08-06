@@ -1,7 +1,9 @@
 import os
 import re
 import base64
+from datetime import datetime, timezone
 import requests
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -179,6 +181,7 @@ OUTPUT_COLUMNS = [
     "Has_Negative_Evidence",
     "Negative_Evidence_Types",
     "Market_Status",
+    "Regulatory_Recognition_Status",
     "Regulatory_Barriers",
     "Novelty_Status",
     "R&D_Opportunity_Score",
@@ -1367,11 +1370,15 @@ class BotanicalRDCandidateEngine:
                         INTERACTION_TERMS,
                     )
 
-                    market_status = self._market_status(
+                    # Phase 8: Market_Status is commercial/market-only.
+                    # Regulatory recognition is retained independently; it
+                    # no longer contributes to the market score/component.
+                    regulatory_recognition_status = self._market_status(
                         alt=alt,
                         evidence=raw_evidence,
                         market=market,
                     )
+                    market_status = self._market_evidence_status(raw_evidence)
                     regulatory_barrier_result = classify_regulatory_barriers(raw_evidence)
 
                     # How many distinct plants (in the WHOLE database,
@@ -1557,6 +1564,7 @@ class BotanicalRDCandidateEngine:
                         evidence_confidence=evidence_confidence,
                         market_status=market_status,
                         use_live_search=self.use_live_search,
+                        regulatory_status=regulatory_recognition_status,
                     )
                     occurrence_corroboration = self._occurrence_corroboration(evidence_source_ids)
                     candidate_evidence_strength_tier = classify_candidate_evidence_strength(
@@ -1655,7 +1663,7 @@ class BotanicalRDCandidateEngine:
                         white_space_type=white_space_type or "",
                     )
                     regulatory_rationale_text = regulatory_rationale(
-                        market_status=market_status,
+                        market_status=regulatory_recognition_status,
                         regulatory_barriers="; ".join(regulatory_barrier_result.barrier_types),
                     )
                     commercial_rationale_text = commercial_rationale(
@@ -1705,6 +1713,7 @@ class BotanicalRDCandidateEngine:
                             "Has_Negative_Evidence": negative_evidence.is_negative,
                             "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,
+                            "Regulatory_Recognition_Status": regulatory_recognition_status,
                             "Regulatory_Barriers": "; ".join(regulatory_barrier_result.barrier_types) if regulatory_barrier_result.has_barrier else "None identified",
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
@@ -4209,6 +4218,36 @@ class BotanicalRDCandidateEngine:
             return False
         return ema_status == "Yes" or ema_status.startswith("Listed in HMPC inventory")
 
+    def _market_evidence_status(self, evidence):
+        """Phase 8 market-only status. Regulatory recognition, safety,
+        efficacy and scientific evidence are intentionally ignored here.
+
+        Until the opt-in retail connector is genuinely implemented, this
+        method can only distinguish unverified commercial prose from honest
+        missing/search states; it never claims a verified product or low
+        saturation from missing data.
+        """
+        text = self._norm(evidence)
+        commercial_phrase_patterns = [
+            r"\bmarketed as\b", r"\bmarketed product\b",
+            r"\bavailable as a supplement\b", r"\bavailable as an? product\b",
+            r"\bcommercially available\b", r"\bsold as\b", r"\bbranded as\b",
+        ]
+        discontinued_patterns = [
+            r"\bdiscontinued\b", r"\bwithdrawn from the market\b",
+            r"\bno longer (?:available|marketed|sold)\b",
+            r"\bnot currently (?:available|marketed|sold)\b", r"\bproduct recall\b",
+        ]
+        commercial_signal = any(re.search(p, text) for p in commercial_phrase_patterns)
+        discontinued_signal = any(re.search(p, text) for p in discontinued_patterns)
+        if commercial_signal and discontinued_signal:
+            return "Conflicting market evidence"
+        if commercial_signal:
+            return "Commercial evidence reported, not independently verified"
+        if self.use_live_search:
+            return "Search incomplete"
+        return "Search not performed"
+
     def _market_status(self, alt, evidence, market):
         """Market status, using the same controlled vocabulary as
         data_contracts.MarketVerificationStatus (audit 4.6/4.7), plus
@@ -5766,12 +5805,15 @@ class BotanicalRDCandidateEngine:
         Set env vars EPO_OPS_KEY and EPO_OPS_SECRET to activate.
         """
         if not self.use_live_search:
-            return [{"status": "Skipped", "detail": "Live search disabled."}]
+            return [{"status": "Skipped", "canonical_status": "SEARCH_NOT_PERFORMED", "detail": "Live search disabled."}]
 
         key, secret = os.environ.get("EPO_OPS_KEY"), os.environ.get("EPO_OPS_SECRET")
         if not key or not secret:
             return [{
                 "status": "Not configured",
+                "canonical_status": "SOURCE_UNAVAILABLE",
+                "source_type": "Patent database",
+                "source": "EPO OPS",
                 "detail": "Set EPO_OPS_KEY and EPO_OPS_SECRET (free registration "
                           "at https://developers.epo.org/) to enable patent search.",
             }]
@@ -5795,9 +5837,49 @@ class BotanicalRDCandidateEngine:
                 timeout=20,
             )
             search_r.raise_for_status()
-            return [{"status": "OK", "raw_response": search_r.json()}]
+            retrieved_at = datetime.now(timezone.utc).isoformat()
+            hits = []
+            try:
+                root = ET.fromstring(search_r.text)
+                seen = set()
+                for doc_id in root.iter():
+                    if not str(doc_id.tag).endswith("document-id"):
+                        continue
+                    fields = {}
+                    for child in list(doc_id):
+                        tag = str(child.tag).split("}")[-1]
+                        fields[tag] = (child.text or "").strip()
+                    patent_id = "".join([fields.get("country", ""), fields.get("doc-number", ""), fields.get("kind", "")])
+                    if not patent_id or patent_id in seen:
+                        continue
+                    seen.add(patent_id)
+                    hits.append({
+                        "Patent_ID": patent_id,
+                        "Applicant": None,
+                        "Jurisdiction": fields.get("country") or None,
+                        "Status": "Unknown — publication-search result only",
+                        "Filing_Date": None,
+                        "Publication_Date": fields.get("date") or None,
+                        "Claim_Relevance": "Query match only; patent claims not inspected",
+                        "Ingredient_Preparation_Relevance": query,
+                        "Source_URL_or_ID": patent_id,
+                    })
+                    if len(hits) >= max_results:
+                        break
+            except ET.ParseError:
+                hits = []
+            return [{
+                "status": "OK",
+                "canonical_status": "COMPLETED",
+                "source_type": "Patent database",
+                "source": "EPO OPS",
+                "query": query,
+                "retrieval_timestamp": retrieved_at,
+                "patent_hits": hits,
+                "raw_response": search_r.text if not hits else "",
+            }]
         except Exception as e:
-            return [{"status": "Error", "detail": str(e)}]
+            return [{"status": "Error", "canonical_status": "SOURCE_UNAVAILABLE", "source_type": "Patent database", "source": "EPO OPS", "detail": str(e)}]
 
     def _search_retail_products(self, query):
         """
@@ -5808,12 +5890,14 @@ class BotanicalRDCandidateEngine:
         SerpAPI, etc.) — this function is the single place to wire it in.
         """
         if not self.use_live_search:
-            return [{"status": "Skipped", "detail": "Live search disabled."}]
+            return [{"status": "Skipped", "canonical_status": "SEARCH_NOT_PERFORMED", "detail": "Live search disabled."}]
 
         api_key = os.environ.get("SEARCH_API_KEY")
         if not api_key:
             return [{
                 "status": "Not configured",
+                "canonical_status": "SOURCE_UNAVAILABLE",
+                "source_type": "Search engine proxy",
                 "detail": "Set SEARCH_API_KEY to a paid web-search provider "
                           "(e.g. Bing Web Search API, SerpAPI) to enable "
                           "retail/brand product scanning. No free source "
@@ -5821,19 +5905,60 @@ class BotanicalRDCandidateEngine:
             }]
         return [{
             "status": "Not implemented",
+            "canonical_status": "CONNECTOR_NOT_IMPLEMENTED",
+            "source_type": "Search engine proxy",
             "detail": "SEARCH_API_KEY is set, but no provider call is wired "
                       "in yet. Implement the request for your chosen "
                       "provider inside _search_retail_products().",
         }]
 
     def market_landscape(self, plant):
-        """Single-plant market snapshot: regulatory + patents + retail."""
+        """Single-plant market snapshot with independent domains.
+
+        Regulatory data stays under ``regulatory``. EPO patent hits are also
+        projected into the canonical Phase-8 MarketEvidence shape so they can
+        be traced without being mistaken for efficacy or approval evidence.
+        Retail remains an explicit unavailable/not-implemented state until a
+        real provider is wired.
+        """
+        patents = self._search_patents(plant)
+        retail = self._search_retail_products(plant)
+        market_evidence = []
+        if patents and patents[0].get("canonical_status") == "COMPLETED":
+            meta = patents[0]
+            for hit in meta.get("patent_hits", []):
+                market_evidence.append({
+                    "source": meta.get("source", "EPO OPS"),
+                    "source_type": "Patent database",
+                    "query": meta.get("query", plant),
+                    "country_market": hit.get("Jurisdiction") or "",
+                    "product_name": "",
+                    "brand": hit.get("Applicant") or "",
+                    "plant_ingredient": plant,
+                    "preparation": "",
+                    "dosage_form": "",
+                    "price": None,
+                    "currency": "",
+                    "availability": "",
+                    "review_count": None,
+                    "rating": None,
+                    "seller_retailer": "",
+                    "retrieval_timestamp": meta.get("retrieval_timestamp"),
+                    "source_url_or_id": hit.get("Source_URL_or_ID") or hit.get("Patent_ID", ""),
+                    "freshness": "FRESH",
+                    "confidence": 0.9,
+                    "reliability": 0.9,
+                    "source_record_id": hit.get("Patent_ID", ""),
+                    "evidence_kind": "patent",
+                    "metadata": hit,
+                })
         return {
             "plant": plant,
             "region": get_region(plant),
             "regulatory": self._eu_regulatory_status(plant),
-            "patents": self._search_patents(plant),
-            "retail_products": self._search_retail_products(plant),
+            "patents": patents,
+            "retail_products": retail,
+            "market_evidence": market_evidence,
         }
 
     def market_landscape_df(self, plants):
@@ -5864,8 +5989,11 @@ class BotanicalRDCandidateEngine:
                     "uk_status", "Not yet catalogued for this plant"
                 ),
                 "Patent_Search_Status": patents[0].get("status", "Unknown"),
+                "Patent_Search_Canonical_Status": patents[0].get("canonical_status", "UNKNOWN"),
+                "Patent_Hit_Count": len(patents[0].get("patent_hits", [])),
                 "Patent_Detail": patents[0].get("detail", patents[0].get("raw_response", "")),
                 "Retail_Products_Status": retail[0].get("status", "Unknown"),
+                "Retail_Products_Canonical_Status": retail[0].get("canonical_status", "UNKNOWN"),
                 "Retail_Products_Detail": retail[0].get("detail", ""),
             })
         return pd.DataFrame(rows)
@@ -5924,8 +6052,11 @@ class BotanicalRDCandidateEngine:
             "US_Status": "Market_Landscape_US_Status",
             "UK_Status": "Market_Landscape_UK_Status",
             "Patent_Search_Status": "Market_Landscape_Patent_Search_Status",
+            "Patent_Search_Canonical_Status": "Market_Landscape_Patent_Search_Canonical_Status",
+            "Patent_Hit_Count": "Market_Landscape_Patent_Hit_Count",
             "Patent_Detail": "Market_Landscape_Patent_Detail",
             "Retail_Products_Status": "Market_Landscape_Retail_Search_Status",
+            "Retail_Products_Canonical_Status": "Market_Landscape_Retail_Search_Canonical_Status",
             "Retail_Products_Detail": "Market_Landscape_Retail_Detail",
         })
 

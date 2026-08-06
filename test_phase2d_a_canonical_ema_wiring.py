@@ -412,7 +412,8 @@ def test_explicit_pre_populated_cache_still_reaches_market_status_end_to_end():
     result_df = engine.run(indication="Test indication", dosage_form="tea", market="EU")
     alt_rows = result_df[result_df["Alternative_Plant"] == "Alternativia speciosa"]
     assert not alt_rows.empty
-    assert (alt_rows["Market_Status"] == "Listed in EMA HMPC inventory — monograph not established").all()
+    assert (alt_rows["Regulatory_Recognition_Status"] == "Listed in EMA HMPC inventory — monograph not established").all()
+    assert (alt_rows["Market_Status"] == "Search not performed").all()
 
 
 def test_run_does_not_mutate_a_pre_populated_cache_to_add_more_plants(monkeypatch):

@@ -1,0 +1,182 @@
+{
+  "generated_date": "2026-08-06",
+  "active_case_count": 17,
+  "features": {
+    "EMA_HMPC": {
+      "case_numbers": [
+        1,
+        6,
+        7,
+        8,
+        9,
+        10,
+        12,
+        14,
+        15
+      ],
+      "count": 9,
+      "status": "COVERED"
+    },
+    "WHO": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "ESCOP": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "FDA": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "National_Regulators": {
+      "case_numbers": [
+        16,
+        18
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Systematic_Reviews": {
+      "case_numbers": [
+        3,
+        4,
+        5,
+        11
+      ],
+      "count": 4,
+      "status": "COVERED"
+    },
+    "Meta_analysis": {
+      "case_numbers": [
+        3,
+        11
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "RCT": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Observational_Studies": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Botanical_Identity": {
+      "case_numbers": [
+        13,
+        17
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Safety": {
+      "case_numbers": [
+        6,
+        14
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Contraindications": {
+      "case_numbers": [
+        6
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Drug_Interactions": {
+      "case_numbers": [
+        6,
+        14
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Dose_specific_Evidence": {
+      "case_numbers": [
+        18
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Preparation_specific_Evidence": {
+      "case_numbers": [
+        7,
+        8,
+        15
+      ],
+      "count": 3,
+      "status": "COVERED"
+    },
+    "Regulatory_Restrictions": {
+      "case_numbers": [
+        18
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Regulatory_Prohibition": {
+      "case_numbers": [
+        16
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Positive_Human_Evidence": {
+      "case_numbers": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "count": 4,
+      "status": "COVERED"
+    },
+    "Negative_Human_Evidence": {
+      "case_numbers": [
+        4
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Null_Human_Evidence": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Conflicting_Evidence": {
+      "case_numbers": [
+        5
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Missing_Evidence": {
+      "case_numbers": [
+        5
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Source_Unavailable": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    }
+  },
+  "notes": {
+    "Null_Human_Evidence": "Null outcomes occur inside reviews but no standalone independently labelled null-RCT Gold source.",
+    "Conflicting_Evidence": "Case 005 documents a real conflicting later systematic review, but the current resolved GoldCase contains one applicable governing reference.",
+    "Missing_Evidence": "Case 005 covers scientific insufficiency (AssertionState.INSUFFICIENT), not retrieval failure.",
+    "Source_Unavailable": "Supported by End-to-End framework/tests but not yet represented by a real locked corpus source-unavailable case.",
+    "RCT": "RCTs appear inside systematic reviews but are not independently curated GoldSourceExpectations; current precedence does not permit RCT as governing INDICATION_EVIDENCE source.",
+    "Observational_Studies": "No independently curated observational Gold source."
+  }
+}

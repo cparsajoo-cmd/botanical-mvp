@@ -1308,6 +1308,7 @@ def _build_evidence_quality_explain(row_records: list[dict]) -> dict:
 def _scientific_evidence_components(
     row_records: list[dict],
     resolved_target_context: Mapping[str, Any] | None,
+    _compute_marginals: bool = True,
 ) -> dict:
     """PHASE 5 — tier-aware Direction/Consistency/Applicability
     aggregation and the resulting Scientific_Evidence_Score. Reuses
@@ -1428,6 +1429,32 @@ def _scientific_evidence_components(
         "Direction_Factor": direction_factor,
     }
 
+    # PHASE 6 — exact, non-fabricated per-evidence score effect.  Because
+    # Scientific_Evidence_Score is nonlinear, additive allocation across
+    # records would be false precision.  Instead record the deterministic
+    # leave-one-evidence-out marginal effect using the SAME scoring function.
+    scientific_evidence_contributions = []
+    if _compute_marginals and primary_records:
+        for record in primary_records:
+            reduced = [r for r in row_records if r is not record]
+            counterfactual = _scientific_evidence_components(
+                reduced, resolved_target_context, _compute_marginals=False
+            )["Scientific_Evidence_Score"]
+            source_id = str(record["source_record_ids"] or record["row_id"])
+            scientific_evidence_contributions.append({
+                "evidence_id": source_id,
+                "entered_score": True,
+                "marginal_score_effect": round(scientific_evidence_score - counterfactual, 4),
+                "score_with_evidence": scientific_evidence_score,
+                "score_without_evidence": counterfactual,
+                "method": "leave_one_evidence_out",
+                "study_design_label": record["label"],
+                "authority_label": record["authority_label"],
+                "authority_score": record["authority_score"],
+                "direction": record["direction"],
+                "applicability": record_applicability_summary.get(source_id),
+            })
+
     return {
         "Scientific_Evidence_Score": scientific_evidence_score,
         "Direction_Factor": direction_factor,
@@ -1448,6 +1475,7 @@ def _scientific_evidence_components(
         "Supporting_Evidence_Tiers_Present": supporting_tiers_present,
         "Supporting_Evidence_Record_Count": supporting_record_count,
         "Scientific_Evidence_Source_Record_IDs": scientific_source_record_ids,
+        "Scientific_Evidence_Contributions": scientific_evidence_contributions,
         "Authoritative_Narrative_Source_Record_ID": authoritative_narrative_source_record_id,
         "Authoritative_Narrative_Provenance": authoritative_narrative_provenance,
     }
@@ -2394,6 +2422,7 @@ def build_plant_candidate_shortlist(
             # phase5_scoring_config.py's weights/thresholds produced this
             # row.
             "Scientific_Evidence_Score": sci_evidence["Scientific_Evidence_Score"],
+            "Scientific_Evidence_Contributions": sci_evidence["Scientific_Evidence_Contributions"],
             "Direction_Factor": sci_evidence["Direction_Factor"],
             "Evidence_Consistency_Class": sci_evidence["Evidence_Consistency_Class"],
             "Evidence_Consistency_Factor": sci_evidence["Evidence_Consistency_Factor"],
@@ -2618,7 +2647,7 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Null_Negative_Result_Count", "Unreported_Result_Count",
         # PHASE 5 — authoritative Scientific Score outputs (addendum
         # §1/§3/§4/§11), always taken from plant_summary, never the raw row.
-        "Scientific_Evidence_Score", "Direction_Factor", "Evidence_Consistency_Class",
+        "Scientific_Evidence_Score", "Scientific_Evidence_Contributions", "Direction_Factor", "Evidence_Consistency_Class",
         "Evidence_Consistency_Factor", "Evidence_Direction_Profile", "Plant_Applicability_Factor",
         "Record_Applicability_Summary", "Dimension_Status", "Applicability_Classification",
         "Applicability_Data_Completeness", "Applicability_Factor", "Primary_Evidence_Tier",

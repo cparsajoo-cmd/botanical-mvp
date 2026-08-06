@@ -198,7 +198,7 @@ def _new_analysis_id() -> str:
     return str(uuid.uuid4())
 
 
-def _serialize_record(record, evidence_df=None) -> dict:
+def _serialize_record(record, evidence_df=None, decision_explanation=None) -> dict:
     """Reads ONLY the allowlisted fields already present on a
     validated CandidateAssessment — no new computation, no
     recalculation of any field — EXCEPT the additive `score_context`
@@ -223,6 +223,12 @@ def _serialize_record(record, evidence_df=None) -> dict:
         if field != "score_context"
     }
     serialized["score_context"] = _build_score_context(as_dict, evidence_df)
+    # PHASE 6 — structured explanation is supplied by the authoritative
+    # report-ready pipeline, never reconstructed here from candidate-level
+    # evidence.  Keeping it inside the existing records JSON avoids a parallel
+    # persistence table/schema while preserving append-only decision snapshots.
+    if decision_explanation is not None:
+        serialized["decision_explanation"] = decision_explanation
     return serialized
 
 
@@ -390,6 +396,7 @@ def persist_decision_record(
     supabase_client=None,
     decision_metadata: dict = None,
     evidence_df=None,
+    decision_explanations: dict = None,
 ) -> dict:
     """The ONE write function this module exists to provide.
 
@@ -459,7 +466,15 @@ def persist_decision_record(
         "indication": indication,
         "project_id": project_id,
         "candidate_count": len(records),
-        "records": json.dumps([_serialize_record(r, evidence_df) for r in records], default=str),
+        "records": json.dumps([
+            _serialize_record(
+                r, evidence_df,
+                (decision_explanations or {}).get(
+                    str((asdict(r) if is_dataclass(r) and not isinstance(r, type) else r if isinstance(r, dict) else {}).get("alternative_plant", ""))
+                ),
+            )
+            for r in records
+        ], default=str),
     }
     if decision_metadata:
         for field in _OPTIONAL_METADATA_COLUMNS:

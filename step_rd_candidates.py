@@ -11,6 +11,7 @@ from candidate_shortlisting import build_plant_candidate_shortlist, merge_author
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
+from decision_explainability import attach_decision_explanations
 from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
     get_scientific_evidence_by_ids,
@@ -1013,6 +1014,14 @@ def render_rd_candidates_step(inputs):
                     f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
                     f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                 )
+                # PHASE 6 — additive structured causal trace.  This reads the
+                # authoritative score/gate outputs and triage audit only; it never
+                # changes scoring, gating, ranking, connectors, or UI behaviour.
+                st.session_state["rd_report_ready_df"] = attach_decision_explanations(
+                    st.session_state["rd_report_ready_df"],
+                    triage_audit_df,
+                    decision_metadata=st.session_state["rd_decision_metadata"],
+                )
 
                 counts = (
                     plant_summary_df["Scientific_Triage_Status"].value_counts()
@@ -1303,6 +1312,13 @@ def render_rd_candidates_step(inputs):
                         # evidence identity (not just raw database ids)
                         # for duplicate-score-contribution detection.
                         evidence_df=_get_evidence_df(),
+                        # PHASE 6 — authoritative plant-level causal traces are
+                        # persisted verbatim with the existing decision snapshot.
+                        decision_explanations={
+                            str(r.get("Alternative_Plant", "")): r.get("Decision_Explanation")
+                            for _, r in st.session_state.get("rd_report_ready_df", pd.DataFrame()).iterrows()
+                            if r.get("Decision_Explanation") is not None
+                        },
                     )
                     if decision_record_summary["status"] == "persisted":
                         st.session_state["rd_last_decision_record_id"] = decision_record_summary["analysis_id"]

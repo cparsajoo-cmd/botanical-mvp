@@ -12,14 +12,27 @@ import step_rd_candidates as src
 
 
 def _report_ready_row(plant, call, score):
+    # Phase 4 — Eligibility Gate compatibility: this test file predates
+    # Phase 4's structured Eligibility_Status/Eligible_For_Normal_Ranking
+    # columns, which _recommendation_block() now reads directly (see
+    # step_rd_candidates.py's _eligible_mask()). Derived here from the
+    # same `call` (Go/Investigate/Hold/No-Go) value these tests already
+    # parametrize on, so eligibility agrees with what each test's plant
+    # name/call combination already implies.
+    is_eligible = str(call).strip().startswith(("Go", "Investigate"))
     return {
         "Alternative_Plant": plant,
         "R&D_Opportunity_Score": score,
         "Overall_Score": score,
         "Go_Investigate_Hold_NoGo": call,
-        "Decision_Class_AH": "B — Established scientific candidate",
+        "Decision_Class_AH": (
+            "B — Established scientific candidate" if is_eligible
+            else "G — Hold / insufficient evidence"
+        ),
         "Target_or_Mechanism": "AMPK",
         "Rationale": f"narrative for {plant}",
+        "Eligibility_Status": "eligible" if is_eligible else "incomplete",
+        "Eligible_For_Normal_Ranking": is_eligible,
     }
 
 

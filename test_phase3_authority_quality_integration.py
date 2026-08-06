@@ -550,10 +550,10 @@ def test_botanical_rd_candidate_engine_passes_real_source_authority_into_interpr
         )
 
     def _interpret(engine):
-        index, source_index, _applicability_index, authority_index = (
+        index, source_index, _applicability_index, authority_index, _records_index = (
             engine._build_evidence_text_index()
         )
-        text, _sources, authority_factor = engine._collect_raw_evidence(
+        text, _sources, authority_factor, _records = engine._collect_raw_evidence(
             evidence_index=index,
             plant="TestPlant",
             compound="ActiveCompound",

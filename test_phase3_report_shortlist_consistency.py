@@ -38,6 +38,13 @@ def _raw_row(plant, indication_text, legacy_score):
         "Interaction_Flags": "No explicit flag found",
         "R&D_Opportunity_Score": legacy_score,
         "Rationale": f"Full narrative for {plant}.",
+        # Phase 4 — Eligibility Gate compatibility: this fixture predates
+        # Phase 4. Default reflects a clean, eligible candidate so this
+        # test's actual point (authoritative score ordering, not legacy
+        # score) is exercised without being incidentally blocked by the
+        # unrelated fail-closed "no eligibility data" path.
+        "Eligibility_Status": "eligible",
+        "Eligible_For_Normal_Ranking": True,
     }
 
 

@@ -1143,6 +1143,41 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
                 "Evidence_Confidence": confidence,
                 "Decision_Class": decision,
                 "Decision_Class_AH": "C" if record_direct and not registry_without_results else "F",
+                # Phase 4 — Eligibility Gate compatibility fields.
+                # This module has its OWN hard-safety-exclusion logic
+                # (safety_findings above) that is untouched by Phase 4 —
+                # it was out of scope for that phase's audit and is not
+                # rebuilt here. These fields exist ONLY so that
+                # consumers now reading the structured Eligibility_Status/
+                # Eligible_For_Normal_Ranking columns (candidate_shortlisting.py,
+                # step_rd_candidates.py, pharma_report_generator.py) don't
+                # silently treat every row from this discovery mode as
+                # ineligible just because the column was previously blank
+                # here — `call` (Go_Investigate_Hold_NoGo, computed above)
+                # is this module's own existing, tested signal for
+                # Hold/No-Go, reused as-is rather than re-derived.
+                "Eligibility_Status": (
+                    "eligible_with_restrictions" if (safety_findings or interactions) else "eligible"
+                ),
+                "Hard_No_Go": False,
+                "Eligible_For_Normal_Ranking": not str(call).strip().startswith(("Hold", "No-Go")),
+                "Score_Validity": "valid",
+                "Gate_Type": "none",
+                "Gate_Reason": (
+                    "Indication-centric discovery path; Phase 4 Eligibility "
+                    "Gate is not wired into this module's own hard-safety-"
+                    "exclusion logic (documented as out of scope for Phase "
+                    "4 — see the Phase 4 report's file list)."
+                ),
+                "Gate_Evidence_IDs": record_id or "",
+                "Safety_Severity": "minor" if (safety_findings or interactions) else "none",
+                "Safety_Scope": "unknown",
+                "Safety_Context_Relevance": "unknown",
+                "Regulatory_Status": "insufficient_data",
+                "Regulatory_Scope": "unknown",
+                "Regulatory_Context_Relevance": "unknown",
+                "Data_Completeness": "complete" if (record_direct or record_mechanistic) else "incomplete",
+                "Requires_Expert_Review": False,
                 "White_Space_Type": "To be assessed",
                 "Confidence_Note": "Candidate generated independently of chemical similarity.",
                 "Go_Investigate_Hold_NoGo": call,

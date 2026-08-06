@@ -222,6 +222,53 @@ def validate_row(row, indication: str, project_id: str = "unspecified-run"):
         str(decision_engine_version) if decision_engine_version not in (None, "") else None
     )
 
+    # Phase 4 — Eligibility Gate. A row produced before this field
+    # existed (or any row where it is missing/empty for any reason)
+    # MUST default to "incomplete" / eligible_for_normal_ranking=False —
+    # never silently "eligible". This is the exact backward-compatibility
+    # policy the Phase 4 design review required: a historical record
+    # with no eligibility data is not the same thing as a record that
+    # was actually evaluated and found clear.
+    eligibility_status = row.get("Eligibility_Status")
+    kwargs["eligibility_status"] = (
+        str(eligibility_status) if eligibility_status not in (None, "") else "incomplete"
+    )
+    eligible_for_normal_ranking = row.get("Eligible_For_Normal_Ranking")
+    kwargs["eligible_for_normal_ranking"] = (
+        bool(eligible_for_normal_ranking) if eligible_for_normal_ranking not in (None, "") else False
+    )
+    hard_no_go = row.get("Hard_No_Go")
+    kwargs["hard_no_go"] = bool(hard_no_go) if hard_no_go not in (None, "") else None
+    score_validity = row.get("Score_Validity")
+    kwargs["score_validity"] = str(score_validity) if score_validity not in (None, "") else None
+    kwargs["gate_type"] = row.get("Gate_Type") or None
+    kwargs["gate_reason"] = row.get("Gate_Reason") or None
+    kwargs["gate_evidence_ids"] = _split_list(row.get("Gate_Evidence_IDs"))
+    kwargs["safety_severity"] = row.get("Safety_Severity") or None
+    kwargs["safety_scope"] = row.get("Safety_Scope") or None
+    kwargs["safety_context_relevance"] = row.get("Safety_Context_Relevance") or None
+    kwargs["eligibility_regulatory_status"] = row.get("Regulatory_Status") or None
+    kwargs["regulatory_scope"] = row.get("Regulatory_Scope") or None
+    kwargs["regulatory_context_relevance"] = row.get("Regulatory_Context_Relevance") or None
+    data_completeness = row.get("Data_Completeness")
+    kwargs["data_completeness"] = str(data_completeness) if data_completeness not in (None, "") else "incomplete"
+    requires_expert_review = row.get("Requires_Expert_Review")
+    kwargs["requires_expert_review"] = bool(requires_expert_review) if requires_expert_review not in (None, "") else None
+
+    # Correction round (2nd pass) — Ranking_Partition. Same fail-closed
+    # default reasoning as eligibility_status above: a row missing this
+    # column entirely defaults to "excluded_no_go" is WRONG (too
+    # alarming for what is really just missing metadata) and "normal" is
+    # WRONG (fail-open) -- the correct honest default for a row with no
+    # partition data at all is the same one used elsewhere for missing
+    # eligibility data: treat it as not normal-ranking-eligible without
+    # asserting it's actively excluded either.
+    ranking_partition = row.get("Ranking_Partition")
+    kwargs["ranking_partition"] = (
+        str(ranking_partition) if ranking_partition not in (None, "")
+        else "preliminary_or_expert_review"
+    )
+
     try:
         record = CandidateAssessment(**kwargs)
     except TypeError as exc:

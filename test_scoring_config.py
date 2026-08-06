@@ -54,13 +54,25 @@ def test_default_scoring_config_reproduces_identical_scores_to_pre_task_hardcode
     alt_row = result_sorted[result_sorted["Alternative_Plant"] == "AltPlant"].iloc[0]
     self_row = result_sorted[result_sorted["Alternative_Plant"] == "RefPlant"].iloc[0]
 
-    # Exact values recorded before ScoringConfig existed (see the
+    # Exact SCORE values recorded before ScoringConfig existed (see the
     # identical fixture and assertions in
-    # test_gate_layer.py::test_deterministic_output_contract_locked_engineering_regression).
+    # test_gate_layer.py::test_deterministic_output_contract_locked_engineering_regression)
+    # are UNCHANGED by Phase 4 — the Eligibility Gate redesign never
+    # touches _score_candidate()'s arithmetic, only Decision_Class for
+    # rows with no evidence text at all (this fixture's rows have none).
     assert alt_row["R&D_Opportunity_Score"] == 38.0
-    assert alt_row["Decision_Class"] == "Low priority / insufficient data"
     assert self_row["R&D_Opportunity_Score"] == 23.0
-    assert self_row["Decision_Class"] == "Low priority / insufficient data"
+    # Decision_Class itself DOES change here (Phase 4, intended): a row
+    # with zero evidence text now correctly reports INCOMPLETE instead
+    # of the fail-open "Low priority / insufficient data" label the
+    # Phase 4 audit proved was indistinguishable from "checked, nothing
+    # concerning found".
+    assert alt_row["Decision_Class"] == (
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+    )
+    assert self_row["Decision_Class"] == (
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+    )
 
 
 def test_default_scoring_config_field_values_match_documented_pre_task_weights():

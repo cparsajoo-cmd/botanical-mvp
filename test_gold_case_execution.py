@@ -152,8 +152,17 @@ def test_structured_safety_target_gate_validation_fails_on_preclassified_hazard_
     )]
     result = execute_gold_case_against_engine(case, evidence=evidence)
     output = platform_output_for_gold_case(result)
-    assert output["decision_class"] == "Safety concern — not suitable without expert review"
+    # Correction round: without a CONFIRMED species-wide/relevant scope
+    # (production never supplies one via this structured-target path
+    # either — see eligibility_gate.py's corrected default policy),
+    # this resolves to EXPERT_REVIEW_REQUIRED, not the old automatic
+    # "Safety concern..." hard-stop. The legacy "safety" gate
+    # (unchanged function) still independently reports FAILED — this
+    # test's real point (a structured hazard target is NOT silently
+    # ignored) is unaffected.
+    assert output["decision_class"].startswith("Expert review required")
     assert output["gate_results"]["safety"]["status"] == GateStatus.FAILED
+    assert output["gate_results"]["eligibility"]["status"] == "expert_review_required"
 
 
 def test_capability_boundary_notes_alone_cannot_trigger_hard_safety_gate():
@@ -191,7 +200,11 @@ def test_regulatory_prohibition_triggers_via_natural_text_notes():
     )]
     result = execute_gold_case_against_engine(case, evidence=evidence)
     output = platform_output_for_gold_case(result)
-    assert output["decision_class"] == "Regulatory prohibition — not suitable without regulatory review"
+    # Correction round: same corrected policy as the safety test above,
+    # for regulatory prohibition.
+    assert output["decision_class"].startswith("Expert review required")
+    assert output["decision_class"] != "Regulatory prohibition — not suitable without regulatory review"
+    assert output["gate_results"]["regulatory"]["status"] == GateStatus.FAILED
 
 
 def test_evidence_for_a_different_taxon_does_not_affect_this_case():

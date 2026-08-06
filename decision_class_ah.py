@@ -196,6 +196,22 @@ def classify_decision_ah(
     if "Safety concern" in existing_decision_class or "Regulatory prohibition" in existing_decision_class:
         return "H — No-go / safety concern"
 
+    # Phase 4 — Eligibility Gate. existing_decision_class now also carries
+    # two new non-H, non-scored labels ("Expert review required...",
+    # "Incomplete...") for EligibilityStatus.EXPERT_REVIEW_REQUIRED /
+    # INCOMPLETE (see botanical_rd_candidate_engine.py's _decision_class()
+    # and eligibility_gate.py). Neither is a hard no-go (H is reserved
+    # for confirmed safety/regulatory exclusions), but neither may fall
+    # through to the score-based A-F rules below either — a high
+    # evidence_confidence/rd_opportunity_score must never upgrade an
+    # eligibility-unresolved row into a "Go"-mapping class (B/C), which
+    # is exactly the contradiction the Phase 4 design review's item 6
+    # ("Decision_Class cannot contradict Eligibility_Status") forbids.
+    # G ("Hold / insufficient evidence") is the correct, conservative
+    # mapping: go_investigate_hold_no_go() maps G to "Hold", never "Go".
+    if "Expert review required" in existing_decision_class or "Incomplete —" in existing_decision_class:
+        return "G — Hold / insufficient evidence"
+
     if market_status == "Verified marketed product":
         return "A — Verified commercial route"
 

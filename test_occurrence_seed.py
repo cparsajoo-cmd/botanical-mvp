@@ -207,8 +207,13 @@ def test_run_end_to_end_unaffected_for_plants_outside_the_seed_dataset():
     alt_row = result[
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
     ].iloc[0]
-    # Exact recorded values from the Task 1/3 regression locks — this
+    # Exact recorded SCORE from the Task 1/3 regression locks — this
     # fixture's plants/compounds aren't in seed_data.py, so nothing
-    # about Task 7 changes this outcome.
+    # about Task 7 changes this outcome. Decision_Class changed under
+    # Phase 4 (this fixture has zero evidence text, now correctly
+    # INCOMPLETE rather than the old fail-open "Low priority" label —
+    # see test_scoring_config.py for the same fixture/reasoning).
     assert alt_row["R&D_Opportunity_Score"] == 38.0
-    assert alt_row["Decision_Class"] == "Low priority / insufficient data"
+    assert alt_row["Decision_Class"] == (
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+    )

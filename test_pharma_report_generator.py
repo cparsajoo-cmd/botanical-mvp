@@ -45,6 +45,15 @@ def _make_row(**overrides):
             "regulatory": {"gate_name": "regulatory", "status": "not_evaluable", "reason": "No evidence text was available.", "evidence": ""},
         },
         Scoring_Config_Version="1.0-default",
+        # Phase 4 — Eligibility Gate compatibility: this test file
+        # predates Phase 4's structured columns. Default reflects a
+        # clean, eligible candidate (consistent with the default
+        # Decision_Class="Promising candidate..." above, which is not a
+        # no-go/incomplete label) so this shared fixture keeps producing
+        # rows that show up in "Top Candidates" as these tests already
+        # assert, unless a specific test overrides it.
+        Eligibility_Status="eligible",
+        Eligible_For_Normal_Ranking=True,
     )
     base.update(overrides)
     return base

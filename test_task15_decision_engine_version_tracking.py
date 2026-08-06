@@ -68,15 +68,16 @@ def _run(evidence_df=None):
 
 
 # ---------------------------------------------------------------------
-# 1) DECISION_ENGINE_VERSION exists and equals "1.0.3" (bumped by
-#    Phase 2A's _market_status() regulatory-normalization fix, which
-#    can alter R&D_Opportunity_Score for inventory-only EMA/HMPC
-#    records — see botanical_rd_candidate_engine.py's DECISION_ENGINE_VERSION
-#    comment for the exact change).
+# 1) DECISION_ENGINE_VERSION exists and equals "1.1.0" (bumped by
+#    Phase 4's Eligibility Gate redesign, which changes Decision_Class
+#    for exactly the rows the Phase 4 audit proved were mis-classified
+#    by the pre-Phase-4 same_plant bypass — see
+#    botanical_rd_candidate_engine.py's DECISION_ENGINE_VERSION comment
+#    and eligibility_gate.py for the exact change).
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_constant_exists_and_equals_1_0_1():
-    assert eng.DECISION_ENGINE_VERSION == "1.0.3"
+    assert eng.DECISION_ENGINE_VERSION == "1.1.0"
 
 
 # ---------------------------------------------------------------------

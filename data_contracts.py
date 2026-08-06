@@ -543,6 +543,37 @@ class CandidateAssessment:
     # distinguishable from a genuine "1.0.0" record.
     decision_engine_version: Optional[str] = None
 
+    # Phase 4 — Eligibility Gate. Additive only: see eligibility_gate.py
+    # for the full model. eligibility_status/eligible_for_normal_ranking
+    # are the AUTHORITATIVE fields downstream consumers must read instead
+    # of regex-matching decision_class text. None on any row produced
+    # before this field existed — never backfilled or inferred; see
+    # candidate_output_adapter.py's validate_row() for how a missing
+    # value here is treated (defaults to NOT eligible for normal
+    # ranking, never silently ELIGIBLE).
+    eligibility_status: Optional[str] = None
+    hard_no_go: Optional[bool] = None
+    eligible_for_normal_ranking: Optional[bool] = None
+    score_validity: Optional[str] = None
+    gate_type: Optional[str] = None
+    gate_reason: Optional[str] = None
+    gate_evidence_ids: list = field(default_factory=list)
+    safety_severity: Optional[str] = None
+    safety_scope: Optional[str] = None
+    safety_context_relevance: Optional[str] = None
+    eligibility_regulatory_status: Optional[str] = None
+    regulatory_scope: Optional[str] = None
+    regulatory_context_relevance: Optional[str] = None
+    data_completeness: Optional[str] = None
+    requires_expert_review: Optional[bool] = None
+
+    # Correction round (2nd pass) — Ranking_Partition (see
+    # eligibility_gate.RankingPartition): the structured, explicit
+    # source of truth for whether a row belongs in NORMAL ranking,
+    # PRELIMINARY_OR_EXPERT_REVIEW, or EXCLUDED_NO_GO — independent of
+    # its raw score. None on any row produced before this field existed.
+    ranking_partition: Optional[str] = None
+
     # GRADE-informed clinical-evidence certainty (see
     # grade_certainty_classifier.classify_grade_certainty() for the
     # full documented method and its declared limitations —

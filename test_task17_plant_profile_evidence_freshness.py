@@ -371,10 +371,11 @@ def test_task_16_regulatory_wiring_still_present():
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_unchanged():
-    # Task 17 itself does not touch the version; Phase 2A later bumped
-    # it separately (1.0.0 -> 1.0.1) for an unrelated regulatory fix.
+    # Task 17 itself does not touch the version; Phase 2A and, later,
+    # Phase 4's Eligibility Gate redesign each bumped it separately for
+    # unrelated changes (most recently 1.0.3 -> 1.1.0).
     import botanical_rd_candidate_engine as eng
-    assert eng.DECISION_ENGINE_VERSION == "1.0.3"
+    assert eng.DECISION_ENGINE_VERSION == "1.1.0"
 
 
 def test_page_never_references_decision_engine_version():

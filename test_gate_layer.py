@@ -39,6 +39,12 @@ from test_botanical_rd_candidate_engine import make_engine
 
 
 REQUIRED_GATE_NAMES = {"safety", "identity", "minimum_evidence", "regulatory"}
+# Correction round — Phase 4 added a 5th key, "eligibility", carrying
+# the authoritative EligibilityStatus so Gate_Results can never
+# disagree with Decision_Class (design review item 4). The four
+# legacy keys above are unchanged in shape/meaning; "eligibility" is
+# additive. See botanical_rd_candidate_engine.py::_evaluate_gates().
+REQUIRED_GATE_NAMES_WITH_ELIGIBILITY = REQUIRED_GATE_NAMES | {"eligibility"}
 REQUIRED_NESTED_KEYS = {"gate_name", "status", "reason", "evidence"}
 
 
@@ -108,7 +114,7 @@ def test_evaluate_gates_returns_exactly_four_top_level_gates():
         evidence_level="Clinical / human evidence",
         regulatory_barrier_types=[], same_plant=False,
     )
-    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES_WITH_ELIGIBILITY
 
 
 def test_evaluate_gates_each_nested_result_has_exactly_required_keys():
@@ -119,7 +125,17 @@ def test_evaluate_gates_each_nested_result_has_exactly_required_keys():
     )
     for gate_name, gate in gates.items():
         assert set(gate.keys()) == REQUIRED_NESTED_KEYS, gate_name
-        assert isinstance(gate["status"], GateStatus)
+        # Correction round: the "eligibility" gate's status vocabulary is
+        # EligibilityStatus (6 values), not GateStatus (3 values) — a
+        # richer classification than the legacy gates' PASSED/FAILED/
+        # NOT_EVALUABLE, stored as its .value string rather than
+        # forced into GateStatus and losing information. The four
+        # legacy gates are unaffected and still return real GateStatus
+        # instances.
+        if gate_name == "eligibility":
+            assert isinstance(gate["status"], str) and gate["status"]
+        else:
+            assert isinstance(gate["status"], GateStatus)
         assert isinstance(gate["reason"], str) and gate["reason"]
         assert isinstance(gate["evidence"], str)
 
@@ -327,13 +343,21 @@ def test_evaluate_gates_regulatory_not_evaluable_when_never_checked():
 # ---------------------------------------------------------------------
 
 def test_decision_class_hard_safety_exclusion_unchanged_after_refactor():
+    # Correction round: an unconfirmed hit term on a different plant no
+    # longer auto-resolves to "Safety concern..." -- see
+    # eligibility_gate.py's corrected default-scope policy. This test's
+    # ORIGINAL intent (documenting that a hard safety term is not
+    # silently ignored) still holds: it must not be a positive/Go-
+    # mapping Decision_Class either.
     decision = eng.BotanicalRDCandidateEngine._decision_class(
         None,  # unbound call, same pattern the existing suite already uses
         score=80, safety_flags="lithogenic", interaction_flags="",
         has_evidence=True, match_quality="exact",
         evidence_level="Clinical / human evidence", same_plant=False,
     )
-    assert decision == "Safety concern — not suitable without expert review"
+    assert decision.startswith("Expert review required")
+    assert "Strong R&D candidate" not in decision
+    assert "Promising candidate" not in decision
 
 
 def test_decision_class_same_plant_skips_hard_exclusion_unchanged_after_refactor():
@@ -388,7 +412,7 @@ def test_gate_results_populated_end_to_end_through_run():
     ].iloc[0]
     gates = self_row["Gate_Results"]
     assert isinstance(gates, dict)
-    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES_WITH_ELIGIBILITY
     for gate_name, gate in gates.items():
         assert set(gate.keys()) == REQUIRED_NESTED_KEYS
         assert gate["gate_name"] == gate_name
@@ -416,12 +440,19 @@ def test_run_score_decision_class_and_ordering_unaffected_by_gate_wiring():
     row = alt_row.iloc[0]
 
     assert "Gate_Results" in result.columns
+    # Phase 4: this synthetic fixture has no raw evidence text at all
+    # (no Notes/abstract fields populated), which the Eligibility Gate
+    # now correctly classifies as INCOMPLETE rather than silently
+    # falling into "Low priority / insufficient data" (a fail-open gap
+    # the Phase 4 audit proved) — see eligibility_gate.py's
+    # classify_safety_finding()/classify_regulatory_finding().
     assert row["Decision_Class"] in {
         "Strong R&D candidate",
         "Promising candidate; verify safety and standardization",
         "Early-stage candidate; more evidence needed",
         "Low priority / insufficient data",
         "Safety concern — not suitable without expert review",
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation",
     }
     assert 0 <= row["R&D_Opportunity_Score"] <= 100
 
@@ -490,7 +521,25 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # separately rather than folded into an existing field. Same
     # "legitimate, expected change to this lock" pattern as every prior
     # bump above.
-    assert len(result.columns) == 59
+    #
+    # Bumped 59 -> 74 by Phase 4's Eligibility Gate redesign: 15 new,
+    # additive, structured columns (Eligibility_Status, Hard_No_Go,
+    # Eligible_For_Normal_Ranking, Score_Validity, Gate_Type, Gate_Reason,
+    # Gate_Evidence_IDs, Safety_Severity, Safety_Scope,
+    # Safety_Context_Relevance, Regulatory_Status, Regulatory_Scope,
+    # Regulatory_Context_Relevance, Data_Completeness,
+    # Requires_Expert_Review) — see eligibility_gate.py. Inserted before
+    # Decision_Engine_Version, which remains the last column.
+    #
+    # Bumped 74 -> 76 by the correction round: Safety_Gate_Evidence_IDs
+    # and Regulatory_Gate_Evidence_IDs (finding-specific traceability,
+    # design review item 3) are new, additive columns.
+    #
+    # Bumped 76 -> 77 by the correction round (2nd pass): Ranking_Partition
+    # (design review item 2 — NORMAL / PRELIMINARY_OR_EXPERT_REVIEW /
+    # EXCLUDED_NO_GO, see eligibility_gate.RankingPartition) is a new,
+    # additive column.
+    assert len(result.columns) == 77
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns
@@ -515,11 +564,19 @@ def test_deterministic_output_contract_locked_engineering_regression():
     alt_row = result_sorted[result_sorted["Alternative_Plant"] == "AltPlant"].iloc[0]
     self_row = result_sorted[result_sorted["Alternative_Plant"] == "RefPlant"].iloc[0]
 
-    # Exact recorded values for this fixed, deterministic fixture.
+    # Exact SCORE values for this fixed, deterministic fixture are
+    # unchanged by Phase 4 (see test_scoring_config.py for the same
+    # point made explicitly). Decision_Class changes for this specific
+    # zero-evidence-text fixture — intended, see that same test's
+    # comment.
     assert alt_row["R&D_Opportunity_Score"] == 38.0
-    assert alt_row["Decision_Class"] == "Low priority / insufficient data"
+    assert alt_row["Decision_Class"] == (
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+    )
     assert self_row["R&D_Opportunity_Score"] == 23.0
-    assert self_row["Decision_Class"] == "Low priority / insufficient data"
+    assert self_row["Decision_Class"] == (
+        "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+    )
 
     # Row order (by score, descending) is exactly: alternative row
     # first (38.0), self-row second (23.0) — unchanged by Gate_Results.
@@ -557,7 +614,7 @@ def test_gate_results_recomputed_after_multi_compound_merge():
     assert not alt_row.empty
     gates = alt_row.iloc[0]["Gate_Results"]
     assert isinstance(gates, dict)
-    assert set(gates.keys()) == REQUIRED_GATE_NAMES
+    assert set(gates.keys()) == REQUIRED_GATE_NAMES_WITH_ELIGIBILITY
     for gate_name, gate in gates.items():
         assert set(gate.keys()) == REQUIRED_NESTED_KEYS
         assert gate["gate_name"] == gate_name
@@ -764,6 +821,13 @@ def test_evaluate_gates_regulatory_same_plant_reason_and_status():
 
 
 def test_decision_class_regulatory_prohibition_hard_stop():
+    # Correction round: without a CONFIRMED species-wide/relevant scope
+    # (which production never supplies today), an unconfirmed
+    # prohibition hit resolves to EXPERT_REVIEW_REQUIRED, not an
+    # automatic hard no-go -- see eligibility_gate.py's corrected
+    # default policy. The test's original intent (a prohibition is
+    # never silently ignored / never lets a high score win) still
+    # holds.
     decision = eng.BotanicalRDCandidateEngine._decision_class(
         None,
         score=90, safety_flags="", interaction_flags="",
@@ -771,12 +835,15 @@ def test_decision_class_regulatory_prohibition_hard_stop():
         evidence_level="Clinical / human evidence", same_plant=False,
         regulatory_barrier_types=["Prohibited / banned"],
     )
-    assert decision == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert decision != eng.REGULATORY_PROHIBITION_DECISION_CLASS  # not the OLD auto hard-stop string...
+    assert decision.startswith("Expert review required")           # ...but not silently ignored either
+    assert "Strong R&D candidate" not in decision
 
 
 def test_decision_class_regulatory_prohibition_beats_high_score():
     # Non-compensatory: even a score that would otherwise earn "Strong"
-    # must not escape the regulatory hard-stop.
+    # must not escape into a positive Decision_Class while a
+    # prohibition is present, confirmed scope or not.
     decision = eng.BotanicalRDCandidateEngine._decision_class(
         None,
         score=99, safety_flags="", interaction_flags="",
@@ -784,7 +851,32 @@ def test_decision_class_regulatory_prohibition_beats_high_score():
         evidence_level="Clinical / human evidence", same_plant=False,
         regulatory_barrier_types=["Prohibited / banned"],
     )
-    assert decision == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert decision.startswith("Expert review required")
+    assert "Strong R&D candidate" not in decision
+
+
+def test_decision_class_regulatory_prohibition_with_confirmed_scope_is_hard_stop():
+    """The OLD test's exact scenario, now expressed honestly: NO_GO_
+    REGULATORY (the REGULATORY_PROHIBITION_DECISION_CLASS string) is
+    still fully reachable -- just only when scope is CONFIRMED, via
+    eligibility_gate.classify_regulatory_finding()'s confirmed_scope/
+    confirmed_context_relevance overrides. Exercises the underlying
+    eligibility_gate function directly, since _decision_class() itself
+    has no confirmed-scope parameter (production never supplies one
+    today -- see eligibility_gate.py's module docstring)."""
+    from eligibility_gate import (
+        ContextRelevance, EligibilityStatus, FindingScope,
+        classify_regulatory_finding, classify_safety_finding, evaluate_eligibility,
+    )
+    safety = classify_safety_finding(hit_terms=frozenset(), has_evidence_text=True, same_plant=False)
+    regulatory = classify_regulatory_finding(
+        barrier_types=frozenset({"Prohibited / banned"}), has_evidence_text=True, same_plant=False,
+        confirmed_scope=FindingScope.SPECIES_WIDE,
+        confirmed_context_relevance=ContextRelevance.RELEVANT,
+    )
+    decision = evaluate_eligibility(safety, regulatory)
+    assert decision.status == EligibilityStatus.NO_GO_REGULATORY
+    assert decision.hard_no_go is True
 
 
 def test_decision_class_same_plant_skips_regulatory_hard_stop():
@@ -842,6 +934,15 @@ def test_go_investigate_hold_no_go_is_no_go_for_regulatory_prohibition():
 
 
 def test_regulatory_prohibition_end_to_end_through_run():
+    """Correction round: through the real run() pipeline, a
+    'prohibited and banned' text match on a DIFFERENT plant is
+    documented and NOT ignored, but — since production never confirms
+    species-wide/relevant scope — it resolves end-to-end to
+    EXPERT_REVIEW_REQUIRED, not an automatic NO_GO_REGULATORY. See
+    eligibility_gate.py's corrected default policy and
+    test_decision_class_regulatory_prohibition_with_confirmed_scope_is_hard_stop
+    above for proof NO_GO_REGULATORY is still fully reachable when
+    scope IS confirmed."""
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -864,10 +965,18 @@ def test_regulatory_prohibition_end_to_end_through_run():
     alt_row = result[
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
     ].iloc[0]
-    assert alt_row["Decision_Class"] == eng.REGULATORY_PROHIBITION_DECISION_CLASS
-    assert alt_row["Decision_Class_AH"] == "H — No-go / safety concern"
-    assert alt_row["Go_Investigate_Hold_NoGo"] == "No-Go"
+    assert alt_row["Decision_Class"].startswith("Expert review required")
+    assert alt_row["Decision_Class"] != eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert alt_row["Eligibility_Status"] == "expert_review_required"
+    assert bool(alt_row["Eligible_For_Normal_Ranking"]) is False
+    # The legacy regulatory gate (unchanged function) still reports
+    # FAILED on its own coarser vocabulary -- this is now understood as
+    # the coarse/legacy view; Gate_Results["eligibility"] is the
+    # authoritative one and must agree with Decision_Class.
     assert alt_row["Gate_Results"]["regulatory"]["status"] == GateStatus.FAILED
+    assert alt_row["Gate_Results"]["eligibility"]["status"] == "expert_review_required"
+    assert alt_row["Decision_Class_AH"] == "G — Hold / insufficient evidence"
+    assert alt_row["Go_Investigate_Hold_NoGo"] == "Hold"
 
 
 def test_regulatory_prohibition_same_plant_exempt_end_to_end_through_run():

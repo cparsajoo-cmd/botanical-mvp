@@ -368,6 +368,33 @@ def _prepare_plant_triage_display(df):
     return view.rename(columns=rename_map).reset_index(drop=True)
 
 
+def _eligible_mask(df: pd.DataFrame) -> pd.Series:
+    """Phase 4 — Eligibility Gate. True only for rows explicitly marked
+    ELIGIBLE / ELIGIBLE_WITH_RESTRICTIONS (Eligible_For_Normal_Ranking
+    == True) — used as a final safety-net filter in BOTH the modern
+    (report_ready_df) and legacy (result_df) branches of
+    _recommendation_block(), so neither branch's own fallback logic can
+    surface a hard no-go/incomplete/expert-review row, no matter how it
+    got there. A row with neither column at all (pre-Phase-4 data) is
+    treated as NOT eligible for normal ranking — see the Phase 4 design
+    review: "رکورد قدیمی بدون eligibility data باید INCOMPLETE تلقی
+    شود، نه ELIGIBLE."
+    """
+    if "Eligible_For_Normal_Ranking" in df.columns:
+        return df["Eligible_For_Normal_Ranking"].fillna(False).astype(bool)
+    if "Eligibility_Status" in df.columns:
+        return df["Eligibility_Status"].astype(str).isin(
+            ("eligible", "eligible_with_restrictions")
+        )
+    return pd.Series(False, index=df.index)
+
+
+def _no_go_mask(df: pd.DataFrame) -> pd.Series:
+    if "Eligibility_Status" in df.columns:
+        return df["Eligibility_Status"].astype(str).isin(("no_go_safety", "no_go_regulatory"))
+    return pd.Series(False, index=df.index)
+
+
 def _recommendation_block(result_df, report_ready_df=None):
     # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
     # one-row-per-plant frame (merge_authoritative_scores()'s output) so
@@ -403,6 +430,15 @@ def _recommendation_block(result_df, report_ready_df=None):
                 # an all-Hold/No-Go result set must not be relabeled
                 # "recommended" just because nothing matched Go/Investigate.
                 recommended = best_rows.drop(weak.index).head(5)
+
+        # Phase 4 — Eligibility Gate safety net. Go_Investigate_Hold_
+        # NoGo is already derived from Decision_Class_AH, which is now
+        # itself eligibility-driven (see decision_class_ah.py), so this
+        # should already be a no-op for correctly-labelled rows — kept
+        # as an explicit, structural final filter (not relying solely
+        # on string-prefix matching of call_col) so "recommended" can
+        # never contain a row Eligible_For_Normal_Ranking says is not.
+        recommended = recommended[_eligible_mask(recommended)]
 
         display_cols = [
             col for col in [
@@ -465,7 +501,21 @@ def _recommendation_block(result_df, report_ready_df=None):
             )
         ]
         if recommended.empty:
-            recommended = best_rows.head(5)
+            # Phase 4 fix: the pre-Phase-4 version of this fallback was
+            # `best_rows.head(5)` — unfiltered by anything — which the
+            # audit proved could surface a hard no-go candidate (a
+            # regulatory-prohibited or safety-concern row) at the top of
+            # "Recommended" whenever nothing matched the positive regex
+            # above. Excluding no-go rows before taking the top 5 closes
+            # that gap without requiring every candidate set to have a
+            # "strong/promising" row.
+            recommended = best_rows[~_no_go_mask(best_rows)].head(5)
+
+    # Phase 4 — Eligibility Gate safety net (legacy branch). Same
+    # reasoning as the modern branch above: an explicit, structural
+    # final filter so eligibility is authoritative even if decision_col
+    # text was somehow inconsistent with it.
+    recommended = recommended[_eligible_mask(recommended)]
 
     display_cols = [
         col for col in [

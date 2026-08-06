@@ -173,11 +173,21 @@ def test_safety_flags_dont_leak_from_an_unrelated_compound_in_the_same_plant():
 # 4) Hard vs. controversial safety tiers.
 # ---------------------------------------------------------------------
 def test_hard_safety_terms_exclude_controversial_only_terms_just_cap():
+    # Correction round: an unconfirmed hard term (no confirmed
+    # scope/relevance — same_plant defaults to False here, which no
+    # longer implies confirmed species-wide scope on its own; see
+    # eligibility_gate.py's corrected default policy) resolves to
+    # EXPERT_REVIEW_REQUIRED, not an automatic "Safety concern..."
+    # hard-stop. Test's core intent (a documented hard term is not
+    # ignored, and does not just get "capped" the way controversial-
+    # only terms do) is preserved via the explicit non-equality checks.
     d1 = eng.BotanicalRDCandidateEngine._decision_class(
         None, score=80, safety_flags="lithogenic", interaction_flags="",
         has_evidence=True, match_quality="exact", evidence_level="Clinical / human evidence",
     )
-    assert d1 == "Safety concern — not suitable without expert review"
+    assert d1.startswith("Expert review required")
+    assert "Strong R&D candidate" not in d1
+    assert "Promising candidate" not in d1
 
     d2 = eng.BotanicalRDCandidateEngine._decision_class(
         None, score=80, safety_flags="carcinogenic; mutagenic", interaction_flags="",
@@ -185,6 +195,10 @@ def test_hard_safety_terms_exclude_controversial_only_terms_just_cap():
     )
     assert d2 != "Safety concern — not suitable without expert review", (
         "carcinogenic/mutagenic alone should not hard-exclude"
+    )
+    assert not d2.startswith("Expert review required"), (
+        "carcinogenic/mutagenic are not in HARD_SAFETY_TERMS, so this "
+        "must still be a normal score-based tier, unlike d1 above"
     )
 
 
@@ -326,7 +340,15 @@ def test_merged_rows_keep_safety_flags_decision_class_and_rationale_in_sync():
     row = result[result["Alternative_Plant"] == "AltPlant"]
     assert not row.empty
     r = row.iloc[0]
-    assert r["Decision_Class"] == "Safety concern — not suitable without expert review"
+    # Correction round: an unconfirmed hard term on a different plant
+    # (AltPlant here) resolves to EXPERT_REVIEW_REQUIRED, not the old
+    # automatic "Safety concern..." string — see
+    # eligibility_gate.py's corrected default policy. Core intent of
+    # this test (Safety_Flags/Decision_Class/Rationale stay in sync
+    # after a multi-compound merge) is unaffected by which specific
+    # non-positive Decision_Class results.
+    assert r["Decision_Class"].startswith("Expert review required")
+    assert "lithogenic" in str(r["Safety_Flags"]).lower()
     assert "lithogenic" in str(r["Safety_Flags"]).lower(), (
         "Decision_Class says Safety concern but Safety_Flags doesn't show why"
     )

@@ -68,7 +68,18 @@ def test_output_columns_count_matches_pre_task_5_baseline():
     # Evidence_Applicability are new, independent, additive OUTPUT_COLUMNS
     # entries (see evidence_interpretation.py and test_gate_layer.py's
     # matching bump). Decision_Engine_Version stays the last column.
-    assert len(eng.OUTPUT_COLUMNS) == 59
+    #
+    # Bumped 59 -> 74 by Phase 4's Eligibility Gate redesign (15 new,
+    # additive, structured columns — see eligibility_gate.py and
+    # test_gate_layer.py's matching bump). Decision_Engine_Version still
+    # stays the last column.
+    #
+    # Bumped 74 -> 76 by the correction round: Safety_Gate_Evidence_IDs
+    # / Regulatory_Gate_Evidence_IDs (finding-specific traceability).
+    #
+    # Bumped 76 -> 77 by the correction round (2nd pass): Ranking_Partition
+    # (design review item 2) is a new, additive column.
+    assert len(eng.OUTPUT_COLUMNS) == 77
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 

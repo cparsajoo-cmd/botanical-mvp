@@ -222,6 +222,36 @@ def _has_direct_evidence(row: pd.Series) -> bool:
 
 
 def _hard_stop(row: pd.Series) -> bool:
+    # Phase 4 — Eligibility Gate. The structured Eligibility_Status/
+    # Eligible_For_Normal_Ranking fields (when present on the row) are
+    # now the AUTHORITATIVE source for this check, not a substring
+    # match over Decision_Class/Safety_Flags/Regulatory_Barriers text.
+    #
+    # WHY: the pre-Phase-4 text-only version of this function was
+    # proven (Phase 4 audit) to MISS the exact same_plant bypass bug it
+    # was meant to catch — a same_plant self-row with a severe hard
+    # safety term (e.g. "teratogenic") produced Decision_Class =
+    # "Promising candidate; verify safety and standardization" (no
+    # _HARD_STOP_TERMS substring at all) while Safety_Flags still said
+    # "teratogenic" (also not one of the _HARD_STOP_TERMS phrases,
+    # which only cover human-readable Decision_Class-style wording like
+    # "safety concern"/"prohibited"/"contraindicated") — so a text-only
+    # check here could never have caught it regardless of what terms
+    # were listed, because it depended on a Decision_Class string that
+    # was itself already wrong. Reading Eligible_For_Normal_Ranking
+    # directly closes that gap structurally instead of by adding more
+    # keywords.
+    #
+    # Backward compatibility: a row produced before Phase 4 has neither
+    # column at all — for that case only, fall back to the original
+    # text-based check so historical rows/tests keep the same
+    # (imperfect but pre-existing) behavior rather than silently
+    # becoming eligible.
+    if "Eligible_For_Normal_Ranking" in row.index and pd.notna(row.get("Eligible_For_Normal_Ranking")):
+        return not bool(row.get("Eligible_For_Normal_Ranking"))
+    if "Eligibility_Status" in row.index and pd.notna(row.get("Eligibility_Status")):
+        return str(row.get("Eligibility_Status")) not in ("eligible", "eligible_with_restrictions")
+
     combined = " | ".join(
         str(row.get(col, ""))
         for col in (

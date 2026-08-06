@@ -36,6 +36,60 @@ from structured_rationale import (
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
+# Phase 4 — Eligibility Gate. See eligibility_gate.py's module docstring
+# for why this is a separate, self-contained module rather than more
+# entries in data_contracts.py. _decision_class() is now DERIVED from
+# evaluate_eligibility()'s outcome instead of the pre-Phase-4 inline
+# same_plant bypass — see _decision_class()'s own docstring below.
+from eligibility_gate import (
+    EligibilityStatus as _EligibilityStatus,
+    ScoreValidity as _ScoreValidity,
+    RankingPartition as _RankingPartition,
+    RANKING_PARTITION_SORT_ORDER as _RANKING_PARTITION_SORT_ORDER,
+    classify_safety_finding as _classify_safety_finding,
+    classify_regulatory_finding as _classify_regulatory_finding,
+    evaluate_eligibility as _evaluate_eligibility,
+)
+
+
+def sort_by_ranking_partition_then_score(df):
+    """Correction round (2nd pass) — the single, shared, directly
+    testable implementation of run()'s final row order: sort by
+    Ranking_Partition FIRST (NORMAL, then PRELIMINARY_OR_EXPERT_REVIEW,
+    then EXCLUDED_NO_GO — see eligibility_gate.RANKING_PARTITION_SORT_ORDER),
+    R&D_Opportunity_Score DESCENDING second. A hard no-go row's raw
+    score, however high, can never place it ahead of a genuinely
+    NORMAL-partition row.
+
+    This does NOT drop or filter any row — the input's full row count
+    is preserved, only the order changes, so run()'s own output stays
+    audit-complete (every candidate the engine produced is still
+    present) while no longer being "sorted by score alone" the way the
+    audit-completeness requirement had previously left it. A row
+    missing the Ranking_Partition column entirely (should not happen
+    for any row produced by the current run() — kept only as a safe
+    fallback) sorts LAST, never accidentally first.
+
+    Takes and returns a plain pandas DataFrame so it can be unit-tested
+    with a small synthetic frame, independent of a full engine run.
+    """
+    if df.empty or "Ranking_Partition" not in df.columns:
+        return df
+
+    partition_sort_key = {
+        partition.value: order
+        for partition, order in _RANKING_PARTITION_SORT_ORDER.items()
+    }
+    sortable = df.copy()
+    sortable["_Ranking_Partition_Sort_Key"] = sortable["Ranking_Partition"].map(
+        partition_sort_key
+    ).fillna(len(partition_sort_key))
+    sortable = sortable.sort_values(
+        by=["_Ranking_Partition_Sort_Key", "R&D_Opportunity_Score"],
+        ascending=[True, False],
+    ).drop(columns=["_Ranking_Partition_Sort_Key"]).reset_index(drop=True)
+    return sortable
+
 from standard_evidence_builder import (
     build_scientific_evidence,
     normalize_missing_value,
@@ -188,6 +242,37 @@ OUTPUT_COLUMNS = [
     # (called from step_rd_candidates.py after run() returns) remains
     # the single source of truth for sensitivity/robustness analysis.
     # Do not re-add a second computation path here.
+    # Phase 4 — Eligibility Gate. Structured, machine-readable fields so
+    # downstream consumers (candidate_shortlisting.py, step_rd_candidates.py,
+    # pharma_report_generator.py, candidate_output_adapter.py) never have
+    # to regex Decision_Class text to know whether a row is a hard no-go,
+    # incomplete, or needs expert review. See eligibility_gate.py.
+    # Inserted before Decision_Engine_Version (not after it) so
+    # test_task15_decision_engine_version_tracking.py's
+    # `OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"` invariant holds.
+    "Eligibility_Status",
+    "Hard_No_Go",
+    "Eligible_For_Normal_Ranking",
+    "Ranking_Partition",
+    "Score_Validity",
+    "Gate_Type",
+    "Gate_Reason",
+    "Gate_Evidence_IDs",
+    # Correction round — finding-specific evidence traceability (not
+    # just the row-level union above). See eligibility_gate.py's
+    # SafetyFinding.evidence_ids / RegulatoryFinding.evidence_ids and
+    # botanical_rd_candidate_engine.py's row-loop construction of
+    # _safety_gate_evidence_ids / _regulatory_gate_evidence_ids.
+    "Safety_Gate_Evidence_IDs",
+    "Regulatory_Gate_Evidence_IDs",
+    "Safety_Severity",
+    "Safety_Scope",
+    "Safety_Context_Relevance",
+    "Regulatory_Status",
+    "Regulatory_Scope",
+    "Regulatory_Context_Relevance",
+    "Data_Completeness",
+    "Requires_Expert_Review",
     # Task 15 — reproducibility metadata only, appended last (not
     # inserted between existing analytical columns) so no historical
     # column ORDER assumption breaks. See DECISION_ENGINE_VERSION below
@@ -290,7 +375,7 @@ OUTPUT_COLUMNS = [
 # Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
 # unless a caller explicitly populates
 # self._canonical_regulatory_by_plant before calling run().
-DECISION_ENGINE_VERSION = "1.0.3"
+DECISION_ENGINE_VERSION = "1.1.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -973,6 +1058,7 @@ class BotanicalRDCandidateEngine:
             evidence_source_index,
             evidence_applicability_index,
             evidence_authority_index,
+            evidence_records_index,
         ) = self._build_evidence_text_index()
 
         # Task 11.1 — built once per run(), exposed as an instance
@@ -1157,7 +1243,7 @@ class BotanicalRDCandidateEngine:
                     if not matched_compound:
                         continue
 
-                    raw_evidence, evidence_source_ids, evidence_authority_factor = (
+                    raw_evidence, evidence_source_ids, evidence_authority_factor, evidence_contributing_records = (
                         self._collect_raw_evidence(
                             evidence_index=evidence_index,
                             plant=alt_plant,
@@ -1165,6 +1251,7 @@ class BotanicalRDCandidateEngine:
                             problem=problem,
                             source_index=evidence_source_index,
                             authority_index=evidence_authority_index,
+                            records_index=evidence_records_index,
                         )
                     )
 
@@ -1337,6 +1424,7 @@ class BotanicalRDCandidateEngine:
                             if raw_evidence and raw_evidence.strip()
                             else None
                         ),
+                        has_evidence_text=bool(raw_evidence and raw_evidence.strip()),
                     )
 
                     # Task 1 — Formal Gate Layer. Purely additive: built
@@ -1358,7 +1446,68 @@ class BotanicalRDCandidateEngine:
                             else None
                         ),
                         same_plant=self._norm(ref_plant) == self._norm(alt_plant),
+                        has_evidence_text=bool(raw_evidence and raw_evidence.strip()),
                     )
+
+                    # Phase 4 — Eligibility Gate. Computed from the same
+                    # signals _decision_class() above already used
+                    # (hit_terms/regulatory_barrier_result/same_plant/
+                    # whether raw_evidence existed), plus the
+                    # evidence_source_ids already collected for this row
+                    # (Gap 1), reused here as Gate_Evidence_IDs so a
+                    # no-go/expert-review row's reason is traceable back
+                    # to specific evidence records. See eligibility_gate.py.
+                    _row_same_plant = self._norm(ref_plant) == self._norm(alt_plant)
+                    _row_flagged_terms = frozenset(
+                        {t.strip() for t in safety_flags.split("; ") if t.strip()}
+                    ) if safety_flags else frozenset()
+                    _row_hit_terms = _row_flagged_terms & HARD_SAFETY_TERMS
+                    _row_has_evidence_text = bool(raw_evidence and raw_evidence.strip())
+
+                    # Phase 4 (correction round) — finding-specific
+                    # evidence IDs: only EvidenceRecords whose OWN text
+                    # (not the row's pooled evidence_source_ids, which
+                    # is candidate-level) contains the matched hit term
+                    # (safety) or barrier phrase (regulatory). Re-runs
+                    # the SAME extraction functions the row-level
+                    # signals already used (_extract_flags_negation_aware/
+                    # classify_regulatory_barriers), just once per
+                    # individual contributing record instead of once on
+                    # the pooled blob.
+                    _safety_gate_evidence_ids = []
+                    _regulatory_gate_evidence_ids = []
+                    for _rec in evidence_contributing_records:
+                        _rec_id = _rec.get("evidence_record_id")
+                        _rec_text = _rec.get("text") or ""
+                        if not _rec_id or not _rec_text.strip():
+                            continue
+                        if _row_hit_terms and self._extract_flags_negation_aware(_rec_text, _row_hit_terms):
+                            _safety_gate_evidence_ids.append(_rec_id)
+                        if regulatory_barrier_result.barrier_types:
+                            _rec_barrier_result = classify_regulatory_barriers(_rec_text)
+                            if _rec_barrier_result.has_barrier:
+                                _regulatory_gate_evidence_ids.append(_rec_id)
+                    _safety_gate_evidence_ids = tuple(dict.fromkeys(_safety_gate_evidence_ids))
+                    _regulatory_gate_evidence_ids = tuple(dict.fromkeys(_regulatory_gate_evidence_ids))
+
+                    _safety_finding = _classify_safety_finding(
+                        hit_terms=_row_hit_terms,
+                        flagged_terms=_row_flagged_terms,
+                        has_evidence_text=_row_has_evidence_text,
+                        same_plant=_row_same_plant,
+                        evidence_ids=_safety_gate_evidence_ids,
+                    )
+                    _regulatory_finding = _classify_regulatory_finding(
+                        barrier_types=(
+                            frozenset(regulatory_barrier_result.barrier_types)
+                            if (_row_has_evidence_text and regulatory_barrier_result.barrier_types)
+                            else frozenset()
+                        ),
+                        has_evidence_text=_row_has_evidence_text,
+                        same_plant=_row_same_plant,
+                        evidence_ids=_regulatory_gate_evidence_ids,
+                    )
+                    eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
 
                     # Task 10.2 — Evidence-level Preparation Applicability,
                     # candidate-level summary. Purely additive, read-only
@@ -1562,6 +1711,28 @@ class BotanicalRDCandidateEngine:
                             "GRADE_Certainty_Rationale": grade_certainty_result.rationale,
                             "White_Space_Type": white_space_type or "",
                             "Confidence_Note": confidence_note or "",
+                            # Phase 4 — Eligibility Gate. See eligibility_gate.py.
+                            "Eligibility_Status": eligibility_decision.status.value,
+                            "Hard_No_Go": eligibility_decision.hard_no_go,
+                            "Eligible_For_Normal_Ranking": eligibility_decision.eligible_for_normal_ranking,
+                            "Ranking_Partition": eligibility_decision.ranking_partition.value,
+                            "Score_Validity": eligibility_decision.score_validity.value,
+                            "Gate_Type": eligibility_decision.gate_type,
+                            "Gate_Reason": eligibility_decision.gate_reason,
+                            "Gate_Evidence_IDs": "; ".join(eligibility_decision.gate_evidence_ids)
+                                if eligibility_decision.gate_evidence_ids else "",
+                            "Safety_Gate_Evidence_IDs": "; ".join(eligibility_decision.safety_finding.evidence_ids)
+                                if eligibility_decision.safety_finding.evidence_ids else "",
+                            "Regulatory_Gate_Evidence_IDs": "; ".join(eligibility_decision.regulatory_finding.evidence_ids)
+                                if eligibility_decision.regulatory_finding.evidence_ids else "",
+                            "Safety_Severity": eligibility_decision.safety_finding.severity.value,
+                            "Safety_Scope": eligibility_decision.safety_finding.scope.value,
+                            "Safety_Context_Relevance": eligibility_decision.safety_finding.context_relevance.value,
+                            "Regulatory_Status": eligibility_decision.regulatory_finding.status.value,
+                            "Regulatory_Scope": eligibility_decision.regulatory_finding.scope.value,
+                            "Regulatory_Context_Relevance": eligibility_decision.regulatory_finding.context_relevance.value,
+                            "Data_Completeness": eligibility_decision.data_completeness.value,
+                            "Requires_Expert_Review": eligibility_decision.requires_expert_review,
                             # Internal-only — used by _merge_multi_compound_matches
                             # to correctly recompute Decision_Class_AH after a
                             # merge, then dropped by the final
@@ -1630,10 +1801,18 @@ class BotanicalRDCandidateEngine:
 
         output = self._merge_multi_compound_matches(output)
 
-        output = output.sort_values(
-            by=["R&D_Opportunity_Score"],
-            ascending=False,
-        ).reset_index(drop=True)
+        # Correction round (2nd pass) — final sort is now
+        # Ranking_Partition FIRST, R&D_Opportunity_Score second: a
+        # NO_GO row's raw score (however high) can no longer place it
+        # ahead of a genuinely NORMAL-partition row in this DataFrame's
+        # own order. This DataFrame remains audit-complete — every row
+        # produced is still present here, nothing is dropped — only the
+        # ORDER changes. Extracted as its own module-level function
+        # (sort_by_ranking_partition_then_score, below) so it has one
+        # implementation shared by run() and directly testable on its
+        # own, without needing a full engine run to exercise the sort
+        # logic itself.
+        output = sort_by_ranking_partition_then_score(output)
 
         # Architecture audit Q2 ("why were the others rejected?"): a
         # post-processing pass over the now-complete, now-merged result
@@ -2788,6 +2967,27 @@ class BotanicalRDCandidateEngine:
         source_index = defaultdict(list)
         applicability_index = defaultdict(list)
         authority_index = defaultdict(list)
+        # Phase 4 (correction round) — per-EvidenceRecord (id, text)
+        # pairs, SAME normalized_key structure as the indexes above.
+        # Needed so Safety_Gate_Evidence_IDs / Regulatory_Gate_Evidence_IDs
+        # can be finding-specific: only the records whose OWN text
+        # actually contains the matched hit term / barrier phrase, not
+        # every record that happened to contribute to this key's pooled
+        # text blob (which is what evidence_source_ids gives — a
+        # candidate-level, not finding-level, id list). See
+        # _collect_raw_evidence()'s new evidence_records return value
+        # and the row-loop's _safety_gate_evidence_ids/
+        # _regulatory_gate_evidence_ids construction in run().
+        evidence_records_index = defaultdict(list)
+
+        def _record_evidence_record(key, row, text):
+            if not text or not text.strip():
+                return
+            record_id = self._pick(row, ["Evidence_Record_ID", "evidence_record_id"])
+            evidence_records_index[key].append({
+                "evidence_record_id": record_id or None,
+                "text": text,
+            })
 
         def _record_source(key, row):
             url = self._pick(row, ["Source_URL", "source_url", "URL", "url"])
@@ -2880,6 +3080,7 @@ class BotanicalRDCandidateEngine:
                     _record_source(plant_key, row)
                     _record_applicability(plant_key, row)
                     _record_authority(plant_key, row)
+                    _record_evidence_record(plant_key, row, text)
 
                 for compound in self._known_compounds_from_text(text):
                     compound_key = self._norm(compound)
@@ -2887,6 +3088,7 @@ class BotanicalRDCandidateEngine:
                     _record_source(compound_key, row)
                     _record_applicability(compound_key, row)
                     _record_authority(compound_key, row)
+                    _record_evidence_record(compound_key, row, text)
 
         if not self.scientific_evidence_df.empty:
             text_columns = [
@@ -2907,11 +3109,13 @@ class BotanicalRDCandidateEngine:
                     plant_key = self._norm(plant)
                     index[plant_key] += " " + text
                     _record_source(plant_key, row)
+                    _record_evidence_record(plant_key, row, text)
 
                 for compound in self._known_compounds_from_text(text):
                     compound_key = self._norm(compound)
                     index[compound_key] += " " + text
                     _record_source(compound_key, row)
+                    _record_evidence_record(compound_key, row, text)
 
         # Curated regulatory/clinical evidence (seed_data.SLEEP_TEA_EVIDENCE)
         # — this is the manually-verified EMA/WHO/ESCOP + cited-study
@@ -2935,7 +3139,7 @@ class BotanicalRDCandidateEngine:
             # this key's source list empty.
             source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
 
-        return index, source_index, applicability_index, authority_index
+        return index, source_index, applicability_index, authority_index, evidence_records_index
 
     def _build_scientific_evidence_index(self):
         """Task 11.1 — evidence_record_id -> ScientificEvidence.
@@ -3021,6 +3225,7 @@ class BotanicalRDCandidateEngine:
         problem,
         source_index=None,
         authority_index=None,
+        records_index=None,
     ):
         """Builds the evidence text used to determine Evidence_Level and
         safety flags for one candidate row, and (Gap 1) the specific
@@ -3045,12 +3250,22 @@ class BotanicalRDCandidateEngine:
         longer blended in unconditionally on every row regardless of
         whether it's actually relevant to the compound being evaluated.
 
-        Returns (text, source_ids, authority_factor) — source_ids empty
-        list and authority_factor 1.0 (neutral, matches
-        interpret_evidence()'s own "no effect" default) when
+        Returns (text, source_ids, authority_factor, contributing_records)
+        — source_ids empty list and authority_factor 1.0 (neutral,
+        matches interpret_evidence()'s own "no effect" default) when
         source_index/authority_index aren't provided, so this callable
         still works exactly as before for any caller that only wants
         the text (Gap 1 backward compatibility preserved).
+        contributing_records (Phase 4 correction round): list of
+        {"evidence_record_id", "text"} dicts — one per individual
+        EvidenceRecord that actually contributed to the returned `text`,
+        from records_index (see _build_evidence_text_index()'s
+        evidence_records_index). Empty list when records_index isn't
+        provided. This is what makes Safety_Gate_Evidence_IDs /
+        Regulatory_Gate_Evidence_IDs finding-specific: the caller can
+        check EACH record's own `text` for the matched hit term/barrier
+        phrase, rather than crediting every id in `source_ids` (which is
+        candidate-level, not finding-level).
 
         authority_factor (Phase 3, problem 1): the REAL per-source
         Source Authority factor for whichever row(s) actually
@@ -3068,6 +3283,7 @@ class BotanicalRDCandidateEngine:
         """
         source_index = source_index or {}
         authority_index = authority_index or {}
+        records_index = records_index or {}
         compound_clean = compound.split("[")[0].strip()
 
         compound_key = self._norm(compound_clean)
@@ -3093,7 +3309,10 @@ class BotanicalRDCandidateEngine:
                 source_index.get(compound_key, []) + source_index.get(problem_key, [])
             ))
             authority_factor = _strongest_authority_factor((compound_key, problem_key))
-            return primary[:6000], sources, authority_factor
+            contributing_records = (
+                records_index.get(compound_key, []) + records_index.get(problem_key, [])
+            )
+            return primary[:6000], sources, authority_factor, contributing_records
 
         # No compound-specific evidence found anywhere — fall back to
         # whatever's known about the plant in general, clearly weaker
@@ -3104,6 +3323,7 @@ class BotanicalRDCandidateEngine:
             plant_text.strip()[:6000],
             list(dict.fromkeys(source_index.get(plant_key, []))),
             _strongest_authority_factor((plant_key,)),
+            records_index.get(plant_key, []),
         )
 
     def _collect_applicability_items(self, applicability_index, plant, compound):
@@ -4273,6 +4493,7 @@ class BotanicalRDCandidateEngine:
         evidence_level,
         regulatory_barrier_types,
         same_plant=False,
+        has_evidence_text=None,
     ):
         """Task 1 — Formal Gate Layer. Additive, non-blocking output for
         two of its four gates: a gate reports whether a candidate
@@ -4510,6 +4731,46 @@ class BotanicalRDCandidateEngine:
                 "evidence": "; ".join(regulatory_barrier_types) if regulatory_barrier_types else "None identified",
             }
 
+        # --- Eligibility gate (correction round, item 4): the SAME
+        # decision _decision_class() derives its string from, exposed
+        # here in structured form too, so Gate_Results can never
+        # disagree with Eligibility_Status/Decision_Class for the same
+        # row. The legacy "safety"/"regulatory" keys above are LEFT
+        # UNCHANGED (still delegate to _hard_safety_gate/
+        # _hard_regulatory_gate, still can report NOT_EVALUABLE for a
+        # same_plant row) — they are now understood as a coarser,
+        # legacy view; "eligibility" is the authoritative one a
+        # consumer should actually gate on.
+        hit_terms_eligibility = frozenset(
+            {t.strip() for t in safety_flags.split("; ") if t.strip()} & HARD_SAFETY_TERMS
+        ) if safety_flags else frozenset()
+        flagged_terms_eligibility = frozenset(
+            {t.strip() for t in safety_flags.split("; ") if t.strip()}
+        ) if safety_flags else frozenset()
+        assumed_has_text_eligibility = True if has_evidence_text is None else bool(has_evidence_text)
+        eligibility_safety_finding = _classify_safety_finding(
+            hit_terms=hit_terms_eligibility,
+            flagged_terms=flagged_terms_eligibility,
+            has_evidence_text=assumed_has_text_eligibility,
+            same_plant=same_plant,
+        )
+        eligibility_regulatory_finding = _classify_regulatory_finding(
+            barrier_types=(
+                frozenset(regulatory_barrier_types) if regulatory_barrier_types else frozenset()
+            ),
+            has_evidence_text=assumed_has_text_eligibility,
+            same_plant=same_plant,
+        )
+        eligibility_decision_for_gates = _evaluate_eligibility(
+            eligibility_safety_finding, eligibility_regulatory_finding
+        )
+        gates["eligibility"] = {
+            "gate_name": "eligibility",
+            "status": eligibility_decision_for_gates.status.value,
+            "reason": eligibility_decision_for_gates.gate_reason,
+            "evidence": "; ".join(eligibility_decision_for_gates.gate_evidence_ids),
+        }
+
         return gates
 
     def _decision_class(
@@ -4524,67 +4785,99 @@ class BotanicalRDCandidateEngine:
         target_specificity=None,
         same_plant=False,
         regulatory_barrier_types=None,
+        has_evidence_text=None,
     ):
-        # A documented serious toxicity (kidney-stone formation,
-        # carcinogenicity, organ toxicity, etc.) is a hard stop: no score,
-        # no amount of "shared compound" chemistry, and no evidence level
-        # should ever let such a candidate be labelled "Strong" or
-        # "Promising" and surface under "Recommended". Previously this
-        # only capped the ceiling at "Promising candidate; verify safety
-        # and standardization" — but that string still contains the word
-        # "promising", so the Step 6 UI's keyword filter kept showing
-        # candidates like calcium oxalate (documented as "Lithogenic") in
-        # the Recommended table. This check happens first and overrides
-        # everything else below, for any compound, any plant, any
-        # indication.
+        # Phase 4 — Eligibility Gate. Decision_Class is now DERIVED from
+        # eligibility_gate.evaluate_eligibility(), not a parallel,
+        # independently-maintained hard-stop check. Pre-Phase-4, this
+        # method called _hard_safety_gate()/_hard_regulatory_gate()
+        # directly, and `same_plant=True` made BOTH of those return
+        # GateStatus.NOT_EVALUABLE — which, because nothing below this
+        # point treated NOT_EVALUABLE any differently from an
+        # affirmative pass, meant a same_plant self-row with a
+        # documented hard safety term (e.g. "teratogenic") or an
+        # explicit "Prohibited / banned" regulatory finding fell straight
+        # through into the ordinary score-based tiers below and could be
+        # labelled "Strong R&D candidate" — proven directly by the Phase
+        # 4 audit (see the now-xfail'd characterization tests
+        # test_same_plant_downgrades_decision_class_for_identical_hard_safety_flag
+        # / test_same_plant_downgrades_decision_class_for_identical_prohibition
+        # in test_phase4_eligibility_gate_characterization.py, which
+        # documented that exact old behavior).
         #
-        # EXCEPT for the reference plant matched to itself (same_plant).
-        # That row isn't a candidate being proposed as an alternative —
-        # it's a description of the reference plant's own baseline
-        # compound profile, which the merge step (see the row-merging
-        # function) can combine dozens of that plant's compounds into.
-        # If even one minor/trace compound out of dozens carries a hard
-        # safety term, the reference plant itself — which may be a
-        # long-established, widely-used herb — would get labelled
-        # "Safety concern — not suitable", which is misleading: it reads
-        # as a judgment on the whole plant, when it's really a flag on
-        # one of many minor constituents. The flags themselves are still
-        # shown either way (Safety_Flags column, Rationale) — only the
-        # hard auto-exclusion is skipped for the self-row, for any
-        # plant, not a special case for any one species.
-        # Task 1 — delegates to _hard_safety_gate() so this check and
-        # _evaluate_gates()'s "safety" entry can never disagree; the
-        # condition below (FAIL exactly when there's a hard-term hit
-        # and not same_plant) is identical to the inline check this
-        # replaced.
-        # Called on the class, not `self` — some existing tests invoke
-        # _decision_class() unbound (BotanicalRDCandidateEngine._decision_class(None, ...)),
-        # which would make `self._hard_safety_gate` fail with self=None.
-        safety_gate_status, _hit_terms, _flagged_terms = (
-            BotanicalRDCandidateEngine._hard_safety_gate(safety_flags, same_plant)
-        )
-        if safety_gate_status == GateStatus.FAILED:
-            return "Safety concern — not suitable without expert review"
+        # _hard_safety_gate()/_hard_regulatory_gate() themselves are left
+        # UNCHANGED (still used only by _evaluate_gates() for the
+        # informational, additive Gate_Results column) — this method no
+        # longer calls them for its own decision.
+        #
+        # has_evidence_text distinguishes "evidence text existed and
+        # mentioned nothing concerning" from "no evidence text existed
+        # to search in the first place" for the SAFETY side (the
+        # regulatory side already carried this distinction natively via
+        # regulatory_barrier_types being None vs. an empty/populated
+        # collection — see classify_regulatory_finding()). Defaults to
+        # None (treated as "assume text existed") for backward
+        # compatibility with existing direct unit-test call sites that
+        # predate Phase 4 and don't pass it; the live production call
+        # site in run() always passes it explicitly.
+        hit_terms = frozenset(
+            {term.strip() for term in safety_flags.split("; ") if term.strip()} & HARD_SAFETY_TERMS
+        ) if safety_flags else frozenset()
+        flagged_terms = frozenset(
+            {term.strip() for term in safety_flags.split("; ") if term.strip()}
+        ) if safety_flags else frozenset()
+        # Backward compatibility: has_evidence_text=None (the default for
+        # every pre-Phase-4 caller, including 28+ existing direct unit-test
+        # call sites) is treated as "assume evidence text existed" for
+        # BOTH safety and regulatory findings — this preserves every
+        # pre-Phase-4 caller's existing expectations (e.g. a caller that
+        # never passes regulatory_barrier_types at all still gets a
+        # regulatory CLEAR finding, not a manufactured INCOMPLETE). The
+        # live production call site in run() always passes
+        # has_evidence_text explicitly (bool(raw_evidence and
+        # raw_evidence.strip())), which is what actually closes the
+        # audit-proven fail-open gap.
+        assumed_has_text = True if has_evidence_text is None else bool(has_evidence_text)
 
-        # Task 4 — activating the regulatory gate as a second hard,
-        # non-compensatory stop, checked immediately after safety and
-        # before any score-based tier is computed below — same
-        # "delegates to the single shared check so this and
-        # _evaluate_gates()'s 'regulatory' entry can never disagree"
-        # reasoning as the safety check just above. An explicit
-        # documented "Prohibited / banned" finding is exactly as
-        # decisive a reason to stop as a documented hard safety term:
-        # no score, market signal, or mechanistic plausibility can
-        # compensate for it. same_plant skips this exclusion for the
-        # same reason it skips the safety one — see
-        # _hard_regulatory_gate()'s own docstring.
-        regulatory_gate_status, _banned_types = (
-            BotanicalRDCandidateEngine._hard_regulatory_gate(
-                regulatory_barrier_types, same_plant
-            )
+        safety_finding = _classify_safety_finding(
+            hit_terms=hit_terms,
+            flagged_terms=flagged_terms,
+            has_evidence_text=assumed_has_text,
+            same_plant=same_plant,
         )
-        if regulatory_gate_status == GateStatus.FAILED:
+        regulatory_finding = _classify_regulatory_finding(
+            barrier_types=(
+                frozenset(regulatory_barrier_types) if regulatory_barrier_types else frozenset()
+            ),
+            has_evidence_text=assumed_has_text,
+            same_plant=same_plant,
+        )
+        eligibility = _evaluate_eligibility(safety_finding, regulatory_finding)
+
+        if eligibility.status == _EligibilityStatus.NO_GO_SAFETY:
+            return "Safety concern — not suitable without expert review"
+        if eligibility.status == _EligibilityStatus.NO_GO_REGULATORY:
             return REGULATORY_PROHIBITION_DECISION_CLASS
+        if eligibility.status == _EligibilityStatus.EXPERT_REVIEW_REQUIRED:
+            # Deliberately does NOT contain "strong"/"promising"/
+            # "recommend" (would false-positive the legacy UI's positive
+            # regex) and DOES contain "not" (so it still falls into the
+            # legacy UI's "weak/not recommended" bucket as defense in
+            # depth, even though the real fix reads Eligibility_Status/
+            # Eligible_For_Normal_Ranking directly — see
+            # step_rd_candidates.py's _recommendation_block()).
+            return (
+                "Expert review required — not eligible for normal ranking "
+                "until safety/regulatory scope is confirmed"
+            )
+        if eligibility.status == _EligibilityStatus.INCOMPLETE:
+            return (
+                "Incomplete — insufficient safety/regulatory evidence for "
+                "a validated recommendation"
+            )
+        # ELIGIBLE / ELIGIBLE_WITH_RESTRICTIONS fall through to the
+        # existing score-based tiers below, unchanged from pre-Phase-4
+        # behavior for these two statuses.
 
         # Controversial-only flags (carcinogenic/mutagenic/genotoxic with
         # no accompanying hard-tier term) fall straight through past the

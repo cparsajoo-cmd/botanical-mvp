@@ -94,7 +94,11 @@ def test_run_benchmark_captures_real_gate_results_not_reinterpreted():
     safety_case_rows = results_df[results_df["case_id"] == "smoke_safety_exclusion"]
     alt_row = safety_case_rows[safety_case_rows["alternative_plant"] == "AltPlant"].iloc[0]
     assert isinstance(alt_row["gate_results"], dict)
-    assert set(alt_row["gate_results"].keys()) == {"safety", "identity", "minimum_evidence", "regulatory"}
+    # Correction round: Gate_Results gained a 5th key, "eligibility"
+    # (design review item 4) — additive, legacy 4 keys unchanged.
+    assert set(alt_row["gate_results"].keys()) == {
+        "safety", "identity", "minimum_evidence", "regulatory", "eligibility",
+    }
 
 
 def test_run_benchmark_handles_a_case_that_fails_to_run_without_crashing():

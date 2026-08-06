@@ -765,10 +765,44 @@ def generate_pharma_report(
     lines.append("")
 
     # Full write-ups for the top-scoring candidates.
+    #
+    # Phase 4 — Eligibility Gate. Pre-Phase-4, `top` was simply
+    # `sortable.head(top_n)` with no eligibility filter at all, so a
+    # hard no-go candidate (regulatory prohibition / safety concern)
+    # with the highest raw R&D_Opportunity_Score could appear as a
+    # full top-scoring write-up here — proven by the Phase 4 audit.
+    # `sortable` itself is left UNFILTERED (this function's caller may
+    # pass the audit-complete result_df, and no-go rows must remain
+    # traceable, not silently dropped from the report entirely — see
+    # the excluded-candidates subsection below) — only `top` (what
+    # actually gets a full write-up) is restricted to normal-ranking-
+    # eligible rows.
     sortable = result.copy()
     if "R&D_Opportunity_Score" in sortable.columns:
         sortable = sortable.sort_values("R&D_Opportunity_Score", ascending=False)
-    top = sortable.head(top_n)
+
+    if "Eligible_For_Normal_Ranking" in sortable.columns:
+        eligible_mask = sortable["Eligible_For_Normal_Ranking"].fillna(False).astype(bool)
+        legacy_no_eligibility_data = pd.Series(False, index=sortable.index)
+    elif "Eligibility_Status" in sortable.columns:
+        eligible_mask = sortable["Eligibility_Status"].astype(str).isin(
+            ("eligible", "eligible_with_restrictions")
+        )
+        legacy_no_eligibility_data = pd.Series(False, index=sortable.index)
+    else:
+        # Correction round fix: a result_df with NEITHER eligibility
+        # column at all (a genuinely pre-Phase-4 record) must default to
+        # fail-closed (NOT eligible for the ranked Top Candidates
+        # section) — the design review was explicit that "no eligibility
+        # data" and "evaluated and found clear" must never be
+        # indistinguishable. Every row here goes into a distinct
+        # "Legacy / eligibility not evaluated" subsection instead
+        # (still traceable, per item 9/10 — never silently dropped).
+        eligible_mask = pd.Series(False, index=sortable.index)
+        legacy_no_eligibility_data = pd.Series(True, index=sortable.index)
+
+    excluded = sortable[~eligible_mask]
+    top = sortable[eligible_mask].head(top_n)
 
     # Sprint 3: build_robustness_analysis() is called EXACTLY ONCE HERE
     # IN THIS FILE, over the FULL result (not just `top`, so each
@@ -804,8 +838,88 @@ def generate_pharma_report(
             scientific_evidence_payload=scientific_evidence_payload,
         ))
 
-    # Compact summary table for everything else.
-    remainder = sortable.iloc[len(top):]
+    # Phase 4 — Eligibility Gate. Candidates excluded from the ranked
+    # write-ups above are NOT deleted from the report (traceability is
+    # required — see the Phase 4 design review, item 9/10) — they get a
+    # short, structured summary instead of a full candidate write-up,
+    # explicitly separated by why they were excluded.
+    if not excluded.empty and "Eligibility_Status" in excluded.columns:
+        no_go = excluded[excluded["Eligibility_Status"].astype(str).isin(
+            ("no_go_safety", "no_go_regulatory")
+        )]
+        pending = excluded.drop(index=no_go.index, errors="ignore")
+    elif not excluded.empty:
+        # No Eligibility_Status column at all -- everything excluded
+        # here is via the fail-closed legacy_no_eligibility_data path
+        # below, not a real no_go/pending classification.
+        no_go = excluded.iloc[0:0]
+        pending = excluded.iloc[0:0]
+    else:
+        no_go = excluded.iloc[0:0]
+        pending = excluded.iloc[0:0]
+
+    legacy_rows = excluded[legacy_no_eligibility_data.reindex(excluded.index, fill_value=False)]
+
+    if not legacy_rows.empty:
+        lines.append("")
+        lines.append(f"## Legacy / eligibility not evaluated ({len(legacy_rows)})")
+        lines.append("")
+        lines.append(
+            "These candidates were produced before the Eligibility Gate existed "
+            "(or by a path that hasn't been wired to populate it) and have never "
+            "been checked for a hard safety/regulatory no-go. They are NOT shown "
+            "in Top Candidates and their score, if any, must not be treated as a "
+            "validated recommendation."
+        )
+        lines.append("")
+        lines.append("| Plant | R&D Opportunity Score |")
+        lines.append("|---|---|")
+        for _, row in legacy_rows.iterrows():
+            lines.append(
+                f"| {row.get('Alternative_Plant', '')} | {row.get('R&D_Opportunity_Score', '')} |"
+            )
+
+    if not no_go.empty:
+        lines.append("")
+        lines.append(f"## Excluded — Safety/Regulatory No-Go ({len(no_go)})")
+        lines.append("")
+        lines.append(
+            "These candidates are excluded from ranking and recommendation. "
+            "Their raw R&D Opportunity Score (if shown) is audit-only and is "
+            "NOT a valid recommendation."
+        )
+        lines.append("")
+        lines.append("| Plant | Eligibility status | Gate reason | Audit-only score |")
+        lines.append("|---|---|---|---|")
+        for _, row in no_go.iterrows():
+            lines.append(
+                f"| {row.get('Alternative_Plant', '')} | {row.get('Eligibility_Status', '')} | "
+                f"{str(row.get('Decision_Class', ''))[:140]} | {row.get('R&D_Opportunity_Score', '')} |"
+            )
+
+    if not pending.empty:
+        lines.append("")
+        lines.append(f"## Pending — Incomplete / Expert Review Required ({len(pending)})")
+        lines.append("")
+        lines.append(
+            "These candidates are not yet eligible for normal ranking. Their "
+            "score, if shown, is preliminary."
+        )
+        lines.append("")
+        lines.append("| Plant | Eligibility status | Reason | Preliminary score |")
+        lines.append("|---|---|---|---|")
+        for _, row in pending.iterrows():
+            lines.append(
+                f"| {row.get('Alternative_Plant', '')} | {row.get('Eligibility_Status', '')} | "
+                f"{str(row.get('Decision_Class', ''))[:140]} | {row.get('R&D_Opportunity_Score', '')} |"
+            )
+
+    # Compact summary table for everything else THAT IS STILL ELIGIBLE
+    # for normal ranking but fell below the top_n cutoff. (Phase 4: no
+    # longer a plain positional slice of `sortable` — `top` is now a
+    # filtered subset of `sortable`, not always its first len(top)
+    # rows, so remainder is computed by excluding top's own index.)
+    remainder = sortable[eligible_mask].drop(index=top.index, errors="ignore")
     if not remainder.empty:
         lines.append(f"## Remaining Candidates ({len(remainder)})")
         lines.append("")

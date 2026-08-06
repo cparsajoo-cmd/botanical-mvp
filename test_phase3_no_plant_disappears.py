@@ -41,6 +41,12 @@ def _row(**overrides):
         "Has_Negative_Evidence": False,
         "Negative_Evidence_Types": "",
         "R&D_Opportunity_Score": 70,
+        # Phase 4 — Eligibility Gate. Default reflects a clean candidate
+        # (matches the default Decision_Class above, which is not a
+        # no-go/incomplete label) — overridden per-row below for the
+        # excluded-plant scenario.
+        "Eligibility_Status": "eligible",
+        "Eligible_For_Normal_Ranking": True,
     }
     row.update(overrides)
     return row

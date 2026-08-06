@@ -60,8 +60,14 @@ def test_default_scoring_config_reproduces_identical_scores_to_pre_task_hardcode
     # are UNCHANGED by Phase 4 — the Eligibility Gate redesign never
     # touches _score_candidate()'s arithmetic, only Decision_Class for
     # rows with no evidence text at all (this fixture's rows have none).
-    assert alt_row["R&D_Opportunity_Score"] == 38.0
-    assert self_row["R&D_Opportunity_Score"] == 23.0
+    # PHASE 5 (§10 fix, confirmed defect main audit §3.1):
+    # market_neutral_default +3 -> 0.0 — see the identical comment in
+    # test_gate_layer.py's sibling assertion. self_row's score is ALSO
+    # affected (verified by execution, not assumed — the same_plant row
+    # still passes through the market-signal branch before the
+    # same_plant penalty is applied).
+    assert alt_row["R&D_Opportunity_Score"] == 35.0
+    assert self_row["R&D_Opportunity_Score"] == 20.0
     # Decision_Class itself DOES change here (Phase 4, intended): a row
     # with zero evidence text now correctly reports INCOMPLETE instead
     # of the fail-open "Low priority / insufficient data" label the
@@ -105,7 +111,14 @@ def test_default_scoring_config_field_values_match_documented_pre_task_weights()
     assert config.market_no_verified_product_found == 6
     assert config.market_conflicting_evidence == -2
     assert config.market_search_incomplete == 3
-    assert config.market_neutral_default == 3
+    # PHASE 5 (§10 fix, confirmed defect, main audit §3.1): the old
+    # value (+3) scored a candidate whose market status was never
+    # checked ABOVE a candidate with a confirmed, verified positive
+    # market finding (+1) — a real defect, not a documented weight.
+    # Corrected to neutral 0.0, sourced from the single central config
+    # (phase5_scoring_config.MARKET_STATUS_POINTS["Unknown"]) rather
+    # than a literal copied into this dataclass.
+    assert config.market_neutral_default == 0.0
     assert config.safety_flag_penalty == -14
     assert config.interaction_flag_penalty == -10
     assert config.same_plant_penalty == -15

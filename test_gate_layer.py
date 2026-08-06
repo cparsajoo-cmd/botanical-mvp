@@ -569,19 +569,30 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # point made explicitly). Decision_Class changes for this specific
     # zero-evidence-text fixture — intended, see that same test's
     # comment.
-    assert alt_row["R&D_Opportunity_Score"] == 38.0
+    # PHASE 5 (§10 fix, confirmed defect in the main Phase 5 audit
+    # §3.1): this fixture's market status resolves to the "neutral
+    # default" branch (no verified market signal either way).
+    # market_neutral_default changed from +3 (a confirmed defect — it
+    # scored ABOVE a verified positive market finding of +1) to the
+    # correct neutral 0.0 (phase5_scoring_config.MARKET_STATUS_POINTS).
+    # 38.0 (old, defective) -> 35.0 (new, correct) is exactly that -3.0
+    # market-component change; nothing else about this fixture's
+    # scoring path changed.
+    assert alt_row["R&D_Opportunity_Score"] == 35.0
     assert alt_row["Decision_Class"] == (
         "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
     )
-    assert self_row["R&D_Opportunity_Score"] == 23.0
+    assert self_row["R&D_Opportunity_Score"] == 20.0
     assert self_row["Decision_Class"] == (
         "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
     )
 
     # Row order (by score, descending) is exactly: alternative row
-    # first (38.0), self-row second (23.0) — unchanged by Gate_Results.
+    # first, self-row second — unchanged by Gate_Results.
+    # PHASE 5: absolute values shifted by the market_neutral_default fix
+    # (see the assertions above) but relative order is unchanged.
     ordered_scores = result["R&D_Opportunity_Score"].tolist()
-    assert ordered_scores == [38.0, 23.0]
+    assert ordered_scores == [35.0, 20.0]
 
 
 # ---------------------------------------------------------------------

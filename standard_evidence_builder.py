@@ -1091,3 +1091,240 @@ def build_regulatory_record(record: Mapping[str, Any]) -> Optional[RegulatoryRec
         # Malformed input must degrade to "no record produced," never
         # raise — same discipline as every other builder in this module.
         return None
+
+
+# ===========================================================================
+# Phase 5 — evaluate_applicability(): evidence-vs-target-context
+# applicability contract. A THIRD, separate applicability signal, distinct
+# from both Direct_For_Selected_Product (module top) and
+# Applicability_Classification/build_standard_evidence() above (Task 10.2,
+# indication+dosage_form-only). This one compares an evidence record's own
+# attributes against an EXPLICIT target-product/session context — no value
+# is ever judged in isolation (addendum §3.4). Weights/thresholds are
+# imported from phase5_scoring_config.py, never re-declared here.
+# ===========================================================================
+
+from phase5_scoring_config import (
+    MATCH as _APPL_MATCH,
+    PARTIAL as _APPL_PARTIAL,
+    UNKNOWN as _APPL_UNKNOWN,
+    MISMATCH as _APPL_MISMATCH,
+    NOT_APPLICABLE as _APPL_NOT_APPLICABLE,
+    APPLICABILITY_FACTORS,
+    APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
+    APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
+    APPLICABILITY_COMPLETENESS_WHEN_NOTHING_EVALUABLE,
+    APPLICABILITY_CLASSIFICATION_PRECEDENCE,
+    APPLICABILITY_DIMENSIONS,
+)
+from general_indication_relevance import (
+    MATCH_NO_MATCH as _INDICATION_MATCH_NO_MATCH,
+)
+
+
+def _appl_is_blank(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
+def _appl_norm(value) -> str:
+    return str(value).strip().lower()
+
+
+def _appl_dimension_simple(evidence_value, target_value) -> str:
+    """MATCH/MISMATCH/UNKNOWN/NOT_APPLICABLE for a plain-equality
+    dimension (species, plant_part, route) — no PARTIAL support in this
+    phase (addendum §3.4/correction round 6 item 5)."""
+    if _appl_is_blank(target_value):
+        return _APPL_NOT_APPLICABLE
+    if _appl_is_blank(evidence_value):
+        return _APPL_UNKNOWN
+    return _APPL_MATCH if _appl_norm(evidence_value) == _appl_norm(target_value) else _APPL_MISMATCH
+
+
+def _appl_dimension_preparation(evidence_row: Mapping[str, Any], target_context: Mapping[str, Any]) -> str:
+    """Deterministic parent-category rule (addendum §3.4, FINAL per
+    correction round 6): exact canonical value match -> MATCH; different
+    specific value but explicit, matching parent category -> PARTIAL;
+    explicit, differing parent categories -> MISMATCH; either side
+    missing what's needed -> UNKNOWN. Never inferred from free-text
+    similarity between the specific preparation names themselves.
+
+    When the target cares about category (supplies Target_Preparation_
+    Category) but the evidence side cannot answer that comparison, the
+    result is UNKNOWN, not an assumed MISMATCH -- resolving PARTIAL vs.
+    MISMATCH genuinely requires both sides' category. When the target
+    never mentions category at all, a plain value mismatch is a
+    straightforward MISMATCH (no category comparison was ever asked for).
+
+    LEGACY ADAPTER: when the row has no Evidence_Preparation field at
+    all, this reuses the pre-existing Preparation_Applicability /
+    Dosage_Form_Compatibility signal (main audit §3.2 — already computed
+    by _dosage_compatibility()/_preparation_applicability_row() for
+    every row) as a direct MATCH/MISMATCH/UNKNOWN result — the same
+    reasoning as the dosage_form/Extraction_Method adapter above, so a
+    legacy-vocabulary row that already says "Compatible" is not
+    penalized to UNKNOWN merely for predating the Evidence_Preparation
+    field."""
+    target_value = target_context.get("Target_Preparation")
+    target_category = target_context.get("Target_Preparation_Category")
+    if _appl_is_blank(target_value) and _appl_is_blank(target_category):
+        return _APPL_NOT_APPLICABLE
+
+    evidence_value = evidence_row.get("Evidence_Preparation")
+    evidence_category = evidence_row.get("Evidence_Preparation_Category")
+
+    value_pair_present = not _appl_is_blank(target_value) and not _appl_is_blank(evidence_value)
+    if value_pair_present and _appl_norm(target_value) == _appl_norm(evidence_value):
+        return _APPL_MATCH
+
+    if not _appl_is_blank(target_category):
+        if _appl_is_blank(evidence_category):
+            return _APPL_UNKNOWN
+        return _APPL_PARTIAL if _appl_norm(target_category) == _appl_norm(evidence_category) else _APPL_MISMATCH
+
+    if value_pair_present:
+        # Values are known to differ (the MATCH check above already
+        # failed) and the target never asked about category.
+        return _APPL_MISMATCH
+
+    if _appl_is_blank(evidence_value):
+        legacy_signal = evidence_row.get("Preparation_Applicability")
+        if _appl_is_blank(legacy_signal):
+            legacy_signal = evidence_row.get("Dosage_Form_Compatibility")
+        if not _appl_is_blank(legacy_signal):
+            normalized_legacy = _appl_norm(legacy_signal)
+            if normalized_legacy == "compatible":
+                return _APPL_MATCH
+            if normalized_legacy == "mismatch":
+                return _APPL_MISMATCH
+            # "Unknown" / "Not evaluated" / anything else recognized but
+            # inconclusive -> UNKNOWN, same as the primary contract's
+            # own missing-data behavior.
+
+    return _APPL_UNKNOWN
+
+
+def _appl_dimension_dose(evidence_row: Mapping[str, Any], target_context: Mapping[str, Any]) -> str:
+    """Target side is a range (Target_Dose_Min/Max/Unit); evidence side
+    must report a COMPARABLE, matching unit before any numeric
+    comparison is attempted. No unit conversion, pharmacokinetic
+    equivalence, or clinical dose validation (addendum §3.4). Missing or
+    incompatible units -> UNKNOWN, never an invented comparison."""
+    target_min = target_context.get("Target_Dose_Min")
+    target_max = target_context.get("Target_Dose_Max")
+    target_unit = target_context.get("Target_Dose_Unit")
+    if target_min is None and target_max is None and _appl_is_blank(target_unit):
+        return _APPL_NOT_APPLICABLE
+
+    evidence_value = evidence_row.get("Evidence_Dose")
+    evidence_unit = evidence_row.get("Evidence_Dose_Unit")
+    if evidence_value is None or _appl_is_blank(evidence_unit) or _appl_is_blank(target_unit):
+        return _APPL_UNKNOWN
+    if _appl_norm(evidence_unit) != _appl_norm(target_unit):
+        return _APPL_UNKNOWN
+    try:
+        value = float(evidence_value)
+    except (TypeError, ValueError):
+        return _APPL_UNKNOWN
+    lo = float(target_min) if target_min is not None else float("-inf")
+    hi = float(target_max) if target_max is not None else float("inf")
+    return _APPL_MATCH if lo <= value <= hi else _APPL_MISMATCH
+
+
+def _appl_dimension_indication(evidence_row: Mapping[str, Any], target_context: Mapping[str, Any]) -> str:
+    """Reuses the already-authoritative Indication_Match_Type field
+    (produced upstream by general_indication_relevance.py via
+    indication_candidate_discovery.py, addendum §3.1) — never
+    re-classifies indication relevance itself here."""
+    target_value = target_context.get("Target_Indication")
+    if _appl_is_blank(target_value):
+        return _APPL_NOT_APPLICABLE
+    match_type = evidence_row.get("Indication_Match_Type")
+    if _appl_is_blank(match_type):
+        return _APPL_UNKNOWN
+    if str(match_type).strip() == _INDICATION_MATCH_NO_MATCH:
+        return _APPL_MISMATCH
+    return _APPL_MATCH
+
+
+def evaluate_applicability(
+    evidence_row: Mapping[str, Any],
+    target_context: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Phase 5 — compare one evidence record's attributes against an
+    EXPLICIT target-product/session context, dimension by dimension.
+    Never classifies a raw value in isolation (addendum §3.4).
+
+    Returns a dict with:
+      Dimension_Status: {dimension: MATCH|PARTIAL|MISMATCH|UNKNOWN|NOT_APPLICABLE, ...}
+      Applicability_Classification: worst-status-wins summary label
+      Record_Applicability_Factor: min() over evaluable (non-NOT_APPLICABLE) dimensions
+      Applicability_Factor: alias of Record_Applicability_Factor (backward compat)
+      Applicability_Data_Completeness: "complete" | "incomplete" | "preliminary"
+
+    PROVISIONAL. NOT CLINICALLY VALIDATED. NOT STATISTICALLY CALIBRATED.
+    """
+    if not target_context:
+        dimension_status = {dim: _APPL_NOT_APPLICABLE for dim in APPLICABILITY_DIMENSIONS}
+        return {
+            "Dimension_Status": dimension_status,
+            "Applicability_Classification": APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
+            "Record_Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
+            "Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
+            "Applicability_Data_Completeness": "preliminary",
+        }
+
+    dimension_status = {
+        "species": _appl_dimension_simple(
+            evidence_row.get("Evidence_Species"), target_context.get("Target_Species")
+        ),
+        "plant_part": _appl_dimension_simple(
+            evidence_row.get("Evidence_Plant_Part"), target_context.get("Target_Plant_Part")
+        ),
+        "preparation": _appl_dimension_preparation(evidence_row, target_context),
+        "route": _appl_dimension_simple(
+            evidence_row.get("Evidence_Route"), target_context.get("Target_Route")
+        ),
+        "dose": _appl_dimension_dose(evidence_row, target_context),
+        "indication": _appl_dimension_indication(evidence_row, target_context),
+    }
+
+    evaluable = {
+        dim: status for dim, status in dimension_status.items() if status != _APPL_NOT_APPLICABLE
+    }
+
+    if not evaluable:
+        return {
+            "Dimension_Status": dimension_status,
+            "Applicability_Classification": APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
+            "Record_Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
+            "Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
+            "Applicability_Data_Completeness": APPLICABILITY_COMPLETENESS_WHEN_NOTHING_EVALUABLE,
+        }
+
+    record_factor = min(APPLICABILITY_FACTORS[status] for status in evaluable.values())
+
+    classification = _APPL_NOT_APPLICABLE
+    for candidate_status in APPLICABILITY_CLASSIFICATION_PRECEDENCE:
+        if candidate_status in evaluable.values():
+            classification = candidate_status
+            break
+
+    completeness = "incomplete" if _APPL_UNKNOWN in evaluable.values() else "complete"
+
+    return {
+        "Dimension_Status": dimension_status,
+        "Applicability_Classification": classification,
+        "Record_Applicability_Factor": record_factor,
+        "Applicability_Factor": record_factor,
+        "Applicability_Data_Completeness": completeness,
+    }

@@ -213,7 +213,10 @@ def test_run_end_to_end_unaffected_for_plants_outside_the_seed_dataset():
     # Phase 4 (this fixture has zero evidence text, now correctly
     # INCOMPLETE rather than the old fail-open "Low priority" label —
     # see test_scoring_config.py for the same fixture/reasoning).
-    assert alt_row["R&D_Opportunity_Score"] == 38.0
+    # PHASE 5 (§10 fix): market_neutral_default +3 -> 0.0 (confirmed
+    # defect fixed, main audit §3.1) — see the identical comment in
+    # test_gate_layer.py's sibling assertion on the same fixture.
+    assert alt_row["R&D_Opportunity_Score"] == 35.0
     assert alt_row["Decision_Class"] == (
         "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
     )

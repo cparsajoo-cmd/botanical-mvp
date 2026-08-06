@@ -95,6 +95,10 @@ from standard_evidence_builder import (
     normalize_missing_value,
     classify_ema_hmpc_signal,
 )
+from phase5_scoring_config import (
+    SCORING_MODEL_VERSION,
+    MARKET_STATUS_POINTS,
+)
 from occurrence_seed import build_occurrence_lookup
 from industrial_feasibility import classify_industrial_feasibility
 from evidence_coverage import classify_candidate_evidence_strength
@@ -708,16 +712,20 @@ class ScoringConfig:
     novelty_alternative: float = 10
     novelty_other: float = 2
 
-    # 5) Market signal.
-    market_verified_marketed_product: float = 1
-    market_regulatory_monograph_or_traditional_use: float = 2
-    market_commercial_evidence_reported: float = 2
-    market_no_verified_product_found: float = 6
-    market_conflicting_evidence: float = -2
-    market_search_incomplete: float = 3
+    # 5) Market signal. Sourced from phase5_scoring_config.MARKET_STATUS_POINTS
+    # (single central place, Phase 5 §1/§10) -- not copied literals.
+    market_verified_marketed_product: float = MARKET_STATUS_POINTS["Verified marketed product"]
+    market_regulatory_monograph_or_traditional_use: float = MARKET_STATUS_POINTS["Regulatory monograph exists"]
+    market_commercial_evidence_reported: float = MARKET_STATUS_POINTS["Commercial evidence reported"]
+    market_no_verified_product_found: float = MARKET_STATUS_POINTS["No verified product found"]
+    market_conflicting_evidence: float = MARKET_STATUS_POINTS["Conflicting evidence"]
+    market_search_incomplete: float = MARKET_STATUS_POINTS["Search incomplete"]
     # "Search not performed" / "Source unavailable" / "Unknown" — the
     # neutral default when no real search signal exists either way.
-    market_neutral_default: float = 3
+    # PHASE 5 FIX (addendum §10, main audit §3.1): this used to be +3,
+    # which scored ABOVE a verified positive market finding (+1) —
+    # confirmed defect. Now neutral 0.0, sourced from the central config.
+    market_neutral_default: float = MARKET_STATUS_POINTS["Unknown"]
 
     # 6) Safety/interaction/self-row penalties.
     safety_flag_penalty: float = -14

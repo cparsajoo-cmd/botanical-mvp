@@ -52,7 +52,7 @@ INDICATION_CANONICAL_SECTIONS = {
 # used for internal/diagnostic purposes, but never on the final,
 # user-facing R&D_Opportunity_Score/Score_Breakdown after Phase 3.
 AUTHORITATIVE_CANONICAL_SECTIONS = {
-    "Indication Relevance", "Evidence Quality", "Compound Support",
+    "Indication Relevance", "Scientific Evidence", "Compound Support",
     "Mechanism Support", "Safety & Regulatory", "Novelty & Market",
 }
 
@@ -77,9 +77,12 @@ COMPONENT_TO_DIMENSIONS = {
     "Preparation applicability": ["Commercial"],
     "Compound support (non-gating; max 5)": ["Scientific"],
     "Baseline development potential": ["Commercial"],
-    # Authoritative plant-level schema (Phase 3)
+    # Authoritative plant-level schema (Phase 3, renamed Phase 5:
+    # "Evidence Quality" -> "Scientific Evidence", now backed by
+    # Scientific_Evidence_Score rather than raw Evidence_Quality_Score —
+    # see candidate_shortlisting.py's _scientific_evidence_components()).
     "Indication Relevance": ["Clinical"],
-    "Evidence Quality": ["Clinical"],
+    "Scientific Evidence": ["Clinical"],
     "Compound Support": ["Scientific"],
     "Mechanism Support": ["Scientific"],
     "Safety & Regulatory": ["Safety"],

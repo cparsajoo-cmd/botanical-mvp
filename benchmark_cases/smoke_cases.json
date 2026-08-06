@@ -1,7 +1,7 @@
 [
   {
     "case_id": "smoke_safety_exclusion",
-    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the hard-safety auto-exclusion path end to end. 'expected' below was recorded by running this exact case through the engine and capturing its current output, so this is a mechanics/regression lock, not an independent scientific judgment.",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the hard-safety auto-exclusion path end to end. 'expected' below was recorded by running this exact case through the engine and capturing its current output, so this is a mechanics/regression lock, not an independent scientific judgment. UPDATED (Phase 4 Eligibility Gate fix): the PlantRef-vs-PlantRef self-row has no evidence text at all, so its decision_class changed from 'Low priority / insufficient data' to 'Incomplete — insufficient safety/regulatory evidence for a validated recommendation' -- the Phase 4 audit proved the old label was indistinguishable from a row that was actually checked and found clear. gate_status and decision_class_ah are unchanged; re-recorded from the new engine output, not an independent scientific judgment. UPDATED (correction round): the PlantRef-vs-AltPlant pair (a hard safety term on a DIFFERENT plant) now resolves to EXPERT_REVIEW_REQUIRED instead of an automatic hard no-go, because being a different plant is no longer treated as confirmation of species-wide/relevant scope on its own (eligibility_gate.py). gate_status[\"safety\"] is unchanged (still failed, from the legacy, unmodified _hard_safety_gate); gate_status now also carries the new authoritative \"eligibility\" key. Re-recorded from the new engine output.",
     "rows": [
       {
         "scientific_name": "PlantRef",
@@ -48,7 +48,7 @@
         {
           "reference_plant": "PlantRef",
           "alternative_plant": "PlantRef",
-          "decision_class": "Low priority / insufficient data",
+          "decision_class": "Incomplete — insufficient safety/regulatory evidence for a validated recommendation",
           "gate_status": {
             "safety": "not_evaluable",
             "identity": "passed",
@@ -60,21 +60,22 @@
         {
           "reference_plant": "PlantRef",
           "alternative_plant": "AltPlant",
-          "decision_class": "Safety concern — not suitable without expert review",
+          "decision_class": "Expert review required — not eligible for normal ranking until safety/regulatory scope is confirmed",
           "gate_status": {
             "safety": "failed",
             "identity": "not_evaluable",
             "minimum_evidence": "not_evaluable",
-            "regulatory": "not_evaluable"
+            "regulatory": "not_evaluable",
+            "eligibility": "expert_review_required"
           },
-          "decision_class_ah": "H — No-go / safety concern"
+          "decision_class_ah": "G — Hold / insufficient evidence"
         }
       ]
     }
   },
   {
     "case_id": "smoke_no_evidence_low_priority",
-    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the generic no-evidence / NOT_EVALUABLE minimum_evidence gate path. 'expected' below was recorded by running this exact case through the engine, not independently derived.",
+    "note": "Synthetic smoke case (NOT a real historical decision, NOT expert-curated) exercising the generic no-evidence / NOT_EVALUABLE minimum_evidence gate path. 'expected' below was recorded by running this exact case through the engine, not independently derived. UPDATED (Phase 4 Eligibility Gate fix): both pairs in this case have no evidence text, so decision_class changed from 'Low priority / insufficient data' to 'Incomplete — insufficient safety/regulatory evidence for a validated recommendation' for the same reason as smoke_safety_exclusion above. gate_status and decision_class_ah are unchanged; re-recorded from the new engine output.",
     "rows": [
       {
         "scientific_name": "RefPlant",
@@ -105,7 +106,7 @@
         {
           "reference_plant": "RefPlant",
           "alternative_plant": "AltPlant",
-          "decision_class": "Low priority / insufficient data",
+          "decision_class": "Incomplete — insufficient safety/regulatory evidence for a validated recommendation",
           "gate_status": {
             "safety": "passed",
             "identity": "passed",
@@ -117,7 +118,7 @@
         {
           "reference_plant": "RefPlant",
           "alternative_plant": "RefPlant",
-          "decision_class": "Low priority / insufficient data",
+          "decision_class": "Incomplete — insufficient safety/regulatory evidence for a validated recommendation",
           "gate_status": {
             "safety": "not_evaluable",
             "identity": "passed",

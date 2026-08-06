@@ -1,0 +1,10 @@
+Case 008 cleanup verification
+
+Canonical registry entry: gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py
+Registry change required: NO
+Canonical Case 008 test result: 5/5 passed
+Active duplicate implementation after cleanup: NO
+Archived historical copy: gold_cases/archive/superseded_case_008/
+Archived test renamed to prevent normal pytest collection: YES
+Production logic changed: NO
+Gold Case logic changed: NO

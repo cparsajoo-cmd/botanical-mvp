@@ -1,0 +1,9 @@
+Delete these two superseded files from gold_cases/ after copying this patch:
+
+gold_cases/gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py
+gold_cases/test_case_008_indicationevidence.py
+
+Do NOT delete the canonical files:
+
+gold_cases/gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py
+gold_cases/test_case_008_ginkgo_biloba_preparation_spec.py

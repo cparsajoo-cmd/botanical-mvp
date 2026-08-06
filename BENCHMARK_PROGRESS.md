@@ -10,7 +10,7 @@ Tracks the `GoldCase`/Reference-Grounded Validation benchmark specifically. Do n
 
 ## 2. Current Number of Implemented Cases
 
-**Reconciled 2026-08-03** (previous count of 6 was stale — it predated Cases 008–017). **17 Reference-Grounded Gold Cases are canonical**, case IDs 001, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012, 013, 014, 015, 016, 017, 018. There is no Case 002 (see Section 5). Case 008 additionally has a **superseded, non-canonical file** still on disk — see the note under the table.
+**Reconciled 2026-08-03** (previous count of 6 was stale — it predated Cases 008–017). **16 Reference-Grounded Gold Cases are canonical**, case IDs 001, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012, 013, 014, 015, 016, 017. There is no Case 002 (see Section 5). Case 008 additionally has a **superseded, non-canonical file** still on disk — see the note under the table.
 
 | Case | File | Taxon | Domain | Assertion Type | Assertion State | Governing Source |
 |---|---|---|---|---|---|---|
@@ -30,11 +30,10 @@ Tracks the `GoldCase`/Reference-Grounded Validation benchmark specifically. Do n
 | 015 | `gold_case_reference_grounded_015_hypericum_perforatum_preparation_spec.py` | Hypericum perforatum (herba) | Preparation Spec | Preparation specification (dry extract, DER 3–7:1, methanol 80% V/V) | PRESENT | EMA_HMPC (EMA/HMPC/7695/2021) |
 | 016 | `gold_case_reference_grounded_016_piper_methysticum_regulatory_prohibition.py` | Piper methysticum | Regulatory Status | Prohibition (UK medicinal-product sale/supply/import) | PRESENT | NATIONAL_REGULATORY (UK MHRA, SI 2002/3170) |
 | 017 | `gold_case_reference_grounded_017_matricaria_chamomilla_identity_quality.py` | Matricaria chamomilla | Identity/Quality | Identity confirmation | PRESENT | TAXONOMIC_AUTHORITY (Kew POWO) |
-| 018 | `gold_case_reference_grounded_018_ephedra_sinica_regulatory_restriction.py` | Ephedra sinica | Regulatory Status | Restriction (UK internal-use supply-channel dose thresholds) | PRESENT | NATIONAL_REGULATORY (UK MHRA) |
 
-**Superseded, non-canonical artifact (do not use or count):** `gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py` and its test `test_case_008_indicationevidence.py` are an earlier, hard-coded, non-canonical draft of Case 008 (domain INDICATION_EVIDENCE) that `CASES_008_009_010_012_CORRECTION_REPORT.md` (2026-08-01) explicitly replaced with the PREPARATION_SPEC file listed in the table above. Both files still physically exist at repository root. See `NEXT_ACTIONS.md` for the recommended cleanup action (flag for archival, do not delete per repository convention).
+**Superseded, non-canonical artifact (do not use or count):** the earlier hard-coded INDICATION_EVIDENCE draft of Case 008 and its old test are archived under `gold_cases/archive/superseded_case_008/`. They are retained only for audit history and are outside the active Case namespace. The canonical Case 008 is the PREPARATION_SPEC file listed above.
 
-Companion "engine evidence run" files exist for Cases 003 and 006 (`case_003_engine_evidence_run.py`, `case_006_engine_evidence_run.py`), which is where those two cases' `EngineEvidenceInput` is constructed and the real engine is actually executed, per the repository's "Leakage Rule 9.1" file-separation convention. Cases 007–018 (all Preparation Spec, Identity/Quality, and Regulatory Status cases, plus Cases 008–012/014's Indication/Evidence and Safety claims) have **no** engine-evidence-run file and explicitly declare `engine_evidence_attached: false` in their quality records — confirmed intentional per Protocol §14.1 for non-eligible domains, but for the Indication/Evidence and Safety cases among 009–012/014 this means no whole-case engine-agreement run has been attached yet even though the domain itself would be eligible. Whether Cases 001/004/005 have their own engine-evidence-run step (inline or in a still-unidentified separate file) was **not independently re-verified for each file individually** — treat as PENDING for those three cases specifically.
+Companion "engine evidence run" files exist for Cases 003 and 006 (`case_003_engine_evidence_run.py`, `case_006_engine_evidence_run.py`), which is where those two cases' `EngineEvidenceInput` is constructed and the real engine is actually executed, per the repository's "Leakage Rule 9.1" file-separation convention. Cases 007–017 (all Preparation Spec, Identity/Quality, and Regulatory Status cases, plus Cases 008–012/014's Indication/Evidence and Safety claims) have **no** engine-evidence-run file and explicitly declare `engine_evidence_attached: false` in their quality records — confirmed intentional per Protocol §14.1 for non-eligible domains, but for the Indication/Evidence and Safety cases among 009–012/014 this means no whole-case engine-agreement run has been attached yet even though the domain itself would be eligible. Whether Cases 001/004/005 have their own engine-evidence-run step (inline or in a still-unidentified separate file) was **not independently re-verified for each file individually** — treat as PENDING for those three cases specifically.
 
 ## 3. Frozen Cases
 
@@ -50,7 +49,7 @@ See `PROJECT_STATUS.md` §12 and `DECISIONS.md`. Cases 001, 003, 004, 005, and 0
 
 ## 6. Coverage by Botanical
 
-**Reconciled 2026-08-03.** 12 distinct taxa across 17 cases. Two taxa now have more than one Gold Case:
+**Reconciled 2026-08-03.** 11 distinct taxa across 16 cases. Two taxa now have more than one Gold Case:
 - Ginkgo biloba: 3 cases (004 — indication/cognitive, ABSENT; 008 — preparation spec; 014 — safety/interaction)
 - Matricaria chamomilla: 3 cases (003 — indication/sleep, CONDITIONAL; 011 — indication/GAD, PRESENT; 017 — identity/quality)
 - Hypericum perforatum: 2 cases (006 — safety/contraindication; 015 — preparation spec)
@@ -65,7 +64,7 @@ Correction: Melissa officinalis also has 2 cases (001 — indication/sleep; 009 
 - Menopausal symptoms: 1 case (005 Cimicifuga racemosa)
 - Mental stress: 2 cases (009 Melissa officinalis, 010 Passiflora incarnata)
 - Generalized anxiety disorder: 1 case (011 Matricaria chamomilla)
-- Not indication-dependent: 7 cases (007, 008, 015 — Preparation Spec; 013, 017 — Identity/Quality; 016, 018 — Regulatory Status; `validation_unit.indication: None` in each)
+- Not indication-dependent: 4 cases (007, 008, 015 — Preparation Spec claims; 013, 016, 017 — Identity/Quality and Regulatory Status claims, `validation_unit.indication: None` in each)
 - Safety/interaction (not an indication per se): 2 cases (006 Hypericum perforatum — contraindication; 014 Ginkgo biloba — dabigatran interaction)
 
 ## 8. Coverage by Evidence Type / Governing Source Type
@@ -73,7 +72,7 @@ Correction: Melissa officinalis also has 2 cases (001 — indication/sleep; 009 
 - EMA_HMPC: 9 cases (001, 006, 007, 008, 009, 010, 012, 014, 015)
 - SYSTEMATIC_REVIEW: 4 cases (003, 004, 005, 011)
 - TAXONOMIC_AUTHORITY: 2 cases (013, 017 — both Kew Plants of the World Online)
-- NATIONAL_REGULATORY: 2 cases (016, 018 — UK MHRA)
+- NATIONAL_REGULATORY: 1 case (016 — UK MHRA)
 
 No case in the current set is governed by WHO_MONOGRAPH, ESCOP_MONOGRAPH, COMMISSION_E, or PHARMACOPOEIA as its primary/selected reference — those source types appear in the Permitted Sources hierarchy (`VALIDATION_PROTOCOL.md` §6) but have not yet been exercised as a case's *governing* (selected) source. (`WHO_MONOGRAPH`, `ESCOP_MONOGRAPH`, `COMMISSION_E` did appear as unverified same-rank competing sources considered, but not used, during Case 006's screening — see `case_006_source_suitability_screening.md`.)
 
@@ -81,11 +80,11 @@ No case in the current set is governed by WHO_MONOGRAPH, ESCOP_MONOGRAPH, COMMIS
 
 **Reconciled 2026-08-03 — the two domain gaps below are now CLOSED:**
 - ~~`ReferenceDomain.IDENTITY_QUALITY` — no case yet~~ → **closed** by Cases 013 (Echinacea purpurea) and 017 (Matricaria chamomilla).
-- ~~`ReferenceDomain.REGULATORY_STATUS` — no case yet~~ → **closed** by Cases 016 (Piper methysticum, UK prohibition) and 018 (Ephedra sinica, UK restriction).
+- ~~`ReferenceDomain.REGULATORY_STATUS` — no case yet~~ → **closed** by Case 016 (Piper methysticum, UK MHRA prohibition).
 
 **Still open:**
-- `AssertionType` values beyond `SUPPORTS_INDICATION`, `CONTRAINDICATION`, `PREPARATION_SPECIFICATION`, `IDENTITY_CONFIRMATION`, `INTERACTION`, `PROHIBITION`, and `RESTRICTION` — remain untested (these seven are now exercised across the 17 cases).
-- `AssertionState.NOT_STATED` — still untested; all 17 cases use PRESENT, ABSENT, CONDITIONAL, or INSUFFICIENT.
+- `AssertionType` values beyond `SUPPORTS_INDICATION`, `CONTRAINDICATION`, `PREPARATION_SPECIFICATION`, `IDENTITY_CONFIRMATION`, `INTERACTION`, and `PROHIBITION` — remain untested (these six are now exercised across the 16 cases).
+- `AssertionState.NOT_STATED` — still untested; all 16 cases use PRESENT, ABSENT, CONDITIONAL, or INSUFFICIENT.
 - `FDA` as a source type is not present in any `reference_precedence.py` domain hierarchy at all — only the generic `NATIONAL_REGULATORY`/`OTHER_NATIONAL_REGULATORY` buckets exist (`VALIDATION_PROTOCOL.md` §6, "Known gap"). Adding an FDA-specific source type would itself be a code change, out of scope for case curation alone.
 - No taxon has been tested across all 5 `ReferenceDomain` values yet — Ginkgo biloba is the closest, with 3 of 5 (Indication/Evidence, Preparation Spec, Safety).
 

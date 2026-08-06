@@ -32,6 +32,7 @@ CURATION: dict[int, dict[str, Any]] = {
     16: {"question": "What UK medicinal-product prohibition applies to Piper methysticum (kava-kava)?", "rationale": "National regulatory prohibition benchmark with an external-use exception."},
     17: {"question": "What is the accepted botanical identity of Matricaria chamomilla and its Chamomilla recutita synonym?", "rationale": "Botanical identity/synonym benchmark from Kew POWO."},
     18: {"question": "What UK supply restriction applies to internal-use herbal medicines containing Ephedra sinica at specified dose thresholds?", "rationale": "Dose-specific national regulatory restriction benchmark."},
+    19: {"question": "What clinically supported use does the WHO monograph recognize for Panax ginseng root?", "rationale": "First WHO_MONOGRAPH governing source in the corpus; closes the WHO source-coverage gap."},
 }
 
 STUDY_DESIGN_BY_SOURCE = {
@@ -39,6 +40,7 @@ STUDY_DESIGN_BY_SOURCE = {
     "EMA_HMPC": "regulatory_monograph",
     "TAXONOMIC_AUTHORITY": "taxonomic_database",
     "NATIONAL_REGULATORY": "national_regulatory_instrument_or_guidance",
+    "WHO_MONOGRAPH": "who_monograph_with_clinical_data_supported_use",
 }
 
 
@@ -146,7 +148,7 @@ def build_manifest() -> dict:
             "expected_prohibited_decisions": prohibited,
             "reference_rationale": cur["rationale"],
             "reviewer": "internal_scientific_curation_pending_external_expert_review",
-            "review_date": "2026-08-06",
+            "review_date": "2026-08-07",
             "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
             "engine_evidence_attached": bool(case.engine_evidence),
             "locked": bool(case.locked),
@@ -156,8 +158,8 @@ def build_manifest() -> dict:
             entry["dose"] = {"single_dose_threshold_mg": 600, "daily_dose_threshold_mg": 1800, "meaning": "supply-channel thresholds, not absolute lawful maxima"}
         entries.append(entry)
     return {
-        "gold_corpus_version": "0.1.0",
-        "generated_date": "2026-08-06",
+        "gold_corpus_version": "0.2.0",
+        "generated_date": "2026-08-07",
         "protocol_version": "VALIDATION_PROTOCOL.md v0.3",
         "active_case_count": len(entries),
         "abandoned_case_numbers": registry.get("abandoned_cases", []),

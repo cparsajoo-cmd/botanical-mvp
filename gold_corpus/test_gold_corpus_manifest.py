@@ -22,7 +22,7 @@ def _case_by_number(number: int):
 
 
 def test_manifest_has_exactly_all_active_registry_cases():
-    assert MANIFEST["active_case_count"] == 17
+    assert MANIFEST["active_case_count"] == len(REGISTRY["active_cases"])
     assert {c["case_number"] for c in MANIFEST["cases"]} == {x["case_number"] for x in REGISTRY["active_cases"]}
 
 

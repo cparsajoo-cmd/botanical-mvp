@@ -1,0 +1,21 @@
+{
+  "case_number": 19,
+  "source_reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG",
+  "title": "WHO monographs on selected medicinal plants, Volume 1 — Radix Ginseng",
+  "publisher": "World Health Organization",
+  "source_type": "WHO_MONOGRAPH",
+  "isbn": "9241545178",
+  "publication_year": 1999,
+  "official_url": "https://www.who.int/publications/i/item/9241545178",
+  "retrieval_date": "2026-08-07",
+  "locator": "Radix Ginseng monograph: Definition p.168; Uses supported by clinical data p.172",
+  "verification_status": "CURATOR_VERIFIED",
+  "critical_source": true,
+  "critical_retrieval_requirement": true,
+  "botanical_identity": "Panax ginseng C.A. Meyer",
+  "plant_part": "dried root",
+  "evidence_direction": "POSITIVE",
+  "evidence_category": "USES_SUPPORTED_BY_CLINICAL_DATA",
+  "scope_note": "No single preparation, dose, route, or population is imposed in the Gold Case because the WHO monograph describes multiple dosage forms/contexts.",
+  "species_disambiguation_note": "The WHO monograph explicitly distinguishes Panax ginseng from other Panax species and states documentation was insufficient to prepare monographs for those other species at that time."
+}

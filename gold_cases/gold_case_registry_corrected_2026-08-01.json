@@ -85,6 +85,11 @@
       "file": "gold_case_reference_grounded_018_ephedra_sinica_regulatory_restriction.py",
       "case_number": 18,
       "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_019_panax_ginseng_who_monograph.py",
+      "case_number": 19,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
     }
   ],
   "abandoned_cases": [

@@ -165,20 +165,28 @@
   ],
   "known_gaps": {
     "description": "Cases with no standalone case_XXX_quality_record.json file on disk. These cases are NOT less valid than the ones above — quality-record generation was simply adopted as a standard practice starting around Case 008 and was never retroactively applied to the earlier cases. Do not infer approval_status for these from this index; consult each case file's own docstring, PROJECT_STATUS.md, and BENCHMARK_PROGRESS.md instead.",
-    "case_numbers_without_quality_record_file": [1, 3, 4, 5, 6, 11],
+    "case_numbers_without_quality_record_file": [
+      1,
+      3,
+      4,
+      5,
+      6,
+      11
+    ],
     "case_11_specific_note": "case_011_quality_record.json does not exist. The v1.0 index fabricated an entry for Case 11 with domain=SAFETY, tests_passed=null-equivalent fields, and no backing file. The actual, corrected Case 11 (gold_case_reference_grounded_011_matricaria_chamomilla_indication_evidence.py) is domain INDICATION_EVIDENCE per CASE_011_CORRECTION_REPORT.md. Recommended action: generate a real case_011_quality_record.json following the same template as Cases 9/10/12, then add a proper entry here."
   },
   "superseded_artifacts": {
     "description": "Files that remain on disk but are no longer the canonical version of a numbered case. Per repository convention, superseded files are not deleted, only flagged. These should be added to a legacy/archival list (see .github/legacy-files.txt and repo_dependency_audit.py) rather than left ambiguously alongside the canonical file.",
     "items": [
       {
-        "file": "gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py",
-        "status": "SUPERSEDED_NON_CANONICAL",
+        "file": "archive/superseded_case_008/superseded_gold_case_reference_grounded_008_ginkgo_biloba_indicationevidence.py",
+        "status": "ARCHIVED_SUPERSEDED_NON_CANONICAL",
         "superseded_by": "gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py",
         "reason": "CASES_008_009_010_012_CORRECTION_REPORT.md (2026-08-01): rebuilt from a non-canonical, hard-coded INDICATION_EVIDENCE draft to a canonical EMA-sourced PREPARATION_SPEC case.",
-        "associated_test_file": "test_case_008_indicationevidence.py",
-        "risk": "File naming makes it easy to import or reference the wrong Case 008 by mistake.",
-        "remediation_2026_08_03": "A 'SUPERSEDED / NON-CANONICAL' warning was added to the top docstring of both this file and its test, pointing to the canonical replacement. Verified zero functional impact via py_compile and pytest (both test suites still pass). Neither file was moved, archived, or deleted -- final archival disposition is still an open decision, see NEXT_ACTIONS.md NA-010."
+        "associated_test_file": "archive/superseded_case_008/superseded_test_case_008_indicationevidence.py",
+        "risk": "Resolved: superseded implementation is outside the active gold_cases namespace and archived test is not pytest-discoverable.",
+        "remediation_2026_08_03": "A 'SUPERSEDED / NON-CANONICAL' warning was added to the top docstring of both this file and its test, pointing to the canonical replacement. Verified zero functional impact via py_compile and pytest (both test suites still pass). Neither file was moved, archived, or deleted -- final archival disposition is still an open decision, see NEXT_ACTIONS.md NA-010.",
+        "remediation_2026_08_07": "Supervisor approved archival. Both superseded files were moved under gold_cases/archive/superseded_case_008/ and renamed with a superseded_ prefix. Canonical Case 008 remains gold_case_reference_grounded_008_ginkgo_biloba_preparation_spec.py."
       }
     ]
   }

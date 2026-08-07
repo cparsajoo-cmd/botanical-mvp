@@ -1,0 +1,34 @@
+{
+  "case_number": 21,
+  "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+  "retrieval_date": "2026-08-07",
+  "critical_sources": [
+    {
+      "source_reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+      "title": "Saw palmetto extracts for treatment of benign prostatic hyperplasia: a systematic review",
+      "authors": "Wilt TJ, Ishani A, Stark G, MacDonald R, Lau J, Mulrow C",
+      "publication": "JAMA. 1998;280(18):1604-1609",
+      "pmid": "9820264",
+      "doi": "10.1001/jama.280.18.1604",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "official_or_index_url": "https://pubmed.ncbi.nlm.nih.gov/9820264/",
+      "verification_status": "CURATOR_VERIFIED_FROM_PUBMED_RECORD",
+      "expected_direction": "POSITIVE",
+      "critical_retrieval_requirement": true
+    },
+    {
+      "source_reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS",
+      "title": "Serenoa repens for the treatment of lower urinary tract symptoms due to benign prostatic enlargement",
+      "authors": "Franco JVA, Trivisonno L, Sgarbossa NJ, Alvez GA, Fieiras C, Escobar Liquitay CM, Jung JH",
+      "publication": "Cochrane Database Syst Rev. 2023;6:CD001423",
+      "doi": "10.1002/14651858.CD001423.pub4",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "official_or_index_url": "https://www.cochrane.org/evidence/CD001423_serenoa-repens-benign-prostatic-hyperplasia",
+      "verification_status": "CURATOR_VERIFIED_FROM_OFFICIAL_COCHRANE_EVIDENCE_PAGE",
+      "expected_direction": "NEGATIVE",
+      "critical_retrieval_requirement": true
+    }
+  ],
+  "conflict_definition": "Two applicable SYSTEMATIC_REVIEW references with the same assertion identity and opposing assertion states.",
+  "scope_note": "No dose, standardized preparation, route, or duration is invented. The case is intentionally a precedence-conflict benchmark."
+}

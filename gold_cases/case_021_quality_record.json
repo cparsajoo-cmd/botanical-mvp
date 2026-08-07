@@ -1,0 +1,49 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "audit_trail_entry": true,
+    "generated_timestamp": "2026-08-07"
+  },
+  "case_information": {
+    "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+    "case_number": 21,
+    "taxon": "Serenoa repens",
+    "domain": "INDICATION_EVIDENCE"
+  },
+  "coverage_value": {
+    "new_gap_closed": "REAL_MULTI_REFERENCE_CONFLICT",
+    "non_duplicate_rationale": "First case whose resolved GoldCase itself contains two applicable, equally ranked SYSTEMATIC_REVIEW references with opposing verdicts and therefore resolves to REFERENCE_CONFLICT."
+  },
+  "primary_references": [
+    {
+      "reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "publication_year": 1998,
+      "expected_direction": "POSITIVE"
+    },
+    {
+      "reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "publication_year": 2023,
+      "expected_direction": "NEGATIVE"
+    }
+  ],
+  "evidence_assessment": {
+    "assertion_type": "SUPPORTS_INDICATION",
+    "expected_resolution_status": "REFERENCE_CONFLICT",
+    "expected_evidence_direction": "CONFLICTING",
+    "confidence_level": "HIGH_FOR_SOURCE_EXTRACTION",
+    "preparation_specific": false,
+    "dose_specific": false
+  },
+  "validation_results": {
+    "case_tests_expected": 8,
+    "engine_evidence_attached": false,
+    "locked": false
+  },
+  "approval_status": {
+    "reference_ground_truth_ready": true,
+    "external_validation_claimed": false,
+    "clinical_validation_claimed": false
+  }
+}

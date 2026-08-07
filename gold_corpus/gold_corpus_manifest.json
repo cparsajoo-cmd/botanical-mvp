@@ -6,7 +6,7 @@
   "abandoned_case_numbers": [
     2
   ],
-  "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; FROZEN_RETRIEVAL_SNAPSHOTS_NOT_YET_CAPTURED",
+  "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; FROZEN_E2E_PILOT_CAPTURED_FOR_CASES_006_016_018_019_020_021_022",
   "cases": [
     {
       "case_number": 1,
@@ -317,7 +317,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 7,
@@ -882,7 +882,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 17,
@@ -990,7 +990,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 19,
@@ -1042,7 +1042,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 20,
@@ -1094,7 +1094,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 21,
@@ -1158,7 +1158,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     },
     {
       "case_number": 22,
@@ -1222,7 +1222,7 @@
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
       "engine_evidence_attached": false,
       "locked": false,
-      "e2e_snapshot_status": "NOT_CAPTURED"
+      "e2e_snapshot_status": "FROZEN_BASELINE_CAPTURED"
     }
   ]
 }

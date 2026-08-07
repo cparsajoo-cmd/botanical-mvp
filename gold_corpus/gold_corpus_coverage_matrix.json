@@ -196,11 +196,29 @@
     "Null_Human_Evidence": "Null outcomes occur inside reviews but no standalone independently labelled null-RCT Gold source.",
     "Conflicting_Evidence": "Case 021 is the first active GoldCase whose resolved Ground Truth itself contains two applicable, equally ranked SYSTEMATIC_REVIEW references with opposing verdicts and resolves to REFERENCE_CONFLICT. Case 005 separately documents a later conflicting review but contains only one governing applicable reference.",
     "Missing_Evidence": "Cases 005 and 022 cover scientific insufficiency (AssertionState.INSUFFICIENT), not retrieval failure. Case 022 additionally tests that the higher-ranked systematic review governs over a positive EMA/HMPC source.",
-    "Source_Unavailable": "Supported by End-to-End framework/tests but not yet represented by a real locked corpus source-unavailable case.",
+    "Source_Unavailable": "No synthetic scientific Gold Case was added. Source-unavailable behavior is now exercised as a frozen E2E perturbation scenario around real critical sources in the seven-case pilot.",
     "RCT": "RCTs appear inside systematic reviews but are not independently curated GoldSourceExpectations; current precedence does not permit RCT as governing INDICATION_EVIDENCE source.",
     "Observational_Studies": "No independently curated observational Gold source.",
     "WHO": "Case 019 is the first active WHO_MONOGRAPH governing source (WHO Monographs Vol.1, Radix Ginseng).",
     "ESCOP": "Case 020 is the first active ESCOP_MONOGRAPH governing source (ESCOP 2021 Echinaceae purpureae herba). Only claims visible on the official public summary are curated.",
     "Cross_rank_precedence": "Case 022 is the first active GoldCase with two applicable references of different INDICATION_EVIDENCE ranks; SYSTEMATIC_REVIEW is selected over a newer EMA_HMPC monograph."
+  },
+  "e2e_pilot": {
+    "case_numbers": [
+      6,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22
+    ],
+    "frozen_baseline_snapshots": 7,
+    "critical_source_expectations": 9,
+    "critical_source_retrieval_baseline": "9/9",
+    "source_unavailable_scenario": "COVERED_BY_E2E_SCENARIO_NOT_NEW_SCIENTIFIC_GOLD_CASE",
+    "duplicate_source_scenario": "COVERED_BY_E2E_SCENARIO",
+    "irrelevant_source_scenario": "COVERED_BY_E2E_SCENARIO",
+    "production_logic_modified": false
   }
 }

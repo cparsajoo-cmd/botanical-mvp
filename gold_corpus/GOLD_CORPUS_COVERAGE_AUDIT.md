@@ -82,3 +82,31 @@ Case 022 adds a real cross-rank INDICATION_EVIDENCE benchmark for *Valeriana off
 Both references are independently applicable to the benchmark's narrow insomnia overlap. Under the existing source hierarchy, SYSTEMATIC_REVIEW outranks EMA_HMPC, so the systematic-review `INSUFFICIENT` verdict is selected. This is not a same-rank conflict and no production precedence rule was changed.
 
 Both references are marked CRITICAL for End-to-End retrieval because the benchmark cannot test cross-rank precedence if only the winning source is retrieved.
+
+
+## Frozen-snapshot End-to-End pilot — Cases 006, 016, 018, 019, 020, 021, 022
+
+Seven representative active cases now have frozen baseline retrieval snapshots built from verified public/official source records. The pilot reuses `end_to_end_validation.py`; no second validation engine was created. Candidate-discovery outputs are frozen in the snapshot solely to make the benchmark deterministic.
+
+### Scenario coverage
+
+- Baseline critical-source retrieval: **9/9 critical references retrieved**.
+- Missing-critical-source perturbation: fail-closed `CRITICAL_SOURCE_MISSED` confirmed for all seven pilot cases.
+- Source-unavailable perturbation: `SOURCE_UNAVAILABLE` plus critical-source miss confirmed for all seven pilot cases.
+- Duplicate capture: article-identity deduplication confirmed using a duplicated real Serenoa review record.
+- Known irrelevant source: the real ESCOP *Echinacea purpurea* root monograph is retrieved and counted as irrelevant for the Case 020 flowering-aerial-parts benchmark.
+
+### Actual production-engine pilot findings
+
+The frozen baseline was executed through the unmodified production engine. Findings are benchmark observations, not tuning targets:
+
+- Critical-source recall: **1.00 (9/9)**.
+- Evidence-retrieval recall: **1.00 (9/9)**.
+- Evidence-direction accuracy against the current GoldSource expectation vocabulary: **0.111 (1/9)**. Most source-derived monograph/regulatory/review summaries were classified as `unclear`.
+- Serious-safety false-negative rate in the pilot: **1.00 (1/1)**. Case 006 retrieved the EMA serious contraindication source, but the safety gate did not fail. This reproduces the previously documented Hypericum safety-gate miss.
+- Regulatory prohibition/restriction detection in the pilot: both Case 016 and Case 018 triggered the regulatory gate as expected.
+- No production logic, scoring, safety rule, regulatory rule, or market logic was changed in response to these findings.
+
+### Interpretation caution
+
+The evidence-direction metric currently compares a generic efficacy-direction classifier (`positive/negative/null/mixed/unclear`) with GoldSource expectations that also encode presence of regulatory/safety assertions as `positive`. Therefore some direction mismatches are a **validation-vocabulary mismatch**, not necessarily a scientific error in the source or Gold Case. This should be addressed at benchmark interpretation/protocol level before using that metric as a headline engine-accuracy claim; the engine was not modified in this phase.

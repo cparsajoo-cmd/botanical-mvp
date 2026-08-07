@@ -220,7 +220,11 @@ def build_manifest() -> dict:
             "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
             "engine_evidence_attached": bool(case.engine_evidence),
             "locked": bool(case.locked),
-            "e2e_snapshot_status": "NOT_CAPTURED",
+            "e2e_snapshot_status": (
+                "FROZEN_BASELINE_CAPTURED"
+                if (Path(__file__).resolve().parent / "e2e_snapshots" / f"case_{n:03d}_baseline.json").exists()
+                else "NOT_CAPTURED"
+            ),
         }
         if n == 18:
             entry["dose"] = {"single_dose_threshold_mg": 600, "daily_dose_threshold_mg": 1800, "meaning": "supply-channel thresholds, not absolute lawful maxima"}
@@ -231,7 +235,7 @@ def build_manifest() -> dict:
         "protocol_version": "VALIDATION_PROTOCOL.md v0.3",
         "active_case_count": len(entries),
         "abandoned_case_numbers": registry.get("abandoned_cases", []),
-        "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; FROZEN_RETRIEVAL_SNAPSHOTS_NOT_YET_CAPTURED",
+        "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; FROZEN_E2E_PILOT_CAPTURED_FOR_CASES_006_016_018_019_020_021_022",
         "cases": entries,
     }
 

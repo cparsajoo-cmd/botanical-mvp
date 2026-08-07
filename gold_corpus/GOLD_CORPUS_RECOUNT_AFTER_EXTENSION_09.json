@@ -1,0 +1,13 @@
+{
+  "recount_date": "2026-08-07",
+  "method": "Primary independent record sets only; aggregate calibration_v1 excluded from unique-record total because it reuses records from earlier frozen sets.",
+  "independent_corpus_records_before_extension_10": 131,
+  "extension_10_records": 12,
+  "independent_corpus_records_after_extension_10": 143,
+  "unique_human_pubmed_records": 82,
+  "active_gold_cases_from_coverage_matrix": 21,
+  "minimum_target_reference": 180,
+  "progress_before_extension_10": 0.728,
+  "progress_after_extension_10": 0.794,
+  "remaining_to_minimum_target_after_extension_10": 37
+}

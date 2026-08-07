@@ -1,0 +1,11 @@
+{
+  "total": 12,
+  "unique_botanicals": 4,
+  "unique_preparations": 12,
+  "routes": [
+    "cutaneous",
+    "oral",
+    "oromucosal"
+  ],
+  "with_explicit_numeric_dose": 11
+}

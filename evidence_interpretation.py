@@ -176,7 +176,7 @@ def _has(text: str, phrases: List[str]) -> bool:
 # and standard-library only per Phase 1 scope). Used only to stop a
 # NEGATED positive-outcome phrase ("did not demonstrate significant
 # improvement") from being counted as positive.
-_NEGATION_CUES = ("did not ", "does not ", "was not ", "were not ", "no ", "not ", "failed to ")
+_NEGATION_CUES = ("did not ", "does not ", "was not ", "were not ", "no ", "not ", "failed to ", "neither ", "nor ")
 _NEGATION_LOOKBACK = 30
 
 
@@ -237,6 +237,16 @@ POSITIVE_PHRASES = [
     "clinically meaningful benefit",
     "showed significant improvement",
     "significant improvement",
+    "statistically significant improvement",
+    "statistically significant change",
+    "significantly greater reduction",
+    "significantly more effective",
+    "significantly more improved",
+    "suggested benefit",
+    "protective effect",
+    "beat placebo",
+    "clinically effective",
+    "greater improvement",
     "outcomes improved",
     "outcome improved",
     "symptoms improved",
@@ -273,6 +283,35 @@ def _positive_regex_hit(text: str) -> Optional[str]:
         return None
     return match.group(0)
 
+# Additional bounded outcome regexes calibrated on a frozen human-evidence
+# corpus. They are intentionally generic outcome constructions rather than
+# plant-, indication-, or case-specific phrases.
+_POSITIVE_COMPARATIVE_REGEXES = (
+    re.compile(r"\bsignificantly\s+(?:greater|larger|lower|higher|more)\s+(?:reduction|improvement|response|benefit|change|effect|effects)\b"),
+    re.compile(r"\bstatistically\s+significant\s+(?:change|improvement|reduction|benefit|effect|effects|difference)\b"),
+    re.compile(r"\bsignificant\s+difference\s+between\s+(?:the\s+)?(?:two\s+)?groups\b"),
+    re.compile(r"\breduced\s+the\s+(?:total\s+)?number\s+of\b"),
+    re.compile(r"\bsignificantly\s+(?:reduced|improved|lowered|increased)\b"),
+    re.compile(r"\b(?:greater|larger)\s+improvement\b"),
+    re.compile(r"\b(?:clinically\s+meaningful\s+)?lower\s+(?:incidence|severity|rate|risk)\b"),
+    re.compile(r"\b(?:suggested|showed|found)\s+(?:a\s+)?(?:small\s+)?(?:benefit|reduction|improvement|protective\s+effect)\b"),
+    re.compile(r"\bshorter\s+(?:\w+\s+){0,3}(?:than|compared\s+with|compared\s+to)\s+placebo\b"),
+    re.compile(r"\bimproved\s+(?:several\s+|some\s+|multiple\s+)?(?:clinical\s+)?(?:symptoms?|outcomes?|markers?|scores?|quality\s+of\s+life)\b"),
+    re.compile(r"\b(?:found|showed|reported)\s+(?:a\s+)?(?:reduction|improvement)\s+in\b"),
+)
+
+def _positive_comparative_hits(text: str) -> List[str]:
+    hits: List[str] = []
+    for pattern in _POSITIVE_COMPARATIVE_REGEXES:
+        for match in pattern.finditer(text):
+            window_start = max(0, match.start() - _NEGATION_LOOKBACK)
+            preceding = text[window_start:match.start()]
+            if any(cue in preceding for cue in _NEGATION_CUES):
+                continue
+            hits.append(match.group(0))
+            break
+    return hits
+
 NULL_PHRASES = [
     "no significant difference",
     "no statistically significant difference",
@@ -283,6 +322,18 @@ NULL_PHRASES = [
     "no significant improvement",
     "no difference from placebo",
     "not significant",
+    "did not significantly reduce",
+    "not significantly more efficacious",
+    "significantly different between the two groups",
+    "no statistically significant effect",
+    "no statistically significant effects",
+    "no significant effect",
+    "not significantly different",
+    "no significant differences",
+    "no effect on",
+    "no association",
+    "nonsignificant reduction",
+    "nonsignificant reductions",
 ]
 
 NEGATIVE_PHRASES = [
@@ -296,6 +347,20 @@ NEGATIVE_PHRASES = [
     "evidence against efficacy",
     "did not meet the primary endpoint",
     "failed to meet its primary endpoint",
+    "was not effective",
+    "were not effective",
+    "fails to support the efficacy",
+    "failed to support the efficacy",
+    "no more effective than placebo",
+    "did not improve",
+    "no measurable benefit",
+    "effectiveness was not demonstrated",
+    "no protection",
+    "does not demonstrate beneficial effects",
+    "does not seem to be effective",
+    "could not be recommended",
+    "did not demonstrate beneficial effects",
+    "neither",
 ]
 
 # Study-design phrase tables, checked in priority order (protocol and
@@ -465,6 +530,21 @@ def classify_study_design(text: str) -> str:
     return STUDY_DESIGN_UNSPECIFIED
 
 
+_NEGATIVE_OUTCOME_REGEXES = (
+    re.compile(r"\bneither\b.{0,100}\bnor\b.{0,100}\b(?:superior|better|more\s+effective)\s+than\s+placebo\b"),
+    re.compile(r"\bdoes\s+not\s+demonstrate(?:\s+any)?\s+beneficial\s+effects?\b"),
+    re.compile(r"\bdid\s+not\s+demonstrate(?:\s+any)?\s+beneficial\s+effects?\b"),
+    re.compile(r"\bno\s+(?:measurable|clinical|clinically\s+meaningful)\s+benefit\b"),
+)
+
+def _negative_regex_hits(text: str) -> List[str]:
+    hits: List[str] = []
+    for pattern in _NEGATIVE_OUTCOME_REGEXES:
+        match = pattern.search(text)
+        if match:
+            hits.append(match.group(0))
+    return hits
+
 def classify_evidence_direction(text: str):
     """Returns (direction, positive_hits, null_hits, negative_hits)."""
     norm = _norm(text)
@@ -477,9 +557,15 @@ def classify_evidence_direction(text: str):
     regex_hit = _positive_regex_hit(norm)
     if regex_hit and regex_hit not in positive_hits:
         positive_hits = positive_hits + [regex_hit]
+    positive_hits = positive_hits + [
+        hit for hit in _positive_comparative_hits(norm) if hit not in positive_hits
+    ]
 
     null_hits = [p for p in NULL_PHRASES if _has(norm, [p])]
     negative_hits = [p for p in NEGATIVE_PHRASES if _has(norm, [p])]
+    negative_hits = negative_hits + [
+        hit for hit in _negative_regex_hits(norm) if hit not in negative_hits
+    ]
 
     # A negated positive-outcome statement ("did not demonstrate
     # significant improvement") reads as a null finding for direction

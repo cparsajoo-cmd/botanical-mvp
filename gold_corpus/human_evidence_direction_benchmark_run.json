@@ -1,0 +1,252 @@
+{
+  "benchmark_version": "human-evidence-direction/1",
+  "record_count": 12,
+  "direction_accuracy": {
+    "numerator": 3,
+    "denominator": 12,
+    "value": 0.25
+  },
+  "study_design_accuracy": {
+    "numerator": 6,
+    "denominator": 12,
+    "value": 0.5
+  },
+  "direction_accuracy_by_expected_label": {
+    "mixed": {
+      "numerator": 0,
+      "denominator": 3,
+      "value": 0.0
+    },
+    "negative": {
+      "numerator": 0,
+      "denominator": 3,
+      "value": 0.0
+    },
+    "null": {
+      "numerator": 2,
+      "denominator": 3,
+      "value": 0.6666666666666666
+    },
+    "positive": {
+      "numerator": 1,
+      "denominator": 3,
+      "value": 0.3333333333333333
+    }
+  },
+  "direction_confusion": [
+    {
+      "expected": "mixed",
+      "actual": "null",
+      "count": 1
+    },
+    {
+      "expected": "mixed",
+      "actual": "unclear",
+      "count": 2
+    },
+    {
+      "expected": "negative",
+      "actual": "unclear",
+      "count": 3
+    },
+    {
+      "expected": "null",
+      "actual": "null",
+      "count": 2
+    },
+    {
+      "expected": "null",
+      "actual": "unclear",
+      "count": 1
+    },
+    {
+      "expected": "positive",
+      "actual": "positive",
+      "count": 1
+    },
+    {
+      "expected": "positive",
+      "actual": "unclear",
+      "count": 2
+    }
+  ],
+  "rows": [
+    {
+      "record_id": "HEDB001",
+      "pmid": "19593179",
+      "taxon": "Matricaria recutita",
+      "expected_direction": "positive",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB002",
+      "pmid": "21775910",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "positive",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB003",
+      "pmid": "11744467",
+      "taxon": "Serenoa repens",
+      "expected_direction": "positive",
+      "actual_direction": "positive",
+      "direction_match": true,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [
+        "significant improvement"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB004",
+      "pmid": "21173411",
+      "taxon": "Echinacea species",
+      "expected_direction": "null",
+      "actual_direction": "null",
+      "direction_match": true,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "randomized_controlled_trial",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [
+        "not statistically significant"
+      ],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB005",
+      "pmid": "19609225",
+      "taxon": "Actaea racemosa / Cimicifuga racemosa",
+      "expected_direction": "null",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "randomized_controlled_trial",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB006",
+      "pmid": "18482867",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "null",
+      "actual_direction": "null",
+      "direction_match": true,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [],
+      "matched_null": [
+        "no statistically significant difference"
+      ],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB007",
+      "pmid": "11308434",
+      "taxon": "Hypericum perforatum",
+      "expected_direction": "negative",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB008",
+      "pmid": "19017911",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "negative",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "clinical_trial",
+      "study_design_match": false,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB009",
+      "pmid": "11939866",
+      "taxon": "Hypericum perforatum",
+      "expected_direction": "negative",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "randomized_controlled_trial",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB010",
+      "pmid": "27912875",
+      "taxon": "Matricaria chamomilla",
+      "expected_direction": "mixed",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "randomized_controlled_trial",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB011",
+      "pmid": "17940604",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "mixed",
+      "actual_direction": "null",
+      "direction_match": false,
+      "expected_study_design": "randomized_controlled_trial",
+      "actual_study_design": "randomized_controlled_trial",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [
+        "not statistically significant"
+      ],
+      "matched_negative": []
+    },
+    {
+      "record_id": "HEDB012",
+      "pmid": "20347389",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "mixed",
+      "actual_direction": "unclear",
+      "direction_match": false,
+      "expected_study_design": "review",
+      "actual_study_design": "review",
+      "study_design_match": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    }
+  ],
+  "interpretation": "This is a frozen baseline diagnostic on real human-study language. No accuracy threshold is used to tune or modify production logic."
+}

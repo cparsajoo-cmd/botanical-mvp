@@ -1,0 +1,150 @@
+{
+  "benchmark_version": "human-evidence-direction/1",
+  "curated_date": "2026-08-07",
+  "purpose": "Benchmark the existing evidence_interpretation classifier on real human-study language without changing production logic or GoldCase truth.",
+  "label_policy": {
+    "positive": "The source reports efficacy/benefit on its relevant clinical conclusion or principal result.",
+    "null": "The source reports no statistically significant treatment-placebo difference on the relevant endpoint(s), without a stronger evidence-against-efficacy conclusion.",
+    "negative": "The source conclusion explicitly states that the botanical was not effective or that the study failed to support efficacy.",
+    "mixed": "The same source reports materially different directions across important outcomes or a significant secondary result alongside a non-significant primary result."
+  },
+  "records": [
+    {
+      "record_id": "HEDB001",
+      "taxon": "Matricaria recutita",
+      "source_title": "A randomized, double-blind, placebo-controlled trial of oral Matricaria recutita extract therapy for generalized anxiety disorder",
+      "pmid": "19593179",
+      "doi": "10.1097/JCP.0b013e3181ac6271",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19593179/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "positive",
+      "benchmark_text": "Randomized, double-blind, placebo-controlled trial. We observed a significantly greater reduction in mean total HAM-A score during chamomile versus placebo therapy.",
+      "rationale": "The primary anxiety outcome improved significantly more with chamomile than placebo."
+    },
+    {
+      "record_id": "HEDB002",
+      "taxon": "Valeriana officinalis",
+      "source_title": "Effect of valerian on sleep quality in postmenopausal women: a randomized placebo-controlled clinical trial",
+      "pmid": "21775910",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21775910/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "positive",
+      "benchmark_text": "Randomized placebo-controlled clinical trial. A statistically significant change was reported in sleep quality for valerian compared with placebo.",
+      "rationale": "The trial reports statistically significant improvement in sleep quality with valerian."
+    },
+    {
+      "record_id": "HEDB003",
+      "taxon": "Serenoa repens",
+      "source_title": "Randomized, double-blind, placebo-controlled trial of saw palmetto in men with lower urinary tract symptoms",
+      "pmid": "11744467",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11744467/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "positive",
+      "benchmark_text": "Randomized, double-blind, placebo-controlled trial. Saw palmetto led to a statistically significant improvement in urinary symptoms compared with placebo.",
+      "rationale": "The source conclusion reports statistically significant improvement in urinary symptoms."
+    },
+    {
+      "record_id": "HEDB004",
+      "taxon": "Echinacea species",
+      "source_title": "Echinacea for treating the common cold: a randomized trial",
+      "pmid": "21173411",
+      "doi": "10.7326/0003-4819-153-12-201012210-00003",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21173411/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "null",
+      "benchmark_text": "Randomized controlled trial. Illness duration and severity were not statistically significant with echinacea compared with placebo.",
+      "rationale": "The primary clinical differences versus placebo were not statistically significant."
+    },
+    {
+      "record_id": "HEDB005",
+      "taxon": "Actaea racemosa / Cimicifuga racemosa",
+      "source_title": "Safety and efficacy of black cohosh and red clover for the management of vasomotor symptoms: a randomized controlled trial",
+      "pmid": "19609225",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19609225/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "null",
+      "benchmark_text": "Randomized controlled trial. Black cohosh did not significantly reduce the frequency of vasomotor symptoms compared with placebo.",
+      "rationale": "Black cohosh did not significantly outperform placebo for the primary vasomotor outcome."
+    },
+    {
+      "record_id": "HEDB006",
+      "taxon": "Valeriana officinalis",
+      "source_title": "A randomized clinical trial of valerian fails to improve self-reported, polysomnographic, and actigraphic sleep in older women with insomnia",
+      "pmid": "18482867",
+      "doi": "10.1016/j.sleep.2008.02.001",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18482867/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "null",
+      "benchmark_text": "Randomized, double-blind, placebo-controlled trial. There were no statistically significant differences between valerian and placebo on measures of sleep latency or sleep quality.",
+      "rationale": "The trial reports no statistically significant differences across the measured sleep outcomes."
+    },
+    {
+      "record_id": "HEDB007",
+      "taxon": "Hypericum perforatum",
+      "source_title": "Effectiveness of St John's wort in major depression: a randomized controlled trial",
+      "pmid": "11308434",
+      "doi": "10.1001/jama.285.15.1978",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11308434/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "negative",
+      "benchmark_text": "Randomized, double-blind, placebo-controlled clinical trial. In this study, St John's wort was not effective for treatment of major depression.",
+      "rationale": "The source conclusion explicitly states that St John's wort was not effective."
+    },
+    {
+      "record_id": "HEDB008",
+      "taxon": "Ginkgo biloba",
+      "source_title": "Ginkgo biloba for prevention of dementia: a randomized controlled trial",
+      "pmid": "19017911",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19017911/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "negative",
+      "benchmark_text": "Randomized, double-blind, placebo-controlled clinical trial. Ginkgo biloba was not effective in reducing the incidence of dementia or Alzheimer disease.",
+      "rationale": "The source conclusion explicitly states that Ginkgo was not effective for dementia prevention."
+    },
+    {
+      "record_id": "HEDB009",
+      "taxon": "Hypericum perforatum",
+      "source_title": "Effect of Hypericum perforatum (St John's wort) in major depressive disorder: a randomized controlled trial",
+      "pmid": "11939866",
+      "doi": "10.1001/jama.287.14.1807",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11939866/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "negative",
+      "benchmark_text": "Double-blind randomized placebo-controlled trial. This study fails to support the efficacy of Hypericum perforatum in moderately severe major depression.",
+      "rationale": "The trial conclusion explicitly says the study fails to support efficacy."
+    },
+    {
+      "record_id": "HEDB010",
+      "taxon": "Matricaria chamomilla",
+      "source_title": "Long-term chamomile treatment for generalized anxiety disorder: A randomized clinical trial",
+      "pmid": "27912875",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27912875/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "mixed",
+      "benchmark_text": "Randomized controlled trial. Chamomile significantly reduced GAD symptoms, but did not significantly reduce the rate of relapse.",
+      "rationale": "Symptoms improved significantly, while the relapse-rate primary outcome was not significantly reduced."
+    },
+    {
+      "record_id": "HEDB011",
+      "taxon": "Valeriana officinalis",
+      "source_title": "A televised, web-based randomised trial of an herbal remedy (valerian) for insomnia",
+      "pmid": "17940604",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17940604/",
+      "study_design_expected": "randomized_controlled_trial",
+      "direction_expected": "mixed",
+      "benchmark_text": "Randomized trial. The primary sleep-quality difference was not statistically significant, while significantly more valerian participants rated sleep better or much better.",
+      "rationale": "The primary outcome was non-significant but a global self-assessment outcome favored valerian significantly."
+    },
+    {
+      "record_id": "HEDB012",
+      "taxon": "Valeriana officinalis",
+      "source_title": "Effectiveness of Valerian on insomnia: a meta-analysis of randomized placebo-controlled trials",
+      "pmid": "20347389",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20347389/",
+      "study_design_expected": "review",
+      "direction_expected": "mixed",
+      "benchmark_text": "Meta-analysis of randomized placebo-controlled trials. Subjective results suggested benefit, although effectiveness was not demonstrated with quantitative or objective measurements.",
+      "rationale": "The meta-analysis found subjective qualitative benefit but not objective quantitative efficacy."
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+{
+  "diagnostic_version": "gold-corpus-e2e-diagnostics/1",
+  "source_pilot_run": "gold_corpus/e2e_snapshots/pilot_evaluation_run.json",
+  "direction_diagnostics": {
+    "raw_mixed_domain_accuracy": {
+      "numerator": 1,
+      "denominator": 9,
+      "value": 0.1111111111111111
+    },
+    "indication_domain_accuracy": {
+      "numerator": 1,
+      "denominator": 6,
+      "value": 0.16666666666666666
+    },
+    "study_result_eligible_accuracy": {
+      "numerator": 1,
+      "denominator": 3,
+      "value": 0.3333333333333333
+    },
+    "study_result_eligible_source_types": [
+      "SYSTEMATIC_REVIEW"
+    ],
+    "rows": [
+      {
+        "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+        "domain": "Safety",
+        "assertion_type": "Contraindication",
+        "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_herba",
+        "source_type": "EMA_HMPC",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+        "domain": "Regulatory status",
+        "assertion_type": "Prohibition",
+        "reference_id": "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition",
+        "source_type": "NATIONAL_REGULATORY",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+        "domain": "Regulatory status",
+        "assertion_type": "Restriction",
+        "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction",
+        "source_type": "NATIONAL_REGULATORY",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG",
+        "source_type": "WHO_MONOGRAPH",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+        "source_type": "ESCOP_MONOGRAPH",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": true
+      },
+      {
+        "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "expected": "negative",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": true
+      },
+      {
+        "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "expected": "unclear",
+        "actual": "unclear",
+        "match": true,
+        "indication_domain": true,
+        "study_result_eligible": true
+      },
+      {
+        "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+        "source_type": "EMA_HMPC",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      }
+    ],
+    "excluded_from_study_result_metric": [
+      {
+        "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+        "domain": "Safety",
+        "assertion_type": "Contraindication",
+        "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_herba",
+        "source_type": "EMA_HMPC",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+        "domain": "Regulatory status",
+        "assertion_type": "Prohibition",
+        "reference_id": "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition",
+        "source_type": "NATIONAL_REGULATORY",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+        "domain": "Regulatory status",
+        "assertion_type": "Restriction",
+        "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction",
+        "source_type": "NATIONAL_REGULATORY",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": false,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG",
+        "source_type": "WHO_MONOGRAPH",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+        "source_type": "ESCOP_MONOGRAPH",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      },
+      {
+        "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+        "domain": "Indication/Evidence",
+        "assertion_type": "Supports indication",
+        "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+        "source_type": "EMA_HMPC",
+        "expected": "positive",
+        "actual": "unclear",
+        "match": false,
+        "indication_domain": true,
+        "study_result_eligible": false
+      }
+    ],
+    "interpretation": "The mixed-domain metric is descriptive only. Safety/regulatory assertion presence and monograph indication statements are not equivalent to study-result direction. The narrower study-result diagnostic is reported separately without changing production classifiers."
+  },
+  "safety_diagnostics": {
+    "critical_source_recall": {
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1.0
+    },
+    "serious_safety_false_negative_rate": {
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1.0
+    },
+    "cases": [
+      {
+        "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+        "safety_critical_total": 1,
+        "safety_critical_retrieved": 1,
+        "safety_gate_failed": false,
+        "false_negative": true,
+        "failure_code": "SERIOUS_SAFETY_EVIDENCE_IGNORED",
+        "gate_result": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "contraindicated"
+        }
+      }
+    ],
+    "causal_interpretation": "If a serious safety critical source is retrieved but the safety gate does not fail, the miss is downstream of retrieval. This diagnostic records the failure; it does not tune the engine."
+  }
+}

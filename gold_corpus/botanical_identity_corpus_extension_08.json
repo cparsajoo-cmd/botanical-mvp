@@ -1,0 +1,141 @@
+{
+  "corpus_extension_id": "botanical-identity-corpus-extension-08",
+  "created_date": "2026-08-07",
+  "record_count": 12,
+  "purpose": "Expand botanical identity coverage with official Kew POWO accepted-name and synonym mappings.",
+  "source_policy": "Only official Plants of the World Online taxonomic pages are used. No medicinal-use inference is made from taxonomy.",
+  "records": [
+    {
+      "record_id": "id08_echinacea_angustifolia",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:87143-2",
+      "submitted_name": "Echinacea angustifolia DC.",
+      "accepted_name": "Echinacea angustifolia DC.",
+      "taxonomic_status": "accepted",
+      "family": "Asteraceae",
+      "identity_note": "Accepted species; POWO lists Brauneria angustifolia and Echinacea pallida var. angustifolia among its synonyms.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_valeriana_officinalis",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/860012-1",
+      "submitted_name": "Valeriana officinalis L.",
+      "accepted_name": "Valeriana officinalis L.",
+      "taxonomic_status": "accepted",
+      "family": "Caprifoliaceae",
+      "identity_note": "Accepted species in POWO; the page also records accepted infraspecific taxa.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_hypericum_perforatum",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:433719-1",
+      "submitted_name": "Hypericum perforatum L.",
+      "accepted_name": "Hypericum perforatum L.",
+      "taxonomic_status": "accepted",
+      "family": "Hypericaceae",
+      "identity_note": "Accepted species in POWO, with accepted infraspecific taxa and synonym data.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_passiflora_incarnata",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:675096-1",
+      "submitted_name": "Passiflora incarnata L.",
+      "accepted_name": "Passiflora incarnata L.",
+      "taxonomic_status": "accepted",
+      "family": "Passifloraceae",
+      "identity_note": "Accepted species; POWO records several historical synonyms including Passiflora keri.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_rhodiola_rosea",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:315148-2",
+      "submitted_name": "Rhodiola rosea L.",
+      "accepted_name": "Rhodiola rosea L.",
+      "taxonomic_status": "accepted",
+      "family": "Crassulaceae",
+      "identity_note": "Accepted species; POWO lists numerous synonyms including historical Sedum names.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_melissa_officinalis",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:450084-1",
+      "submitted_name": "Melissa officinalis L.",
+      "accepted_name": "Melissa officinalis L.",
+      "taxonomic_status": "accepted",
+      "family": "Lamiaceae",
+      "identity_note": "Accepted species; POWO lists historical synonyms including Faucibarba officinalis and Mutelia officinalis.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_boswellia_serrata",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:127067-1",
+      "submitted_name": "Boswellia serrata Roxb.",
+      "accepted_name": "Boswellia serrata Roxb.",
+      "taxonomic_status": "accepted",
+      "family": "Burseraceae",
+      "identity_note": "Accepted species; POWO lists Boswellia glabra and Boswellia thurifera among historical synonyms.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_curcuma_longa",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:796451-1",
+      "submitted_name": "Curcuma longa L.",
+      "accepted_name": "Curcuma longa L.",
+      "taxonomic_status": "accepted",
+      "family": "Zingiberaceae",
+      "identity_note": "Accepted species in POWO.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_serenoa_repens",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:941782-1",
+      "submitted_name": "Serenoa repens (W.Bartram) Small",
+      "accepted_name": "Serenoa repens (W.Bartram) Small",
+      "taxonomic_status": "accepted",
+      "family": "Arecaceae",
+      "identity_note": "Accepted species; POWO records historical synonyms including Corypha repens and Chamaerops serrulata.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_panax_ginseng",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:91472-1",
+      "submitted_name": "Panax ginseng C.A.Mey.",
+      "accepted_name": "Panax ginseng C.A.Mey.",
+      "taxonomic_status": "accepted",
+      "family": "Araliaceae",
+      "identity_note": "Accepted species; POWO records Aralia ginseng as a homotypic synonym.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_cimicifuga_racemosa_synonym",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:1210182-2",
+      "submitted_name": "Cimicifuga racemosa (L.) Nutt.",
+      "accepted_name": "Actaea racemosa L.",
+      "taxonomic_status": "synonym",
+      "family": "Ranunculaceae",
+      "identity_note": "POWO treats Cimicifuga racemosa as a synonym of the accepted name Actaea racemosa.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id08_methysticum_methysticum_synonym",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/677760-1",
+      "submitted_name": "Methysticum methysticum (G.Forst.) A.Lyons",
+      "accepted_name": "Piper methysticum G.Forst.",
+      "taxonomic_status": "synonym",
+      "family": "Piperaceae",
+      "identity_note": "POWO treats Methysticum methysticum as a synonym of the accepted name Piper methysticum.",
+      "verification_level": "official_kew_taxonomic_page"
+    }
+  ]
+}

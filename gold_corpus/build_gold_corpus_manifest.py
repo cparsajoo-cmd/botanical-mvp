@@ -33,6 +33,7 @@ CURATION: dict[int, dict[str, Any]] = {
     17: {"question": "What is the accepted botanical identity of Matricaria chamomilla and its Chamomilla recutita synonym?", "rationale": "Botanical identity/synonym benchmark from Kew POWO."},
     18: {"question": "What UK supply restriction applies to internal-use herbal medicines containing Ephedra sinica at specified dose thresholds?", "rationale": "Dose-specific national regulatory restriction benchmark."},
     19: {"question": "What clinically supported use does the WHO monograph recognize for Panax ginseng root?", "rationale": "First WHO_MONOGRAPH governing source in the corpus; closes the WHO source-coverage gap."},
+    20: {"question": "What therapeutic indication does the ESCOP monograph recognize for Echinacea purpurea flowering aerial parts?", "rationale": "First ESCOP_MONOGRAPH governing source in the corpus; closes the ESCOP source-coverage gap using only claims visible on the official public ESCOP summary."},
 }
 
 STUDY_DESIGN_BY_SOURCE = {
@@ -41,6 +42,7 @@ STUDY_DESIGN_BY_SOURCE = {
     "TAXONOMIC_AUTHORITY": "taxonomic_database",
     "NATIONAL_REGULATORY": "national_regulatory_instrument_or_guidance",
     "WHO_MONOGRAPH": "who_monograph_with_clinical_data_supported_use",
+    "ESCOP_MONOGRAPH": "escop_monograph",
 }
 
 
@@ -158,7 +160,7 @@ def build_manifest() -> dict:
             entry["dose"] = {"single_dose_threshold_mg": 600, "daily_dose_threshold_mg": 1800, "meaning": "supply-channel thresholds, not absolute lawful maxima"}
         entries.append(entry)
     return {
-        "gold_corpus_version": "0.2.0",
+        "gold_corpus_version": "0.3.0",
         "generated_date": "2026-08-07",
         "protocol_version": "VALIDATION_PROTOCOL.md v0.3",
         "active_case_count": len(entries),

@@ -1,8 +1,8 @@
 {
-  "gold_corpus_version": "0.2.0",
+  "gold_corpus_version": "0.3.0",
   "generated_date": "2026-08-07",
   "protocol_version": "VALIDATION_PROTOCOL.md v0.3",
-  "active_case_count": 18,
+  "active_case_count": 19,
   "abandoned_case_numbers": [
     2
   ],
@@ -1019,6 +1019,57 @@
       },
       "expected_prohibited_decisions": [],
       "reference_rationale": "First WHO_MONOGRAPH governing source in the corpus; closes the WHO source-coverage gap.",
+      "reviewer": "internal_scientific_curation_pending_external_expert_review",
+      "review_date": "2026-08-07",
+      "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",
+      "engine_evidence_attached": false,
+      "locked": false,
+      "e2e_snapshot_status": "NOT_CAPTURED"
+    },
+    {
+      "case_number": 20,
+      "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+      "question": "What therapeutic indication does the ESCOP monograph recognize for Echinacea purpurea flowering aerial parts?",
+      "indication": "recurrent infections of the upper respiratory tract (common colds)",
+      "botanical_identity": "Echinacea purpurea (L.) Moench",
+      "scientific_name": "Echinacea purpurea (L.) Moench",
+      "plant_part": "flowering aerial parts",
+      "preparation": null,
+      "dose": null,
+      "population": null,
+      "route": null,
+      "jurisdiction": null,
+      "domain": "Indication/Evidence",
+      "assertion_type": "Supports indication",
+      "assertion_state": "Present",
+      "critical_sources": [
+        {
+          "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+          "source_type": "ESCOP_MONOGRAPH",
+          "document_date": "2021-06-09",
+          "source_locator": "ESCOP public monograph summary page, therapeutic indications section: https://www.escop.com/downloads/echinaceae-purpureae-herba-purple-coneflower-herb/",
+          "expected_study_design": "escop_monograph",
+          "expected_evidence_direction": "positive",
+          "expected_applicability": "applicable_for_resolved_domain",
+          "critical_retrieval_requirement": true,
+          "safety_critical": false,
+          "regulatory_critical": false
+        }
+      ],
+      "supporting_sources": [],
+      "known_irrelevant_sources": [],
+      "known_duplicate_sources": [],
+      "expected_evidence_direction": "positive",
+      "expected_study_design": "escop_monograph",
+      "expected_applicability": "APPLICABLE",
+      "expected_safety_status": "NOT_APPLICABLE",
+      "expected_regulatory_status": "NOT_APPLICABLE",
+      "expected_decision_direction": {
+        "value": "Positive",
+        "status": "DERIVABLE_FROM_GROUND_TRUTH_BUT_NOT_FROZEN_IN_GOLDCASE_EXPECTED_OUTPUT"
+      },
+      "expected_prohibited_decisions": [],
+      "reference_rationale": "First ESCOP_MONOGRAPH governing source in the corpus; closes the ESCOP source-coverage gap using only claims visible on the official public ESCOP summary.",
       "reviewer": "internal_scientific_curation_pending_external_expert_review",
       "review_date": "2026-08-07",
       "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",

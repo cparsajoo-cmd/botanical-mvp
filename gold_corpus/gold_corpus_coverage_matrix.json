@@ -1,6 +1,6 @@
 {
   "generated_date": "2026-08-07",
-  "active_case_count": 18,
+  "active_case_count": 19,
   "features": {
     "EMA_HMPC": {
       "case_numbers": [
@@ -25,9 +25,11 @@
       "status": "COVERED"
     },
     "ESCOP": {
-      "case_numbers": [],
-      "count": 0,
-      "status": "GAP"
+      "case_numbers": [
+        20
+      ],
+      "count": 1,
+      "status": "COVERED"
     },
     "FDA": {
       "case_numbers": [],
@@ -137,9 +139,10 @@
         10,
         11,
         12,
-        19
+        19,
+        20
       ],
-      "count": 5,
+      "count": 6,
       "status": "COVERED"
     },
     "Negative_Human_Evidence": {
@@ -181,6 +184,7 @@
     "Source_Unavailable": "Supported by End-to-End framework/tests but not yet represented by a real locked corpus source-unavailable case.",
     "RCT": "RCTs appear inside systematic reviews but are not independently curated GoldSourceExpectations; current precedence does not permit RCT as governing INDICATION_EVIDENCE source.",
     "Observational_Studies": "No independently curated observational Gold source.",
-    "WHO": "Case 019 is the first active WHO_MONOGRAPH governing source (WHO Monographs Vol.1, Radix Ginseng)."
+    "WHO": "Case 019 is the first active WHO_MONOGRAPH governing source (WHO Monographs Vol.1, Radix Ginseng).",
+    "ESCOP": "Case 020 is the first active ESCOP_MONOGRAPH governing source (ESCOP 2021 Echinaceae purpureae herba). Only claims visible on the official public summary are curated."
   }
 }

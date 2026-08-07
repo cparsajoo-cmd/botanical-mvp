@@ -47,8 +47,13 @@ def test_critical_sources_match_ground_truth_resolution():
         assert len(case.resolved_outcomes) == 1
         outcome = case.resolved_outcomes[0]
         manifest_ids = {s["reference_id"] for s in case_meta["critical_sources"]}
+        case_reference_ids = {g.reference.reference_id for g in case.references}
+        assert manifest_ids <= case_reference_ids
         if outcome.selected_reference_id is not None:
-            assert manifest_ids == {outcome.selected_reference_id}
+            # The selected reference is always critical. A benchmark may also
+            # explicitly require lower-ranked applicable references when the
+            # scientific objective is to test cross-rank precedence itself.
+            assert outcome.selected_reference_id in manifest_ids
         else:
             assert outcome.conflicting_reference_ids
             assert manifest_ids == set(outcome.conflicting_reference_ids)
@@ -113,6 +118,34 @@ def test_case_21_requires_both_conflicting_critical_sources_for_e2e_retrieval():
         notes="One of two critical same-rank systematic reviews.",
         source_type=first["source_type"],
         target_indication=meta["indication"] or "",
+    )
+    q = ValidationQuestion(meta["question"], meta["indication"] or "", "unspecified", meta["jurisdiction"] or "International")
+    result = run_end_to_end_case(
+        case, q, GOLD_SOURCE_SETS[case.case_id], FrozenSnapshotRetriever([rec]),
+        candidate_discovery=lambda _q: [case.validation_unit.taxon],
+    )
+    assert any(f.code == "CRITICAL_SOURCE_MISSED" for f in result.failures)
+    assert result.source_counts["critical_retrieved"] == 1
+
+
+def test_case_22_is_cross_rank_precedence_not_conflict():
+    case = _case_by_number(22)
+    meta = next(c for c in MANIFEST["cases"] if c["case_number"] == 22)
+    outcome = case.resolved_outcomes[0]
+    assert outcome.resolution_status.value == "Selected"
+    assert outcome.selected_reference_id == "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR"
+    assert len(meta["critical_sources"]) == 2
+    assert {s["source_type"] for s in meta["critical_sources"]} == {"SYSTEMATIC_REVIEW", "EMA_HMPC"}
+
+
+def test_case_22_requires_both_cross_rank_sources_for_e2e_retrieval():
+    case = _case_by_number(22)
+    meta = next(c for c in MANIFEST["cases"] if c["case_number"] == 22)
+    first = meta["critical_sources"][0]
+    rec = RetrievedEvidence(
+        reference_id=first["reference_id"], scientific_name=case.validation_unit.taxon,
+        notes="Only one of two critical cross-rank references retrieved.",
+        source_type=first["source_type"], target_indication=meta["indication"] or "",
     )
     q = ValidationQuestion(meta["question"], meta["indication"] or "", "unspecified", meta["jurisdiction"] or "International")
     result = run_end_to_end_case(

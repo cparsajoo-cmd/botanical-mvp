@@ -35,6 +35,14 @@ CURATION: dict[int, dict[str, Any]] = {
     19: {"question": "What clinically supported use does the WHO monograph recognize for Panax ginseng root?", "rationale": "First WHO_MONOGRAPH governing source in the corpus; closes the WHO source-coverage gap."},
     20: {"question": "What therapeutic indication does the ESCOP monograph recognize for Echinacea purpurea flowering aerial parts?", "rationale": "First ESCOP_MONOGRAPH governing source in the corpus; closes the ESCOP source-coverage gap using only claims visible on the official public ESCOP summary."},
     21: {"question": "Do equally ranked systematic reviews agree on whether Serenoa repens improves lower urinary tract symptoms due to benign prostatic enlargement?", "rationale": "First real multi-reference GoldCase in which two applicable SYSTEMATIC_REVIEW sources carry opposing verdicts and must resolve to REFERENCE_CONFLICT rather than being silently ranked by recency."},
+    22: {
+        "question": "When a systematic review and an EMA/HMPC monograph disagree on Valeriana officinalis for insomnia, which reference governs under the existing INDICATION_EVIDENCE hierarchy?",
+        "rationale": "First cross-rank precedence benchmark: a SYSTEMATIC_REVIEW with an inconclusive verdict must outrank a newer EMA_HMPC monograph without creating a same-rank conflict.",
+        "critical_reference_ids": [
+            "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+            "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+        ],
+    },
 }
 
 STUDY_DESIGN_BY_SOURCE = {
@@ -97,7 +105,10 @@ def build_manifest() -> dict:
         # reference or, for an unresolved same-rank conflict, every reference
         # explicitly named by the precedence resolution. This keeps the corpus
         # generic and avoids case-specific benchmark rules.
-        if outcome.selected_reference_id:
+        curated_critical_ids = cur.get("critical_reference_ids")
+        if curated_critical_ids:
+            critical_ids = list(curated_critical_ids)
+        elif outcome.selected_reference_id:
             critical_ids = [outcome.selected_reference_id]
         elif outcome.conflicting_reference_ids:
             critical_ids = list(outcome.conflicting_reference_ids)

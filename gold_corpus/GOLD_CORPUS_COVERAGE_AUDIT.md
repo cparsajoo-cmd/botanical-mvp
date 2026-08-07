@@ -71,3 +71,14 @@ Both references are represented using the already-approved `SYSTEMATIC_REVIEW` s
 ## Integrity rule
 
 `gold_cases/` remains the source of truth for curated Gold Cases. `gold_corpus/` is a derived benchmark layer. The corpus manifest must be regenerated from the case registry and Gold Case builders rather than becoming an independent manually edited source of case truth.
+
+## Case 022 addition — cross-rank precedence (2026-08-07)
+
+Case 022 adds a real cross-rank INDICATION_EVIDENCE benchmark for *Valeriana officinalis* L. and insomnia:
+
+- Stevinson & Ernst 2000, SYSTEMATIC_REVIEW, PMID 10767649, DOI 10.1016/S1389-9457(99)00015-5 — conclusion: evidence for valerian as a treatment for insomnia is inconclusive.
+- EMA/HMPC/150848/2015, EMA_HMPC — recognizes Valeriana officinalis L., radix for relief of sleep disorders.
+
+Both references are independently applicable to the benchmark's narrow insomnia overlap. Under the existing source hierarchy, SYSTEMATIC_REVIEW outranks EMA_HMPC, so the systematic-review `INSUFFICIENT` verdict is selected. This is not a same-rank conflict and no production precedence rule was changed.
+
+Both references are marked CRITICAL for End-to-End retrieval because the benchmark cannot test cross-rank precedence if only the winning source is retrieved.

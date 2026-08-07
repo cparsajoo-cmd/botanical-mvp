@@ -1,0 +1,119 @@
+{
+  "corpus_extension_id": "authoritative-monograph-corpus-extension-14",
+  "created_date": "2026-08-07",
+  "record_count": 6,
+  "purpose": "Close the minimum Gold Corpus count gap using new, non-overlapping official EMA/HMPC monograph records rather than low-value duplicate human studies.",
+  "source_policy": "Only claims visible on official EMA public herbal-medicine pages are represented. No therapeutic claim is inferred beyond the EMA page.",
+  "governance_note": "All six EMA URLs were checked against the current project before construction and were absent.",
+  "records": [
+    {
+      "record_id": "auth14_ema_eucalypti_folium",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/eucalypti-folium",
+      "source_title": "Eucalypti folium - herbal medicinal product",
+      "botanical_name": "Eucalyptus globulus Labill.",
+      "herbal_drug": "Eucalyptus leaf",
+      "plant_part": "leaf",
+      "therapeutic_area": [
+        "cough and cold"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/892618/2011",
+      "public_summary_reference_number": "EMA/HMPC/300235/2013",
+      "claim_scope": "HMPC traditional-use conclusion for relief of cough associated with a cold.",
+      "verification_level": "official_ema_public_page"
+    },
+    {
+      "record_id": "auth14_ema_primulae_radix",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/primulae-radix",
+      "source_title": "Primulae radix - herbal medicinal product",
+      "botanical_name": "Primula veris L.; Primula elatior (L.) Hill",
+      "herbal_drug": "Primula root",
+      "plant_part": "root",
+      "therapeutic_area": [
+        "cough and cold"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/104095/2012",
+      "public_summary_reference_number": null,
+      "claim_scope": "Official HMPC inventory record identifies Primula root in the cough-and-cold therapeutic area with a final EU herbal monograph.",
+      "verification_level": "official_ema_public_page"
+    },
+    {
+      "record_id": "auth14_ema_primulae_flos",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/primulae-flos",
+      "source_title": "Primulae flos - herbal medicinal product",
+      "botanical_name": "Primula veris L.; Primula elatior (L.) Hill",
+      "herbal_drug": "Primula flower",
+      "plant_part": "flower",
+      "therapeutic_area": [
+        "cough and cold"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/136582/2012",
+      "public_summary_reference_number": "EMA/423706/2016",
+      "claim_scope": "HMPC traditional-use conclusion for primula flower as an expectorant for cough associated with colds.",
+      "verification_level": "official_ema_public_page"
+    },
+    {
+      "record_id": "auth14_ema_pelargonii_radix",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/pelargonii-radix",
+      "source_title": "Pelargonii radix - herbal medicinal product",
+      "botanical_name": "Pelargonium sidoides DC; Pelargonium reniforme Curt.",
+      "herbal_drug": "Pelargonium root",
+      "plant_part": "root",
+      "therapeutic_area": [
+        "cough and cold"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/648100/2022",
+      "public_summary_reference_number": "EMA/421085/2018",
+      "claim_scope": "HMPC traditional-use conclusion for Pelargonium root preparations for symptoms of the common cold.",
+      "verification_level": "official_ema_public_page"
+    },
+    {
+      "record_id": "auth14_ema_myrtilli_fructus_recens",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/myrtilli-fructus-recens",
+      "source_title": "Myrtilli fructus recens - herbal medicinal product",
+      "botanical_name": "Vaccinium myrtillus L.",
+      "herbal_drug": "Fresh bilberry fruit",
+      "plant_part": "fresh fruit",
+      "therapeutic_area": [
+        "circulatory disorders"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/375808/2014",
+      "public_summary_reference_number": "EMA/680058/2015",
+      "claim_scope": "HMPC traditional-use conclusion for minor circulatory symptoms including leg discomfort/heaviness and minor skin bleeding from small vessels.",
+      "verification_level": "official_ema_public_page"
+    },
+    {
+      "record_id": "auth14_ema_myrtilli_fructus_siccus",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/myrtilli-fructus-siccus",
+      "source_title": "Myrtilli fructus siccus - herbal medicinal product",
+      "botanical_name": "Vaccinium myrtillus L.",
+      "herbal_drug": "Dried bilberry fruit",
+      "plant_part": "dried fruit",
+      "therapeutic_area": [
+        "mouth and throat disorders",
+        "gastrointestinal disorders"
+      ],
+      "assessment_status": "F: Assessment finalised",
+      "assessment_outcome": "European Union herbal monograph",
+      "adopted_reference_number": "EMA/HMPC/678995/2013",
+      "public_summary_reference_number": "EMA/685398/2015",
+      "claim_scope": "HMPC traditional-use conclusion for mild diarrhoea and minor inflammation of the lining of the mouth.",
+      "verification_level": "official_ema_public_page"
+    }
+  ]
+}

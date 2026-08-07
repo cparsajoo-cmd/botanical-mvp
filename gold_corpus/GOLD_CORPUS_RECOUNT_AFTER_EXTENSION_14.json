@@ -1,0 +1,9 @@
+{
+  "independent_records_after_extension_13": 175,
+  "extension_14_added": 6,
+  "independent_records_after_extension_14": 181,
+  "minimum_target": 180,
+  "minimum_target_reached": true,
+  "records_above_minimum_target": 1,
+  "governance_status": "STOP_COUNT_CHASING_BEGIN_FREEZE_AND_COVERAGE_AUDIT"
+}

@@ -1,8 +1,11 @@
-
 from __future__ import annotations
 import json
 from pathlib import Path
-from human_evidence_direction_extension_01 import evaluate
+
+try:
+    from .human_evidence_direction_extension_01 import evaluate
+except ImportError:  # direct script execution from repository root
+    from gold_corpus.human_evidence_direction_extension_01 import evaluate
 
 if __name__ == "__main__":
     result = evaluate()

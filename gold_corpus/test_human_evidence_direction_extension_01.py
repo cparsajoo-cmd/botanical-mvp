@@ -1,5 +1,5 @@
 
-from human_evidence_direction_extension_01 import load_records, evaluate
+from gold_corpus.human_evidence_direction_extension_01 import load_records, evaluate
 
 def test_extension_has_12_real_pubmed_records():
     records = load_records()

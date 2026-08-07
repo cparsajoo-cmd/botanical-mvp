@@ -661,8 +661,26 @@ def _preparation_applicability(record: dict | None, selected_dosage_form: str) -
         return "Mismatch", [f"Selected dosage form '{selected_dosage_form}' differs from reported preparation '{record.get('preparation')}'"]
     return "Unknown", ["Reported preparation could not be mapped to selected dosage form"]
 
-def discover_indication_candidates(engine, indication: str, dosage_form: str = "", market: str = "", product_type: str = "") -> pd.DataFrame:
-    """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence."""
+def discover_indication_candidates(
+    engine, indication: str, dosage_form: str = "", market: str = "",
+    product_type: str = "", progress_callback=None,
+) -> pd.DataFrame:
+    """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence.
+
+    ``progress_callback`` is an optional presentation hook used by the Streamlit
+    Step 5 UI. It receives ``(stage, current, total, message)`` and never feeds
+    back into scoring, filtering, ranking, or scientific interpretation.
+    """
+
+    def _progress(stage: str, current: int = 0, total: int = 0, message: str = ""):
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, current, total, message)
+        except Exception:
+            # UI telemetry must never be able to change or abort scientific
+            # execution. A broken/closed Streamlit progress element is ignored.
+            pass
     from botanical_rd_candidate_engine import OUTPUT_COLUMNS
 
     _t0 = time.perf_counter()
@@ -670,6 +688,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
     candidates = engine._candidate_frame()
     _perf(f"engine._candidate_frame() done candidate_plants={len(candidates)} elapsed={time.perf_counter() - _t0:.3f}")
+    _progress(
+        "candidate_universe", 0, len(candidates),
+        f"Candidate universe prepared: {len(candidates)} plants.",
+    )
     if candidates.empty:
         _perf(f"discover_indication_candidates done (empty candidates) elapsed={time.perf_counter() - _t0:.3f}")
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
@@ -685,11 +707,19 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     # the corpus-adaptive engine finds no match at all; it never overrides
     # a corpus-adaptive match and is never required.
     evidence_index = _build_plant_evidence_index(engine)
+    _progress(
+        "evidence_index", 0, len(candidates),
+        f"Evidence index built for {len(evidence_index)} plants.",
+    )
     _t_profile = time.perf_counter()
     relevance_profile = build_indication_profile(
         indication, corpus_texts_from_records(evidence_index),
     )
     _perf(f"build_indication_profile() done elapsed={time.perf_counter() - _t_profile:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
+    _progress(
+        "profile", 0, len(candidates),
+        "Indication relevance profile prepared.",
+    )
     assist_family = _resolve_indication_terms(indication)
     assist_terms: tuple[str, ...] = tuple(dict.fromkeys(
         (*assist_family[0], *assist_family[1])
@@ -706,6 +736,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     _perf(
         f"embed_query() done have_embedding={bool(query_embedding)} "
         f"elapsed={time.perf_counter() - _t_embed:.3f} (cumulative={time.perf_counter() - _t0:.3f})"
+    )
+    _progress(
+        "embedding", 0, len(candidates),
+        "Semantic query embedding ready." if query_embedding
+        else "Semantic embedding unavailable; continuing with deterministic relevance.",
     )
     embedding_fallback_reason = "" if query_embedding else (
         "embedding provider unavailable" if not _EMBEDDING_INFRA_IMPORTED
@@ -791,6 +826,11 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             )
         print(f"[PERF] loop profile {label}\n" + "\n".join(detail_lines), flush=True)
 
+    _progress(
+        "scoring", 0, _total_candidate_plants,
+        f"Scoring 0 / {_total_candidate_plants} plants…",
+    )
+
     for _, item in candidates.iterrows():
         _plants_processed += 1
         plant = engine._pick(item, ["Scientific_Name", "scientific_name", "Plant", "plant"])
@@ -831,6 +871,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
 
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
             if _plants_processed % _PROGRESS_EVERY == 0:
+                _progress(
+                    "scoring", _plants_processed, _total_candidate_plants,
+                    f"Scoring {_plants_processed} / {_total_candidate_plants} plants…",
+                )
                 _perf(
                     f"indication loop {_plants_processed}/{_total_candidate_plants} plants, "
                     f"evidence_records_examined={_evidence_records_examined}, "
@@ -1221,6 +1265,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             _section_add("row_build", time.perf_counter() - _t)
 
         if _plants_processed % _PROGRESS_EVERY == 0:
+            _progress(
+                "scoring", _plants_processed, _total_candidate_plants,
+                f"Scoring {_plants_processed} / {_total_candidate_plants} plants…",
+            )
             _perf(
                 f"indication loop {_plants_processed}/{_total_candidate_plants} plants, "
                 f"evidence_records_examined={_evidence_records_examined}, "
@@ -1230,6 +1278,10 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
             )
             _print_loop_profile(f"{_plants_processed}/{_total_candidate_plants}")
 
+    _progress(
+        "scoring", _total_candidate_plants, _total_candidate_plants,
+        f"Scoring complete: {_total_candidate_plants} / {_total_candidate_plants} plants.",
+    )
     _perf(
         f"indication loop done plants_processed={_plants_processed}/{_total_candidate_plants}, "
         f"evidence_records_examined={_evidence_records_examined}, "
@@ -1245,7 +1297,12 @@ def discover_indication_candidates(engine, indication: str, dosage_form: str = "
     _print_loop_profile("final")
 
     if not rows:
+        _progress("discovery_done", 0, 0, "Candidate discovery finished — no candidates found.")
         return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
+    _progress(
+        "discovery_done", len(out), len(out),
+        f"Record-level discovery complete: {len(out)} candidate evidence rows.",
+    )
     return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS)).reset_index(drop=True)

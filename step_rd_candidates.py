@@ -1,4 +1,5 @@
 import time
+import threading
 
 import pandas as pd
 import streamlit as st
@@ -105,6 +106,7 @@ def _get_evidence_df():
     return None
 
 
+
 def _get_step2_candidate_shortlist():
     """Return the final candidate shortlist produced by Step 2.
 
@@ -180,7 +182,7 @@ def _collect_evidence_record_ids(result_df):
 # local pandas operation once the network fetch is out of the picture.
 # ---------------------------------------------------------------------- #
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _cached_plant_compounds_df():
     """Returns (df, succeeded). succeeded=False means the load itself
     failed (network/auth/schema error) — NOT that the query legitimately
@@ -200,7 +202,7 @@ def _cached_plant_compounds_df():
         return pd.DataFrame(), False
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _cached_compound_profiles_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_compound_profiles_df
@@ -210,7 +212,7 @@ def _cached_compound_profiles_df():
         return pd.DataFrame(), False
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_scientific_evidence_df
@@ -218,6 +220,35 @@ def _cached_scientific_evidence_df():
         return load_scientific_evidence_df(), True
     except Exception:
         return pd.DataFrame(), False
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_evidence_records_df():
+    """Full paginated evidence_records read, cached for one hour.
+
+    The engine historically loaded this structured table independently of the
+    canonical ``evidence_df`` supplied by app.py. We preserve that scientific
+    data path, but stop downloading the same 20k+ rows on every engine build.
+    """
+    from supabase_data import load_evidence_records_df
+    try:
+        return load_evidence_records_df(), True
+    except Exception:
+        return pd.DataFrame(), False
+
+
+_CANDIDATE_DISCOVERY_PROCESS_LOCK = threading.Lock()
+
+
+def _candidate_discovery_process_lock():
+    """One process-wide lock preventing Streamlit cache stampedes.
+
+    Streamlit can execute multiple script threads when a user double-clicks,
+    refreshes during a long run, or opens the same app in several tabs. Before
+    this guard, those threads could all miss the same cold cache at once and
+    each download/build the 20k+ row evidence universe independently.
+    """
+    return _CANDIDATE_DISCOVERY_PROCESS_LOCK
 
 
 # Building the engine itself is the expensive part now — with 50,000+
@@ -242,17 +273,23 @@ def _evidence_fingerprint(evidence_df):
     try:
         content_hash = int(pd.util.hash_pandas_object(evidence_df, index=True).sum())
     except Exception:
-        # If hashing ever fails on some exotic column dtype, fall back to
-        # row count alone — still catches the common "Step 2 just added
-        # N new rows" case, just not an in-place content edit.
-        content_hash = 0
+        # JSONB/list/dict cells are common in evidence_records and are not
+        # always hashable by pandas directly. Falling back to row-count only
+        # can keep a stale engine when a record is edited in place without a
+        # row-count change, so use a deterministic string view before giving
+        # up. This is cache invalidation only; the DataFrame itself is untouched.
+        try:
+            stable_view = evidence_df.astype(str)
+            content_hash = int(pd.util.hash_pandas_object(stable_view, index=True).sum())
+        except Exception:
+            content_hash = hash((tuple(map(str, evidence_df.columns)), len(evidence_df)))
     return (len(evidence_df), content_hash)
 
 
-ENGINE_CACHE_VERSION = "step4_scientific_inventory_v2"
+ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v1"
 
 
-@st.cache_resource(ttl=120, show_spinner=False)
+@st.cache_resource(ttl=3600, show_spinner=False)
 def _cached_engine(
     use_live_search: bool,
     evidence_fingerprint,
@@ -262,18 +299,28 @@ def _cached_engine(
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
     scientific_evidence_df, scientific_evidence_ok = _cached_scientific_evidence_df()
+    evidence_records_df, evidence_records_ok = _cached_evidence_records_df()
 
+    # Preserve the pre-fix scientific data path exactly: evidence_df remains the
+    # canonical deduplicated read supplied by app.py, while evidence_records_df
+    # remains the full structured table used by indication-centric discovery.
+    # The optimization is transport-only: the latter is now fetched at most once
+    # per cache TTL instead of once per engine construction / concurrent click.
     return BotanicalRDCandidateEngine(
         evidence_df=_evidence_df,
         use_live_search=use_live_search,
         plant_compounds_df=plant_compounds_df,
         compound_profiles_df=compound_profiles_df,
         scientific_evidence_df=scientific_evidence_df,
+        evidence_records_df=evidence_records_df,
         # Review #17: if any core Supabase load actually FAILED (not
         # just legitimately returned few/no rows), the engine caps
         # every recommendation at "Investigate" — a Go call must never
         # be issued on data that may not have actually loaded.
-        data_source_reliable=plant_compounds_ok and compound_profiles_ok and scientific_evidence_ok,
+        data_source_reliable=(
+            plant_compounds_ok and compound_profiles_ok
+            and scientific_evidence_ok and evidence_records_ok
+        ),
     )
 
 
@@ -284,6 +331,28 @@ def _build_engine(evidence_df, use_live_search):
         fingerprint,
         ENGINE_CACHE_VERSION,
         _evidence_df=evidence_df,
+    )
+
+
+def _candidate_discovery_run_key(
+    *, indication, dosage_form, market, reference_plant, reference_compound,
+    discovery_mode, use_live_search, evidence_df,
+):
+    """Stable per-session key for exact-input result reuse.
+
+    Re-clicking Run with unchanged inputs should display the already completed
+    result, not execute another multi-minute scientific pipeline.
+    """
+    return (
+        str(indication or "").strip().casefold(),
+        str(dosage_form or "").strip().casefold(),
+        str(market or "").strip().casefold(),
+        str(reference_plant or "").strip().casefold(),
+        str(reference_compound or "").strip().casefold(),
+        str(discovery_mode or "").strip().casefold(),
+        bool(use_live_search),
+        _evidence_fingerprint(evidence_df),
+        ENGINE_CACHE_VERSION,
     )
 
 
@@ -940,115 +1009,195 @@ def render_rd_candidates_step(inputs):
         key="rd_live_evidence_checkbox",
     )
 
-    if st.button("Run Candidate Discovery", type="primary", key="run_step3_candidates"):
-        try:
-            _perf_t0 = time.perf_counter()
-            _perf(f"build_engine start discovery_mode={discovery_mode!r} indication={indication!r}")
-            engine = _build_engine(_get_evidence_df(), use_live_search=use_live_search)
-            _perf(f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f}")
+    evidence_df_for_run = _get_evidence_df()
+    run_key = _candidate_discovery_run_key(
+        indication=indication,
+        dosage_form=dosage_form,
+        market=market,
+        reference_plant=reference_plant,
+        reference_compound=reference_compound,
+        discovery_mode=discovery_mode,
+        use_live_search=use_live_search,
+        evidence_df=evidence_df_for_run,
+    )
 
-            with st.spinner("Discovering and scoring R&D candidates..."):
-                _perf_t_run = time.perf_counter()
-                result_df = engine.run(
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    market=market,
-                    reference_plant=reference_plant,
-                    reference_compound=reference_compound,
-                    discovery_mode=discovery_mode,
-                )
-                _perf(
-                    f"engine.run() done rows={0 if result_df is None else len(result_df)} "
-                    f"elapsed={time.perf_counter() - _perf_t_run:.3f} "
-                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                )
+    discovery_lock = _candidate_discovery_process_lock()
+    discovery_busy = discovery_lock.locked()
+    run_clicked = st.button(
+        "Run Candidate Discovery",
+        type="primary",
+        key="run_step3_candidates",
+        disabled=discovery_busy,
+    )
+    if discovery_busy:
+        st.caption(
+            "Candidate Discovery is already running in this app process. "
+            "A second copy will not be started; wait for the active run to finish."
+        )
 
-            st.session_state["rd_candidates_df"] = result_df
-            # Any previously prepared CSV bytes belong to the former run.
-            st.session_state.pop("rd_raw_candidate_csv_bytes", None)
-            st.session_state.pop("rd_triage_audit_csv_bytes", None)
+    _rerun_after_discovery = False
+    if run_clicked:
+        existing_result = st.session_state.get("rd_candidates_df")
+        if (
+            st.session_state.get("rd_candidate_run_key") == run_key
+            and isinstance(existing_result, pd.DataFrame)
+            and not existing_result.empty
+        ):
+            st.info("Same inputs detected — reusing the completed Step 5 result.")
+            _rerun_after_discovery = True
+        elif not discovery_lock.acquire(blocking=False):
+            st.warning(
+                "Another Candidate Discovery run started just before this click. "
+                "No duplicate job was launched."
+            )
+        else:
+            progress = st.progress(0.0, text="Preparing cached scientific data…")
 
-            if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-                _perf_t_shortlist = time.perf_counter()
-                plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
-                    result_df,
-                    indication=indication,
-                    dosage_form=dosage_form,
-                    max_candidates=50,
-                )
-                _perf(
-                    f"build_plant_candidate_shortlist() done "
-                    f"plants={0 if plant_summary_df is None else len(plant_summary_df)} "
-                    f"elapsed={time.perf_counter() - _perf_t_shortlist:.3f} "
-                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                )
-                st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
-                st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
-                # Phase 3 (IMPLEMENTATION_PLAN.md) — the single authoritative,
-                # report-ready frame. Both the recommendation block and the
-                # downloaded report are built from THIS, not from result_df
-                # directly, so they can never disagree with the shortlist
-                # above about which plant is the top candidate.
-                _perf_t_merge = time.perf_counter()
-                st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
-                    result_df, plant_summary_df
-                )
-                _perf(
-                    f"merge_authoritative_scores() done "
-                    f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
-                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                )
-                # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
-                # decision run, from the same report_ready_df just built.
-                # Both the downloaded report and the persisted decision
-                # record read this exact dict — see build_decision_metadata()'s
-                # own docstring.
-                _perf_t_decision = time.perf_counter()
-                st.session_state["rd_decision_metadata"] = build_decision_metadata(
-                    st.session_state["rd_report_ready_df"],
-                    indication=indication, dosage_form=dosage_form, market=market,
-                    discovery_mode=_detect_discovery_mode(result_df),
-                )
-                _perf(
-                    f"build_decision_metadata() done "
-                    f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
-                    f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                )
-                # PHASE 6 — additive structured causal trace.  This reads the
-                # authoritative score/gate outputs and triage audit only; it never
-                # changes scoring, gating, ranking, connectors, or UI behaviour.
-                st.session_state["rd_report_ready_df"] = attach_decision_explanations(
-                    st.session_state["rd_report_ready_df"],
-                    triage_audit_df,
-                    decision_metadata=st.session_state["rd_decision_metadata"],
+            def _step5_progress(stage, current=0, total=0, message=""):
+                # The indication engine reports real plant-level progress. The
+                # stage offsets leave room for evidence-index construction and
+                # plant-level shortlisting before/after the main scoring loop.
+                if stage == "candidate_universe":
+                    value = 0.05
+                elif stage == "evidence_index":
+                    value = 0.12
+                elif stage == "profile":
+                    value = 0.18
+                elif stage == "embedding":
+                    value = 0.22
+                elif stage == "scoring":
+                    fraction = (float(current) / float(total)) if total else 0.0
+                    value = 0.22 + 0.63 * max(0.0, min(1.0, fraction))
+                elif stage == "discovery_done":
+                    value = 0.86
+                else:
+                    value = 0.02
+                progress.progress(
+                    max(0.0, min(1.0, value)),
+                    text=message or "Discovering and scoring R&D candidates…",
                 )
 
-                counts = (
-                    plant_summary_df["Scientific_Triage_Status"].value_counts()
-                    if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty
-                    else pd.Series(dtype=int)
+            try:
+                _perf_t0 = time.perf_counter()
+                _perf(f"build_engine start discovery_mode={discovery_mode!r} indication={indication!r}")
+                engine = _build_engine(
+                    evidence_df_for_run,
+                    use_live_search=use_live_search,
                 )
-                shortlisted = int(counts.get("Shortlist", 0))
-                exploratory = int(counts.get("Exploratory", 0))
-                excluded = int(counts.get("Excluded", 0))
-                st.success(
-                    f"✅ {len(result_df)} raw plant–compound associations generated; "
-                    f"aggregated into {shortlisted + exploratory + excluded} plant candidates "
-                    f"({shortlisted} shortlisted, {exploratory} exploratory, {excluded} excluded)."
-                )
-                # End the expensive button run here and render the result in a fresh,
-                # lightweight rerun. This prevents Streamlit from appearing stuck
-                # after the success message while it continues formatting thousands
-                # of raw rows below the fold.
-                _perf(f"st.rerun() about to be called total_elapsed={time.perf_counter() - _perf_t0:.3f}")
-                st.rerun()
-            else:
-                st.session_state.pop("rd_candidate_plant_summary_df", None)
-                st.session_state.pop("rd_candidate_triage_audit_df", None)
-                st.warning("No R&D candidates found.")
+                _perf(f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f}")
 
-        except Exception as e:
-            st.error(f"Candidate discovery failed: {e}")
+                with st.spinner("Discovering and scoring R&D candidates..."):
+                    _perf_t_run = time.perf_counter()
+                    result_df = engine.run(
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        market=market,
+                        reference_plant=reference_plant,
+                        reference_compound=reference_compound,
+                        discovery_mode=discovery_mode,
+                        progress_callback=_step5_progress,
+                    )
+                    _perf(
+                        f"engine.run() done rows={0 if result_df is None else len(result_df)} "
+                        f"elapsed={time.perf_counter() - _perf_t_run:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+
+                st.session_state["rd_candidates_df"] = result_df
+                # Any previously prepared CSV bytes belong to the former run.
+                st.session_state.pop("rd_raw_candidate_csv_bytes", None)
+                st.session_state.pop("rd_triage_audit_csv_bytes", None)
+
+                if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+                    progress.progress(0.90, text="Aggregating plant-level shortlist…")
+                    _perf_t_shortlist = time.perf_counter()
+                    plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
+                        result_df,
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        max_candidates=50,
+                    )
+                    _perf(
+                        f"build_plant_candidate_shortlist() done "
+                        f"plants={0 if plant_summary_df is None else len(plant_summary_df)} "
+                        f"elapsed={time.perf_counter() - _perf_t_shortlist:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+                    st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
+                    st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
+                    # Phase 3 (IMPLEMENTATION_PLAN.md) — the single authoritative,
+                    # report-ready frame. Both the recommendation block and the
+                    # downloaded report are built from THIS, not from result_df
+                    # directly, so they can never disagree with the shortlist
+                    # above about which plant is the top candidate.
+                    _perf_t_merge = time.perf_counter()
+                    st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
+                        result_df, plant_summary_df
+                    )
+                    _perf(
+                        f"merge_authoritative_scores() done "
+                        f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+                    # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
+                    # decision run, from the same report_ready_df just built.
+                    # Both the downloaded report and the persisted decision
+                    # record read this exact dict — see build_decision_metadata()'s
+                    # own docstring.
+                    _perf_t_decision = time.perf_counter()
+                    st.session_state["rd_decision_metadata"] = build_decision_metadata(
+                        st.session_state["rd_report_ready_df"],
+                        indication=indication, dosage_form=dosage_form, market=market,
+                        discovery_mode=_detect_discovery_mode(result_df),
+                    )
+                    _perf(
+                        f"build_decision_metadata() done "
+                        f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+                    # PHASE 6 — additive structured causal trace.  This reads the
+                    # authoritative score/gate outputs and triage audit only; it never
+                    # changes scoring, gating, ranking, connectors, or UI behaviour.
+                    st.session_state["rd_report_ready_df"] = attach_decision_explanations(
+                        st.session_state["rd_report_ready_df"],
+                        triage_audit_df,
+                        decision_metadata=st.session_state["rd_decision_metadata"],
+                    )
+
+                    counts = (
+                        plant_summary_df["Scientific_Triage_Status"].value_counts()
+                        if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty
+                        else pd.Series(dtype=int)
+                    )
+                    shortlisted = int(counts.get("Shortlist", 0))
+                    exploratory = int(counts.get("Exploratory", 0))
+                    excluded = int(counts.get("Excluded", 0))
+                    st.session_state["rd_candidate_run_key"] = run_key
+                    progress.progress(1.0, text="Candidate Discovery complete.")
+                    st.success(
+                        f"✅ {len(result_df)} raw plant–compound associations generated; "
+                        f"aggregated into {shortlisted + exploratory + excluded} plant candidates "
+                        f"({shortlisted} shortlisted, {exploratory} exploratory, {excluded} excluded)."
+                    )
+                    # Render the result in a fresh, lightweight rerun only AFTER
+                    # releasing the process lock in the finally block below.
+                    _rerun_after_discovery = True
+                else:
+                    st.session_state.pop("rd_candidate_plant_summary_df", None)
+                    st.session_state.pop("rd_candidate_triage_audit_df", None)
+                    st.session_state.pop("rd_candidate_run_key", None)
+                    progress.progress(1.0, text="Candidate Discovery finished — no candidates found.")
+                    st.warning("No R&D candidates found.")
+
+            except Exception as e:
+                st.session_state.pop("rd_candidate_run_key", None)
+                st.error(f"Candidate discovery failed: {e}")
+            finally:
+                discovery_lock.release()
+
+    if _rerun_after_discovery:
+        _perf("Step 5 result ready; rerunning UI after releasing discovery lock")
+        st.rerun()
 
     result_df = st.session_state.get("rd_candidates_df")
 

@@ -999,12 +999,14 @@ class BotanicalRDCandidateEngine:
         product_type=None,
         max_reference_plants=12,
         discovery_mode="compound_substitution",
+        progress_callback=None,
     ):
         if discovery_mode == "indication":
             from indication_candidate_discovery import discover_indication_candidates
             return discover_indication_candidates(
                 self, indication=indication, dosage_form=dosage_form, market=market,
                 product_type=product_type or (dosage_form or "botanical product"),
+                progress_callback=progress_callback,
             )
         if discovery_mode not in {"compound_substitution", "legacy"}:
             raise ValueError("discovery_mode must be indication or compound_substitution")

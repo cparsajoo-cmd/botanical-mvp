@@ -28,10 +28,14 @@ with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
     )
 
 
-@st.cache_data(ttl=300, show_spinner="Loading Supabase evidence database...")
+@st.cache_data(ttl=3600, show_spinner="Loading Supabase evidence database...")
 def _cached_evidence_with_meta():
-    # Cached (not re-fetched on every rerun/widget interaction, which is
-    # what happened before) but with a short TTL, and — critically — NOT
+    # Cached across reruns and sessions for one hour. The previous 5-minute TTL
+    # caused the full evidence table to cross the Supabase network boundary
+    # repeatedly during normal interactive use, materially increasing Egress.
+    # A one-hour TTL keeps the app responsive and cuts repeated full-table
+    # transfers without changing any scientific/scoring behavior. It is still
+    # bounded (not permanent), and — critically — does NOT
     # swallowing errors: any failure comes back as an explicit
     # data_source_mode instead of a silently empty/None result.
     return load_evidence_database_with_meta()

@@ -1,0 +1,229 @@
+{
+  "corpus_extension_id": "authoritative-monograph-corpus-extension-05",
+  "created_date": "2026-08-07",
+  "record_count": 12,
+  "scope": "Official public EMA/HMPC and ESCOP monograph summaries.",
+  "governance_note": "WHO item-level expansion was deliberately deferred in this pass because individual monograph locators were not verified to the same standard. No WHO plant record was inferred from collection-level metadata.",
+  "source_policy": "Only facts visible on official public source pages are represented. Curator summaries are paraphrases and not verbatim quotations.",
+  "records": [
+    {
+      "record_id": "auth05_ema_althaea_radix",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/althaeae-radix",
+      "source_title": "Althaeae radix - herbal medicinal product",
+      "botanical_name": "Althaea officinalis L.",
+      "herbal_drug": "Marshmallow root (radix)",
+      "plant_part": "root",
+      "therapeutic_scope": [
+        "mouth and throat disorders",
+        "cough and cold",
+        "gastrointestinal disorders"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph",
+      "reference_number": "EMA/HMPC/436679/2015",
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA identifies marshmallow root as the dried root of Althaea officinalis and lists mouth/throat, cough/cold, and gastrointestinal therapeutic areas."
+    },
+    {
+      "record_id": "auth05_ema_hedera_folium",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/hederae-helicis-folium",
+      "source_title": "Hederae helicis folium - herbal medicinal product",
+      "botanical_name": "Hedera helix L.",
+      "herbal_drug": "Ivy leaf (folium)",
+      "plant_part": "leaf",
+      "therapeutic_scope": [
+        "cough and cold"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph",
+      "reference_number": "EMA/HMPC/325716/2017",
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA lists ivy leaf from Hedera helix under cough and cold and provides a final EU herbal monograph revision."
+    },
+    {
+      "record_id": "auth05_ema_thymi_herba",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/thymi-herba",
+      "source_title": "Thymi herba - herbal medicinal product",
+      "botanical_name": "Thymus vulgaris L.; Thymus zygis L.",
+      "herbal_drug": "Thyme herb (herba)",
+      "plant_part": "herb",
+      "therapeutic_scope": [
+        "cough and cold"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph",
+      "reference_number": "EMA/HMPC/342332/2013",
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA lists thyme herb from Thymus vulgaris or Thymus zygis in the cough-and-cold therapeutic area."
+    },
+    {
+      "record_id": "auth05_ema_urtica_radix",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/urticae-radix",
+      "source_title": "Urticae radix - herbal medicinal product",
+      "botanical_name": "Urtica dioica L.; Urtica urens L.",
+      "herbal_drug": "Nettle root (radix)",
+      "plant_part": "root",
+      "therapeutic_scope": [
+        "urinary tract and genital disorders"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph",
+      "reference_number": "EMA/HMPC/322646/2023",
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA lists nettle root from Urtica dioica or Urtica urens for urinary-tract/genital therapeutic use and provides a final revised EU herbal monograph."
+    },
+    {
+      "record_id": "auth05_ema_foeniculi_dulcis_fructus",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/foeniculi-dulcis-fructus",
+      "source_title": "Foeniculi dulcis fructus - herbal medicinal product",
+      "botanical_name": "Foeniculum vulgare subsp. vulgare var. dulce",
+      "herbal_drug": "Sweet fennel fruit",
+      "plant_part": "fruit",
+      "therapeutic_scope": [
+        "mild spasmodic gastrointestinal complaints",
+        "minor menstrual cramps",
+        "cough associated with colds"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph and European Union list entry",
+      "reference_number": "EMEA/HMPC/372839/2016",
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA's public summary describes traditional oral use of sweet fennel fruit for mild spasmodic GI complaints, minor menstrual cramps, and as an expectorant in cough associated with colds."
+    },
+    {
+      "record_id": "auth05_ema_plantago_ovata_husk",
+      "source_family": "EMA_HMPC",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/plantaginis-ovatae-seminis-tegumentum",
+      "source_title": "Plantaginis ovatae seminis tegumentum - herbal medicinal product",
+      "botanical_name": "Plantago ovata Forssk.",
+      "herbal_drug": "Ispaghula husk (seed coats)",
+      "plant_part": "seed coat",
+      "therapeutic_scope": [
+        "gastrointestinal disorders"
+      ],
+      "status": "assessment_finalised",
+      "outcome": "European Union herbal monograph",
+      "reference_number": null,
+      "verification_level": "official_public_summary",
+      "curator_summary": "EMA identifies ispaghula husk as the seed coats of Plantago ovata and describes oral herbal medicines made from the husk or its powder."
+    },
+    {
+      "record_id": "auth05_escop_urtica_radix",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/nettle-root/",
+      "source_title": "Urticae radix (Nettle Root)",
+      "botanical_name": "Urtica dioica L.; Urtica urens L.",
+      "herbal_drug": "Nettle root",
+      "plant_part": "underground parts/root",
+      "therapeutic_scope": [
+        "symptomatic micturition disorders in benign prostatic hyperplasia"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2015 Urticae radix",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP defines nettle root as underground parts of Urtica dioica/Urtica urens and lists symptomatic micturition disorders in BPH as the therapeutic indication."
+    },
+    {
+      "record_id": "auth05_escop_melissa_folium",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/melissa-leaf/",
+      "source_title": "Melissae folium (Melissa leaf)",
+      "botanical_name": "Melissa officinalis L.",
+      "herbal_drug": "Melissa leaf",
+      "plant_part": "leaf",
+      "therapeutic_scope": [
+        "tenseness",
+        "restlessness",
+        "irritability",
+        "symptomatic digestive disorders",
+        "herpes labialis"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2013 Melissae folium",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP defines melissa leaf as dried leaves of Melissa officinalis and lists CNS, digestive, and herpes-labialis therapeutic indications."
+    },
+    {
+      "record_id": "auth05_escop_passiflora_herba",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/passiflorae-herba-passionflower-herb/",
+      "source_title": "Passiflorae herba (Passionflower herb)",
+      "botanical_name": "Passiflora incarnata L.",
+      "herbal_drug": "Passionflower herb",
+      "plant_part": "herb/aerial material",
+      "therapeutic_scope": [
+        "tension",
+        "restlessness",
+        "irritability",
+        "difficulty in falling asleep"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2023 Passiflorae herba",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP lists tension, restlessness, irritability and difficulty falling asleep among therapeutic indications of Passiflora incarnata herb."
+    },
+    {
+      "record_id": "auth05_escop_matricaria_flos",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/matricariae-flos-matricaria-flower/",
+      "source_title": "Matricariae flos (Matricaria flower)",
+      "botanical_name": "Matricaria recutita L. [Chamomilla recutita (L.) Rauschert]",
+      "herbal_drug": "Matricaria flower",
+      "plant_part": "dried capitula/flower heads",
+      "therapeutic_scope": [
+        "minor gastrointestinal spasms and related complaints",
+        "minor inflammation and irritation of skin and mucosa"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2020 Matricariae flos",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP defines Matricaria flower as dried capitula and distinguishes internal gastrointestinal indications from external skin/mucosal uses."
+    },
+    {
+      "record_id": "auth05_escop_salicis_cortex",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/salix/",
+      "source_title": "Salicis cortex (Willow Bark)",
+      "botanical_name": "Salix spp. including S. purpurea L., S. daphnoides Vill. and S. fragilis L.",
+      "herbal_drug": "Willow bark",
+      "plant_part": "bark",
+      "therapeutic_scope": [
+        "low-back pain",
+        "mild rheumatic conditions",
+        "fever associated with common cold",
+        "headache"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2017 Salicis cortex",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP lists low-back pain, mild rheumatic conditions, fever with common cold, and headache among willow-bark indications."
+    },
+    {
+      "record_id": "auth05_escop_peppermint_leaf",
+      "source_family": "ESCOP_MONOGRAPH",
+      "source_url": "https://www.escop.com/downloads/menthae-piperitae-folium-peppermint-leaf/",
+      "source_title": "Menthae piperitae folium (Peppermint leaf)",
+      "botanical_name": "Mentha × piperita L.",
+      "herbal_drug": "Peppermint leaf",
+      "plant_part": "leaf",
+      "therapeutic_scope": [
+        "symptomatic digestive disorders including dyspepsia, flatulence and gastritis"
+      ],
+      "status": "published",
+      "outcome": "ESCOP online monograph",
+      "reference_number": "ESCOP 2019 Menthae piperitae folium",
+      "verification_level": "official_public_summary",
+      "curator_summary": "ESCOP defines peppermint leaf as dried Mentha × piperita leaves and lists symptomatic digestive disorders including dyspepsia, flatulence and gastritis."
+    }
+  ]
+}

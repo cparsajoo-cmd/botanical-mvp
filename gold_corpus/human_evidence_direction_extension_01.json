@@ -1,8 +1,9 @@
 {
   "benchmark_id": "human-evidence-direction-extension-01",
   "created_date": "2026-08-07",
+  "revision": "1.1-deduplicated",
   "purpose": "Independent extension of the frozen human-evidence direction benchmark; no production tuning.",
-  "source_policy": "Every record is tied to a real PubMed record verified before inclusion.",
+  "source_policy": "All 12 records have unique PMIDs, are disjoint from the original 12-record benchmark, and correspond to verified PubMed records.",
   "records": [
     {
       "id": "ext01_echinacea_10228604_positive",
@@ -38,39 +39,6 @@
       "evidence_text": "There was a significant difference between the two groups in terms of severity and number of hot flashes in weeks 4 and 8."
     },
     {
-      "id": "ext01_echinacea_21173411_null",
-      "pmid": "21173411",
-      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21173411/",
-      "title": "Echinacea for treating the common cold: a randomized trial",
-      "botanical": "Echinacea",
-      "study_design": "randomized_controlled_trial",
-      "expected_direction": "null",
-      "text_origin": "verbatim_abstract_excerpt",
-      "evidence_text": "Illness duration and severity were not statistically significant with echinacea compared with placebo."
-    },
-    {
-      "id": "ext01_black_cohosh_19609225_null",
-      "pmid": "19609225",
-      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19609225/",
-      "title": "Safety and efficacy of black cohosh and red clover for the management of vasomotor symptoms",
-      "botanical": "Cimicifuga racemosa",
-      "study_design": "randomized_controlled_trial",
-      "expected_direction": "null",
-      "text_origin": "verbatim_abstract_excerpt",
-      "evidence_text": "Black cohosh and red clover did not significantly reduce the frequency of vasomotor symptoms as compared with placebo."
-    },
-    {
-      "id": "ext01_hypericum_11308434_negative",
-      "pmid": "11308434",
-      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11308434/",
-      "title": "Effectiveness of St John's wort in major depression: a randomized controlled trial",
-      "botanical": "Hypericum perforatum",
-      "study_design": "randomized_controlled_trial",
-      "expected_direction": "negative",
-      "text_origin": "verbatim_abstract_excerpt",
-      "evidence_text": "In this study, St John's wort was not effective for treatment of major depression."
-    },
-    {
       "id": "ext01_ginkgo_11154618_negative",
       "pmid": "11154618",
       "source_url": "https://pubmed.ncbi.nlm.nih.gov/11154618/",
@@ -82,17 +50,6 @@
       "evidence_text": "Ginkgo biloba extract given 3 times daily for 12 weeks is no more effective than placebo in treating tinnitus."
     },
     {
-      "id": "ext01_ginkgo_19017911_negative",
-      "pmid": "19017911",
-      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19017911/",
-      "title": "Ginkgo biloba for prevention of dementia: a randomized controlled trial",
-      "botanical": "Ginkgo biloba",
-      "study_design": "randomized_controlled_trial",
-      "expected_direction": "negative",
-      "text_origin": "verbatim_abstract_excerpt",
-      "evidence_text": "G. biloba was not effective in reducing either the overall incidence rate of dementia or Alzheimer disease incidence."
-    },
-    {
       "id": "ext01_serenoa_21954478_negative",
       "pmid": "21954478",
       "source_url": "https://pubmed.ncbi.nlm.nih.gov/21954478/",
@@ -102,17 +59,6 @@
       "expected_direction": "negative",
       "text_origin": "verbatim_abstract_excerpt",
       "evidence_text": "Saw palmetto extract was no more effective than placebo for any secondary outcome."
-    },
-    {
-      "id": "ext01_valerian_17940604_mixed",
-      "pmid": "17940604",
-      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17940604/",
-      "title": "A televised, web-based randomised trial of an herbal remedy (valerian) for insomnia",
-      "botanical": "Valeriana officinalis",
-      "study_design": "randomized_controlled_trial",
-      "expected_direction": "mixed",
-      "text_origin": "curated_summary_from_abstract",
-      "evidence_text": "The primary sleep-quality outcome was not statistically significant, while significantly more valerian participants reported their sleep as better or much better."
     },
     {
       "id": "ext01_valerian_hops_16335333_mixed",
@@ -135,6 +81,61 @@
       "expected_direction": "mixed",
       "text_origin": "curated_summary_from_abstract",
       "evidence_text": "Unadjusted analyses showed no protection against progression or memory decline, while adherence-adjusted secondary analyses showed a protective effect."
+    },
+    {
+      "id": "ext01_black_cohosh_11352967_null",
+      "pmid": "11352967",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11352967/",
+      "title": "Randomized trial of black cohosh for the treatment of hot flashes among women with a history of breast cancer",
+      "botanical": "Cimicifuga racemosa",
+      "study_design": "randomized_controlled_trial",
+      "expected_direction": "null",
+      "text_origin": "verbatim_abstract_excerpt",
+      "evidence_text": "Black cohosh was not significantly more efficacious than placebo against most menopausal symptoms, including number and intensity of hot flashes."
+    },
+    {
+      "id": "ext01_black_cohosh_24941138_null",
+      "pmid": "24941138",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24941138/",
+      "title": "Cimicifuga racemosa extract for relieving menopausal symptoms: a randomized controlled trial",
+      "botanical": "Cimicifuga racemosa",
+      "study_design": "randomized_controlled_trial",
+      "expected_direction": "null",
+      "text_origin": "verbatim_abstract_excerpt",
+      "evidence_text": "Neither the improvements nor the global satisfaction were significantly different between the two groups."
+    },
+    {
+      "id": "ext01_ginkgo_22955125_negative",
+      "pmid": "22955125",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22955125/",
+      "title": "Ginkgo biloba does not improve cognitive function in MS: a randomized placebo-controlled trial",
+      "botanical": "Ginkgo biloba",
+      "study_design": "randomized_controlled_trial",
+      "expected_direction": "negative",
+      "text_origin": "verbatim_abstract_excerpt",
+      "evidence_text": "Treatment with ginkgo 120 mg twice a day did not improve cognitive performance in persons with MS."
+    },
+    {
+      "id": "ext01_ginkgo_12186600_negative",
+      "pmid": "12186600",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/12186600/",
+      "title": "Ginkgo for memory enhancement: a randomized controlled trial",
+      "botanical": "Ginkgo biloba",
+      "study_design": "randomized_controlled_trial",
+      "expected_direction": "negative",
+      "text_origin": "verbatim_abstract_excerpt",
+      "evidence_text": "Ginkgo provides no measurable benefit in memory or related cognitive function to adults with healthy cognitive function."
+    },
+    {
+      "id": "ext01_valerian_hops_17486686_mixed",
+      "pmid": "17486686",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17486686/",
+      "title": "A randomized, double blind, placebo-controlled, prospective clinical study of a fixed valerian hops extract combination",
+      "botanical": "Valeriana officinalis / Humulus lupulus",
+      "study_design": "randomized_controlled_trial",
+      "expected_direction": "mixed",
+      "text_origin": "curated_summary_from_abstract",
+      "evidence_text": "The valerian-hops combination beat placebo on sleep latency, whereas the single valerian extract did not."
     }
   ]
 }

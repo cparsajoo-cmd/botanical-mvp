@@ -1,0 +1,228 @@
+{
+  "calibration_set_id": "human-evidence-direction-calibration-v1",
+  "frozen_date": "2026-08-07",
+  "record_count": 24,
+  "source_sets": [
+    "human-evidence-direction-benchmark",
+    "human-evidence-direction-extension-01"
+  ],
+  "policy": "No duplicate PMIDs. No threshold is used to tune production logic. This set is frozen before any future calibration change.",
+  "records": [
+    {
+      "set": "original",
+      "record_id": "HEDB001",
+      "pmid": "19593179",
+      "taxon": "Matricaria recutita",
+      "expected_direction": "positive",
+      "text": "Randomized, double-blind, placebo-controlled trial. We observed a significantly greater reduction in mean total HAM-A score during chamomile versus placebo therapy.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19593179/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB002",
+      "pmid": "21775910",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "positive",
+      "text": "Randomized placebo-controlled clinical trial. A statistically significant change was reported in sleep quality for valerian compared with placebo.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21775910/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB003",
+      "pmid": "11744467",
+      "taxon": "Serenoa repens",
+      "expected_direction": "positive",
+      "text": "Randomized, double-blind, placebo-controlled trial. Saw palmetto led to a statistically significant improvement in urinary symptoms compared with placebo.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11744467/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB004",
+      "pmid": "21173411",
+      "taxon": "Echinacea species",
+      "expected_direction": "null",
+      "text": "Randomized controlled trial. Illness duration and severity were not statistically significant with echinacea compared with placebo.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21173411/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB005",
+      "pmid": "19609225",
+      "taxon": "Actaea racemosa / Cimicifuga racemosa",
+      "expected_direction": "null",
+      "text": "Randomized controlled trial. Black cohosh did not significantly reduce the frequency of vasomotor symptoms compared with placebo.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19609225/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB006",
+      "pmid": "18482867",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "null",
+      "text": "Randomized, double-blind, placebo-controlled trial. There were no statistically significant differences between valerian and placebo on measures of sleep latency or sleep quality.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18482867/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB007",
+      "pmid": "11308434",
+      "taxon": "Hypericum perforatum",
+      "expected_direction": "negative",
+      "text": "Randomized, double-blind, placebo-controlled clinical trial. In this study, St John's wort was not effective for treatment of major depression.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11308434/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB008",
+      "pmid": "19017911",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "negative",
+      "text": "Randomized, double-blind, placebo-controlled clinical trial. Ginkgo biloba was not effective in reducing the incidence of dementia or Alzheimer disease.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19017911/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB009",
+      "pmid": "11939866",
+      "taxon": "Hypericum perforatum",
+      "expected_direction": "negative",
+      "text": "Double-blind randomized placebo-controlled trial. This study fails to support the efficacy of Hypericum perforatum in moderately severe major depression.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11939866/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB010",
+      "pmid": "27912875",
+      "taxon": "Matricaria chamomilla",
+      "expected_direction": "mixed",
+      "text": "Randomized controlled trial. Chamomile significantly reduced GAD symptoms, but did not significantly reduce the rate of relapse.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27912875/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB011",
+      "pmid": "17940604",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "mixed",
+      "text": "Randomized trial. The primary sleep-quality difference was not statistically significant, while significantly more valerian participants rated sleep better or much better.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17940604/"
+    },
+    {
+      "set": "original",
+      "record_id": "HEDB012",
+      "pmid": "20347389",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "mixed",
+      "text": "Meta-analysis of randomized placebo-controlled trials. Subjective results suggested benefit, although effectiveness was not demonstrated with quantitative or objective measurements.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20347389/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_echinacea_10228604_positive",
+      "pmid": "10228604",
+      "taxon": "Echinacea purpurea",
+      "expected_direction": "positive",
+      "text": "Echinaforce and its concentrated preparation were significantly more effective than the special Echinacea extract or placebo.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/10228604/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_echinacea_23024696_positive",
+      "pmid": "23024696",
+      "taxon": "Echinacea purpurea",
+      "expected_direction": "positive",
+      "text": "Echinacea reduced the total number of cold episodes, cumulated episode days within the group, and pain-killer medicated episodes.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/23024696/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_black_cohosh_25276716_positive",
+      "pmid": "25276716",
+      "taxon": "Cimicifuga racemosa",
+      "expected_direction": "positive",
+      "text": "There was a significant difference between the two groups in terms of severity and number of hot flashes in weeks 4 and 8.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/25276716/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_ginkgo_11154618_negative",
+      "pmid": "11154618",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "negative",
+      "text": "Ginkgo biloba extract given 3 times daily for 12 weeks is no more effective than placebo in treating tinnitus.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11154618/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_serenoa_21954478_negative",
+      "pmid": "21954478",
+      "taxon": "Serenoa repens",
+      "expected_direction": "negative",
+      "text": "Saw palmetto extract was no more effective than placebo for any secondary outcome.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21954478/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_valerian_hops_16335333_mixed",
+      "pmid": "16335333",
+      "taxon": "Valeriana officinalis",
+      "expected_direction": "mixed",
+      "text": "Valerian produced nonsignificant reductions in sleep latency, while physical quality of life was significantly more improved than placebo at 28 days.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/16335333/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_ginkgo_18305231_mixed",
+      "pmid": "18305231",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "mixed",
+      "text": "Unadjusted analyses showed no protection against progression or memory decline, while adherence-adjusted secondary analyses showed a protective effect.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18305231/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_black_cohosh_11352967_null",
+      "pmid": "11352967",
+      "taxon": "Cimicifuga racemosa",
+      "expected_direction": "null",
+      "text": "Black cohosh was not significantly more efficacious than placebo against most menopausal symptoms, including number and intensity of hot flashes.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11352967/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_black_cohosh_24941138_null",
+      "pmid": "24941138",
+      "taxon": "Cimicifuga racemosa",
+      "expected_direction": "null",
+      "text": "Neither the improvements nor the global satisfaction were significantly different between the two groups.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24941138/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_ginkgo_22955125_negative",
+      "pmid": "22955125",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "negative",
+      "text": "Treatment with ginkgo 120 mg twice a day did not improve cognitive performance in persons with MS.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22955125/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_ginkgo_12186600_negative",
+      "pmid": "12186600",
+      "taxon": "Ginkgo biloba",
+      "expected_direction": "negative",
+      "text": "Ginkgo provides no measurable benefit in memory or related cognitive function to adults with healthy cognitive function.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/12186600/"
+    },
+    {
+      "set": "extension_01",
+      "record_id": "ext01_valerian_hops_17486686_mixed",
+      "pmid": "17486686",
+      "taxon": "Valeriana officinalis / Humulus lupulus",
+      "expected_direction": "mixed",
+      "text": "The valerian-hops combination beat placebo on sleep latency, whereas the single valerian extract did not.",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17486686/"
+    }
+  ]
+}

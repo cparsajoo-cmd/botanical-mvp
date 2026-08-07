@@ -23,36 +23,8 @@
       "direction_correct": false
     },
     {
-      "id": "ext01_echinacea_21173411_null",
-      "pmid": "21173411",
-      "expected_direction": "null",
-      "predicted_direction": "null",
-      "direction_correct": true
-    },
-    {
-      "id": "ext01_black_cohosh_19609225_null",
-      "pmid": "19609225",
-      "expected_direction": "null",
-      "predicted_direction": "unclear",
-      "direction_correct": false
-    },
-    {
-      "id": "ext01_hypericum_11308434_negative",
-      "pmid": "11308434",
-      "expected_direction": "negative",
-      "predicted_direction": "unclear",
-      "direction_correct": false
-    },
-    {
       "id": "ext01_ginkgo_11154618_negative",
       "pmid": "11154618",
-      "expected_direction": "negative",
-      "predicted_direction": "unclear",
-      "direction_correct": false
-    },
-    {
-      "id": "ext01_ginkgo_19017911_negative",
-      "pmid": "19017911",
       "expected_direction": "negative",
       "predicted_direction": "unclear",
       "direction_correct": false
@@ -62,13 +34,6 @@
       "pmid": "21954478",
       "expected_direction": "negative",
       "predicted_direction": "unclear",
-      "direction_correct": false
-    },
-    {
-      "id": "ext01_valerian_17940604_mixed",
-      "pmid": "17940604",
-      "expected_direction": "mixed",
-      "predicted_direction": "null",
       "direction_correct": false
     },
     {
@@ -84,12 +49,47 @@
       "expected_direction": "mixed",
       "predicted_direction": "unclear",
       "direction_correct": false
+    },
+    {
+      "id": "ext01_black_cohosh_11352967_null",
+      "pmid": "11352967",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_black_cohosh_24941138_null",
+      "pmid": "24941138",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_ginkgo_22955125_negative",
+      "pmid": "22955125",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_ginkgo_12186600_negative",
+      "pmid": "12186600",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_valerian_hops_17486686_mixed",
+      "pmid": "17486686",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "direction_correct": false
     }
   ],
   "direction_accuracy": {
-    "correct": 1,
+    "correct": 0,
     "total": 12,
-    "value": 0.08333333333333333
+    "value": 0.0
   },
   "by_expected_direction": {
     "positive": {
@@ -97,7 +97,7 @@
       "total": 3
     },
     "null": {
-      "correct": 1,
+      "correct": 0,
       "total": 2
     },
     "negative": {

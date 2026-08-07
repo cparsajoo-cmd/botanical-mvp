@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "audit_trail_entry": true,
+    "generated_timestamp": "2026-08-07"
+  },
+  "case_information": {
+    "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+    "case_number": 22,
+    "taxon": "Valeriana officinalis L.",
+    "domain": "INDICATION_EVIDENCE"
+  },
+  "coverage_value": {
+    "new_gap_closed": "CROSS_RANK_REFERENCE_PRECEDENCE",
+    "non_duplicate_rationale": "First active case requiring two applicable references of different hierarchy ranks; SYSTEMATIC_REVIEW must outrank a newer EMA_HMPC monograph."
+  },
+  "primary_references": [
+    {
+      "reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "publication_year": 2000,
+      "expected_direction": "INSUFFICIENT"
+    },
+    {
+      "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+      "source_type": "EMA_HMPC",
+      "publication_year": 2016,
+      "expected_direction": "POSITIVE"
+    }
+  ],
+  "evidence_assessment": {
+    "assertion_type": "SUPPORTS_INDICATION",
+    "expected_resolution_status": "SELECTED",
+    "expected_selected_reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+    "expected_assertion_state": "INSUFFICIENT",
+    "confidence_level": "HIGH_FOR_SOURCE_EXTRACTION",
+    "preparation_specific": false,
+    "dose_specific": false
+  },
+  "validation_results": {
+    "case_tests_expected": 8,
+    "engine_evidence_attached": false,
+    "locked": false
+  },
+  "approval_status": {
+    "reference_ground_truth_ready": true,
+    "external_validation_claimed": false,
+    "clinical_validation_claimed": false
+  }
+}

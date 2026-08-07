@@ -1,0 +1,33 @@
+{
+  "case_number": 22,
+  "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+  "retrieval_date": "2026-08-07",
+  "critical_sources": [
+    {
+      "source_reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+      "title": "Valerian for insomnia: a systematic review of randomized clinical trials",
+      "authors": "Stevinson C, Ernst E",
+      "publication": "Sleep Med. 2000;1(2):91-99",
+      "pmid": "10767649",
+      "doi": "10.1016/S1389-9457(99)00015-5",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "official_or_index_url": "https://pubmed.ncbi.nlm.nih.gov/10767649/",
+      "verification_status": "CURATOR_VERIFIED_FROM_PUBMED_RECORD",
+      "expected_direction": "UNCLEAR_INSUFFICIENT",
+      "critical_retrieval_requirement": true
+    },
+    {
+      "source_reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+      "title": "European Union herbal monograph on Valeriana officinalis L., radix",
+      "authors": "European Medicines Agency, Committee on Herbal Medicinal Products (HMPC)",
+      "publication": "EMA/HMPC/150848/2015; adopted 2 February 2016",
+      "source_type": "EMA_HMPC",
+      "official_or_index_url": "https://www.ema.europa.eu/en/medicines/herbal/valerianae-radix",
+      "verification_status": "CURATOR_VERIFIED_FROM_OFFICIAL_EMA_PAGE_AND_MONOGRAPH",
+      "expected_direction": "POSITIVE",
+      "critical_retrieval_requirement": true
+    }
+  ],
+  "precedence_definition": "Both references are applicable; SYSTEMATIC_REVIEW outranks EMA_HMPC for INDICATION_EVIDENCE under the existing repository hierarchy.",
+  "scope_note": "No dose or preparation is invented. The benchmark question is narrowed to insomnia, the overlap between the systematic-review question and EMA sleep-disorder use."
+}

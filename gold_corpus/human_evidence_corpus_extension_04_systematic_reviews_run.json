@@ -1,0 +1,154 @@
+{
+  "corpus_extension_id": "human-evidence-corpus-extension-04-systematic-reviews",
+  "accuracy": {
+    "correct": 4,
+    "total": 18,
+    "value": 0.2222222222222222
+  },
+  "by_expected_direction": {
+    "positive": {
+      "correct": 4,
+      "total": 8
+    },
+    "null": {
+      "correct": 0,
+      "total": 0
+    },
+    "negative": {
+      "correct": 0,
+      "total": 2
+    },
+    "mixed": {
+      "correct": 0,
+      "total": 8
+    }
+  },
+  "rows": [
+    {
+      "record_id": "ext04_boswellia_32680575_positive",
+      "pmid": "32680575",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_curcuma_34216044_positive",
+      "pmid": "34216044",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext04_peppermint_30654773_positive",
+      "pmid": "30654773",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_cranberry_29046404_positive",
+      "pmid": "29046404",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_cranberry_34473789_positive",
+      "pmid": "34473789",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext04_green_tea_32028419_positive",
+      "pmid": "32028419",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext04_hypericum_28083422_positive",
+      "pmid": "28083422",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_garlic_38892625_positive",
+      "pmid": "38892625",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext04_ginkgo_26058281_negative",
+      "pmid": "26058281",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_black_cohosh_19102512_negative",
+      "pmid": "19102512",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_ginger_34700257_mixed",
+      "pmid": "34700257",
+      "expected_direction": "mixed",
+      "predicted_direction": "null",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_black_cohosh_37192826_mixed",
+      "pmid": "37192826",
+      "expected_direction": "mixed",
+      "predicted_direction": "positive",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_ginkgo_20236541_mixed",
+      "pmid": "20236541",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_chamomile_31006899_mixed",
+      "pmid": "31006899",
+      "expected_direction": "mixed",
+      "predicted_direction": "positive",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_ginseng_29624410_mixed",
+      "pmid": "29624410",
+      "expected_direction": "mixed",
+      "predicted_direction": "positive",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_rhodiola_22643043_mixed",
+      "pmid": "22643043",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_valerian_38359657_mixed",
+      "pmid": "38359657",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext04_ginger_31519467_mixed",
+      "pmid": "31519467",
+      "expected_direction": "mixed",
+      "predicted_direction": "positive",
+      "correct": false
+    }
+  ]
+}

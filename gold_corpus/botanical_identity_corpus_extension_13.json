@@ -1,0 +1,97 @@
+{
+  "corpus_extension_id": "botanical-identity-corpus-extension-13",
+  "created_date": "2026-08-07",
+  "record_count": 8,
+  "purpose": "Complete the planned Botanical Identity target range using additional official Kew POWO accepted-name and synonym mappings.",
+  "governance_note": "These URLs were checked against the current project identity corpus and do not duplicate Extension 08 source pages.",
+  "records": [
+    {
+      "record_id": "id13_silybum_marianum",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:249211-1",
+      "submitted_name": "Silybum marianum (L.) Gaertn.",
+      "accepted_name": "Silybum marianum (L.) Gaertn.",
+      "taxonomic_status": "accepted",
+      "family": "Asteraceae",
+      "identity_note": "Kew POWO treats Silybum marianum (L.) Gaertn. as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_allium_sativum",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/528796-1",
+      "submitted_name": "Allium sativum L.",
+      "accepted_name": "Allium sativum L.",
+      "taxonomic_status": "accepted",
+      "family": "Amaryllidaceae",
+      "identity_note": "Kew POWO treats Allium sativum L. as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_camellia_sinensis",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/828548-1",
+      "submitted_name": "Camellia sinensis (L.) Kuntze",
+      "accepted_name": "Camellia sinensis (L.) Kuntze",
+      "taxonomic_status": "accepted",
+      "family": "Theaceae",
+      "identity_note": "Kew POWO treats Camellia sinensis (L.) Kuntze as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_crataegus_monogyna",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/723820-1",
+      "submitted_name": "Crataegus monogyna Jacq.",
+      "accepted_name": "Crataegus monogyna Jacq.",
+      "taxonomic_status": "accepted",
+      "family": "Rosaceae",
+      "identity_note": "Kew POWO treats Crataegus monogyna Jacq. as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_vitex_agnus_castus",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/865568-1",
+      "submitted_name": "Vitex agnus-castus L.",
+      "accepted_name": "Vitex agnus-castus L.",
+      "taxonomic_status": "accepted",
+      "family": "Lamiaceae",
+      "identity_note": "Kew POWO treats Vitex agnus-castus L. as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_carum_carvi",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:839677-1",
+      "submitted_name": "Carum carvi L.",
+      "accepted_name": "Carum carvi L.",
+      "taxonomic_status": "accepted",
+      "family": "Apiaceae",
+      "identity_note": "Kew POWO treats Carum carvi L. as an accepted species.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_zingiber_zingiber_synonym",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/77248586-1",
+      "submitted_name": "Zingiber zingiber (L.) H.Karst.",
+      "accepted_name": "Zingiber officinale Roscoe",
+      "taxonomic_status": "synonym",
+      "family": "Zingiberaceae",
+      "identity_note": "Kew POWO states that Zingiber zingiber (L.) H.Karst. is a synonym of Zingiber officinale.",
+      "verification_level": "official_kew_taxonomic_page"
+    },
+    {
+      "record_id": "id13_crataegus_javorkae_synonym",
+      "source_family": "KEW_POWO",
+      "source_url": "https://powo.science.kew.org/taxon/77186050-1",
+      "submitted_name": "Crataegus monogyna var. javorkae Pénzes",
+      "accepted_name": "Crataegus monogyna Jacq.",
+      "taxonomic_status": "synonym",
+      "family": "Rosaceae",
+      "identity_note": "Kew POWO states that Crataegus monogyna var. javorkae Pénzes is a synonym of Crataegus monogyna.",
+      "verification_level": "official_kew_taxonomic_page"
+    }
+  ]
+}

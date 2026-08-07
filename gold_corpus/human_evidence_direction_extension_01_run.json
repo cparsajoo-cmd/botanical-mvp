@@ -1,0 +1,112 @@
+{
+  "benchmark_id": "human-evidence-direction-extension-01",
+  "records": [
+    {
+      "id": "ext01_echinacea_10228604_positive",
+      "pmid": "10228604",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_echinacea_23024696_positive",
+      "pmid": "23024696",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_black_cohosh_25276716_positive",
+      "pmid": "25276716",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_echinacea_21173411_null",
+      "pmid": "21173411",
+      "expected_direction": "null",
+      "predicted_direction": "null",
+      "direction_correct": true
+    },
+    {
+      "id": "ext01_black_cohosh_19609225_null",
+      "pmid": "19609225",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_hypericum_11308434_negative",
+      "pmid": "11308434",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_ginkgo_11154618_negative",
+      "pmid": "11154618",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_ginkgo_19017911_negative",
+      "pmid": "19017911",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_serenoa_21954478_negative",
+      "pmid": "21954478",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_valerian_17940604_mixed",
+      "pmid": "17940604",
+      "expected_direction": "mixed",
+      "predicted_direction": "null",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_valerian_hops_16335333_mixed",
+      "pmid": "16335333",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    },
+    {
+      "id": "ext01_ginkgo_18305231_mixed",
+      "pmid": "18305231",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "direction_correct": false
+    }
+  ],
+  "direction_accuracy": {
+    "correct": 1,
+    "total": 12,
+    "value": 0.08333333333333333
+  },
+  "by_expected_direction": {
+    "positive": {
+      "correct": 0,
+      "total": 3
+    },
+    "null": {
+      "correct": 1,
+      "total": 2
+    },
+    "negative": {
+      "correct": 0,
+      "total": 4
+    },
+    "mixed": {
+      "correct": 0,
+      "total": 3
+    }
+  }
+}

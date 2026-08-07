@@ -162,7 +162,7 @@ _SR_CITATION = (
     "review and meta-analysis of clinical trials. Complementary Therapies "
     "in Medicine 84:103071. DOI 10.1016/j.ctim.2024.103071."
 )
-_SR_DOCUMENT_DATE = date(2024, 8, 1)
+_SR_DOCUMENT_DATE = date(2024, 8, 4)
 _SR_LOCATOR = "Abstract, 'Conclusion' field — Complementary Therapies in Medicine 84 (2024) 103071"
 # Fixed, explicit extraction date — never date.today() (see Case 001's
 # provenance-determinism correction; the same rule applies here).

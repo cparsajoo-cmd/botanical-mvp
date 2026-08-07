@@ -1,0 +1,19 @@
+{
+  "case_number": 20,
+  "source_reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+  "title": "Echinaceae purpureae herba (Purple Coneflower Herb)",
+  "publisher": "European Scientific Cooperative on Phytotherapy (ESCOP)",
+  "source_type": "ESCOP_MONOGRAPH",
+  "publication_year": 2021,
+  "official_url": "https://www.escop.com/downloads/echinaceae-purpureae-herba-purple-coneflower-herb/",
+  "retrieval_date": "2026-08-07",
+  "locator": "Public ESCOP monograph summary: herbal-drug definition and therapeutic indications",
+  "verification_status": "CURATOR_VERIFIED_FROM_OFFICIAL_PUBLIC_SUMMARY",
+  "critical_source": true,
+  "critical_retrieval_requirement": true,
+  "botanical_identity": "Echinacea purpurea (L.) Moench",
+  "plant_part": "flowering aerial parts",
+  "evidence_direction": "POSITIVE",
+  "evidence_category": "THERAPEUTIC_INDICATION",
+  "scope_note": "Only claims directly visible on the official public ESCOP summary are used. No preparation, dose, route, duration, or population is inferred from the paywalled full monograph."
+}

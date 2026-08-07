@@ -1,0 +1,42 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "audit_trail_entry": true,
+    "generated_timestamp": "2026-08-07"
+  },
+  "case_information": {
+    "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+    "case_number": 20,
+    "taxon": "Echinacea purpurea (L.) Moench",
+    "domain": "INDICATION_EVIDENCE"
+  },
+  "coverage_value": {
+    "new_gap_closed": "ESCOP",
+    "non_duplicate_rationale": "Cases 001-019 contained no ESCOP_MONOGRAPH governing source."
+  },
+  "primary_reference": {
+    "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+    "source_type": "ESCOP_MONOGRAPH",
+    "publisher": "European Scientific Cooperative on Phytotherapy (ESCOP)",
+    "publication_year": 2021
+  },
+  "evidence_assessment": {
+    "assertion_type": "SUPPORTS_INDICATION",
+    "assertion_state": "PRESENT",
+    "confidence_level": "HIGH",
+    "expected_evidence_direction": "POSITIVE",
+    "expected_study_design": "ESCOP_MONOGRAPH",
+    "preparation_specific": false,
+    "dose_specific": false
+  },
+  "validation_results": {
+    "case_tests_expected": 8,
+    "engine_evidence_attached": false,
+    "locked": false
+  },
+  "approval_status": {
+    "reference_ground_truth_ready": true,
+    "external_validation_claimed": false,
+    "clinical_validation_claimed": false
+  }
+}

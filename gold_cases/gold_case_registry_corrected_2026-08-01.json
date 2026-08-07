@@ -90,6 +90,11 @@
       "file": "gold_case_reference_grounded_019_panax_ginseng_who_monograph.py",
       "case_number": 19,
       "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_020_echinacea_purpurea_escop_monograph.py",
+      "case_number": 20,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
     }
   ],
   "abandoned_cases": [

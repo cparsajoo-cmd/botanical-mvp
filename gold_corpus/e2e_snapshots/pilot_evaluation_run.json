@@ -1,0 +1,1292 @@
+{
+  "evaluation_run_id": "gold-corpus-e2e-pilot-2026-08-07",
+  "validation_scope": "end-to-end",
+  "mode": "frozen-snapshot",
+  "versions": {
+    "benchmark_version": "gold-corpus-e2e-pilot/1",
+    "gold_corpus_version": "0.3.0",
+    "scoring_model_version": "production-current-unmodified",
+    "ruleset_version": "production-current-unmodified",
+    "evidence_schema_version": "production-current-unmodified",
+    "connector_versions": {
+      "frozen_snapshot": "source-derived-2026-08-07"
+    }
+  },
+  "execution_timestamp": "2026-08-07T08:52:50.070013+00:00",
+  "data_snapshot": "gold-corpus-e2e-pilot-2026-08-07",
+  "configuration_hash": "583b8e3575c459b1f7ac88165773861be97670a24c8affb5deb86f0daeb5c735",
+  "case_results": [
+    {
+      "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+      "retrieved_reference_ids": [
+        "EMA_HMPC_7695_2021_hypericum_perforatum_herba"
+      ],
+      "unique_reference_ids": [
+        "EMA_HMPC_7695_2021_hypericum_perforatum_herba"
+      ],
+      "candidate_ranking": [
+        "Hypericum perforatum L.",
+        "Melissa officinalis L.",
+        "Valeriana officinalis L."
+      ],
+      "decision_class": "Low priority / insufficient data",
+      "decision_direction": "Hold",
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "contraindicated"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: Regulatory / monograph evidence.",
+          "evidence": "Regulatory / monograph evidence"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "passed",
+          "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+          "evidence": "None identified"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "eligible",
+          "reason": "Minor (non-hard) safety term(s) present: contraindicated.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_herba"
+        },
+        {
+          "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+          "stage": "SAFETY_GATE_FAILURE",
+          "severity": "CRITICAL",
+          "code": "SERIOUS_SAFETY_EVIDENCE_IGNORED",
+          "detail": "Serious safety evidence was retrieved but the safety gate did not fail.",
+          "reference_id": null
+        }
+      ],
+      "source_counts": {
+        "retrieved": 1,
+        "unique": 1,
+        "duplicates": 0,
+        "critical_total": 1,
+        "critical_retrieved": 1,
+        "relevant_total": 1,
+        "relevant_retrieved": 1,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 1,
+        "safety_critical_retrieved": 1,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 0
+      },
+      "classification_checks": [
+        {
+          "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_herba",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Hypericum perforatum L.",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+      "retrieved_reference_ids": [
+        "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition"
+      ],
+      "unique_reference_ids": [
+        "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition"
+      ],
+      "candidate_ranking": [
+        "Piper methysticum G.Forst.",
+        "Melissa officinalis L.",
+        "Valeriana officinalis L."
+      ],
+      "decision_class": "Expert review required — not eligible for normal ranking until safety/regulatory scope is confirmed",
+      "decision_direction": null,
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: General literature signal.",
+          "evidence": "General literature signal"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "failed",
+          "reason": "Reviewed evidence text indicates this candidate is prohibited/banned in at least one jurisdiction.",
+          "evidence": "Prohibited / banned"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "expert_review_required",
+          "reason": "Documented regulatory finding: Prohibited / banned.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 1,
+        "unique": 1,
+        "duplicates": 0,
+        "critical_total": 1,
+        "critical_retrieved": 1,
+        "relevant_total": 1,
+        "relevant_retrieved": 1,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 1,
+        "regulatory_critical_retrieved": 1,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 1
+      },
+      "classification_checks": [
+        {
+          "reference_id": "UK_MHRA_SI_2002_3170_piper_methysticum_prohibition",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Piper methysticum G.Forst.",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+      "retrieved_reference_ids": [
+        "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction"
+      ],
+      "unique_reference_ids": [
+        "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction"
+      ],
+      "candidate_ranking": [
+        "Ephedra sinica Stapf",
+        "Panax ginseng C.A. Meyer",
+        "Valeriana officinalis L."
+      ],
+      "decision_class": "Expert review required — not eligible for normal ranking until safety/regulatory scope is confirmed",
+      "decision_direction": null,
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: General literature signal.",
+          "evidence": "General literature signal"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "failed",
+          "reason": "Reviewed evidence text indicates this candidate is prohibited/banned in at least one jurisdiction.",
+          "evidence": "Prohibited / banned"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "expert_review_required",
+          "reason": "Documented regulatory finding: Prohibited / banned.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 1,
+        "unique": 1,
+        "duplicates": 0,
+        "critical_total": 1,
+        "critical_retrieved": 1,
+        "relevant_total": 1,
+        "relevant_retrieved": 1,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 1
+      },
+      "classification_checks": [
+        {
+          "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Ephedra sinica Stapf",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+      "retrieved_reference_ids": [
+        "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG"
+      ],
+      "unique_reference_ids": [
+        "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG"
+      ],
+      "candidate_ranking": [
+        "Panax ginseng C.A. Meyer",
+        "Eleutherococcus senticosus",
+        "Melissa officinalis L."
+      ],
+      "decision_class": "Promising candidate; verify safety and standardization",
+      "decision_direction": "Positive",
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: Regulatory / monograph evidence.",
+          "evidence": "Regulatory / monograph evidence"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "passed",
+          "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+          "evidence": "None identified"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "eligible",
+          "reason": "No documented safety or regulatory concern found in available evidence.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 1,
+        "unique": 1,
+        "duplicates": 0,
+        "critical_total": 1,
+        "critical_retrieved": 1,
+        "relevant_total": 1,
+        "relevant_retrieved": 1,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 0
+      },
+      "classification_checks": [
+        {
+          "reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Panax ginseng C.A. Meyer",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+      "retrieved_reference_ids": [
+        "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA"
+      ],
+      "unique_reference_ids": [
+        "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA"
+      ],
+      "candidate_ranking": [
+        "Echinacea purpurea (L.) Moench",
+        "Panax ginseng C.A. Meyer",
+        "Melissa officinalis L."
+      ],
+      "decision_class": "Promising candidate; verify safety and standardization",
+      "decision_direction": "Positive",
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: Regulatory / monograph evidence.",
+          "evidence": "Regulatory / monograph evidence"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "passed",
+          "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+          "evidence": "None identified"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "eligible",
+          "reason": "No documented safety or regulatory concern found in available evidence.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 1,
+        "unique": 1,
+        "duplicates": 0,
+        "critical_total": 1,
+        "critical_retrieved": 1,
+        "relevant_total": 1,
+        "relevant_retrieved": 1,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 0
+      },
+      "classification_checks": [
+        {
+          "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Echinacea purpurea (L.) Moench",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+      "retrieved_reference_ids": [
+        "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+        "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS"
+      ],
+      "unique_reference_ids": [
+        "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+        "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS"
+      ],
+      "candidate_ranking": [
+        "Serenoa repens",
+        "Prunus africana",
+        "Urtica dioica L."
+      ],
+      "decision_class": "Early-stage candidate; more evidence needed",
+      "decision_direction": "Positive",
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: Clinical / human evidence.",
+          "evidence": "Clinical / human evidence"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "passed",
+          "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+          "evidence": "None identified"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "eligible",
+          "reason": "No documented safety or regulatory concern found in available evidence.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR"
+        },
+        {
+          "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'negative', got 'unclear'.",
+          "reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 2,
+        "unique": 2,
+        "duplicates": 0,
+        "critical_total": 2,
+        "critical_retrieved": 2,
+        "relevant_total": 2,
+        "relevant_retrieved": 2,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 0
+      },
+      "classification_checks": [
+        {
+          "reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+          "actual": {
+            "study_design": "review",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "moderate",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        },
+        {
+          "reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "negative"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Serenoa repens",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    },
+    {
+      "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+      "retrieved_reference_ids": [
+        "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+        "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP"
+      ],
+      "unique_reference_ids": [
+        "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+        "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP"
+      ],
+      "candidate_ranking": [
+        "Valeriana officinalis L.",
+        "Passiflora incarnata L.",
+        "Melissa officinalis L."
+      ],
+      "decision_class": "Early-stage candidate; more evidence needed",
+      "decision_direction": "Positive",
+      "gate_results": {
+        "safety": {
+          "gate_name": "safety",
+          "status": "passed",
+          "reason": "No documented hard safety term present.",
+          "evidence": "No explicit flag found"
+        },
+        "identity": {
+          "gate_name": "identity",
+          "status": "passed",
+          "reason": "Compound identity resolved via a 'exact' match.",
+          "evidence": "exact"
+        },
+        "minimum_evidence": {
+          "gate_name": "minimum_evidence",
+          "status": "passed",
+          "reason": "Evidence located at level: Clinical / human evidence.",
+          "evidence": "Clinical / human evidence"
+        },
+        "regulatory": {
+          "gate_name": "regulatory",
+          "status": "passed",
+          "reason": "No explicit prohibition/ban found in reviewed evidence text.",
+          "evidence": "None identified"
+        },
+        "eligibility": {
+          "gate_name": "eligibility",
+          "status": "eligible",
+          "reason": "No documented safety or regulatory concern found in available evidence.",
+          "evidence": ""
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+          "stage": "DIRECTION_FAILURE",
+          "severity": "HIGH",
+          "code": "EVIDENCE_DIRECTION_MISMATCH",
+          "detail": "Expected 'positive', got 'unclear'.",
+          "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP"
+        }
+      ],
+      "source_counts": {
+        "retrieved": 2,
+        "unique": 2,
+        "duplicates": 0,
+        "critical_total": 2,
+        "critical_retrieved": 2,
+        "relevant_total": 2,
+        "relevant_retrieved": 2,
+        "known_irrelevant_retrieved": 0,
+        "safety_critical_total": 0,
+        "safety_critical_retrieved": 0,
+        "regulatory_critical_total": 0,
+        "regulatory_critical_retrieved": 0,
+        "safety_gate_failed": 0,
+        "regulatory_gate_failed": 0
+      },
+      "classification_checks": [
+        {
+          "reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+          "actual": {
+            "study_design": "review",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "moderate",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "unclear"
+          }
+        },
+        {
+          "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+          "actual": {
+            "study_design": "unspecified",
+            "evidence_direction": "unclear",
+            "applicability": "direct_reported",
+            "evidence_quality": "unknown",
+            "source_authority": null
+          },
+          "expected": {
+            "evidence_direction": "positive"
+          }
+        }
+      ],
+      "expected_gold_candidate": "Valeriana officinalis L.",
+      "expected_decision_direction": null,
+      "expected_decision_class_min": null,
+      "expected_decision_class_max": null
+    }
+  ],
+  "metrics": [
+    {
+      "metric_name": "critical_source_recall",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 9,
+        "denominator": 9,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.7008472464490407,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Critical sources retrieved / critical gold sources."
+    },
+    {
+      "metric_name": "evidence_retrieval_recall",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 9,
+        "denominator": 9,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.7008472464490407,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "irrelevant_evidence_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 9,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.2991527535509594
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "duplicate_retrieval_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 9,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.2991527535509594
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "evidence_retrieval_precision_labelled_subset",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 9,
+        "denominator": 9,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.7008472464490407,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Computed only over explicitly gold-labelled relevant/irrelevant retrieved sources; not full-corpus precision."
+    },
+    {
+      "metric_name": "study_design_accuracy",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "evidence_direction_accuracy",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 9,
+        "point_estimate": 0.1111111111111111,
+        "confidence_interval": [
+          0.019890371327130535,
+          0.4350062147680601
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "applicability_classification_accuracy",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "source_authority_classification_accuracy",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "evidence_quality_classification_agreement",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "safety_source_recall",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 1,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "serious_safety_false_negative_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 1,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Zero-tolerance; retrieval misses and retrieved-but-ignored gate misses remain separately attributed in failures."
+    },
+    {
+      "metric_name": "safety_gate_sensitivity",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 1,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.7934567085261071
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "safety_gate_specificity",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 6,
+        "denominator": 6,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.6096569663469354,
+          0.9999999999999999
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "safety_expert_review_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 2,
+        "denominator": 7,
+        "point_estimate": 0.2857142857142857,
+        "confidence_interval": [
+          0.0822171657090155,
+          0.6410709098517873
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "regulatory_prohibition_recall",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 1,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "restriction_detection_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 1,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "regulatory_status_agreement",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 1,
+        "denominator": 1,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.20654329147389294,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "For currently labelled prohibition/restriction Gold cases; broader status categories require additional adjudicated corpus."
+    },
+    {
+      "metric_name": "decision_direction_agreement",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 5,
+        "denominator": 5,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.5655085052479191,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "no_go_recall",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "unsafe_positive_decision_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 4,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.48990002040399916
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "invalid_strong_recommendation_rate",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "incomplete_as_validated_error_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 1,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.7934567085261071
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "top_3_inclusion",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 7,
+        "denominator": 7,
+        "point_estimate": 1.0,
+        "confidence_interval": [
+          0.6456611570247934,
+          1.0
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "top_5_inclusion",
+      "metric_type": "Proportion",
+      "status": "Not computable",
+      "proportion": null,
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": "Denominator is zero — no eligible cases for this metric."
+    },
+    {
+      "metric_name": "gold_candidate_rank",
+      "metric_type": "Continuous",
+      "status": "Computed",
+      "proportion": null,
+      "correlation": null,
+      "continuous": {
+        "n": 7,
+        "mean": 1.0,
+        "median": 1,
+        "values": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      },
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    },
+    {
+      "metric_name": "unsafe_candidate_in_top5_rate",
+      "metric_type": "Proportion",
+      "status": "Computed",
+      "proportion": {
+        "numerator": 0,
+        "denominator": 7,
+        "point_estimate": 0.0,
+        "confidence_interval": [
+          0.0,
+          0.35433884297520657
+        ]
+      },
+      "correlation": null,
+      "continuous": null,
+      "diversity_breakdown": {
+        "by_taxon": {},
+        "by_indication": {},
+        "by_preparation": {},
+        "by_source_document": {}
+      },
+      "detail": ""
+    }
+  ],
+  "limitations": [
+    "Retrieval precision is restricted to the explicitly labelled Gold Source subset unless a fully adjudicated retrieval corpus is supplied."
+  ]
+}

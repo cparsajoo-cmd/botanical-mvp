@@ -1,0 +1,41 @@
+{
+  "case_number": 22,
+  "snapshot_id": "case022-valerian-precedence-2026-08-07",
+  "candidate_pool": [
+    "Valeriana officinalis L.",
+    "Passiflora incarnata L.",
+    "Melissa officinalis L."
+  ],
+  "question": {
+    "question": "When a systematic review and an EMA/HMPC monograph disagree on Valeriana officinalis for insomnia, which reference governs under the existing INDICATION_EVIDENCE hierarchy?",
+    "indication": "insomnia",
+    "dosage_form": "Oral",
+    "market": "EU"
+  },
+  "records": [
+    {
+      "reference_id": "PUBMED_10767649_STEVINSON_ERNST_2000_VALERIAN_INSOMNIA_SR",
+      "scientific_name": "Valeriana officinalis L.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Valerian for insomnia: a systematic review of randomized clinical trials",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/10767649/",
+      "pmid": "10767649",
+      "doi": "10.1016/s1389-9457(99)00015-5",
+      "target_indication": "insomnia",
+      "dosage_form": "Oral",
+      "notes": "The systematic review found contradictory trials and concluded that evidence for valerian as a treatment for insomnia is inconclusive.",
+      "source_available": true
+    },
+    {
+      "reference_id": "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
+      "scientific_name": "Valeriana officinalis L.",
+      "source_type": "EMA_HMPC",
+      "source_title": "European Union herbal monograph on Valeriana officinalis L., radix",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/valerianae-radix",
+      "target_indication": "insomnia",
+      "dosage_form": "Oral",
+      "notes": "EMA states that a valerian root ethanolic dry extract is used for relief of mild nervous tension and sleep disorders based on clinical studies showing efficacy.",
+      "source_available": true
+    }
+  ]
+}

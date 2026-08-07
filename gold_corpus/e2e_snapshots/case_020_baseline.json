@@ -1,0 +1,28 @@
+{
+  "case_number": 20,
+  "snapshot_id": "case020-echinacea-escop-2026-08-07",
+  "candidate_pool": [
+    "Echinacea purpurea (L.) Moench",
+    "Panax ginseng C.A. Meyer",
+    "Melissa officinalis L."
+  ],
+  "question": {
+    "question": "What therapeutic indication does the ESCOP monograph recognize for Echinacea purpurea flowering aerial parts?",
+    "indication": "recurrent infections of the upper respiratory tract (common colds)",
+    "dosage_form": "Oral",
+    "market": "EU"
+  },
+  "records": [
+    {
+      "reference_id": "ESCOP_2021_ECHINACEAE_PURPUREAE_HERBA",
+      "scientific_name": "Echinacea purpurea (L.) Moench",
+      "source_type": "ESCOP_MONOGRAPH",
+      "source_title": "Echinaceae purpureae herba (Purple Coneflower Herb)",
+      "source_url": "https://www.escop.com/downloads/echinaceae-purpureae-herba-purple-coneflower-herb/",
+      "target_indication": "recurrent infections of the upper respiratory tract (common colds)",
+      "dosage_form": "Oral",
+      "notes": "ESCOP identifies the flowering aerial parts of Echinacea purpurea and lists recurrent upper respiratory tract infections, including common colds, among therapeutic indications.",
+      "source_available": true
+    }
+  ]
+}

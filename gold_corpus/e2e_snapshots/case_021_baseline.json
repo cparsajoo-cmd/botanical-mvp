@@ -1,0 +1,42 @@
+{
+  "case_number": 21,
+  "snapshot_id": "case021-serenoa-conflict-2026-08-07",
+  "candidate_pool": [
+    "Serenoa repens",
+    "Urtica dioica L.",
+    "Prunus africana"
+  ],
+  "question": {
+    "question": "Do equally ranked systematic reviews agree on whether Serenoa repens improves lower urinary tract symptoms due to benign prostatic enlargement?",
+    "indication": "lower urinary tract symptoms due to benign prostatic enlargement",
+    "dosage_form": "Oral",
+    "market": "International"
+  },
+  "records": [
+    {
+      "reference_id": "PUBMED_9820264_WILT_1998_SERENOA_BPH_SR",
+      "scientific_name": "Serenoa repens",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Saw palmetto extracts for treatment of benign prostatic hyperplasia: a systematic review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/9820264/",
+      "pmid": "9820264",
+      "doi": "10.1001/jama.280.18.1604",
+      "target_indication": "lower urinary tract symptoms due to benign prostatic enlargement",
+      "dosage_form": "Oral",
+      "notes": "The 1998 systematic review reported evidence suggesting Serenoa repens improves urologic symptoms and urinary flow measures in symptomatic BPH.",
+      "source_available": true
+    },
+    {
+      "reference_id": "COCHRANE_CD001423_2023_FRANCO_SERENOA_LUTS",
+      "scientific_name": "Serenoa repens",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Serenoa repens for the treatment of lower urinary tract symptoms due to benign prostatic enlargement",
+      "source_url": "https://www.cochrane.org/evidence/CD001423_serenoa-repens-benign-prostatic-hyperplasia",
+      "doi": "10.1002/14651858.CD001423.pub4",
+      "target_indication": "lower urinary tract symptoms due to benign prostatic enlargement",
+      "dosage_form": "Oral",
+      "notes": "The 2023 Cochrane review concludes that Serenoa repens alone provides little to no benefit for lower urinary tract symptoms due to benign prostatic enlargement.",
+      "source_available": true
+    }
+  ]
+}

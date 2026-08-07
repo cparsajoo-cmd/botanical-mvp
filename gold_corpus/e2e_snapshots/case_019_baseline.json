@@ -1,0 +1,28 @@
+{
+  "case_number": 19,
+  "snapshot_id": "case019-ginseng-who-2026-08-07",
+  "candidate_pool": [
+    "Panax ginseng C.A. Meyer",
+    "Eleutherococcus senticosus",
+    "Melissa officinalis L."
+  ],
+  "question": {
+    "question": "What clinically supported use does the WHO monograph recognize for Panax ginseng root?",
+    "indication": "weakness, exhaustion, tiredness and loss of concentration",
+    "dosage_form": "Oral",
+    "market": "International"
+  },
+  "records": [
+    {
+      "reference_id": "WHO_MONOGRAPHS_VOL1_1999_RADIX_GINSENG",
+      "scientific_name": "Panax ginseng C.A. Meyer",
+      "source_type": "WHO_MONOGRAPH",
+      "source_title": "WHO monographs on selected medicinal plants, Volume 1 — Radix Ginseng",
+      "source_url": "https://iris.who.int/bitstream/handle/10665/42052/9241545178.pdf?isAllowed=&sequence=1",
+      "target_indication": "weakness, exhaustion, tiredness and loss of concentration",
+      "dosage_form": "Oral",
+      "notes": "WHO describes Radix Ginseng as a prophylactic and restorative agent supporting mental and physical capacities in states including weakness and tiredness.",
+      "source_available": true
+    }
+  ]
+}

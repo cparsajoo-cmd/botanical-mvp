@@ -1,0 +1,28 @@
+{
+  "case_number": 18,
+  "snapshot_id": "case018-ephedra-mhra-2026-08-07",
+  "candidate_pool": [
+    "Ephedra sinica Stapf",
+    "Panax ginseng C.A. Meyer",
+    "Valeriana officinalis L."
+  ],
+  "question": {
+    "question": "What UK supply restriction applies to internal-use herbal medicines containing Ephedra sinica at specified dose thresholds?",
+    "indication": "",
+    "dosage_form": "Oral",
+    "market": "UK"
+  },
+  "records": [
+    {
+      "reference_id": "UK_MHRA_HMR2012_S20_ephedra_sinica_dose_restriction",
+      "scientific_name": "Ephedra sinica Stapf",
+      "source_type": "NATIONAL_REGULATORY",
+      "source_title": "MHRA Banned and restricted herbal ingredients",
+      "source_url": "https://www.gov.uk/government/publications/list-of-banned-or-restricted-herbal-ingredients-for-medicinal-use/banned-and-restricted-herbal-ingredients",
+      "target_indication": "",
+      "dosage_form": "Oral",
+      "notes": "MHRA lists Ephedra sinica with 600 mg single-dose and 1800 mg daily thresholds; exceeding them restricts supply to registered pharmacies under pharmacist supervision.",
+      "source_available": true
+    }
+  ]
+}

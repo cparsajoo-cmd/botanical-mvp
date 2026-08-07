@@ -1,0 +1,73 @@
+{
+  "corpus_extension_id": "who-item-level-corpus-extension-06",
+  "created_date": "2026-08-07",
+  "record_count": 2,
+  "scope": "WHO-hosted monograph records with item-level medicinal-use text and explicit locator verified in this pass.",
+  "governance_note": "Only two records are included because these were the WHO monographs for which item-level content and locators could be verified to the required standard in this pass. No target count was forced.",
+  "source_policy": "WHO-hosted source only. Curator summaries are paraphrases; the dataset does not represent them as verbatim quotations.",
+  "records": [
+    {
+      "record_id": "auth06_who_bulbus_allii_sativi",
+      "source_family": "WHO_MONOGRAPH",
+      "source_url": "https://iris.who.int/bitstream/handle/10665/42052/9241545178.pdf?sequence=1",
+      "source_title": "WHO Monographs on Selected Medicinal Plants, Volume 1 — Bulbus Allii Sativi",
+      "volume": 1,
+      "isbn": "9241545178",
+      "monograph": "Bulbus Allii Sativi",
+      "botanical_name": "Allium sativum L.",
+      "plant_part": "bulb",
+      "locator": "Volume 1, Bulbus Allii Sativi, medicinal uses section, p. 20",
+      "claim_category": "uses_supported_by_clinical_data",
+      "therapeutic_scope": [
+        "adjuvant to dietetic management of hyperlipidaemia",
+        "prevention of atherosclerotic age-dependent vascular changes",
+        "may be useful in mild hypertension"
+      ],
+      "dosage_form_context": [
+        "fresh bulbs",
+        "dried powder",
+        "volatile oil",
+        "oil macerates",
+        "juice",
+        "aqueous or alcoholic extracts",
+        "aged garlic extracts",
+        "odourless garlic products"
+      ],
+      "verification_level": "WHO_hosted_item_level_text_verified",
+      "curator_summary": "WHO Volume 1 places garlic bulb uses for hyperlipidaemia and prevention of atherosclerotic vascular changes under 'Uses supported by clinical data' and notes possible usefulness in mild hypertension.",
+      "curator_summary_is_verbatim": false
+    },
+    {
+      "record_id": "auth06_who_flos_chamomillae",
+      "source_family": "WHO_MONOGRAPH",
+      "source_url": "https://iris.who.int/bitstream/handle/10665/42052/9241545178.pdf?sequence=1",
+      "source_title": "WHO Monographs on Selected Medicinal Plants, Volume 1 — Flos Chamomillae",
+      "volume": 1,
+      "isbn": "9241545178",
+      "monograph": "Flos Chamomillae",
+      "botanical_name": "Chamomilla recutita (L.) Rauschert",
+      "botanical_synonyms": [
+        "Matricaria chamomilla L.",
+        "Matricaria recutita L."
+      ],
+      "plant_part": "dried flowering heads",
+      "locator": "Volume 1, Flos Chamomillae, dosage forms and medicinal uses, pp. 88–89",
+      "claim_category": "uses_supported_by_clinical_data",
+      "therapeutic_scope": [
+        "internal symptomatic treatment of digestive ailments including dyspepsia, epigastric bloating, impaired digestion and flatulence",
+        "restlessness and mild insomnia due to nervous disorders",
+        "external inflammation and irritation of skin and mucosa",
+        "inhalational symptomatic relief of respiratory tract irritation due to the common cold"
+      ],
+      "dosage_form_context": [
+        "dried flower-heads",
+        "liquid extract 1:1 in 45% alcohol",
+        "tinctures",
+        "other galenicals"
+      ],
+      "verification_level": "WHO_hosted_item_level_text_verified",
+      "curator_summary": "WHO Volume 1 lists internal digestive uses, restlessness/mild insomnia, external skin and mucosal inflammation, and inhalational common-cold irritation relief under clinically supported uses of chamomile flower.",
+      "curator_summary_is_verbatim": false
+    }
+  ]
+}

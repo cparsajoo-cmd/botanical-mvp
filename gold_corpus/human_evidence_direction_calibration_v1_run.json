@@ -2,73 +2,73 @@
   "calibration_set_id": "human-evidence-direction-calibration-v1",
   "record_count": 24,
   "accuracy": {
-    "correct": 3,
+    "correct": 21,
     "total": 24,
-    "value": 0.125
+    "value": 0.875
   },
   "by_expected_direction": {
     "positive": {
-      "correct": 1,
+      "correct": 6,
       "total": 6
     },
     "null": {
-      "correct": 2,
+      "correct": 4,
       "total": 5
     },
     "negative": {
-      "correct": 0,
+      "correct": 7,
       "total": 7
     },
     "mixed": {
-      "correct": 0,
+      "correct": 4,
       "total": 6
     }
   },
   "by_source_set": {
     "original": {
-      "correct": 3,
+      "correct": 11,
       "total": 12
     },
     "extension_01": {
-      "correct": 0,
+      "correct": 10,
       "total": 12
     }
   },
   "confusion": [
     {
       "expected": "mixed",
+      "actual": "mixed",
+      "count": 4
+    },
+    {
+      "expected": "mixed",
       "actual": "null",
       "count": 1
     },
     {
       "expected": "mixed",
-      "actual": "unclear",
-      "count": 5
-    },
-    {
-      "expected": "negative",
-      "actual": "unclear",
-      "count": 7
-    },
-    {
-      "expected": "null",
-      "actual": "null",
-      "count": 2
-    },
-    {
-      "expected": "null",
-      "actual": "unclear",
-      "count": 3
-    },
-    {
-      "expected": "positive",
       "actual": "positive",
       "count": 1
     },
     {
+      "expected": "negative",
+      "actual": "negative",
+      "count": 7
+    },
+    {
+      "expected": "null",
+      "actual": "negative",
+      "count": 1
+    },
+    {
+      "expected": "null",
+      "actual": "null",
+      "count": 4
+    },
+    {
       "expected": "positive",
-      "actual": "unclear",
-      "count": 5
+      "actual": "positive",
+      "count": 6
     }
   ],
   "rows": [
@@ -77,16 +77,16 @@
       "pmid": "19593179",
       "set": "original",
       "expected": "positive",
-      "actual": "unclear",
-      "correct": false
+      "actual": "positive",
+      "correct": true
     },
     {
       "record_id": "HEDB002",
       "pmid": "21775910",
       "set": "original",
       "expected": "positive",
-      "actual": "unclear",
-      "correct": false
+      "actual": "positive",
+      "correct": true
     },
     {
       "record_id": "HEDB003",
@@ -109,8 +109,8 @@
       "pmid": "19609225",
       "set": "original",
       "expected": "null",
-      "actual": "unclear",
-      "correct": false
+      "actual": "null",
+      "correct": true
     },
     {
       "record_id": "HEDB006",
@@ -125,32 +125,32 @@
       "pmid": "11308434",
       "set": "original",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "HEDB008",
       "pmid": "19017911",
       "set": "original",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "HEDB009",
       "pmid": "11939866",
       "set": "original",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "HEDB010",
       "pmid": "27912875",
       "set": "original",
       "expected": "mixed",
-      "actual": "unclear",
-      "correct": false
+      "actual": "mixed",
+      "correct": true
     },
     {
       "record_id": "HEDB011",
@@ -165,79 +165,79 @@
       "pmid": "20347389",
       "set": "original",
       "expected": "mixed",
-      "actual": "unclear",
-      "correct": false
+      "actual": "mixed",
+      "correct": true
     },
     {
       "record_id": "ext01_echinacea_10228604_positive",
       "pmid": "10228604",
       "set": "extension_01",
       "expected": "positive",
-      "actual": "unclear",
-      "correct": false
+      "actual": "positive",
+      "correct": true
     },
     {
       "record_id": "ext01_echinacea_23024696_positive",
       "pmid": "23024696",
       "set": "extension_01",
       "expected": "positive",
-      "actual": "unclear",
-      "correct": false
+      "actual": "positive",
+      "correct": true
     },
     {
       "record_id": "ext01_black_cohosh_25276716_positive",
       "pmid": "25276716",
       "set": "extension_01",
       "expected": "positive",
-      "actual": "unclear",
-      "correct": false
+      "actual": "positive",
+      "correct": true
     },
     {
       "record_id": "ext01_ginkgo_11154618_negative",
       "pmid": "11154618",
       "set": "extension_01",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "ext01_serenoa_21954478_negative",
       "pmid": "21954478",
       "set": "extension_01",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "ext01_valerian_hops_16335333_mixed",
       "pmid": "16335333",
       "set": "extension_01",
       "expected": "mixed",
-      "actual": "unclear",
-      "correct": false
+      "actual": "mixed",
+      "correct": true
     },
     {
       "record_id": "ext01_ginkgo_18305231_mixed",
       "pmid": "18305231",
       "set": "extension_01",
       "expected": "mixed",
-      "actual": "unclear",
-      "correct": false
+      "actual": "mixed",
+      "correct": true
     },
     {
       "record_id": "ext01_black_cohosh_11352967_null",
       "pmid": "11352967",
       "set": "extension_01",
       "expected": "null",
-      "actual": "unclear",
-      "correct": false
+      "actual": "null",
+      "correct": true
     },
     {
       "record_id": "ext01_black_cohosh_24941138_null",
       "pmid": "24941138",
       "set": "extension_01",
       "expected": "null",
-      "actual": "unclear",
+      "actual": "negative",
       "correct": false
     },
     {
@@ -245,23 +245,23 @@
       "pmid": "22955125",
       "set": "extension_01",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "ext01_ginkgo_12186600_negative",
       "pmid": "12186600",
       "set": "extension_01",
       "expected": "negative",
-      "actual": "unclear",
-      "correct": false
+      "actual": "negative",
+      "correct": true
     },
     {
       "record_id": "ext01_valerian_hops_17486686_mixed",
       "pmid": "17486686",
       "set": "extension_01",
       "expected": "mixed",
-      "actual": "unclear",
+      "actual": "positive",
       "correct": false
     }
   ]

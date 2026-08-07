@@ -1,0 +1,66 @@
+{
+  "benchmark_id": "human-evidence-direction-external-validation-v2",
+  "accuracy": {
+    "correct": 7,
+    "total": 8,
+    "value": 0.875
+  },
+  "rows": [
+    {
+      "record_id": "EXTVAL2_001",
+      "pmid": "20512042",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_002",
+      "pmid": "25414888",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_003",
+      "pmid": "27787564",
+      "expected": "null",
+      "actual": "null",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_004",
+      "pmid": "22305026",
+      "expected": "null",
+      "actual": "null",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_005",
+      "pmid": "23076891",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_006",
+      "pmid": "19935757",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true
+    },
+    {
+      "record_id": "EXTVAL2_007",
+      "pmid": "19303273",
+      "expected": "mixed",
+      "actual": "positive",
+      "correct": false
+    },
+    {
+      "record_id": "EXTVAL2_008",
+      "pmid": "31937153",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true
+    }
+  ]
+}

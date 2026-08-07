@@ -1,0 +1,80 @@
+{
+  "benchmark_id": "human-evidence-direction-external-validation-v2",
+  "frozen_date": "2026-08-07",
+  "record_count": 8,
+  "policy": "PMIDs are disjoint from calibration_v1; curated summaries were written before final evaluation and labels are frozen.",
+  "records": [
+    {
+      "record_id": "EXTVAL2_001",
+      "pmid": "20512042",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20512042/",
+      "taxon": "Lavandula angustifolia",
+      "expected_direction": "positive",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Lavender oil was significantly superior to placebo in reducing anxiety symptoms in adults with subsyndromal anxiety."
+    },
+    {
+      "record_id": "EXTVAL2_002",
+      "pmid": "25414888",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/25414888/",
+      "taxon": "Zingiber officinale",
+      "expected_direction": "positive",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Ginger was effective for relief of mild to moderate nausea and vomiting in early pregnancy."
+    },
+    {
+      "record_id": "EXTVAL2_003",
+      "pmid": "27787564",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27787564/",
+      "taxon": "Vaccinium macrocarpon",
+      "expected_direction": "null",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Cranberry capsules showed no significant difference from placebo in bacteriuria plus pyuria or symptomatic urinary tract infections."
+    },
+    {
+      "record_id": "EXTVAL2_004",
+      "pmid": "22305026",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22305026/",
+      "taxon": "Vaccinium macrocarpon",
+      "expected_direction": "null",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Cranberry juice did not significantly reduce urinary tract infection risk compared with placebo."
+    },
+    {
+      "record_id": "EXTVAL2_005",
+      "pmid": "23076891",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/23076891/",
+      "taxon": "Vaccinium macrocarpon",
+      "expected_direction": "negative",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Cranberry products did not significantly reduce symptomatic urinary tract infections overall and could not be recommended for prevention."
+    },
+    {
+      "record_id": "EXTVAL2_006",
+      "pmid": "19935757",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19935757/",
+      "taxon": "Vaccinium macrocarpon",
+      "expected_direction": "negative",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Clinical-trial evidence suggests cranberry does not seem to be effective in preventing or treating urinary tract infections in spinal cord injury."
+    },
+    {
+      "record_id": "EXTVAL2_007",
+      "pmid": "19303273",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/19303273/",
+      "taxon": "Silybum marianum",
+      "expected_direction": "mixed",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Silymarin improved several clinical symptoms and indirect bilirubin, but liver enzymes and other biomarkers were not significantly reduced."
+    },
+    {
+      "record_id": "EXTVAL2_008",
+      "pmid": "31937153",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/31937153/",
+      "taxon": "Zingiber officinale",
+      "expected_direction": "mixed",
+      "text_origin": "curated_summary_from_pubmed_abstract",
+      "benchmark_text": "Ginger significantly improved general pregnancy nausea and vomiting symptoms and nausea versus placebo, but had no significant effect on vomiting."
+    }
+  ]
+}

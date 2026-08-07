@@ -1,0 +1,124 @@
+{
+  "corpus_extension_id": "human-evidence-corpus-extension-03-observational",
+  "accuracy": {
+    "correct": 4,
+    "total": 12,
+    "value": 0.3333333333333333
+  },
+  "by_expected_direction": {
+    "positive": {
+      "correct": 3,
+      "total": 6
+    },
+    "null": {
+      "correct": 1,
+      "total": 3
+    },
+    "negative": {
+      "correct": 0,
+      "total": 0
+    },
+    "mixed": {
+      "correct": 0,
+      "total": 3
+    }
+  },
+  "rows": [
+    {
+      "record_id": "ext03_hypericum_40906611_positive",
+      "pmid": "40906611",
+      "study_design": "prospective_observational",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_garlic_31262080_positive",
+      "pmid": "31262080",
+      "study_design": "population_based_cohort",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext03_cranberry_24139545_positive",
+      "pmid": "24139545",
+      "study_design": "observational_study",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_black_cohosh_17590291_positive",
+      "pmid": "17590291",
+      "study_design": "controlled_observational",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext03_green_tea_16968850_positive",
+      "pmid": "16968850",
+      "study_design": "prospective_cohort",
+      "expected_direction": "positive",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_green_tea_27372743_positive",
+      "pmid": "27372743",
+      "study_design": "prospective_cohort",
+      "expected_direction": "positive",
+      "predicted_direction": "positive",
+      "correct": true
+    },
+    {
+      "record_id": "ext03_green_tea_19505908_null",
+      "pmid": "19505908",
+      "study_design": "prospective_cohort",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_green_tea_18090127_null",
+      "pmid": "18090127",
+      "study_design": "prospective_cohort",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_green_tea_30457014_null",
+      "pmid": "30457014",
+      "study_design": "prospective_cohort",
+      "expected_direction": "null",
+      "predicted_direction": "null",
+      "correct": true
+    },
+    {
+      "record_id": "ext03_ginkgo_29319499_mixed",
+      "pmid": "29319499",
+      "study_design": "retrospective_observational",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_ginseng_19678784_mixed",
+      "pmid": "19678784",
+      "study_design": "prospective_cohort",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext03_black_cohosh_21231853_mixed",
+      "pmid": "21231853",
+      "study_design": "prospective_observational",
+      "expected_direction": "mixed",
+      "predicted_direction": "unclear",
+      "correct": false
+    }
+  ]
+}

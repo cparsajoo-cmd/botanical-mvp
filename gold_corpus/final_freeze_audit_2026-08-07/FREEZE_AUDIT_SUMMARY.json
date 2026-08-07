@@ -1,0 +1,35 @@
+{
+  "decision": "FREEZE_BLOCKED",
+  "active_case_count": 22,
+  "freeze_ready_count": 0,
+  "e2e_retrieval_baseline_count": 7,
+  "e2e_retrieval_missing_count": 15,
+  "explicit_snapshot_gate_baseline_count": 0,
+  "explicit_snapshot_decision_baseline_count": 0,
+  "calibration_benchmark_overlap_pmids": [
+    "11308434",
+    "11744467",
+    "11939866",
+    "17940604",
+    "18482867",
+    "19017911",
+    "19593179",
+    "19609225",
+    "20347389",
+    "21173411",
+    "21775910",
+    "27912875"
+  ],
+  "metadata_fixes": [
+    {
+      "case_number": 3,
+      "field": "critical source document_date",
+      "from": "2024-08-01",
+      "to": "2024-08-04",
+      "basis": "Epub date for PMID 39106912 / DOI 10.1016/j.ctim.2024.103071"
+    }
+  ],
+  "production_logic_modified": false,
+  "gold_cases_added": 0,
+  "corpus_extensions_added": 0
+}

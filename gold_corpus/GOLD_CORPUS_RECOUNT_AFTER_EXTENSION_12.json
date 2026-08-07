@@ -1,0 +1,31 @@
+{
+  "recount_date": "2026-08-07",
+  "basis": "uploaded_project_after_extension_11_plus_extension_12",
+  "independent_records_before_extension_12": 155,
+  "extension_12_added": 12,
+  "independent_records_after_extension_12": 167,
+  "human_evidence_unique_pmids_before": 82,
+  "human_evidence_unique_pmids_after": 94,
+  "human_direction_before": {
+    "positive": 28,
+    "mixed": 24,
+    "null": 15,
+    "negative": 15
+  },
+  "human_direction_after": {
+    "positive": 28,
+    "mixed": 24,
+    "null": 21,
+    "negative": 21
+  },
+  "other_partition_counts_before_extension_12": {
+    "authoritative_ema_escop": 12,
+    "who_item_level": 2,
+    "national_fda_regulatory": 11,
+    "botanical_identity": 12,
+    "safety_interaction": 24,
+    "dose_preparation": 12
+  },
+  "minimum_target": 180,
+  "records_remaining_to_minimum_target": 13
+}

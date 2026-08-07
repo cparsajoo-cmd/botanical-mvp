@@ -1,0 +1,112 @@
+{
+  "corpus_extension_id": "human-evidence-corpus-extension-12-negative-null",
+  "accuracy": {
+    "correct": 3,
+    "total": 12,
+    "value": 0.25
+  },
+  "by_expected_direction": {
+    "positive": {
+      "correct": 0,
+      "total": 0
+    },
+    "null": {
+      "correct": 2,
+      "total": 6
+    },
+    "negative": {
+      "correct": 1,
+      "total": 6
+    },
+    "mixed": {
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "rows": [
+    {
+      "record_id": "ext12_echinacea_10230741_null",
+      "pmid": "10230741",
+      "expected_direction": "null",
+      "predicted_direction": "null",
+      "correct": true
+    },
+    {
+      "record_id": "ext12_silymarin_22797645_null",
+      "pmid": "22797645",
+      "expected_direction": "null",
+      "predicted_direction": "negative",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_kava_31813230_null",
+      "pmid": "31813230",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_ginseng_34504764_null",
+      "pmid": "34504764",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_red_ginseng_23717119_null",
+      "pmid": "23717119",
+      "expected_direction": "null",
+      "predicted_direction": "null",
+      "correct": true
+    },
+    {
+      "record_id": "ext12_kava_14692723_null",
+      "pmid": "14692723",
+      "expected_direction": "null",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_valerian_15022653_negative",
+      "pmid": "15022653",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_hawthorn_19789403_negative",
+      "pmid": "19789403",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_milk_thistle_12427501_negative",
+      "pmid": "12427501",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_echinacea_children_14657066_negative",
+      "pmid": "14657066",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    },
+    {
+      "record_id": "ext12_kava_valerian_16010204_negative",
+      "pmid": "16010204",
+      "expected_direction": "negative",
+      "predicted_direction": "negative",
+      "correct": true
+    },
+    {
+      "record_id": "ext12_kava_16877894_negative",
+      "pmid": "16877894",
+      "expected_direction": "negative",
+      "predicted_direction": "unclear",
+      "correct": false
+    }
+  ]
+}

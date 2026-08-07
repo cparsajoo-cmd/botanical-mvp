@@ -154,3 +154,15 @@ def test_case_22_requires_both_cross_rank_sources_for_e2e_retrieval():
     )
     assert any(f.code == "CRITICAL_SOURCE_MISSED" for f in result.failures)
     assert result.source_counts["critical_retrieved"] == 1
+
+def test_case_23_preserves_null_scientific_meaning_without_production_vocabulary_change():
+    case = _case_by_number(23)
+    meta = next(c for c in MANIFEST["cases"] if c["case_number"] == 23)
+    outcome = case.resolved_outcomes[0]
+    assert outcome.assertion_state.value == "Absent"  # existing production Ground Truth vocabulary
+    assert meta["scientific_result_kind"] == "NULL_STATISTICAL_RESULT"
+    assert meta["expected_evidence_direction"] == "null"
+    assert meta["critical_sources"][0]["expected_evidence_direction"] == "null"
+    assert meta["expected_decision_direction"]["value"] is None
+    assert meta["expected_decision_direction"]["status"] == "NULL_STATISTICAL_RESULT_NOT_DISTINCT_IN_CURRENT_ASSERTION_STATE_MAPPING"
+

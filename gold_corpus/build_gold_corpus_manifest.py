@@ -43,6 +43,11 @@ CURATION: dict[int, dict[str, Any]] = {
             "EMA_HMPC_150848_2015_VALERIANA_RADIX_SLEEP",
         ],
     },
+    23: {
+        "question": "Does randomized human evidence show that Momordica charantia reduces fasting blood glucose compared with placebo?",
+        "rationale": "First standalone null-human-evidence Gold Case, restricted to the fasting-blood-glucose endpoint of a verified systematic review/meta-analysis.",
+        "scientific_result_kind": "NULL_STATISTICAL_RESULT",
+    },
 }
 
 STUDY_DESIGN_BY_SOURCE = {
@@ -160,6 +165,14 @@ def build_manifest() -> dict:
         if not critical_sources:
             raise RuntimeError(f"{case.case_id}: active corpus case has no critical Ground Truth reference")
 
+        # Gold Case 023 exposes a scientific distinction the current AssertionState
+        # vocabulary cannot encode directly: a statistically NULL result is not a
+        # harmful/negative-direction effect. Keep production vocabulary unchanged,
+        # but preserve the scientific meaning in derived benchmark metadata.
+        if cur.get("scientific_result_kind") == "NULL_STATISTICAL_RESULT":
+            for src in critical_sources:
+                src["expected_evidence_direction"] = "null"
+
         if outcome.resolution_status.value == "Reference conflict":
             aggregate_direction = "conflicting"
         else:
@@ -200,6 +213,7 @@ def build_manifest() -> dict:
             "known_irrelevant_sources": [],
             "known_duplicate_sources": [],
             "expected_evidence_direction": aggregate_direction,
+            "scientific_result_kind": cur.get("scientific_result_kind"),
             "expected_study_design": aggregate_design,
                         "expected_applicability": (
                 "APPLICABLE"
@@ -211,7 +225,11 @@ def build_manifest() -> dict:
             ),
             "expected_safety_status": expected_safety,
             "expected_regulatory_status": expected_reg,
-            "expected_decision_direction": _decision_direction(outcome),
+            "expected_decision_direction": (
+                {"value": None, "status": "NULL_STATISTICAL_RESULT_NOT_DISTINCT_IN_CURRENT_ASSERTION_STATE_MAPPING"}
+                if cur.get("scientific_result_kind") == "NULL_STATISTICAL_RESULT"
+                else _decision_direction(outcome)
+            ),
             "expected_prohibited_decisions": prohibited,
             "reference_rationale": cur["rationale"],
             "resolution_status": outcome.resolution_status.value,
@@ -230,12 +248,12 @@ def build_manifest() -> dict:
             entry["dose"] = {"single_dose_threshold_mg": 600, "daily_dose_threshold_mg": 1800, "meaning": "supply-channel thresholds, not absolute lawful maxima"}
         entries.append(entry)
     return {
-        "gold_corpus_version": "0.3.0",
+        "gold_corpus_version": "0.3.1",
         "generated_date": "2026-08-07",
         "protocol_version": "VALIDATION_PROTOCOL.md v0.3",
         "active_case_count": len(entries),
         "abandoned_case_numbers": registry.get("abandoned_cases", []),
-        "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; FROZEN_E2E_PILOT_CAPTURED_FOR_CASES_006_016_018_019_020_021_022",
+        "corpus_status": "CURATED_GROUND_TRUTH_WITH_CRITICAL_SOURCE_EXPECTATIONS; STANDALONE_NULL_GAP_CLOSED_BY_CASE_023; EXTERNAL_EXPERT_REVIEW_AND_LOCKING_PENDING; FROZEN_E2E_PILOT_CAPTURED_FOR_CASES_006_016_018_019_020_021_022",
         "cases": entries,
     }
 

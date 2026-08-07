@@ -31,3 +31,7 @@ This 24-record set is frozen before any production calibration change.
 No production phrase table, score, safety rule, regulatory rule, market rule, or Gold Case truth was changed.
 
 The next phase, if authorized, may change the production direction classifier, but it must be evaluated against this frozen V1 set without changing its labels.
+
+## Status after production calibration
+
+Calibration V1 has now served its intended calibration role and is **not a holdout set**. Its labels remain frozen for reproducibility, but its post-change score must be reported as calibration-set performance. Independent generalization claims must use External Validation V2 or a future disjoint validation set that was not consulted during rule design.

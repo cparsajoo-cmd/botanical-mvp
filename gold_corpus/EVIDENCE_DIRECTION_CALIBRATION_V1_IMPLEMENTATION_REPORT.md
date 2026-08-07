@@ -76,3 +76,9 @@ evidence-direction behavior:
 The external 87.5% result is evidence that the calibration generalizes beyond the
 24 records used for calibration, but it is not a claim of overall platform accuracy
 or clinical validation.
+
+## Post-calibration evaluation status clarification
+
+Because Calibration V1 directly informed the generic production phrase-matcher changes described in this report, its post-change 21/24 score is a **calibration/training-set measurement**, not an independent holdout-validation estimate. It must not be used as headline evidence of out-of-sample performance.
+
+External Validation V2 remains the disjoint post-calibration evaluation set currently available. Any future benchmark intended to estimate generalization must use records not consulted during rule design or calibration. This clarification changes benchmark governance/documentation only; no production code is changed here.

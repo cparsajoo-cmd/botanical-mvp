@@ -1,13 +1,13 @@
-# Gold Corpus Coverage Audit — updated through Case 021
+# Gold Corpus Coverage Audit — updated through Case 023
 
 **Audit date:** 2026-08-07  
 **Scope:** Gold Case / Gold Corpus / Benchmark only. No production engine, scoring, safety, regulatory, or market logic was changed.
 
 ## Active corpus
 
-- Active reference-grounded cases: **20**
+- Active reference-grounded cases: **22**
 - Abandoned case numbers: **2**
-- Latest case: **021 — Serenoa repens, real same-rank systematic-review conflict**
+- Latest case: **023 — Momordica charantia, standalone null human evidence**
 - Engine evidence attached to Ground Truth cases: **none**
 - Gold Cases remain development/unlocked unless separately promoted by the existing protocol.
 
@@ -15,7 +15,7 @@
 
 | ReferenceDomain | Cases | Count |
 |---|---|---:|
-| INDICATION_EVIDENCE | 001, 003, 004, 005, 009, 010, 011, 012, 019, 020, 021 | 11 |
+| INDICATION_EVIDENCE | 001, 003, 004, 005, 009, 010, 011, 012, 019, 020, 021, 022, 023 | 13 |
 | SAFETY | 006, 014 | 2 |
 | PREPARATION_SPEC | 007, 008, 015 | 3 |
 | IDENTITY_QUALITY | 013, 017 | 2 |
@@ -30,8 +30,8 @@
 | ESCOP | COVERED | 020 |
 | FDA-specific | GAP | Current protocol has no FDA-specific hierarchy entry; not fabricated here |
 | National regulators | COVERED | 016, 018 |
-| Systematic reviews | COVERED | 003, 004, 005, 011, 021 |
-| Meta-analysis | COVERED | 003, 011, 021 |
+| Systematic reviews | COVERED | 003, 004, 005, 011, 021, 022, 023 |
+| Meta-analysis | COVERED | 003, 011, 021, 023 |
 | RCT as independent governing Gold source | GAP | Current indication hierarchy does not permit RCT as governing source |
 | Observational study as independent governing Gold source | GAP | No permitted governing-source path in current protocol |
 | Botanical identity | COVERED | 013, 017 |
@@ -44,7 +44,7 @@
 | Regulatory prohibition | COVERED | 016 |
 | Positive human evidence | COVERED | includes 009, 010, 011, 012, 019, 020 and positive side of 021 |
 | Negative human evidence | COVERED | 004 and negative side of 021 |
-| Null human evidence standalone | GAP | Null outcomes exist inside reviews; no independent null-outcome case yet |
+| Null human evidence standalone | **COVERED** | **023 — endpoint-bounded null meta-analytic result, PMID 38274207** |
 | Conflicting evidence | **COVERED — REAL MULTI-REFERENCE** | **021 resolves to REFERENCE_CONFLICT** |
 | Missing/insufficient evidence | COVERED | 005 |
 | Source unavailable | GAP | Framework supports retrieval failure, but no real curated source-unavailable holdout case |
@@ -62,11 +62,11 @@ Both references are represented using the already-approved `SYSTEMATIC_REVIEW` s
 
 ## Remaining highest-value gaps
 
-1. **Standalone null human evidence** using a permitted governing source.
-2. **Source-unavailable / retrieval-failure case** with a real pre-declared critical source and frozen snapshot semantics.
-3. **FDA-specific coverage** only if the protocol is deliberately expanded; do not force FDA into an incompatible source type.
-4. **RCT / observational source coverage** only after a protocol-level decision permits those source types as governing references.
-5. More multi-reference cases are useful only when they add a materially different conflict mechanism; quantity alone is not a target.
+1. **Source-unavailable / retrieval-failure scientific case** only if a real, reproducible, pre-declared source-unavailability condition can be curated without fabrication; current engineering perturbation coverage already exists.
+2. **FDA-specific governing-case coverage** only if the protocol is deliberately expanded; do not force FDA into an incompatible source type.
+3. **RCT / observational governing-source coverage** only after a protocol-level decision permits those source types.
+4. **External expert review, locking, and wider E2E freezing** are now higher-value than adding more scientific cases.
+5. More cases are useful only when they close a materially different scientific or governance gap; quantity alone is not a target.
 
 ## Integrity rule
 
@@ -110,3 +110,16 @@ The frozen baseline was executed through the unmodified production engine. Findi
 ### Interpretation caution
 
 The evidence-direction metric currently compares a generic efficacy-direction classifier (`positive/negative/null/mixed/unclear`) with GoldSource expectations that also encode presence of regulatory/safety assertions as `positive`. Therefore some direction mismatches are a **validation-vocabulary mismatch**, not necessarily a scientific error in the source or Gold Case. This should be addressed at benchmark interpretation/protocol level before using that metric as a headline engine-accuracy claim; the engine was not modified in this phase.
+
+## Case 023 addition — standalone null human evidence (2026-08-07)
+
+Case 023 closes the last high-value standalone direction gap using a real systematic review/meta-analysis: *Momordica charantia* and fasting blood glucose, PMID 38274207, DOI 10.3389/fnut.2023.1200801. The case is restricted to the fasting-blood-glucose endpoint, for which the source reports no statistically significant effect versus placebo (MD -0.03; 95% CI -0.38 to 0.31).
+
+The repository has no dedicated `NULL` assertion state. The unchanged Ground Truth vocabulary therefore represents the bounded efficacy claim as `SUPPORTS_INDICATION + ABSENT`, while the Gold Corpus manifest records `scientific_result_kind = NULL_STATISTICAL_RESULT`. This is benchmark metadata only and does not change production interpretation logic.
+
+PMID 38274207 and its DOI were absent from the uploaded repository before inclusion. The source was not duplicated into a second corpus-extension record, so the independent corpus-record count remains **181**. Active reference-grounded Gold Cases increase from **21 to 22**.
+
+## Freeze status after Case 023
+
+Scientific direction coverage is now substantially saturated, including positive, negative, conflicting, insufficient, and standalone null human evidence. The corpus is still **not globally freeze-ready** because external expert review, formal locking, and broader frozen E2E baseline coverage remain incomplete. The next phase should prioritize governance completion rather than count growth.
+

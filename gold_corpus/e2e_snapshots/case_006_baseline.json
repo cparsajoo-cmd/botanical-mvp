@@ -1,0 +1,28 @@
+{
+  "case_number": 6,
+  "snapshot_id": "case006-hypericum-ema-2026-08-07",
+  "candidate_pool": [
+    "Hypericum perforatum L.",
+    "Melissa officinalis L.",
+    "Valeriana officinalis L."
+  ],
+  "question": {
+    "question": "What serious medicine interactions or contraindications apply to Hypericum perforatum herb?",
+    "indication": "",
+    "dosage_form": "Extract",
+    "market": "EU"
+  },
+  "records": [
+    {
+      "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_herba",
+      "scientific_name": "Hypericum perforatum L.",
+      "source_type": "EMA_HMPC",
+      "source_title": "European Union herbal monograph on Hypericum perforatum L., herba - Revision 1",
+      "source_url": "https://www.ema.europa.eu/en/documents/herbal-monograph/final-european-union-herbal-monograph-hypericum-perforatum-l-herba-revision-1_en.pdf",
+      "target_indication": "",
+      "dosage_form": "Extract",
+      "notes": "EMA states that Hypericum preparations induce CYP3A4 and P-glycoprotein and that concomitant use with several affected medicines is contraindicated.",
+      "source_available": true
+    }
+  ]
+}

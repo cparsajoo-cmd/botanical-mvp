@@ -1,0 +1,239 @@
+{
+  "generated_date": "2026-08-07",
+  "active_case_count": 22,
+  "features": {
+    "EMA_HMPC": {
+      "case_numbers": [
+        1,
+        6,
+        7,
+        8,
+        9,
+        10,
+        12,
+        14,
+        15,
+        22
+      ],
+      "count": 10,
+      "status": "COVERED"
+    },
+    "WHO": {
+      "case_numbers": [
+        19
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "ESCOP": {
+      "case_numbers": [
+        20
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "FDA": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "National_Regulators": {
+      "case_numbers": [
+        16,
+        18
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Systematic_Reviews": {
+      "case_numbers": [
+        3,
+        4,
+        5,
+        11,
+        21,
+        22,
+        23
+      ],
+      "count": 7,
+      "status": "COVERED"
+    },
+    "Meta_analysis": {
+      "case_numbers": [
+        3,
+        11,
+        21,
+        23
+      ],
+      "count": 4,
+      "status": "COVERED"
+    },
+    "RCT": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Observational_Studies": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Botanical_Identity": {
+      "case_numbers": [
+        13,
+        17
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Safety": {
+      "case_numbers": [
+        6,
+        14
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Contraindications": {
+      "case_numbers": [
+        6
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Drug_Interactions": {
+      "case_numbers": [
+        6,
+        14
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Dose_specific_Evidence": {
+      "case_numbers": [
+        18
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Preparation_specific_Evidence": {
+      "case_numbers": [
+        7,
+        8,
+        15
+      ],
+      "count": 3,
+      "status": "COVERED"
+    },
+    "Regulatory_Restrictions": {
+      "case_numbers": [
+        18
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Regulatory_Prohibition": {
+      "case_numbers": [
+        16
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Positive_Human_Evidence": {
+      "case_numbers": [
+        9,
+        10,
+        11,
+        12,
+        19,
+        20,
+        21
+      ],
+      "count": 7,
+      "status": "COVERED"
+    },
+    "Negative_Human_Evidence": {
+      "case_numbers": [
+        4,
+        21
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Null_Human_Evidence": {
+      "case_numbers": [
+        23
+      ],
+      "count": 1,
+      "status": "COVERED"
+    },
+    "Conflicting_Evidence": {
+      "case_numbers": [
+        5,
+        21
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Missing_Evidence": {
+      "case_numbers": [
+        5,
+        22
+      ],
+      "count": 2,
+      "status": "COVERED"
+    },
+    "Source_Unavailable": {
+      "case_numbers": [],
+      "count": 0,
+      "status": "GAP"
+    },
+    "Cross_rank_precedence": {
+      "case_numbers": [
+        22
+      ],
+      "count": 1,
+      "status": "COVERED"
+    }
+  },
+  "notes": {
+    "Null_Human_Evidence": "Case 023 is the first active governing Gold Case for a statistically null human-evidence result: Momordica charantia and fasting blood glucose, PubMed PMID 38274207. The repository has no NULL AssertionState, so the Ground Truth uses SUPPORTS_INDICATION + ABSENT while benchmark metadata separately records NULL_STATISTICAL_RESULT.",
+    "Conflicting_Evidence": "Case 021 is the first active GoldCase whose resolved Ground Truth itself contains two applicable, equally ranked SYSTEMATIC_REVIEW references with opposing verdicts and resolves to REFERENCE_CONFLICT. Case 005 separately documents a later conflicting review but contains only one governing applicable reference.",
+    "Missing_Evidence": "Cases 005 and 022 cover scientific insufficiency (AssertionState.INSUFFICIENT), not retrieval failure. Case 022 additionally tests that the higher-ranked systematic review governs over a positive EMA/HMPC source.",
+    "Source_Unavailable": "No synthetic scientific Gold Case was added. Source-unavailable behavior is now exercised as a frozen E2E perturbation scenario around real critical sources in the seven-case pilot.",
+    "RCT": "RCTs appear inside systematic reviews but are not independently curated GoldSourceExpectations; current precedence does not permit RCT as governing INDICATION_EVIDENCE source.",
+    "Observational_Studies": "No independently curated observational Gold source.",
+    "WHO": "Case 019 is the first active WHO_MONOGRAPH governing source (WHO Monographs Vol.1, Radix Ginseng).",
+    "ESCOP": "Case 020 is the first active ESCOP_MONOGRAPH governing source (ESCOP 2021 Echinaceae purpureae herba). Only claims visible on the official public summary are curated.",
+    "Cross_rank_precedence": "Case 022 is the first active GoldCase with two applicable references of different INDICATION_EVIDENCE ranks; SYSTEMATIC_REVIEW is selected over a newer EMA_HMPC monograph.",
+    "Systematic_Reviews": "Case 023 adds a systematic review/meta-analysis governing source for standalone null human evidence.",
+    "Meta_analysis": "Cases 003, 011, 021 and 023 include governing systematic-review/meta-analysis evidence; Case 023 is endpoint-bounded null evidence."
+  },
+  "e2e_pilot": {
+    "case_numbers": [
+      6,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22
+    ],
+    "frozen_baseline_snapshots": 7,
+    "critical_source_expectations": 9,
+    "critical_source_retrieval_baseline": "9/9",
+    "source_unavailable_scenario": "COVERED_BY_E2E_SCENARIO_NOT_NEW_SCIENTIFIC_GOLD_CASE",
+    "duplicate_source_scenario": "COVERED_BY_E2E_SCENARIO",
+    "irrelevant_source_scenario": "COVERED_BY_E2E_SCENARIO",
+    "production_logic_modified": false
+  },
+  "freeze_governance": {
+    "scientific_coverage_status": "STANDALONE_NULL_GAP_CLOSED",
+    "corpus_record_count": 181,
+    "active_gold_case_count": 22,
+    "external_expert_review_complete": false,
+    "all_cases_locked": false,
+    "freeze_ready": false,
+    "reason": "Coverage is no longer the primary blocker; external expert review, locking, and broader frozen E2E baseline coverage remain pending."
+  }
+}

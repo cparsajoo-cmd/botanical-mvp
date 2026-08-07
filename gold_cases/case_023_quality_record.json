@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "audit_trail_entry": true,
+    "generated_timestamp": "2026-08-07"
+  },
+  "case_information": {
+    "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+    "case_number": 23,
+    "taxon": "Momordica charantia L.",
+    "domain": "INDICATION_EVIDENCE"
+  },
+  "coverage_value": {
+    "new_gap_closed": "STANDALONE_NULL_HUMAN_EVIDENCE",
+    "non_duplicate_rationale": "First active Gold Case whose governing human evidence is a statistically null meta-analytic result for one explicitly bounded clinical endpoint. PMID 38274207 and DOI 10.3389/fnut.2023.1200801 were absent from the uploaded project before inclusion."
+  },
+  "primary_references": [
+    {
+      "reference_id": "PUBMED_38274207_LACZKO_ZOLD_2024_MOMORDICA_FBG_META",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "publication_year": 2024,
+      "pmid": "38274207",
+      "doi": "10.3389/fnut.2023.1200801",
+      "expected_direction": "NULL_STATISTICAL_RESULT"
+    }
+  ],
+  "evidence_assessment": {
+    "assertion_type": "SUPPORTS_INDICATION",
+    "expected_resolution_status": "SELECTED",
+    "expected_selected_reference_id": "PUBMED_38274207_LACZKO_ZOLD_2024_MOMORDICA_FBG_META",
+    "expected_assertion_state": "ABSENT",
+    "scientific_result_kind": "NULL_STATISTICAL_RESULT",
+    "endpoint": "fasting blood glucose",
+    "confidence_level": "HIGH_FOR_SOURCE_EXTRACTION",
+    "preparation_specific": false,
+    "dose_specific": false
+  },
+  "validation_results": {
+    "case_tests_expected": 8,
+    "engine_evidence_attached": false,
+    "locked": false
+  },
+  "approval_status": {
+    "reference_ground_truth_ready": true,
+    "external_validation_claimed": false,
+    "clinical_validation_claimed": false,
+    "freeze_ready": false,
+    "freeze_blocker": "external expert review and lock still pending"
+  }
+}

@@ -105,6 +105,11 @@
       "file": "gold_case_reference_grounded_022_valeriana_cross_rank_precedence.py",
       "case_number": 22,
       "status": "ACTIVE_REFERENCE_GROUNDED"
+    },
+    {
+      "file": "gold_case_reference_grounded_023_momordica_charantia_null_fbg.py",
+      "case_number": 23,
+      "status": "ACTIVE_REFERENCE_GROUNDED"
     }
   ],
   "abandoned_cases": [

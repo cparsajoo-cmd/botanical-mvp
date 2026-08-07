@@ -1,0 +1,24 @@
+{
+  "case_number": 23,
+  "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+  "retrieval_date": "2026-08-07",
+  "critical_sources": [
+    {
+      "source_reference_id": "PUBMED_38274207_LACZKO_ZOLD_2024_MOMORDICA_FBG_META",
+      "title": "The metabolic effect of Momordica charantia cannot be determined based on the available clinical evidence: a systematic review and meta-analysis of randomized clinical trials",
+      "authors": "Laczkó-Zöld E, Csupor-Löffler B, Kolcsár E-B, Ferenci T, Nan M, Tóth B, Csupor D",
+      "publication": "Front Nutr. 2024;10:1200801",
+      "pmid": "38274207",
+      "pmcid": "PMC10808600",
+      "doi": "10.3389/fnut.2023.1200801",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "official_or_index_url": "https://pubmed.ncbi.nlm.nih.gov/38274207/",
+      "verification_status": "CURATOR_VERIFIED_FROM_PUBMED_RECORD_2026_08_07",
+      "expected_direction": "NULL_STATISTICAL_RESULT",
+      "critical_retrieval_requirement": true,
+      "endpoint": "fasting blood glucose",
+      "effect_estimate": "MD -0.03; 95% CI -0.38 to 0.31 versus placebo"
+    }
+  ],
+  "scope_note": "Gold Case 023 is restricted to the fasting-blood-glucose endpoint. It does not generalize the source's null result to all metabolic outcomes and does not infer dose, preparation, plant part, route, or population fields not load-bearing in the PubMed abstract."
+}

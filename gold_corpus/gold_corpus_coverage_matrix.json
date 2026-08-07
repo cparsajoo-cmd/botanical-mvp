@@ -1,6 +1,6 @@
 {
   "generated_date": "2026-08-07",
-  "active_case_count": 19,
+  "active_case_count": 20,
   "features": {
     "EMA_HMPC": {
       "case_numbers": [
@@ -49,17 +49,19 @@
         3,
         4,
         5,
-        11
+        11,
+        21
       ],
-      "count": 4,
+      "count": 5,
       "status": "COVERED"
     },
     "Meta_analysis": {
       "case_numbers": [
         3,
-        11
+        11,
+        21
       ],
-      "count": 2,
+      "count": 3,
       "status": "COVERED"
     },
     "RCT": {
@@ -140,16 +142,18 @@
         11,
         12,
         19,
-        20
+        20,
+        21
       ],
-      "count": 6,
+      "count": 7,
       "status": "COVERED"
     },
     "Negative_Human_Evidence": {
       "case_numbers": [
-        4
+        4,
+        21
       ],
-      "count": 1,
+      "count": 2,
       "status": "COVERED"
     },
     "Null_Human_Evidence": {
@@ -159,9 +163,10 @@
     },
     "Conflicting_Evidence": {
       "case_numbers": [
-        5
+        5,
+        21
       ],
-      "count": 1,
+      "count": 2,
       "status": "COVERED"
     },
     "Missing_Evidence": {
@@ -179,7 +184,7 @@
   },
   "notes": {
     "Null_Human_Evidence": "Null outcomes occur inside reviews but no standalone independently labelled null-RCT Gold source.",
-    "Conflicting_Evidence": "Case 005 documents a real conflicting later systematic review, but the current resolved GoldCase contains one applicable governing reference.",
+    "Conflicting_Evidence": "Case 021 is the first active GoldCase whose resolved Ground Truth itself contains two applicable, equally ranked SYSTEMATIC_REVIEW references with opposing verdicts and resolves to REFERENCE_CONFLICT. Case 005 separately documents a later conflicting review but contains only one governing applicable reference.",
     "Missing_Evidence": "Case 005 covers scientific insufficiency (AssertionState.INSUFFICIENT), not retrieval failure.",
     "Source_Unavailable": "Supported by End-to-End framework/tests but not yet represented by a real locked corpus source-unavailable case.",
     "RCT": "RCTs appear inside systematic reviews but are not independently curated GoldSourceExpectations; current precedence does not permit RCT as governing INDICATION_EVIDENCE source.",

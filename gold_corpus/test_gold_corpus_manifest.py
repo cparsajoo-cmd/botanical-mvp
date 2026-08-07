@@ -41,13 +41,17 @@ def test_every_case_has_required_scientific_corpus_fields():
         assert case["critical_sources"], case["case_id"]
 
 
-def test_critical_source_is_the_selected_ground_truth_reference():
+def test_critical_sources_match_ground_truth_resolution():
     for case_meta in MANIFEST["cases"]:
         case = _case_by_number(case_meta["case_number"])
         assert len(case.resolved_outcomes) == 1
-        selected = case.resolved_outcomes[0].selected_reference_id
-        assert selected is not None
-        assert case_meta["critical_sources"][0]["reference_id"] == selected
+        outcome = case.resolved_outcomes[0]
+        manifest_ids = {s["reference_id"] for s in case_meta["critical_sources"]}
+        if outcome.selected_reference_id is not None:
+            assert manifest_ids == {outcome.selected_reference_id}
+        else:
+            assert outcome.conflicting_reference_ids
+            assert manifest_ids == set(outcome.conflicting_reference_ids)
 
 
 def test_all_active_cases_have_gold_source_sets():
@@ -82,4 +86,38 @@ def test_critical_source_retrieval_clears_critical_miss_for_case_1():
         candidate_discovery=lambda _q: [case.validation_unit.taxon],
     )
     assert not any(f.code == "CRITICAL_SOURCE_MISSED" for f in result.failures)
+    assert result.source_counts["critical_retrieved"] == 1
+
+
+def test_case_21_is_real_multi_reference_conflict():
+    case = _case_by_number(21)
+    meta = next(c for c in MANIFEST["cases"] if c["case_number"] == 21)
+    outcome = case.resolved_outcomes[0]
+    assert outcome.resolution_status.value == "Reference conflict"
+    assert outcome.selected_reference_id is None
+    assert len(outcome.conflicting_reference_ids) == 2
+    assert len(meta["critical_sources"]) == 2
+    assert meta["expected_evidence_direction"] == "conflicting"
+    assert meta["expected_decision_direction"]["value"] is None
+
+
+def test_case_21_requires_both_conflicting_critical_sources_for_e2e_retrieval():
+    case = _case_by_number(21)
+    meta = next(c for c in MANIFEST["cases"] if c["case_number"] == 21)
+    sources = meta["critical_sources"]
+    assert len(sources) == 2
+    first = sources[0]
+    rec = RetrievedEvidence(
+        reference_id=first["reference_id"],
+        scientific_name=case.validation_unit.taxon,
+        notes="One of two critical same-rank systematic reviews.",
+        source_type=first["source_type"],
+        target_indication=meta["indication"] or "",
+    )
+    q = ValidationQuestion(meta["question"], meta["indication"] or "", "unspecified", meta["jurisdiction"] or "International")
+    result = run_end_to_end_case(
+        case, q, GOLD_SOURCE_SETS[case.case_id], FrozenSnapshotRetriever([rec]),
+        candidate_discovery=lambda _q: [case.validation_unit.taxon],
+    )
+    assert any(f.code == "CRITICAL_SOURCE_MISSED" for f in result.failures)
     assert result.source_counts["critical_retrieved"] == 1

@@ -34,6 +34,7 @@ CURATION: dict[int, dict[str, Any]] = {
     18: {"question": "What UK supply restriction applies to internal-use herbal medicines containing Ephedra sinica at specified dose thresholds?", "rationale": "Dose-specific national regulatory restriction benchmark."},
     19: {"question": "What clinically supported use does the WHO monograph recognize for Panax ginseng root?", "rationale": "First WHO_MONOGRAPH governing source in the corpus; closes the WHO source-coverage gap."},
     20: {"question": "What therapeutic indication does the ESCOP monograph recognize for Echinacea purpurea flowering aerial parts?", "rationale": "First ESCOP_MONOGRAPH governing source in the corpus; closes the ESCOP source-coverage gap using only claims visible on the official public ESCOP summary."},
+    21: {"question": "Do equally ranked systematic reviews agree on whether Serenoa repens improves lower urinary tract symptoms due to benign prostatic enlargement?", "rationale": "First real multi-reference GoldCase in which two applicable SYSTEMATIC_REVIEW sources carry opposing verdicts and must resolve to REFERENCE_CONFLICT rather than being silently ranked by recency."},
 }
 
 STUDY_DESIGN_BY_SOURCE = {
@@ -72,6 +73,8 @@ def _prep_dict(prep):
 def _decision_direction(outcome):
     if outcome.domain != ReferenceDomain.INDICATION_EVIDENCE:
         return {"value": None, "status": "NOT_APPLICABLE_TO_WHOLE_CASE_DECISION_UNDER_PROTOCOL_V0_3"}
+    if outcome.resolution_status.value in {"Reference conflict", "Human review required"}:
+        return {"value": None, "status": "NOT_ELIGIBLE_DUE_TO_UNRESOLVED_REFERENCE_CONFLICT"}
     direction = map_assertion_state_to_direction(outcome.assertion_state) if outcome.assertion_state else None
     if direction is None:
         return {"value": None, "status": "NOT_ELIGIBLE_UNDER_CURRENT_ASSERTION_STATE_MAPPING"}
@@ -89,27 +92,71 @@ def build_manifest() -> dict:
         if len(case.resolved_outcomes) != 1:
             raise RuntimeError(f"{case.case_id}: expected one resolved outcome")
         outcome = case.resolved_outcomes[0]
-        ref = case.references[0].reference
-        claim = case.references[0].claims[0]
         cur = CURATION[n]
-        critical = {
-            "reference_id": ref.reference_id,
-            "source_type": ref.source_type,
-            "document_date": str(ref.document_date) if ref.document_date else None,
-            "source_locator": claim.source_locator,
-            "expected_study_design": STUDY_DESIGN_BY_SOURCE.get(ref.source_type, "unspecified"),
-            "expected_evidence_direction": (
-                "positive" if outcome.domain == ReferenceDomain.INDICATION_EVIDENCE and outcome.assertion_state and outcome.assertion_state.value == "Present"
-                else "negative" if outcome.domain == ReferenceDomain.INDICATION_EVIDENCE and outcome.assertion_state and outcome.assertion_state.value == "Absent"
-                else "mixed" if outcome.domain == ReferenceDomain.INDICATION_EVIDENCE and outcome.assertion_state and outcome.assertion_state.value == "Conditional"
-                else "unclear" if outcome.domain == ReferenceDomain.INDICATION_EVIDENCE and outcome.assertion_state and outcome.assertion_state.value == "Insufficient"
+        # Critical Ground Truth references are either the single selected
+        # reference or, for an unresolved same-rank conflict, every reference
+        # explicitly named by the precedence resolution. This keeps the corpus
+        # generic and avoids case-specific benchmark rules.
+        if outcome.selected_reference_id:
+            critical_ids = [outcome.selected_reference_id]
+        elif outcome.conflicting_reference_ids:
+            critical_ids = list(outcome.conflicting_reference_ids)
+        else:
+            critical_ids = []
+
+        refs_by_id = {g.reference.reference_id: g for g in case.references}
+        critical_sources = []
+        for critical_id in critical_ids:
+            gref = refs_by_id[critical_id]
+            ref = gref.reference
+            matching_claims = [
+                c for c in gref.claims
+                if c.domain == outcome.domain and c.assertion_type == outcome.assertion_type
+            ]
+            if len(matching_claims) != 1:
+                raise RuntimeError(
+                    f"{case.case_id}: expected exactly one claim for critical reference {critical_id}"
+                )
+            claim = matching_claims[0]
+            state = claim.assertion_state.value if claim.assertion_state else None
+            direction = (
+                "positive" if state == "Present"
+                else "negative" if state == "Absent"
+                else "mixed" if state == "Conditional"
+                else "unclear" if state == "Insufficient"
                 else None
-            ),
-            "expected_applicability": "applicable_for_resolved_domain",
-            "critical_retrieval_requirement": True,
-            "safety_critical": bool(outcome.domain == ReferenceDomain.SAFETY and outcome.severity and outcome.severity.value == "SERIOUS"),
-            "regulatory_critical": bool(outcome.domain == ReferenceDomain.REGULATORY_STATUS and outcome.assertion_type.value == "Prohibition"),
-        }
+            )
+            critical_sources.append({
+                "reference_id": ref.reference_id,
+                "source_type": ref.source_type,
+                "document_date": str(ref.document_date) if ref.document_date else None,
+                "source_locator": claim.source_locator,
+                "expected_study_design": STUDY_DESIGN_BY_SOURCE.get(ref.source_type, "unspecified"),
+                "expected_evidence_direction": direction,
+                "expected_applicability": "applicable_for_resolved_domain",
+                "critical_retrieval_requirement": True,
+                "safety_critical": bool(
+                    outcome.domain == ReferenceDomain.SAFETY
+                    and claim.severity
+                    and claim.severity.value == "SERIOUS"
+                ),
+                "regulatory_critical": bool(
+                    outcome.domain == ReferenceDomain.REGULATORY_STATUS
+                    and outcome.assertion_type.value == "Prohibition"
+                ),
+            })
+
+        if not critical_sources:
+            raise RuntimeError(f"{case.case_id}: active corpus case has no critical Ground Truth reference")
+
+        if outcome.resolution_status.value == "Reference conflict":
+            aggregate_direction = "conflicting"
+        else:
+            dirs = {x["expected_evidence_direction"] for x in critical_sources}
+            aggregate_direction = next(iter(dirs)) if len(dirs) == 1 else "mixed"
+
+        designs = {x["expected_study_design"] for x in critical_sources}
+        aggregate_design = next(iter(designs)) if len(designs) == 1 else "mixed"
         expected_safety = "NOT_APPLICABLE"
         if outcome.domain == ReferenceDomain.SAFETY:
             expected_safety = f"{outcome.assertion_type.value}:{outcome.assertion_state.value}:{outcome.severity.value if outcome.severity else 'UNSPECIFIED'}"
@@ -117,9 +164,9 @@ def build_manifest() -> dict:
         if outcome.domain == ReferenceDomain.REGULATORY_STATUS:
             expected_reg = f"{outcome.assertion_type.value}:{outcome.assertion_state.value}"
         prohibited = []
-        if critical["safety_critical"]:
+        if any(src["safety_critical"] for src in critical_sources):
             prohibited = ["positive_or_clear_decision_when_serious_safety_source_is_retrieved", "serious_safety_candidate_in_top5"]
-        elif critical["regulatory_critical"]:
+        elif any(src["regulatory_critical"] for src in critical_sources):
             prohibited = ["positive_or_clear_decision_when_prohibition_source_is_retrieved", "prohibited_candidate_in_top5"]
         entry = {
             "case_number": n,
@@ -137,18 +184,26 @@ def build_manifest() -> dict:
             "domain": outcome.domain.value,
             "assertion_type": outcome.assertion_type.value,
             "assertion_state": outcome.assertion_state.value if outcome.assertion_state else None,
-            "critical_sources": [critical],
+            "critical_sources": critical_sources,
             "supporting_sources": cur.get("supporting_sources", []),
             "known_irrelevant_sources": [],
             "known_duplicate_sources": [],
-            "expected_evidence_direction": critical["expected_evidence_direction"],
-            "expected_study_design": critical["expected_study_design"],
-            "expected_applicability": "APPLICABLE" if case.references[0].applicability_by_domain[outcome.domain].applicable else "NOT_APPLICABLE",
+            "expected_evidence_direction": aggregate_direction,
+            "expected_study_design": aggregate_design,
+                        "expected_applicability": (
+                "APPLICABLE"
+                if all(
+                    refs_by_id[src["reference_id"]].applicability_by_domain[outcome.domain].applicable
+                    for src in critical_sources
+                )
+                else "NOT_APPLICABLE"
+            ),
             "expected_safety_status": expected_safety,
             "expected_regulatory_status": expected_reg,
             "expected_decision_direction": _decision_direction(outcome),
             "expected_prohibited_decisions": prohibited,
             "reference_rationale": cur["rationale"],
+            "resolution_status": outcome.resolution_status.value,
             "reviewer": "internal_scientific_curation_pending_external_expert_review",
             "review_date": "2026-08-07",
             "ground_truth_status": "REFERENCE_CURATED_DEVELOPMENT",

@@ -166,15 +166,27 @@ def test_structured_safety_target_gate_validation_fails_on_preclassified_hazard_
 
 
 def test_capability_boundary_notes_alone_cannot_trigger_hard_safety_gate():
-    """Documents the current capability boundary: even hazard-adjacent
-    language in notes — the literal word "lithogenic" plus
-    "contraindicated" and "pregnancy" — does NOT activate the Hard
-    Safety Gate when compound_activity_targets is empty. Free text is
-    scanned only against SAFETY_TERMS (a disjoint, softer vocabulary);
-    HARD_SAFETY_TERMS is reachable only via the structured target
-    field — see the companion test above for the positive case. This
-    is not a desired future capability being asserted; it is what the
-    engine, unmodified, does today."""
+    """Documents the capability boundary for DB_ACTIVITY_SAFETY_TERMS
+    specifically: hazard-adjacent language in notes — the literal word
+    "lithogenic" plus "contraindicated" and "pregnancy", but with NO
+    named drug/interacting-substance class — does NOT activate the
+    Hard Safety Gate when compound_activity_targets is empty. Free
+    text is scanned only against SAFETY_TERMS (a disjoint, softer
+    vocabulary); DB_ACTIVITY_SAFETY_TERMS (lithogenic/abortifacient/
+    etc.) is reachable only via the structured target field — see the
+    companion test above for the positive case.
+
+    Critical Safety False-Negative remediation (Case 006) note: a
+    narrower, separate exception now exists alongside this boundary —
+    see interaction_severity_classifier.py and
+    test_structured_serious_interaction_gate_fix.py. Free text CAN
+    reach HARD_SAFETY_TERMS, but ONLY when it asserts BOTH explicit
+    contraindication/serious-interaction language AND a recognized
+    high-risk interacting drug class in the same sentence. This
+    fixture's "contraindicated in pregnancy" has no such drug class,
+    so it correctly stays PASSED below — this test is deliberately
+    reused verbatim (as a negative control) in that new suite to prove
+    the remediation does not loosen this boundary."""
     _reset_engine_globals()
     case = _executable_case(taxon="NotesOnlyHazardLanguageTaxon")
     evidence = [EngineEvidenceInput(

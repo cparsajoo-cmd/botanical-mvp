@@ -52,6 +52,20 @@ from eligibility_gate import (
     classify_regulatory_finding as _classify_regulatory_finding,
     evaluate_eligibility as _evaluate_eligibility,
 )
+# Critical Safety False-Negative remediation (Case 006 / Hypericum
+# perforatum) — a third, independent structured channel alongside
+# free-text SAFETY_TERMS and structured DB_ACTIVITY_SAFETY_TERMS. See
+# interaction_severity_classifier.py's module docstring for the full
+# rationale and why this does not violate the existing SAFETY_TERMS /
+# HARD_SAFETY_TERMS capability boundary documented in
+# engine_evidence_input.py / test_gold_case_execution.py.
+from interaction_severity_classifier import (
+    classify_interaction_assertion as _classify_interaction_assertion,
+    hard_hit_terms_for as _interaction_hard_hit_terms_for,
+    informational_terms_for as _interaction_informational_terms_for,
+    HARD_GATE_SIGNAL_TERM as _INTERACTION_HARD_GATE_SIGNAL_TERM,
+    InteractionSeverityTier as _InteractionSeverityTier,
+)
 
 
 def sort_by_ranking_partition_then_score(df):
@@ -563,11 +577,26 @@ DB_ACTIVITY_SAFETY_TERMS = [
 # not have it decided for them by a keyword co-occurrence. "Emetic" and
 # "Irritant" are milder still and are excluded from both hard tiers for
 # the same reason.
-HARD_SAFETY_TERMS = set(DB_ACTIVITY_SAFETY_TERMS) - {
+HARD_SAFETY_TERMS = (set(DB_ACTIVITY_SAFETY_TERMS) - {
     "emetic", "irritant",
     "carcinogenic", "mutagenic", "genotoxic",
     "hepatotoxic", "hepatotoxin", "nephrotoxic", "nephrotoxin",
     "cardiotoxic", "neurotoxic",
+}) | {
+    # Critical Safety False-Negative remediation (Case 006) — the
+    # ONE additional term the structured interaction/contraindication
+    # classifier (interaction_severity_classifier.py) can contribute.
+    # This is the single, narrow, documented exception to "free text
+    # cannot reach HARD_SAFETY_TERMS" (see that module's docstring):
+    # it is reachable ONLY via classify_interaction_assertion()
+    # resolving to a SERIOUS_* tier (explicit contraindication/
+    # interaction assertion language AND a recognized high-risk
+    # interacting drug class), never via a bare hazard word or
+    # substring match against this string directly. Still disjoint
+    # from SAFETY_TERMS (the softer free-text vocabulary) — see
+    # test_hard_safety_terms_and_safety_terms_still_disjoint_except_for_structured_interaction_signal
+    # in test_structured_serious_interaction_gate_fix.py.
+    _INTERACTION_HARD_GATE_SIGNAL_TERM,
 }
 CONTROVERSIAL_SAFETY_TERMS = {
     "carcinogenic", "mutagenic", "genotoxic",
@@ -1372,6 +1401,32 @@ class BotanicalRDCandidateEngine:
                         INTERACTION_TERMS,
                     )
 
+                    # Critical Safety False-Negative remediation (Case
+                    # 006) — structured interaction/contraindication
+                    # assertion classification, independent of both
+                    # SAFETY_TERMS and DB_ACTIVITY_SAFETY_TERMS. See
+                    # interaction_severity_classifier.py. Folded into
+                    # safety_flags via the SAME merge pattern
+                    # db_safety_flags already uses just below, so every
+                    # downstream consumer of safety_flags (this row's
+                    # own eligibility computation, _decision_class(),
+                    # _evaluate_gates(), _hard_safety_gate()) picks up
+                    # the new signal automatically through the existing
+                    # Safety_Flags ∩ HARD_SAFETY_TERMS mechanism, with
+                    # zero changes required at any of those call sites.
+                    interaction_assertion = _classify_interaction_assertion(raw_evidence)
+                    structured_interaction_terms = set(
+                        _interaction_hard_hit_terms_for(interaction_assertion)
+                    ) | set(
+                        _interaction_informational_terms_for(interaction_assertion)
+                    )
+                    if structured_interaction_terms:
+                        pieces = []
+                        if safety_flags:
+                            pieces.extend(safety_flags.split("; "))
+                        pieces.extend(sorted(structured_interaction_terms))
+                        safety_flags = "; ".join(sorted(set(pieces)))
+
                     # Phase 8: Market_Status is commercial/market-only.
                     # Regulatory recognition is retained independently; it
                     # no longer contributes to the market score/component.
@@ -1491,6 +1546,21 @@ class BotanicalRDCandidateEngine:
                     # classify_regulatory_barriers), just once per
                     # individual contributing record instead of once on
                     # the pooled blob.
+                    # The structured interaction/contraindication hard
+                    # term (if present in _row_hit_terms) is a synthetic
+                    # marker, never literal text in any evidence
+                    # record — _extract_flags_negation_aware's substring
+                    # check can never match it. Per-record attribution
+                    # for that specific signal instead re-runs
+                    # classify_interaction_assertion() on each record's
+                    # own text, the same "re-run the same extraction
+                    # once per record" pattern this loop already uses
+                    # for the other two signals below.
+                    _row_has_structured_interaction_hit = bool(
+                        _row_hit_terms & {_INTERACTION_HARD_GATE_SIGNAL_TERM}
+                    )
+                    _row_hit_terms_for_text_match = _row_hit_terms - {_INTERACTION_HARD_GATE_SIGNAL_TERM}
+
                     _safety_gate_evidence_ids = []
                     _regulatory_gate_evidence_ids = []
                     for _rec in evidence_contributing_records:
@@ -1498,7 +1568,18 @@ class BotanicalRDCandidateEngine:
                         _rec_text = _rec.get("text") or ""
                         if not _rec_id or not _rec_text.strip():
                             continue
-                        if _row_hit_terms and self._extract_flags_negation_aware(_rec_text, _row_hit_terms):
+                        if _row_hit_terms_for_text_match and self._extract_flags_negation_aware(
+                            _rec_text, _row_hit_terms_for_text_match
+                        ):
+                            _safety_gate_evidence_ids.append(_rec_id)
+                        elif (
+                            _row_has_structured_interaction_hit
+                            and _classify_interaction_assertion(_rec_text).tier
+                            in (
+                                _InteractionSeverityTier.SERIOUS_CONTRAINDICATION,
+                                _InteractionSeverityTier.SERIOUS_HIGH_RISK_INTERACTION,
+                            )
+                        ):
                             _safety_gate_evidence_ids.append(_rec_id)
                         if regulatory_barrier_result.barrier_types:
                             _rec_barrier_result = classify_regulatory_barriers(_rec_text)

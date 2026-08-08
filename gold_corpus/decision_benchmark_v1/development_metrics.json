@@ -1,0 +1,130 @@
+{
+  "benchmark_version": "1.0.0",
+  "cohort": "development",
+  "not_external_expert_agreement": true,
+  "n_scored": 7,
+  "n_correct": 7,
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "per_class_recall": {
+    "GO": 1.0,
+    "GO WITH CAUTION": 1.0,
+    "EXPERT REVIEW REQUIRED": 1.0,
+    "NO GO SAFETY": 1.0,
+    "NO GO REGULATORY": 1.0,
+    "INSUFFICIENT EVIDENCE": 1.0
+  },
+  "serious_safety_false_negatives": 0,
+  "regulatory_false_negatives": 0,
+  "false_no_go": 0,
+  "expert_review_overuse": 0,
+  "insufficient_evidence_miss": 0,
+  "confusion_matrix": {
+    "GO": {
+      "GO": 2,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "GO WITH CAUTION": {
+      "GO": 0,
+      "GO WITH CAUTION": 1,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "EXPERT REVIEW REQUIRED": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 1,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "NO GO SAFETY": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 1,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "NO GO REGULATORY": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 1,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "INSUFFICIENT EVIDENCE": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 1
+    }
+  },
+  "cases": [
+    {
+      "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+      "expected_reference_curated": "NO GO SAFETY",
+      "actual_engine": "NO GO SAFETY",
+      "match": true,
+      "ranking_partition": "excluded_no_go",
+      "eligible_for_normal_ranking": false
+    },
+    {
+      "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+      "expected_reference_curated": "NO GO REGULATORY",
+      "actual_engine": "NO GO REGULATORY",
+      "match": true,
+      "ranking_partition": "excluded_no_go",
+      "eligible_for_normal_ranking": false
+    },
+    {
+      "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+      "expected_reference_curated": "GO WITH CAUTION",
+      "actual_engine": "GO WITH CAUTION",
+      "match": true,
+      "ranking_partition": "normal",
+      "eligible_for_normal_ranking": true
+    },
+    {
+      "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+      "expected_reference_curated": "GO",
+      "actual_engine": "GO",
+      "match": true,
+      "ranking_partition": "normal",
+      "eligible_for_normal_ranking": true
+    },
+    {
+      "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+      "expected_reference_curated": "GO",
+      "actual_engine": "GO",
+      "match": true,
+      "ranking_partition": "normal",
+      "eligible_for_normal_ranking": true
+    },
+    {
+      "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+      "expected_reference_curated": "EXPERT REVIEW REQUIRED",
+      "actual_engine": "EXPERT REVIEW REQUIRED",
+      "match": true,
+      "ranking_partition": "preliminary_or_expert_review",
+      "eligible_for_normal_ranking": false
+    },
+    {
+      "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+      "expected_reference_curated": "INSUFFICIENT EVIDENCE",
+      "actual_engine": "INSUFFICIENT EVIDENCE",
+      "match": true,
+      "ranking_partition": "preliminary_or_expert_review",
+      "eligible_for_normal_ranking": false
+    }
+  ]
+}

@@ -1,0 +1,617 @@
+[
+  {
+    "case_id": "refgrounded_001_melissa_officinalis_sleep",
+    "taxon": "Melissa officinalis L.",
+    "plant_part": "leaf",
+    "dosage_form": "Infusion",
+    "solvent": "water",
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Sleep and relaxation",
+    "population": "Adolescents over 12 years of age, adults and elderly",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_196745_2012_melissa_officinalis_folium",
+        "source_type": "EMA_HMPC",
+        "version": "Final, adopted by HMPC 14 May 2013 (EMA/HMPC/196745/2012)",
+        "document_date": "2013-05-14",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "sleep",
+            "source_locator": "Section 4.1 'Therapeutic indications', Indication 1) (Traditional use column) — EMA/HMPC/196745/2012, p.3/7",
+            "evidence_text": "Traditional herbal medicinal product for relief of mild symptoms of mental stress and to aid sleep."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+    "taxon": "Matricaria chamomilla L.",
+    "plant_part": "flower",
+    "dosage_form": "Infusion",
+    "solvent": "water",
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Sleep and relaxation",
+    "population": "Adults",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "CTM_2024_Kazemi_chamomile_sleep_SR",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "version": "Kazemi A, Shojaei-Zarghani S, Eskandarzadeh P, Hashempur MH (2024). Effects of chamomile (Matricaria chamomilla L.) on sleep: A systematic review and meta-analysis of clinical trials. Complementary Therapies in Medicine 84:103071. DOI 10.1016/j.ctim.2024.103071.",
+        "document_date": "2024-08-04",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "sleep",
+            "source_locator": "Abstract, 'Conclusion' field — Complementary Therapies in Medicine 84 (2024) 103071",
+            "evidence_text": "Chamomile improved sleep, especially the number of awakenings after sleep or staying asleep; however, it did not lead to an improvement in the duration of sleep, percentage of sleep efficiency, and daytime functioning measures."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_004_ginkgo_biloba_cognitive",
+    "taxon": "Ginkgo biloba L.",
+    "plant_part": "leaf",
+    "dosage_form": "Extract",
+    "solvent": "acetone 60% m/m",
+    "der_min": 35.0,
+    "der_max": 67.0,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Cognitive decline / Alzheimer's support",
+    "population": "Adults and elderly",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "COCHRANE_CD013661_2026_Wieland_ginkgo_cognitive",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "version": "Wieland LS, Ludeman E, Chi Y, Feinberg TM, Chen I-H, Chen K-H, Zhu Y, Wolverson E, Amri H (2026). Ginkgo biloba for cognitive impairment and dementia. Cochrane Database of Systematic Reviews, Issue 2. Art. No. CD013661. DOI 10.1002/14651858.CD013661.pub2.",
+        "document_date": "2026-02-05",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "cognitive impairment",
+            "source_locator": "Authors' conclusions, Mild cognitive impairment subgroup sentence — Wieland et al. 2026, Cochrane Database of Systematic Reviews, Issue 2, Art. No. CD013661",
+            "evidence_text": "In people with MCI, ginkgo probably has little or no effect at six months on global status, cognition, or ADLs."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
+    "taxon": "Cimicifuga racemosa (L.) Nutt.",
+    "plant_part": "rhizome",
+    "dosage_form": "Extract",
+    "solvent": "ethanol 60% (V/V)",
+    "der_min": 4.5,
+    "der_max": 8.5,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Menopause support",
+    "population": "Female adults",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "COCHRANE_CD007244_2012_Leach_black_cohosh_menopausal",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "version": "Leach MJ, Moore V. Black cohosh (Cimicifuga spp.) for menopausal symptoms. Cochrane Database of Systematic Reviews 2012, Issue 9. Art. No.: CD007244. DOI: 10.1002/14651858.CD007244.pub2.",
+        "document_date": "2012-09-12",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "menopausal symptoms",
+            "source_locator": "Authors' conclusions section, free plain-language evidence page — cochrane.org/evidence/CD007244_black-cohosh-cimicifuga-spp-menopausal-symptoms (fetched directly; not the paywalled full technical review)",
+            "evidence_text": "There is currently insufficient evidence to support the use of black cohosh for menopausal symptoms."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
+    "taxon": "Valeriana officinalis L.",
+    "plant_part": "radix",
+    "dosage_form": "Extract",
+    "solvent": "ethanol 40-70% (V/V)",
+    "der_min": 3.0,
+    "der_max": 7.4,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": null,
+    "population": "Adults",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_150846_2015_valeriana_officinalis_radix",
+        "source_type": "EMA_HMPC",
+        "version": "final (adopted 2 February 2016)",
+        "document_date": "2016-02-02",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Preparation specification",
+            "assertion_type": "Preparation specification",
+            "subject": "dry extract, DER 3-7.4:1, extraction solvent ethanol 40-70% (V/V)",
+            "source_locator": "EMA/HMPC/150846/2015, Assessment Report on Valeriana officinalis L., radix, section 'Herbal preparation(s) — Well-established use'",
+            "evidence_text": "Dry extract (DER 3-7.4:1), extraction solvent: ethanol 40-70% (V/V)"
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+    "taxon": "Ginkgo biloba L.",
+    "plant_part": "folium",
+    "dosage_form": "Dry extract",
+    "solvent": "acetone 60% (w/w)",
+    "der_min": 35.0,
+    "der_max": 67.0,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": null,
+    "population": "Adults",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_321097_2012_ginkgo_folium",
+        "source_type": "EMA_HMPC",
+        "version": "Final European Union herbal monograph; first published 8 April 2015",
+        "document_date": "2015-04-08",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Preparation specification",
+            "assertion_type": "Preparation specification",
+            "subject": "dry extract DER 35-67:1, extraction solvent acetone 60% (w/w)",
+            "source_locator": "EMA/HMPC/321097/2012, section 2: Qualitative and quantitative composition, well-established use",
+            "evidence_text": "Dry extract (DER 35-67:1), extraction solvent: acetone 60% (w/w)."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+    "taxon": "Melissa officinalis L.",
+    "plant_part": "folium",
+    "dosage_form": "Herbal tea",
+    "solvent": "water",
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Mental stress and mood disorders",
+    "population": "Adolescents over 12 years of age, adults and elderly",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_310761_2013_melissae_folium_summary",
+        "source_type": "EMA_HMPC",
+        "version": "EMA HMPC summary for the public; first published 16 June 2014",
+        "document_date": "2014-06-16",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "relief of mild symptoms of mental stress",
+            "source_locator": "EMA/HMPC/310761/2013, Melissa leaf — Summary for the public, HMPC conclusions on medicinal uses",
+            "evidence_text": "The HMPC concluded that, on the basis of its long-standing use, melissa leaf can be used for the relief of mild symptoms of mental stress and to aid sleep."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
+    "taxon": "Passiflora incarnata L.",
+    "plant_part": "herba",
+    "dosage_form": "Herbal tea",
+    "solvent": "water",
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Mental stress and mood disorders",
+    "population": "Adults and adolescents over 12 years of age",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_275240_2014_passiflorae_herba_summary",
+        "source_type": "EMA_HMPC",
+        "version": "EMA HMPC summary for the public; first published 6 October 2016",
+        "document_date": "2016-10-06",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "relief of mild symptoms of mental stress",
+            "source_locator": "EMA/275240/2014, Passion flower — Summary for the public, HMPC conclusions on medicinal uses",
+            "evidence_text": "The HMPC concluded that, on the basis of its long-standing use, these passion flower preparations can be used for the relief of mild symptoms of mental stress and to aid sleep."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
+    "taxon": "Matricaria chamomilla L.",
+    "plant_part": "flower",
+    "dosage_form": null,
+    "solvent": null,
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "generalized anxiety disorder",
+    "population": "Adults",
+    "jurisdiction": "International",
+    "references": [
+      {
+        "reference_id": "PUBMED_31006899_Hieu_2019_chamomile_GAD_SR",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "version": "Hieu TH, Dibas M, Surya Dila KA, et al. Therapeutic efficacy and safety of chamomile for state anxiety, generalized anxiety disorder, insomnia, and sleep quality. Phytother Res. 2019;33(6):1604-1615. DOI:10.1002/ptr.6349. PMID:31006899.",
+        "document_date": "2019-04-21",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "generalized anxiety disorder",
+            "source_locator": "PubMed PMID 31006899, abstract conclusion; DOI 10.1002/ptr.6349",
+            "evidence_text": "Chamomile appears to be efficacious and safe for sleep quality and GAD."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+    "taxon": "Lavandula angustifolia Mill.",
+    "plant_part": "aetheroleum",
+    "dosage_form": "Essential oil",
+    "solvent": null,
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": "Sleep disorders and temporary insomnia",
+    "population": "Adults and children over 12 years of age",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_530968_2012_lavandulae_aetheroleum_summary",
+        "source_type": "EMA_HMPC",
+        "version": "EMA HMPC summary for the public; first published 16 June 2014",
+        "document_date": "2014-06-16",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "aid sleep",
+            "source_locator": "EMA/HMPC/530968/2012, Lavender oil — Summary for the public, HMPC conclusions on medicinal uses",
+            "evidence_text": "The HMPC concluded that, on the basis of its long-standing use, lavender oil can be used for the relief of mild symptoms of mental stress and exhaustion, and to aid sleep."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+    "taxon": "Echinacea purpurea (L.) Moench",
+    "plant_part": null,
+    "dosage_form": null,
+    "solvent": null,
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": null,
+    "indication": null,
+    "population": null,
+    "jurisdiction": "International",
+    "references": [
+      {
+        "reference_id": "KEW_POWO_1174497_2_echinacea_purpurea",
+        "source_type": "TAXONOMIC_AUTHORITY",
+        "version": "Plants of the World Online, Kew Names and Taxonomic Backbone; taxon urn:lsid:ipni.org:names:1174497-2; accessed 2026-08-01",
+        "document_date": "2026-08-01",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Identity/Quality",
+            "assertion_type": "Identity confirmation",
+            "subject": "accepted taxonomic identity: Echinacea purpurea (L.) Moench",
+            "source_locator": "Kew Plants of the World Online (POWO), Echinacea purpurea (L.) Moench, Taxonomy section, LSID urn:lsid:ipni.org:names:1174497-2",
+            "evidence_text": "This species is accepted."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+    "taxon": "Ginkgo biloba L.",
+    "plant_part": "folium",
+    "dosage_form": "Dry extract",
+    "solvent": "acetone 60% m/m",
+    "der_min": 35.0,
+    "der_max": 67.0,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": null,
+    "population": "Adults and elderly",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_321097_2012_ginkgo_biloba_dabigatran_interaction",
+        "source_type": "EMA_HMPC",
+        "version": "European Union herbal monograph on Ginkgo biloba L., folium, EMA/HMPC/321097/2012, final, adopted 28 January 2015",
+        "document_date": "2015-01-28",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Safety",
+            "assertion_type": "Interaction",
+            "subject": "concomitant use with dabigatran etexilate",
+            "source_locator": "EMA/HMPC/321097/2012, section 4.5 'Interactions with other medicinal products and other forms of interaction', page 4/8",
+            "evidence_text": "Caution is advised if combining G. biloba and dabigatran."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+    "taxon": "Hypericum perforatum L.",
+    "plant_part": "herba",
+    "dosage_form": "Dry extract",
+    "solvent": "methanol 80% (V/V)",
+    "der_min": 3.0,
+    "der_max": 7.0,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": "Oral",
+    "indication": null,
+    "population": "Adults and elderly",
+    "jurisdiction": "EU",
+    "references": [
+      {
+        "reference_id": "EMA_HMPC_7695_2021_hypericum_perforatum_preparation_a",
+        "source_type": "EMA_HMPC",
+        "version": "Revision 1, final",
+        "document_date": "2023-02-22",
+        "jurisdiction": "EU",
+        "claims": [
+          {
+            "domain": "Preparation specification",
+            "assertion_type": "Preparation specification",
+            "subject": "Dry extract (DER 3-7:1), extraction solvent methanol 80% (V/V)",
+            "source_locator": "EMA/HMPC/7695/2021, section 2 'Qualitative and quantitative composition', well-established-use herbal preparation a, page 3/14",
+            "evidence_text": "Dry extract (DER 3-7:1), extraction solvent methanol 80% (V/V)"
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+    "taxon": "Matricaria chamomilla L.",
+    "plant_part": null,
+    "dosage_form": null,
+    "solvent": null,
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": null,
+    "indication": null,
+    "population": null,
+    "jurisdiction": "International",
+    "references": [
+      {
+        "reference_id": "KEW_POWO_154715_2_matricaria_chamomilla",
+        "source_type": "TAXONOMIC_AUTHORITY",
+        "version": "Plants of the World Online, Kew Names and Taxonomic Backbone; accepted taxon urn:lsid:ipni.org:names:154715-2; accessed 2026-08-01",
+        "document_date": "2026-08-01",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Identity/Quality",
+            "assertion_type": "Identity confirmation",
+            "subject": "accepted taxonomic identity: Matricaria chamomilla L.",
+            "source_locator": "Kew Plants of the World Online (POWO), Matricaria chamomilla L., General Information and Synonyms sections, LSID urn:lsid:ipni.org:names:154715-2",
+            "evidence_text": "This species is accepted."
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  },
+  {
+    "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+    "taxon": "Momordica charantia L.",
+    "plant_part": null,
+    "dosage_form": null,
+    "solvent": null,
+    "der_min": null,
+    "der_max": null,
+    "dose_amount": null,
+    "dose_unit": null,
+    "dose_frequency": null,
+    "duration": null,
+    "route": null,
+    "indication": "reduction of fasting blood glucose",
+    "population": null,
+    "jurisdiction": null,
+    "references": [
+      {
+        "reference_id": "PUBMED_38274207_LACZKO_ZOLD_2024_MOMORDICA_FBG_META",
+        "source_type": "SYSTEMATIC_REVIEW",
+        "version": "Laczkó-Zöld E, Csupor-Löffler B, Kolcsár E-B, Ferenci T, Nan M, Tóth B, Csupor D. The metabolic effect of Momordica charantia cannot be determined based on the available clinical evidence: a systematic review and meta-analysis of randomized clinical trials. Front Nutr. 2024;10:1200801. PMID:38274207. PMCID:PMC10808600. DOI:10.3389/fnut.2023.1200801.",
+        "document_date": "2024-01-11",
+        "jurisdiction": null,
+        "claims": [
+          {
+            "domain": "Indication/Evidence",
+            "assertion_type": "Supports indication",
+            "subject": "reduction of fasting blood glucose",
+            "source_locator": "PubMed PMID 38274207, abstract Results, fasting blood glucose change-score meta-analysis; MD -0.03, 95% CI -0.38 to 0.31",
+            "evidence_text": "no significant effect could be observed for bitter melon treatment over placebo on fasting blood glucose level"
+          }
+        ]
+      }
+    ],
+    "reviewer_1_decision": "",
+    "reviewer_1_rationale": "",
+    "reviewer_2_decision": "",
+    "reviewer_2_rationale": "",
+    "adjudicated_decision": "",
+    "adjudication_rationale": ""
+  }
+]

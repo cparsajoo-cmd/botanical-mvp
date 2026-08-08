@@ -1,0 +1,116 @@
+{
+  "benchmark_version": "1.0.0",
+  "policy": {
+    "development_definition": "Cases used in prior final-decision remediation; never reported as holdout.",
+    "holdout_definition": "Existing reference-grounded cases not used in prior final-decision remediation.",
+    "holdout_scoring_rule": "Do not score until independent engine evidence/snapshot exists. Never derive engine evidence from GoldCase reference truth.",
+    "expert_blinding_rule": "Adjudication packet omits engine decision, derived reference final decision, and resolved outcomes."
+  },
+  "development": [
+    {
+      "case_id": "refgrounded_006_hypericum_perforatum_safety_interaction",
+      "case_source_sha256": "94307733fc2debc6284be3bdb763f8994929a35865ba2e9af55cf1c680af45f9"
+    },
+    {
+      "case_id": "refgrounded_016_piper_methysticum_regulatory_prohibition",
+      "case_source_sha256": "d66d454188fd829cab1b72758408b6378c6f442fd4b2085e2b1732416cc5dd0a"
+    },
+    {
+      "case_id": "refgrounded_018_ephedra_sinica_regulatory_restriction",
+      "case_source_sha256": "d80d697ae69791a55696c93587ab02bda172527e65c281a7d3d1055746e2e8ae"
+    },
+    {
+      "case_id": "refgrounded_019_panax_ginseng_who_monograph",
+      "case_source_sha256": "86aae4f04a7cebdf8c6135972ed4580209e31867bafd7c45a3b251ff60c41498"
+    },
+    {
+      "case_id": "refgrounded_020_echinacea_purpurea_escop_monograph",
+      "case_source_sha256": "0af05b852746113e48555be681cd4a274a1c15660a719a13fecdbff52e66a201"
+    },
+    {
+      "case_id": "refgrounded_021_serenoa_repens_reference_conflict",
+      "case_source_sha256": "72ebb2aea62bce25089b93b09fb98f8c18d8b5a9b249fe4ed56bcf78bc1a3de9"
+    },
+    {
+      "case_id": "refgrounded_022_valeriana_cross_rank_precedence",
+      "case_source_sha256": "b8bc75d9e5f4f982c543a5278a6b1732e1a913deac8615358eb4b26444e765b3"
+    }
+  ],
+  "prospective_holdout": [
+    {
+      "case_id": "refgrounded_001_melissa_officinalis_sleep",
+      "case_source_sha256": "0f9c68708c9c6dae7c975ecf6ef497ee0388229c3024bd3ba25ac512dd67bf15",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+      "case_source_sha256": "7e5baf471380fef6715f3c0bd3345cdda0cdcd2debd51c60e8d5d99405667af9",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_004_ginkgo_biloba_cognitive",
+      "case_source_sha256": "fb33b6f8b5783576686f65a503504b5a953725a0810431fd3c75187aebf917de",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
+      "case_source_sha256": "8c8fd90f36adb30ad1fdffaac003c97d3db96f64c581b1cdafdc47d098112d99",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
+      "case_source_sha256": "273a14a2f632040ffa618543433d424324794b926f62ffbbc75ae35c59328c12",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+      "case_source_sha256": "466fa0f3b040275d180622bce55a9ce7369b13999c09448dac5d998f82737357",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+      "case_source_sha256": "c1db698be178cf3363e1e6948093e4c502e4c7a265e7f4aa970369be878fb18d",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
+      "case_source_sha256": "d6a29c00ada40e2ce9472ec03a0898c6be391a4a8dcc339fe07c6d05bf51c9b0",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
+      "case_source_sha256": "1d765f7d348cd7d9aabb799b23690a4cb01e081b439c7db5c04221f1646f0499",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+      "case_source_sha256": "e415fb1e025e387ffb227de19798aaa596b30acdd46a427426c8400d98a1c983",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+      "case_source_sha256": "cfefef463937004e0c9015f383a1d8a186f59192e781ffeeec1899f9096548a0",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+      "case_source_sha256": "9f5d679289aa747e7debbbc743fcd06da9d19851b157ac8373d6ead76e010f34",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+      "case_source_sha256": "1fdde06801593625ae44825abb04b50a66e37b25e38718cc253f67a20f072928",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+      "case_source_sha256": "cbeea47c93ef315107a09d9f14e773547a146fb6e1d5c0caf5d57352d9187015",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    },
+    {
+      "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+      "case_source_sha256": "3ea29d6fe042040c344117e7ec6138b815d5cf247f0bce7595dab79400859638",
+      "status": "UNSCORED_PENDING_INDEPENDENT_ENGINE_SNAPSHOT"
+    }
+  ]
+}

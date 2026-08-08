@@ -1,0 +1,10 @@
+{
+  "benchmark_version": "1.0.0",
+  "focused_tests": {"passed": 9, "failed": 0},
+  "broad_regression": {"passed": 2670, "xfailed": 3, "failed": 1},
+  "broad_regression_failure": "test_production_dependency_integrity.py::test_app_py_and_direct_production_modules_are_import_resolvable",
+  "isolated_rerun_of_failure": {"passed": 1, "failed": 0},
+  "collection_exclusions": 12,
+  "collection_exclusion_reason": "Environment missing supabase and/or streamlit; these files did not collect and were not counted as passed.",
+  "interpretation": "No regression attributable to Decision Benchmark v1 was observed. The single broad-suite failure passed in isolation and is order/state dependent."
+}

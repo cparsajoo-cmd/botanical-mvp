@@ -79,7 +79,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import FrozenSet, Optional, Tuple
+from typing import Any, FrozenSet, Optional, Tuple
+
+from assertion_vocabulary import SeverityLevel
+from safety_assertion_engine import SafetyAssertion, SafetyConfidence, AssertionPolarity
 
 
 # ======================================================================
@@ -199,6 +202,7 @@ class RegulatoryDataStatus(str, Enum):
 class SafetySeverity(str, Enum):
     NONE = "none"
     MINOR = "minor"
+    MODERATE = "moderate"
     SEVERE = "severe"
 
 
@@ -235,6 +239,10 @@ class SafetyFinding:
     data_completeness: DataCompleteness
     same_plant: bool
     hit_terms: FrozenSet[str] = field(default_factory=frozenset)
+    assertions: Tuple[SafetyAssertion, ...] = ()
+    confidence: SafetyConfidence = SafetyConfidence.INSUFFICIENT
+    evidence_conflict: bool = False
+    severity_rule: str = "legacy-hard-term-policy"
     reason: str = ""
     evidence_ids: Tuple[str, ...] = ()
 
@@ -289,6 +297,7 @@ def classify_safety_finding(
     confirmed_scope: Optional[FindingScope] = None,
     confirmed_context_relevance: Optional[ContextRelevance] = None,
     evidence_ids: Tuple[str, ...] = (),
+    assertions: Tuple[SafetyAssertion, ...] = (),
 ) -> SafetyFinding:
     """Builds a SafetyFinding from the same inputs the pre-Phase-4
     ``_hard_safety_gate()`` used (a hard-term hit and same_plant),
@@ -337,12 +346,35 @@ def classify_safety_finding(
     if flagged_terms is None:
         flagged_terms = hit_terms
 
-    if hit_terms:
+    risk_assertions = tuple(
+        a for a in assertions if a.polarity in {AssertionPolarity.RISK_PRESENT, AssertionPolarity.CONDITIONAL}
+    )
+    reassuring_assertions = tuple(a for a in assertions if a.polarity == AssertionPolarity.RISK_ABSENT)
+    assertion_levels = {a.severity for a in risk_assertions}
+
+    # Structured assertions are authoritative for semantic severity. Legacy
+    # hard-term hits remain supported for backward compatibility, but a
+    # serious assertion can no longer be downgraded merely because it did not
+    # produce one of the old hard-keyword markers.
+    if hit_terms or SeverityLevel.SERIOUS in assertion_levels:
         severity = SafetySeverity.SEVERE
-    elif flagged_terms:
+    elif SeverityLevel.MODERATE in assertion_levels:
+        severity = SafetySeverity.MODERATE
+    elif flagged_terms or SeverityLevel.MINOR in assertion_levels:
         severity = SafetySeverity.MINOR
     else:
         severity = SafetySeverity.NONE
+
+    rank = {SafetyConfidence.INSUFFICIENT: 0, SafetyConfidence.LOW: 1, SafetyConfidence.MODERATE: 2, SafetyConfidence.HIGH: 3}
+    confidence_source = tuple(a for a in risk_assertions if a.severity == SeverityLevel.SERIOUS) or risk_assertions or assertions
+    confidence = (
+        max((a.evidence_strength for a in confidence_source), key=lambda x: rank[x])
+        if confidence_source else SafetyConfidence.INSUFFICIENT
+    )
+    evidence_conflict = bool(risk_assertions and reassuring_assertions)
+    assertion_evidence_ids = tuple(dict.fromkeys(a.evidence_record_id for a in assertions if a.evidence_record_id))
+    evidence_ids = tuple(dict.fromkeys(tuple(evidence_ids) + assertion_evidence_ids))
+    severity_rule = next((a.severity_rule for a in risk_assertions if a.severity == SeverityLevel.SERIOUS), "legacy-hard-term-policy")
 
     data_completeness = (
         DataCompleteness.COMPLETE if has_evidence_text else DataCompleteness.INCOMPLETE
@@ -359,7 +391,17 @@ def classify_safety_finding(
         relevance = ContextRelevance.UNKNOWN
 
     same_plant_note = "Reference plant matched to itself; " if same_plant else ""
-    if hit_terms:
+    serious_assertions = tuple(a for a in risk_assertions if a.severity == SeverityLevel.SERIOUS)
+    if serious_assertions:
+        kinds = ", ".join(sorted({a.assertion_type.value for a in serious_assertions}))
+        reason = (
+            f"{same_plant_note}Structured serious safety assertion(s) present: {kinds}. "
+            f"Confidence={confidence.value}. "
+            + ("Conflicting reassurance evidence is also present and has been retained; serious risk is not overwritten. " if evidence_conflict else "")
+            + ("Scope/relevance is confirmed." if confirmed_scope is not None else
+               "Scope/relevance to this specific candidate is not confirmed by structured plant-part/preparation/dose/route/population matching.")
+        )
+    elif hit_terms:
         reason = (
             f"{same_plant_note}Documented hard safety term(s) present: "
             f"{', '.join(sorted(hit_terms))}. Scope/relevance to this "
@@ -385,6 +427,10 @@ def classify_safety_finding(
         data_completeness=data_completeness,
         same_plant=same_plant,
         hit_terms=hit_terms,
+        assertions=assertions,
+        confidence=confidence,
+        evidence_conflict=evidence_conflict,
+        severity_rule=severity_rule,
         reason=reason,
         evidence_ids=evidence_ids,
     )
@@ -595,8 +641,9 @@ def evaluate_eligibility(
 
     # 4) ELIGIBLE_WITH_RESTRICTIONS — a real regulatory restriction, or a
     # severe safety finding whose scope/relevance is CONFIRMED not to
-    # apply to this candidate. MINOR safety findings are handled
-    # separately below (rule 6) — per the design review, a minor/non-
+    # apply to this candidate. MODERATE/MINOR non-hard findings remain
+    # visible and traceable but do not automatically change eligibility.
+    # MINOR safety findings are handled separately below (rule 6) — per the design review, a minor/non-
     # hard safety term is warning-only and stays ELIGIBLE by default,
     # not automatically restricted, unless project policy explicitly
     # decides otherwise for a specific term (not modeled here).
@@ -643,13 +690,13 @@ def evaluate_eligibility(
     # fully traceable via Safety_Severity="minor" and gate_reason on
     # this same decision object — visible, but not gating.
     gate_reason = (
-        safety.reason if safety.severity == SafetySeverity.MINOR
+        safety.reason if safety.severity in (SafetySeverity.MINOR, SafetySeverity.MODERATE)
         else "No documented safety or regulatory concern found in available evidence."
     )
     return EligibilityDecision(
         status=EligibilityStatus.ELIGIBLE,
         hard_no_go=False,
-        gate_type="safety" if safety.severity == SafetySeverity.MINOR else "none",
+        gate_type="safety" if safety.severity in (SafetySeverity.MINOR, SafetySeverity.MODERATE) else "none",
         gate_reason=gate_reason,
         gate_evidence_ids=evidence_ids,
         safety_finding=safety,

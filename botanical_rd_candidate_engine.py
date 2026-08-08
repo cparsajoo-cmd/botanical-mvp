@@ -1,6 +1,7 @@
 import os
 import re
 import base64
+import json
 from datetime import datetime, timezone
 import requests
 import xml.etree.ElementTree as ET
@@ -65,6 +66,13 @@ from interaction_severity_classifier import (
     informational_terms_for as _interaction_informational_terms_for,
     HARD_GATE_SIGNAL_TERM as _INTERACTION_HARD_GATE_SIGNAL_TERM,
     InteractionSeverityTier as _InteractionSeverityTier,
+)
+from safety_assertion_engine import (
+    classify_safety_assertions as _classify_safety_assertions,
+    summarize_safety_assertions as _summarize_safety_assertions,
+    SafetyAssertionType as _SafetyAssertionType,
+    AssertionPolarity as _SafetyAssertionPolarity,
+    safety_assertion_from_dict as _safety_assertion_from_dict,
 )
 
 
@@ -286,6 +294,10 @@ OUTPUT_COLUMNS = [
     # _safety_gate_evidence_ids / _regulatory_gate_evidence_ids.
     "Safety_Gate_Evidence_IDs",
     "Regulatory_Gate_Evidence_IDs",
+    "Safety_Assertions",
+    "Safety_Decision_Confidence",
+    "Safety_Evidence_Conflict",
+    "Safety_Severity_Rule",
     "Safety_Severity",
     "Safety_Scope",
     "Safety_Context_Relevance",
@@ -1427,6 +1439,32 @@ class BotanicalRDCandidateEngine:
                         pieces.extend(sorted(structured_interaction_terms))
                         safety_flags = "; ".join(sorted(set(pieces)))
 
+                    # Pharmaceutical-grade Safety hardening: raw lexical
+                    # extraction is converted into a structured assertion
+                    # first. Gate behavior is then driven by the assertion's
+                    # semantic severity, not by the keyword itself. This
+                    # closes the generic false-negative where an explicit
+                    # contraindication with no whitelisted drug class was
+                    # previously downgraded to MODERATE.
+                    pooled_safety_assertions = _classify_safety_assertions(
+                        raw_evidence, authority_score=evidence_authority_factor
+                    )
+                    pooled_serious_assertions = [
+                        a for a in pooled_safety_assertions
+                        if a.polarity == _SafetyAssertionPolarity.RISK_PRESENT
+                        and a.severity.value == "SERIOUS"
+                    ]
+                    if pooled_serious_assertions:
+                        pieces = []
+                        if safety_flags:
+                            pieces.extend(safety_flags.split("; "))
+                        pieces.append(_INTERACTION_HARD_GATE_SIGNAL_TERM)
+                        pieces.extend(
+                            f"structured serious safety assertion ({a.assertion_type.value})"
+                            for a in pooled_serious_assertions
+                        )
+                        safety_flags = "; ".join(sorted(set(pieces)))
+
                     # Phase 8: Market_Status is commercial/market-only.
                     # Regulatory recognition is retained independently; it
                     # no longer contributes to the market score/component.
@@ -1588,12 +1626,35 @@ class BotanicalRDCandidateEngine:
                     _safety_gate_evidence_ids = tuple(dict.fromkeys(_safety_gate_evidence_ids))
                     _regulatory_gate_evidence_ids = tuple(dict.fromkeys(_regulatory_gate_evidence_ids))
 
+                    # Structured record-level Safety Assertions preserve the
+                    # exact sentence, authority, evidence id, preparation,
+                    # dose/route context and polarity. Positive and reassuring
+                    # records are both retained so conflict cannot be erased by
+                    # pooled-text winner-takes-all logic.
+                    _structured_safety_assertions = []
+                    for _rec in evidence_contributing_records:
+                        _structured_safety_assertions.extend(_classify_safety_assertions(
+                            _rec.get("text") or "",
+                            evidence_record_id=str(_rec.get("evidence_record_id") or ""),
+                            authority=str(_rec.get("authority_label") or "Unknown Source"),
+                            authority_score=float(_rec.get("authority_factor") or 0.5),
+                            source_url=str(_rec.get("source_url") or ""),
+                            preparation=str(_rec.get("preparation") or ""),
+                            dose_dependency=(str(_rec.get("dose") or "unknown") if _rec.get("dose") else "unknown"),
+                            route=str(_rec.get("route") or ""),
+                        ))
+                    if not _structured_safety_assertions:
+                        _structured_safety_assertions = list(pooled_safety_assertions)
+                    _structured_safety_assertions = tuple(_structured_safety_assertions)
+                    _safety_assertion_summary = _summarize_safety_assertions(_structured_safety_assertions)
+
                     _safety_finding = _classify_safety_finding(
                         hit_terms=_row_hit_terms,
                         flagged_terms=_row_flagged_terms,
                         has_evidence_text=_row_has_evidence_text,
                         same_plant=_row_same_plant,
                         evidence_ids=_safety_gate_evidence_ids,
+                        assertions=_structured_safety_assertions,
                     )
                     _regulatory_finding = _classify_regulatory_finding(
                         barrier_types=(
@@ -1825,6 +1886,13 @@ class BotanicalRDCandidateEngine:
                                 if eligibility_decision.safety_finding.evidence_ids else "",
                             "Regulatory_Gate_Evidence_IDs": "; ".join(eligibility_decision.regulatory_finding.evidence_ids)
                                 if eligibility_decision.regulatory_finding.evidence_ids else "",
+                            "Safety_Assertions": json.dumps(
+                                [a.to_dict() for a in eligibility_decision.safety_finding.assertions],
+                                sort_keys=True, ensure_ascii=False,
+                            ),
+                            "Safety_Decision_Confidence": eligibility_decision.safety_finding.confidence.value,
+                            "Safety_Evidence_Conflict": eligibility_decision.safety_finding.evidence_conflict,
+                            "Safety_Severity_Rule": eligibility_decision.safety_finding.severity_rule,
                             "Safety_Severity": eligibility_decision.safety_finding.severity.value,
                             "Safety_Scope": eligibility_decision.safety_finding.scope.value,
                             "Safety_Context_Relevance": eligibility_decision.safety_finding.context_relevance.value,
@@ -2106,6 +2174,104 @@ class BotanicalRDCandidateEngine:
 
             best["Safety_Flags"] = _merged_flags("Safety_Flags")
             best["Interaction_Flags"] = _merged_flags("Interaction_Flags")
+
+            # Pharmaceutical-grade safety merge: structured eligibility
+            # must be recomputed from ALL sub-row assertions. Keeping the
+            # highest-scoring sub-row's Eligibility_Status while merely
+            # merging Safety_Flags is a fail-open path: a serious assertion
+            # on a lower-scoring compound could otherwise disappear from the
+            # authoritative eligibility fields used downstream.
+            if "Safety_Assertions" in group.columns:
+                _merged_assertions = []
+                _seen_assertions = set()
+                for _raw in group["Safety_Assertions"]:
+                    try:
+                        _payload = json.loads(_raw) if isinstance(_raw, str) else (_raw or [])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        _payload = []
+                    if not isinstance(_payload, list):
+                        continue
+                    for _item in _payload:
+                        if not isinstance(_item, dict):
+                            continue
+                        try:
+                            _a = _safety_assertion_from_dict(_item)
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        _key = (
+                            _a.assertion_type.value, _a.severity.value, _a.polarity.value,
+                            _a.evidence_record_id, _a.source_sentence, _a.matched_language,
+                        )
+                        if _key not in _seen_assertions:
+                            _seen_assertions.add(_key)
+                            _merged_assertions.append(_a)
+                _merged_assertions = tuple(_merged_assertions)
+
+                _merged_flag_terms = frozenset(
+                    p.strip() for p in str(best.get("Safety_Flags", "")).split("; ")
+                    if p.strip() and p.strip() != "No explicit flag found"
+                )
+                _merged_hit_terms = _merged_flag_terms & HARD_SAFETY_TERMS
+                _merged_safety_ids = tuple(dict.fromkeys(
+                    eid.strip()
+                    for value in group.get("Safety_Gate_Evidence_IDs", [])
+                    for eid in str(value or "").split(";")
+                    if eid.strip()
+                ))
+                _merged_reg_ids = tuple(dict.fromkeys(
+                    eid.strip()
+                    for value in group.get("Regulatory_Gate_Evidence_IDs", [])
+                    for eid in str(value or "").split(";")
+                    if eid.strip()
+                ))
+                _merged_barrier_types = set()
+                if "Regulatory_Barriers" in group.columns:
+                    for _v in group["Regulatory_Barriers"]:
+                        _txt = str(_v or "").strip()
+                        if _txt and _txt != "None identified":
+                            _merged_barrier_types.update(x.strip() for x in _txt.split("; ") if x.strip())
+                _merged_has_evidence = any(
+                    str(v or "").strip() not in {"", "No specific source record identified"}
+                    for v in group.get("Source_Record_IDs", [])
+                ) or any(str(v or "").strip() != "No direct evidence" for v in group.get("Evidence_Level", []))
+
+                _merged_safety_finding = _classify_safety_finding(
+                    hit_terms=_merged_hit_terms,
+                    flagged_terms=_merged_flag_terms,
+                    has_evidence_text=_merged_has_evidence,
+                    same_plant=bool(best.get("_same_plant", False)),
+                    evidence_ids=_merged_safety_ids,
+                    assertions=_merged_assertions,
+                )
+                _merged_reg_finding = _classify_regulatory_finding(
+                    barrier_types=frozenset(_merged_barrier_types),
+                    has_evidence_text=_merged_has_evidence,
+                    same_plant=bool(best.get("_same_plant", False)),
+                    evidence_ids=_merged_reg_ids,
+                )
+                _merged_eligibility = _evaluate_eligibility(_merged_safety_finding, _merged_reg_finding)
+                best["Eligibility_Status"] = _merged_eligibility.status.value
+                best["Hard_No_Go"] = _merged_eligibility.hard_no_go
+                best["Eligible_For_Normal_Ranking"] = _merged_eligibility.eligible_for_normal_ranking
+                best["Ranking_Partition"] = _merged_eligibility.ranking_partition.value
+                best["Score_Validity"] = _merged_eligibility.score_validity.value
+                best["Gate_Type"] = _merged_eligibility.gate_type
+                best["Gate_Reason"] = _merged_eligibility.gate_reason
+                best["Gate_Evidence_IDs"] = "; ".join(_merged_eligibility.gate_evidence_ids)
+                best["Safety_Gate_Evidence_IDs"] = "; ".join(_merged_eligibility.safety_finding.evidence_ids)
+                best["Regulatory_Gate_Evidence_IDs"] = "; ".join(_merged_eligibility.regulatory_finding.evidence_ids)
+                best["Safety_Assertions"] = json.dumps([a.to_dict() for a in _merged_assertions], sort_keys=True, ensure_ascii=False)
+                best["Safety_Decision_Confidence"] = _merged_eligibility.safety_finding.confidence.value
+                best["Safety_Evidence_Conflict"] = _merged_eligibility.safety_finding.evidence_conflict
+                best["Safety_Severity_Rule"] = _merged_eligibility.safety_finding.severity_rule
+                best["Safety_Severity"] = _merged_eligibility.safety_finding.severity.value
+                best["Safety_Scope"] = _merged_eligibility.safety_finding.scope.value
+                best["Safety_Context_Relevance"] = _merged_eligibility.safety_finding.context_relevance.value
+                best["Regulatory_Status"] = _merged_eligibility.regulatory_finding.status.value
+                best["Regulatory_Scope"] = _merged_eligibility.regulatory_finding.scope.value
+                best["Regulatory_Context_Relevance"] = _merged_eligibility.regulatory_finding.context_relevance.value
+                best["Data_Completeness"] = _merged_eligibility.data_completeness.value
+                best["Requires_Expert_Review"] = _merged_eligibility.requires_expert_review
 
             # Same reasoning as Safety_Flags/Interaction_Flags just
             # above, applied to negative evidence (audit 4.15): if ANY
@@ -3084,9 +3250,17 @@ class BotanicalRDCandidateEngine:
             if not text or not text.strip():
                 return
             record_id = self._pick(row, ["Evidence_Record_ID", "evidence_record_id"])
+            classification = classify_source_authority_from_row(row)
             evidence_records_index[key].append({
                 "evidence_record_id": record_id or None,
                 "text": text,
+                "authority_label": classification.label,
+                "authority_factor": classification.score,
+                "source_url": self._pick(row, ["Source_URL", "source_url", "URL", "url"]) or "",
+                "preparation": self._pick(row, ["Preparation", "preparation", "Extraction_Method", "extraction_method"]) or "",
+                "dose": self._pick(row, ["Dose", "dose"]) or "",
+                "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",
+                "population": self._pick(row, ["Population", "population"]) or "",
             })
 
         def _record_source(key, row):

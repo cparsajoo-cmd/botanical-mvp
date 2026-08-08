@@ -99,9 +99,13 @@ from evidence_interpretation import (  # noqa: F401 (re-exported for callers)
 # Source Authority taxonomy
 # =======================================================================
 AUTHORITY_EMA_HMPC_MONOGRAPH = "EMA HMPC Monograph"
+AUTHORITY_FDA_REGULATORY = "FDA Regulatory Source"
+AUTHORITY_HEALTH_CANADA_REGULATORY = "Health Canada Regulatory Source"
+AUTHORITY_TGA_REGULATORY = "TGA Regulatory Source"
 AUTHORITY_WHO_MONOGRAPH = "WHO Monograph"
 AUTHORITY_ESCOP_MONOGRAPH = "ESCOP Monograph"
 AUTHORITY_COCHRANE_REVIEW = "Cochrane Review"
+AUTHORITY_CLINICAL_GUIDELINE = "Clinical Guideline"
 AUTHORITY_SYSTEMATIC_REVIEW = "Systematic Review & Meta-analysis"
 AUTHORITY_RCT = "Randomized Controlled Trial"
 AUTHORITY_CONTROLLED_CLINICAL_TRIAL = "Controlled Clinical Trial"
@@ -120,9 +124,13 @@ AUTHORITY_UNKNOWN = "Unknown Source"
 # assert the exact order without re-deriving it from the function body.
 AUTHORITY_LABELS = (
     AUTHORITY_EMA_HMPC_MONOGRAPH,
+    AUTHORITY_FDA_REGULATORY,
+    AUTHORITY_HEALTH_CANADA_REGULATORY,
+    AUTHORITY_TGA_REGULATORY,
     AUTHORITY_WHO_MONOGRAPH,
     AUTHORITY_ESCOP_MONOGRAPH,
     AUTHORITY_COCHRANE_REVIEW,
+    AUTHORITY_CLINICAL_GUIDELINE,
     AUTHORITY_COMMERCIAL_WEBSITE,
     AUTHORITY_BLOG,
     AUTHORITY_SYSTEMATIC_REVIEW,
@@ -162,9 +170,13 @@ AUTHORITY_LABELS = (
 #     competitive with any confirmed scientific or regulatory source.
 AUTHORITY_FACTORS: Mapping[str, float] = types.MappingProxyType({
     AUTHORITY_EMA_HMPC_MONOGRAPH: 1.00,
+    AUTHORITY_FDA_REGULATORY: 1.00,
+    AUTHORITY_HEALTH_CANADA_REGULATORY: 0.98,
+    AUTHORITY_TGA_REGULATORY: 0.98,
     AUTHORITY_WHO_MONOGRAPH: 0.97,
     AUTHORITY_ESCOP_MONOGRAPH: 0.93,
     AUTHORITY_COCHRANE_REVIEW: 0.93,
+    AUTHORITY_CLINICAL_GUIDELINE: 0.88,
     AUTHORITY_SYSTEMATIC_REVIEW: 0.85,
     AUTHORITY_RCT: 0.80,
     AUTHORITY_CONTROLLED_CLINICAL_TRIAL: 0.72,
@@ -227,6 +239,22 @@ _EMA_PHRASES = (
     "european medicines agency",
     "community herbal monograph",
 )
+_FDA_PHRASES = (
+    "u.s. food and drug administration",
+    "us food and drug administration",
+    "food and drug administration",
+    "fda drug safety communication",
+    "fda safety communication",
+)
+_HEALTH_CANADA_PHRASES = (
+    "health canada",
+    "healthy canadians",
+)
+_TGA_PHRASES = (
+    "therapeutic goods administration",
+    "australian tga",
+    "tga safety advisory",
+)
 _WHO_PHRASES = (
     "who monograph",
     "world health organization",
@@ -261,6 +289,7 @@ _BLOG_TYPE_PHRASES = ("blog", "weblog")
 
 # Peer-reviewed-literature fallback tiers (used only when no
 # organizational identity and no commercial/blog signal is found).
+_CLINICAL_GUIDELINE_PHRASES = ("clinical practice guideline", "clinical guideline", "practice guideline", "consensus guideline")
 _SYSTEMATIC_REVIEW_PHRASES = ("systematic review", "meta-analysis", "meta analysis")
 _RCT_PHRASES = (
     "randomized controlled trial", "randomised controlled trial",
@@ -323,6 +352,24 @@ def classify_source_authority(
             AUTHORITY_FACTORS[AUTHORITY_EMA_HMPC_MONOGRAPH],
             "Matched EMA/HMPC monograph terminology in source organization/title/connector metadata.",
         )
+    if _contains_any(org_signal, _FDA_PHRASES) or _contains_any(connector_text, _FDA_PHRASES):
+        return AuthorityClassification(
+            AUTHORITY_FDA_REGULATORY,
+            AUTHORITY_FACTORS[AUTHORITY_FDA_REGULATORY],
+            "Matched FDA regulatory-source terminology in source organization/title/connector metadata.",
+        )
+    if _contains_any(org_signal, _HEALTH_CANADA_PHRASES) or _contains_any(connector_text, _HEALTH_CANADA_PHRASES):
+        return AuthorityClassification(
+            AUTHORITY_HEALTH_CANADA_REGULATORY,
+            AUTHORITY_FACTORS[AUTHORITY_HEALTH_CANADA_REGULATORY],
+            "Matched Health Canada regulatory-source terminology in source organization/title/connector metadata.",
+        )
+    if _contains_any(org_signal, _TGA_PHRASES) or _contains_any(connector_text, _TGA_PHRASES):
+        return AuthorityClassification(
+            AUTHORITY_TGA_REGULATORY,
+            AUTHORITY_FACTORS[AUTHORITY_TGA_REGULATORY],
+            "Matched TGA regulatory-source terminology in source organization/title/connector metadata.",
+        )
     if _contains_any(org_signal, _WHO_PHRASES) or _contains_any(connector_text, _WHO_PHRASES):
         return AuthorityClassification(
             AUTHORITY_WHO_MONOGRAPH,
@@ -355,6 +402,12 @@ def classify_source_authority(
         )
 
     literature_text = " ".join([org_signal, connector_text, type_category_text]).strip()
+    if _contains_any(literature_text, _CLINICAL_GUIDELINE_PHRASES):
+        return AuthorityClassification(
+            AUTHORITY_CLINICAL_GUIDELINE,
+            AUTHORITY_FACTORS[AUTHORITY_CLINICAL_GUIDELINE],
+            "No regulator/monograph identity found; matched clinical-guideline terminology.",
+        )
     if _contains_any(literature_text, _SYSTEMATIC_REVIEW_PHRASES):
         return AuthorityClassification(
             AUTHORITY_SYSTEMATIC_REVIEW,

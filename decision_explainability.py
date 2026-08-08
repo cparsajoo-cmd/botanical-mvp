@@ -80,6 +80,20 @@ def _missing_data(row: dict) -> list[dict]:
     return out
 
 
+
+
+def _safety_assertions(row: dict) -> list[dict]:
+    raw = row.get("Safety_Assertions")
+    if isinstance(raw, list):
+        return [x for x in raw if isinstance(x, dict)]
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+
 def _gate_attribution(row: dict) -> list[dict]:
     gates = []
     gate_results = row.get("Gate_Results")
@@ -101,13 +115,18 @@ def _gate_attribution(row: dict) -> list[dict]:
     gate_type = str(row.get("Gate_Type") or "").strip()
     if gate_type and gate_type != "none":
         ids = _ids(row.get("Gate_Evidence_IDs"))
+        safety_assertions = _safety_assertions(row)
         gates.append({
             "gate": f"eligibility:{gate_type}",
             "status": str(row.get("Eligibility_Status") or ""),
             "reason": row.get("Gate_Reason") or "",
             "evidence_ids": ids,
-            "authority": None,
-            "severity": None,
+            "authority": sorted({str(a.get("authority")) for a in safety_assertions if a.get("authority")}) or None,
+            "severity": row.get("Safety_Severity"),
+            "safety_confidence": row.get("Safety_Decision_Confidence"),
+            "evidence_conflict": bool(row.get("Safety_Evidence_Conflict", False)),
+            "severity_rule": row.get("Safety_Severity_Rule"),
+            "assertion_trace": safety_assertions,
             "override": bool(row.get("Hard_No_Go", False)),
             "expert_review_required": "expert" in str(row.get("Eligibility_Status") or "").lower(),
         })
@@ -126,6 +145,14 @@ def _rules(row: dict) -> list[dict]:
         rules.append({"rule_id": "triage.exploratory_cap", "applied": True, "changed_decision": True, "override": False, "reason": row.get("Triage_Gate_Reasons") or ""})
     if row.get("Duplicate_Pruning_Note"):
         rules.append({"rule_id": "ranking.near_duplicate_congener_pruning", "applied": True, "changed_decision": True, "override": True, "reason": row.get("Duplicate_Pruning_Note")})
+    if _safety_assertions(row):
+        rules.append({
+            "rule_id": str(row.get("Safety_Severity_Rule") or "safety.structured_assertion"),
+            "applied": True,
+            "changed_decision": str(row.get("Safety_Severity") or "").lower() == "severe",
+            "override": bool(row.get("Hard_No_Go", False)),
+            "reason": row.get("Gate_Reason") or "Structured safety assertion evaluation.",
+        })
     return rules
 
 

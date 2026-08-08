@@ -165,28 +165,14 @@ def test_structured_safety_target_gate_validation_fails_on_preclassified_hazard_
     assert output["gate_results"]["eligibility"]["status"] == "expert_review_required"
 
 
-def test_capability_boundary_notes_alone_cannot_trigger_hard_safety_gate():
-    """Documents the capability boundary for DB_ACTIVITY_SAFETY_TERMS
-    specifically: hazard-adjacent language in notes — the literal word
-    "lithogenic" plus "contraindicated" and "pregnancy", but with NO
-    named drug/interacting-substance class — does NOT activate the
-    Hard Safety Gate when compound_activity_targets is empty. Free
-    text is scanned only against SAFETY_TERMS (a disjoint, softer
-    vocabulary); DB_ACTIVITY_SAFETY_TERMS (lithogenic/abortifacient/
-    etc.) is reachable only via the structured target field — see the
-    companion test above for the positive case.
-
-    Critical Safety False-Negative remediation (Case 006) note: a
-    narrower, separate exception now exists alongside this boundary —
-    see interaction_severity_classifier.py and
-    test_structured_serious_interaction_gate_fix.py. Free text CAN
-    reach HARD_SAFETY_TERMS, but ONLY when it asserts BOTH explicit
-    contraindication/serious-interaction language AND a recognized
-    high-risk interacting drug class in the same sentence. This
-    fixture's "contraindicated in pregnancy" has no such drug class,
-    so it correctly stays PASSED below — this test is deliberately
-    reused verbatim (as a negative control) in that new suite to prove
-    the remediation does not loosen this boundary."""
+def test_explicit_contraindication_in_notes_cannot_pass_pharmaceutical_safety_gate():
+    """Pharmaceutical-grade safety policy supersedes the old free-text
+    boundary for explicit contraindications. A bare DB activity word such as
+    ``lithogenic`` still cannot become a hard DB-activity hit from notes, but
+    an explicit clinical contraindication is first converted to a structured
+    SafetyAssertion and must never silently pass merely because no whitelisted
+    interacting drug class is named.
+    """
     _reset_engine_globals()
     case = _executable_case(taxon="NotesOnlyHazardLanguageTaxon")
     evidence = [EngineEvidenceInput(
@@ -199,8 +185,7 @@ def test_capability_boundary_notes_alone_cannot_trigger_hard_safety_gate():
     )]
     result = execute_gold_case_against_engine(case, evidence=evidence)
     output = platform_output_for_gold_case(result)
-    assert output["gate_results"]["safety"]["status"] == GateStatus.PASSED
-    assert "lithogenic" not in output["gate_results"]["safety"]["reason"].lower()
+    assert output["gate_results"]["safety"]["status"] == GateStatus.FAILED
 
 
 def test_regulatory_prohibition_triggers_via_natural_text_notes():

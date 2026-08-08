@@ -535,11 +535,15 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # and Regulatory_Gate_Evidence_IDs (finding-specific traceability,
     # design review item 3) are new, additive columns.
     #
+    # Bumped 78 -> 82 by Pharmaceutical-grade Safety hardening:
+    # Safety_Assertions, Safety_Decision_Confidence,
+    # Safety_Evidence_Conflict, and Safety_Severity_Rule.
+    #
     # Bumped 76 -> 77 by the correction round (2nd pass): Ranking_Partition
     # (design review item 2 — NORMAL / PRELIMINARY_OR_EXPERT_REVIEW /
     # EXCLUDED_NO_GO, see eligibility_gate.RankingPartition) is a new,
     # additive column.
-    assert len(result.columns) == 78
+    assert len(result.columns) == 82
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns

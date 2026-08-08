@@ -101,6 +101,13 @@ Very High, High, Moderate, Low, Very Low, Traditional, Unknown.
 Result direction must be one of:
 Positive, Negative, Mixed, Neutral, Unknown.
 
+Safety signal must be one of:
+Serious, Moderate, Reassuring, None, Unknown.
+Use Serious only for a documented serious/major safety risk, Moderate for a
+clinically relevant caution/precaution that is not a hard serious risk,
+Reassuring for explicit absence of important safety problems, None when the
+text contains no safety finding, and Unknown when safety cannot be determined.
+
 Dosage form relevance:
 Direct = same dosage form as selected product.
 Indirect = botanical evidence exists but dosage form differs.

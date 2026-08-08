@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterable, Mapping
 
+from canonical_scientific_assertion import resolve_record_direction
+
 
 class BodyDirection(str, Enum):
     SUPPORTIVE = "supportive"
@@ -175,11 +177,13 @@ def assess_evidence_body(
         text = str(rec.get("assertion_text") or rec.get("text") or "")
         stype = _norm_source_type(rec)
         assessed, meth, directness = _structured_domain_state(rec, stype)
+        canonical_direction = resolve_record_direction(rec, fallback_fn=direction_fn)
         rows.append({
             "identity": ident,
             "source_type": stype,
             "rank": _SOURCE_RANK.get(stype),
-            "direction": str(direction_fn(text)),
+            "direction": canonical_direction.direction,
+            "direction_provenance": canonical_direction.provenance,
             "limitation": str(limitation_fn(text)),
             "explicit_conflict": bool(explicit_conflict_fn(text)) if explicit_conflict_fn else False,
             "year": _year(rec),

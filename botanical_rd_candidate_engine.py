@@ -75,9 +75,18 @@ from interaction_severity_classifier import (
 from safety_assertion_engine import (
     classify_safety_assertions as _classify_safety_assertions,
     summarize_safety_assertions as _summarize_safety_assertions,
+    SafetyAssertion as _SafetyAssertion,
     SafetyAssertionType as _SafetyAssertionType,
+    SafetyConfidence as _SafetyConfidence,
     AssertionPolarity as _SafetyAssertionPolarity,
     safety_assertion_from_dict as _safety_assertion_from_dict,
+)
+from assertion_vocabulary import SeverityLevel as _SeverityLevel
+from canonical_scientific_assertion import (
+    normalize_safety_signal as _normalize_canonical_safety_signal,
+    CANONICAL_SAFETY_SERIOUS as _CANONICAL_SAFETY_SERIOUS,
+    CANONICAL_SAFETY_MODERATE as _CANONICAL_SAFETY_MODERATE,
+    CANONICAL_SAFETY_REASSURING as _CANONICAL_SAFETY_REASSURING,
 )
 
 
@@ -497,7 +506,7 @@ OUTPUT_COLUMNS = [
 # unchanged at 23/24 (0.958) — these fixes targeted generalization on
 # UNSEEN text, not the holdout itself, and none of the 24 cases happen
 # to exercise either bug pattern.
-DECISION_ENGINE_VERSION = "1.5.2"
+DECISION_ENGINE_VERSION = "1.6.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1564,9 +1573,21 @@ class BotanicalRDCandidateEngine:
                     )
                     market_status = self._market_evidence_status(raw_evidence)
                     _regulatory_assertion_text = " ".join(
-                        str(_r.get("assertion_text") or "")
+                        " ".join(
+                            str(x).strip() for x in (
+                                _r.get("assertion_text") or "",
+                                _r.get("regulatory_status") or "",
+                                _r.get("novel_food_status") or "",
+                                _r.get("regulatory_evidence") or "",
+                            ) if str(x or "").strip()
+                        )
                         for _r in evidence_contributing_records
-                        if str(_r.get("assertion_text") or "").strip()
+                        if any(str(x or "").strip() for x in (
+                            _r.get("assertion_text"),
+                            _r.get("regulatory_status"),
+                            _r.get("novel_food_status"),
+                            _r.get("regulatory_evidence"),
+                        ))
                     )
                     regulatory_barrier_result = classify_regulatory_barriers(
                         _regulatory_assertion_text or raw_evidence
@@ -1731,8 +1752,15 @@ class BotanicalRDCandidateEngine:
                     # pooled-text winner-takes-all logic.
                     _structured_safety_assertions = []
                     for _rec in evidence_contributing_records:
+                        _safety_assertion_input = " ".join(
+                            str(x).strip() for x in (
+                                _rec.get("assertion_text") or _rec.get("text") or "",
+                                _rec.get("source_safety_signal") or "",
+                                _rec.get("llm_safety_signal") or "",
+                            ) if str(x or "").strip()
+                        )
                         _structured_safety_assertions.extend(_classify_safety_assertions(
-                            _rec.get("assertion_text") or _rec.get("text") or "",
+                            _safety_assertion_input,
                             evidence_record_id=str(_rec.get("evidence_record_id") or ""),
                             authority=str(_rec.get("authority_label") or "Unknown Source"),
                             authority_score=float(_rec.get("authority_factor") or 0.5),
@@ -1744,6 +1772,54 @@ class BotanicalRDCandidateEngine:
                                 x.strip().lower() for x in str(_rec.get("population") or "").replace(";", ",").split(",") if x.strip()
                             ),
                         ))
+
+                        # A structured Safety_Signal is already an assertion,
+                        # so its controlled severity must not be thrown back
+                        # into the free-text vocabulary classifier. Convert it
+                        # directly into the same SafetyAssertion contract used
+                        # by the gate.
+                        _canonical_safety = _normalize_canonical_safety_signal(
+                            _rec.get("source_safety_signal")
+                            or _rec.get("llm_safety_signal")
+                        )
+                        if _canonical_safety in {
+                            _CANONICAL_SAFETY_SERIOUS,
+                            _CANONICAL_SAFETY_MODERATE,
+                            _CANONICAL_SAFETY_REASSURING,
+                        }:
+                            _is_reassuring = (
+                                _canonical_safety == _CANONICAL_SAFETY_REASSURING
+                            )
+                            _structured_safety_assertions.append(_SafetyAssertion(
+                                assertion_type=(
+                                    _SafetyAssertionType.REASSURANCE
+                                    if _is_reassuring
+                                    else _SafetyAssertionType.WARNING
+                                ),
+                                severity=(
+                                    _SeverityLevel.NONE if _is_reassuring
+                                    else _SeverityLevel.SERIOUS
+                                    if _canonical_safety == _CANONICAL_SAFETY_SERIOUS
+                                    else _SeverityLevel.MODERATE
+                                ),
+                                polarity=(
+                                    _SafetyAssertionPolarity.RISK_ABSENT
+                                    if _is_reassuring
+                                    else _SafetyAssertionPolarity.RISK_PRESENT
+                                ),
+                                evidence_strength=_SafetyConfidence.HIGH,
+                                authority=str(_rec.get("authority_label") or "Structured evidence"),
+                                authority_score=float(_rec.get("authority_factor") or 0.5),
+                                evidence_record_id=str(_rec.get("evidence_record_id") or ""),
+                                source_url=str(_rec.get("source_url") or ""),
+                                source_sentence=str(
+                                    _rec.get("source_safety_signal")
+                                    or _rec.get("llm_safety_signal")
+                                    or ""
+                                ),
+                                matched_language=str(_canonical_safety),
+                                reason="Canonical structured Safety_Signal mapped directly to safety severity.",
+                            ))
                     if not _structured_safety_assertions:
                         _structured_safety_assertions = list(pooled_safety_assertions)
                     _structured_safety_assertions = tuple(_structured_safety_assertions)
@@ -1767,7 +1843,10 @@ class BotanicalRDCandidateEngine:
                         same_plant=_row_same_plant,
                         finding_text=_regulatory_assertion_text,
                         candidate_dosage_form=dosage_form,
-                        candidate_context_text=str(indication or ""),
+                        candidate_context_text=" ".join(
+                            str(x).strip() for x in (indication, dosage_form, market)
+                            if str(x or "").strip()
+                        ),
                         evidence_ids=_regulatory_gate_evidence_ids,
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
@@ -3518,7 +3597,19 @@ class BotanicalRDCandidateEngine:
                 "target_indication": self._pick(row, ["Target_Indication", "target_indication", "Indication", "indication"]) or "",
                 "source_year": self._pick(row, ["Source_Year", "source_year", "Publication_Year", "publication_year", "Year", "year"]) or "",
                 "evidence_quality": self._pick(row, ["Evidence_Quality", "evidence_quality", "Evidence_Level", "evidence_level"]) or "",
-                "reported_direction": self._pick(row, ["Evidence_Direction", "evidence_direction", "Result_Direction", "result_direction"]) or "",
+                # Canonical assertion transport. Keep provenance separate:
+                # Result_Direction may be connector/source-provided;
+                # LLM_Result_Direction is model-extracted; Evidence_Direction
+                # is the legacy platform heuristic and is therefore only a
+                # lowest-priority compatibility value.
+                "source_result_direction": self._pick(row, ["Result_Direction", "result_direction"]) or "",
+                "llm_result_direction": self._pick(row, ["LLM_Result_Direction", "llm_result_direction"]) or "",
+                "reported_direction": self._pick(row, ["Evidence_Direction", "evidence_direction"]) or "",
+                "source_safety_signal": self._pick(row, ["Safety_Signal", "safety_signal"]) or "",
+                "llm_safety_signal": self._pick(row, ["LLM_Safety_Signal", "llm_safety_signal"]) or "",
+                "regulatory_status": self._pick(row, ["Regulatory_Status", "regulatory_status"]) or "",
+                "novel_food_status": self._pick(row, ["Novel_Food_Status", "novel_food_status"]) or "",
+                "regulatory_evidence": self._pick(row, ["Regulatory_Evidence", "regulatory_evidence"]) or "",
                 "pmid": self._pick(row, ["PMID", "pmid"]) or "",
                 "doi": self._pick(row, ["DOI", "doi"]) or "",
                 "sample_size": self._pick(row, ["Sample_Size", "sample_size", "LLM_Sample_Size"]) or "",

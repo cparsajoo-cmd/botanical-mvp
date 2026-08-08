@@ -72,7 +72,23 @@ def standardize_extracted_record(extracted, source_metadata):
         if record.get(_source_field) not in (None, "", [], {}):
             normalized[_source_field] = record[_source_field]
 
-    if extract_evidence_with_llm is not None and not already_has_reliable_evidence_level:
+    # Canonical assertion activation: a reliable Evidence_Level answers
+    # "what kind/strength of evidence is this?", not "what did it find?".
+    # Previously, having Evidence_Level suppressed the LLM extraction entirely,
+    # which meant the strongest systematic-review records often never received
+    # Result_Direction/Safety_Signal and downstream code fell back to regex.
+    # Run extraction whenever any core scientific assertion is still missing.
+    # Direction is the mandatory canonical assertion for therapeutic
+    # decision-making. Do not call the LLM merely because an optional
+    # methodological/safety field is blank; that would turn every record into
+    # an unnecessary model call. Safety extraction can still ride along when
+    # a direction extraction is needed, while source-provided Safety_Signal is
+    # always preserved.
+    needs_structured_assertion = not normalized.get("Result_Direction")
+
+    if extract_evidence_with_llm is not None and (
+        not already_has_reliable_evidence_level or needs_structured_assertion
+    ):
         try:
             llm = extract_evidence_with_llm(
                 normalized,
@@ -80,19 +96,26 @@ def standardize_extracted_record(extracted, source_metadata):
                 selected_indication=normalized.get("Target_Indication", ""),
             )
 
-            normalized["Scientific_Name"] = llm.get(
-                "plant_scientific_name",
-                normalized.get("Scientific_Name", "")
-            )
+            if not normalized.get("Scientific_Name"):
+                normalized["Scientific_Name"] = llm.get("plant_scientific_name", "")
 
-            normalized["Evidence_Type"] = llm.get("evidence_type", "")
-            normalized["Study_Type"] = llm.get("evidence_type", "")
-            normalized["Evidence_Level"] = llm.get("evidence_level", "")
-            normalized["Study_Model"] = llm.get("study_model", "")
+            # Never overwrite reliable connector/source fields merely because
+            # structured assertion extraction was needed.
+            if not normalized.get("Evidence_Type"):
+                normalized["Evidence_Type"] = llm.get("evidence_type", "")
+            if not normalized.get("Study_Type"):
+                normalized["Study_Type"] = llm.get("evidence_type", "")
+            if not normalized.get("Evidence_Level"):
+                normalized["Evidence_Level"] = llm.get("evidence_level", "")
+            if not normalized.get("Study_Model"):
+                normalized["Study_Model"] = llm.get("study_model", "")
 
-            normalized["Detected_Dosage_Forms"] = llm.get("dosage_form", "")
-            normalized["Detected_Indications"] = llm.get("target_indication", "")
-            normalized["Dosage_Form_Relevance"] = llm.get("dosage_form_relevance", "")
+            if not normalized.get("Detected_Dosage_Forms"):
+                normalized["Detected_Dosage_Forms"] = llm.get("dosage_form", "")
+            if not normalized.get("Detected_Indications"):
+                normalized["Detected_Indications"] = llm.get("target_indication", "")
+            if not normalized.get("Dosage_Form_Relevance"):
+                normalized["Dosage_Form_Relevance"] = llm.get("dosage_form_relevance", "")
 
             normalized["LLM_Population"] = llm.get("population", "")
             normalized["LLM_Sample_Size"] = llm.get("sample_size", "")
@@ -121,7 +144,7 @@ def standardize_extracted_record(extracted, source_metadata):
             if llm.get("escop_relevance", "").lower() == "yes":
                 normalized["ESCOP_Status"] = "Yes"
 
-            if llm.get("safety_signal"):
+            if llm.get("safety_signal") and not normalized.get("Safety_Signal"):
                 normalized["Safety_Signal"] = llm.get("safety_signal", "")
 
         except Exception as e:

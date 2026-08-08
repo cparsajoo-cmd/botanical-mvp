@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Serenoa repens for Lower urinary tract symptoms due to benign prostatic enlargement?",
+    "indication": "Lower urinary tract symptoms due to benign prostatic enlargement",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Serenoa repens"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_12887481",
+      "scientific_name": "Serenoa repens",
+      "notes": "Double-blind placebo-controlled trial found no significant beneficial effect of Serenoa repens over placebo for BPH symptom score or urinary flow.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Serenoa repens extract for benign prostate hyperplasia randomized trial",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/12887481/",
+      "pmid": "12887481",
+      "target_indication": "Lower urinary tract symptoms due to benign prostatic enlargement",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2003
+    },
+    {
+      "reference_id": "PUBMED_34488251",
+      "scientific_name": "Serenoa repens",
+      "notes": "Systematic review of 27 trials found Serenoa repens results in little to no difference in urinary symptoms, quality of life, or adverse events; combination results were uncertain.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Serenoa repens for LUTS due to benign prostatic enlargement",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/34488251/",
+      "pmid": "34488251",
+      "target_indication": "Lower urinary tract symptoms due to benign prostatic enlargement",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021
+    }
+  ]
+}

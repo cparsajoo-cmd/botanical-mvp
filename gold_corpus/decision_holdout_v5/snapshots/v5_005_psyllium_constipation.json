@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Plantago ovata for Chronic constipation?",
+    "indication": "Chronic constipation",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Plantago ovata"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_1520545",
+      "scientific_name": "Plantago ovata",
+      "notes": "Double-blind placebo-controlled study in chronic constipation found stool frequency increased markedly with Plantago ovata and all treated patients had good results versus one on placebo.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Plantago ovata as regulator of intestinal transit",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/1520545/",
+      "pmid": "1520545",
+      "target_indication": "Chronic constipation",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 1992
+    }
+  ]
+}

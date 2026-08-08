@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Aristolochia fangchi for Oral therapeutic use?",
+    "indication": "Oral therapeutic use",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Aristolochia fangchi"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_31244661",
+      "scientific_name": "Aristolochia fangchi",
+      "notes": "Aristolochic acids in Aristolochia are toxins associated with nephropathy and upper urinary tract urothelial carcinoma; DNA adducts and a characteristic mutational signature support carcinogenicity.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Systematic overview of aristolochic acids nephrotoxicity and carcinogenicity",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/31244661/",
+      "pmid": "31244661",
+      "target_indication": "Oral therapeutic use",
+      "study_design": "Systematic Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2019
+    },
+    {
+      "reference_id": "EMA_ARISTOLOCHIA_2005",
+      "scientific_name": "Aristolochia fangchi",
+      "notes": "EMA public statement says use of Aristolochia species in herbal medicines is no longer permitted in many countries because aristolochic acids are nephrotoxic, carcinogenic and mutagenic.",
+      "source_type": "REGULATORY",
+      "source_title": "EMA risks associated with Aristolochia species",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "Oral therapeutic use",
+      "study_design": "Regulatory Monograph",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2005
+    }
+  ]
+}

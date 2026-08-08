@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Piper methysticum for Anxiety?",
+    "indication": "Anxiety",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Piper methysticum"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_20720265",
+      "scientific_name": "Piper methysticum",
+      "notes": "Clinical review confirms kava is potentially hepatotoxic, with causality assessed as highly probable, probable or possible in reported liver injury cases across aqueous, ethanolic and acetonic extracts.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Kava hepatotoxicity clinical review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20720265/",
+      "pmid": "20720265",
+      "target_indication": "Anxiety",
+      "study_design": "Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2010
+    },
+    {
+      "reference_id": "PUBMED_30396607_ENGINE",
+      "scientific_name": "Piper methysticum",
+      "notes": "Systematic review of randomized clinical trials evaluated kava for anxiety and reported therapeutic efficacy signals, creating a benefit-risk question in the presence of liver safety concerns.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Kava for anxiety randomized trial systematic review",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "Anxiety",
+      "study_design": "Systematic Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2018
+    }
+  ]
+}

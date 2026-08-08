@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Cinnamomum verum for Type 2 diabetes glycemic control?",
+    "indication": "Type 2 diabetes glycemic control",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Cinnamomum verum"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_37818728",
+      "scientific_name": "Cinnamomum verum",
+      "notes": "Updated systematic review and dose-response meta-analysis found cinnamon supplementation improved glycemic control measures in type 2 diabetes; results support benefit but dose and study heterogeneity remain.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Cinnamon supplementation and glycemic control in T2DM",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/37818728/",
+      "pmid": "37818728",
+      "target_indication": "Type 2 diabetes glycemic control",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2024
+    }
+  ]
+}

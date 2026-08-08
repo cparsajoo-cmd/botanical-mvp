@@ -1,1 +1,41 @@
-
+{
+  "question": {
+    "question": "What is the scientific decision for Curcuma longa for Knee osteoarthritis pain and function?",
+    "indication": "Knee osteoarthritis pain and function",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Curcuma longa"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_34216044",
+      "scientific_name": "Curcuma longa",
+      "notes": "Meta-analysis of 10 randomized trials found significantly better pain relief and functional improvement versus placebo for knee osteoarthritis.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Effectiveness of Curcuma longa extract versus placebo for knee osteoarthritis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/34216044/",
+      "pmid": "34216044",
+      "target_indication": "Knee osteoarthritis pain and function",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021
+    },
+    {
+      "reference_id": "PUBMED_28470851",
+      "scientific_name": "Curcuma longa",
+      "notes": "Meta-analysis found beneficial effects on knee pain and quality of life, but studies were small, reporting quality varied, and further clinical trials were warranted.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Effectiveness of curcuminoids in knee osteoarthritis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/28470851/",
+      "pmid": "28470851",
+      "target_indication": "Knee osteoarthritis pain and function",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2017
+    }
+  ]
+}

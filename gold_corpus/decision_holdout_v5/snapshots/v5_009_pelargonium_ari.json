@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Pelargonium sidoides for Acute respiratory tract infection?",
+    "indication": "Acute respiratory tract infection",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Pelargonium sidoides"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_18646148",
+      "scientific_name": "Pelargonium sidoides",
+      "notes": "Cochrane review of randomized trials found evidence of benefit for some acute respiratory infections, but heterogeneity across age groups, disease entities and preparations required cautious interpretation.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Pelargonium sidoides extract for acute respiratory tract infections",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18646148/",
+      "pmid": "18646148",
+      "target_indication": "Acute respiratory tract infection",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2008
+    }
+  ]
+}

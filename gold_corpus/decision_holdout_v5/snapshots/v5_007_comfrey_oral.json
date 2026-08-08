@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Symphytum officinale for Oral use for musculoskeletal complaints?",
+    "indication": "Oral use for musculoskeletal complaints",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Symphytum officinale"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_11276298",
+      "scientific_name": "Symphytum officinale",
+      "notes": "Review states comfrey leaves are a substantial health hazard with hepatic toxicity; hepatotoxic pyrrolizidine alkaloids can cause hepatic veno-occlusive disease, cirrhosis and liver failure.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "The efficacy and safety of comfrey",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11276298/",
+      "pmid": "11276298",
+      "target_indication": "Oral use for musculoskeletal complaints",
+      "study_design": "Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2001
+    },
+    {
+      "reference_id": "PUBMED_26626258",
+      "scientific_name": "Symphytum officinale",
+      "notes": "Systematic review concludes herbal remedies containing pyrrolizidine alkaloids can induce liver damage including hepatic sinusoidal obstruction or veno-occlusive disease, and chronic exposure can promote cancer.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Hepatotoxicity of Pyrrolizidine Alkaloids",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/26626258/",
+      "pmid": "26626258",
+      "target_indication": "Oral use for musculoskeletal complaints",
+      "study_design": "Systematic Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2015
+    }
+  ]
+}

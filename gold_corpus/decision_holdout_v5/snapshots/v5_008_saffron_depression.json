@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Crocus sativus for Depressive symptoms?",
+    "indication": "Depressive symptoms",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Crocus sativus"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_31135916",
+      "scientific_name": "Crocus sativus",
+      "notes": "Systematic review and meta-analysis found saffron supplementation reduced depression and anxiety symptoms, supporting efficacy, while study populations and interventions varied.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Saffron supplementation on depression and anxiety",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/31135916/",
+      "pmid": "31135916",
+      "target_indication": "Depressive symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2019
+    }
+  ]
+}

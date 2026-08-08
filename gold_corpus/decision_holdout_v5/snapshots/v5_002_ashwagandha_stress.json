@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Withania somnifera for Stress and anxiety?",
+    "indication": "Stress and anxiety",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Withania somnifera"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_36017529",
+      "scientific_name": "Withania somnifera",
+      "notes": "Meta-analysis of 12 randomized trials found significant reductions in anxiety and stress, but heterogeneity was very high, certainty of evidence was low, and further high-quality studies were needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Ashwagandha supplementation for anxiety and stress",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/36017529/",
+      "pmid": "36017529",
+      "target_indication": "Stress and anxiety",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022
+    }
+  ]
+}

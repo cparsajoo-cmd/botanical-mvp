@@ -1,0 +1,181 @@
+{
+  "evaluation_type": "POST_REMEDIATION_REGRESSION_NOT_UNSEEN_VALIDATION",
+  "n_cases": 15,
+  "n_scored": 15,
+  "n_correct": 15,
+  "agreement": 1.0,
+  "macro_f1": 1.0,
+  "serious_safety_false_negatives": 0,
+  "regulatory_false_negatives": 0,
+  "false_no_go": 0,
+  "expert_review_overuse": 0,
+  "insufficient_evidence_miss": 0,
+  "cases": [
+    {
+      "case_id": "refgrounded_001_melissa_officinalis_sleep",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 17,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_001_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 17,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_003_independent.json",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO WITH CAUTION",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_004_ginkgo_biloba_cognitive",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 2,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_004_independent.json",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 19,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_005_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_007_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_008_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 19,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_009_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 19,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_010_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 26,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_011_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 17,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_012_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_013_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_014_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_015_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 1,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_017_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 32,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_023_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": true
+    }
+  ],
+  "interpretation": "These 15 cases were previously exposed during root-cause analysis and remediation. Agreement is a regression-closure metric only and must not be reported as independent holdout performance."
+}

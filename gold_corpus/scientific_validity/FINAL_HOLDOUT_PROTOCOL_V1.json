@@ -1,0 +1,33 @@
+{
+  "version": "scientific-validity-final-holdout/1.0.0",
+  "engine_version_required": "1.4.0",
+  "purpose": "One finite, final external-validation benchmark for Scientific Decision Engine v1 decision support.",
+  "design": {
+    "n_cases": 24,
+    "classes": {
+      "GO": 4,
+      "GO WITH CAUTION": 4,
+      "EXPERT REVIEW REQUIRED": 4,
+      "NO GO SAFETY": 4,
+      "NO GO REGULATORY": 4,
+      "INSUFFICIENT EVIDENCE": 4
+    },
+    "reference_frozen_before_engine_run": true,
+    "engine_blinded_to_reference_labels": true,
+    "exclude_all_cases_used_for_remediation": true,
+    "independent_human_adjudicators_min": 2,
+    "inter_rater_agreement_min": 0.7,
+    "adjudication_disagreements_resolved_before_freeze": true
+  },
+  "release_thresholds": {
+    "accuracy_min": 0.8,
+    "macro_f1_min": 0.75,
+    "GO_precision_min": 0.85,
+    "GO_WITH_CAUTION_recall_min": 0.75,
+    "EXPERT_REVIEW_REQUIRED_recall_min": 0.7,
+    "serious_safety_false_negatives_max": 0,
+    "regulatory_false_negatives_max": 0,
+    "INSUFFICIENT_EVIDENCE_miss_rate_max": 0.2
+  },
+  "rule": "If the frozen benchmark fails, v1 is not scientifically validated. Do not tune on the final holdout; open a new engine version and a new future holdout instead."
+}

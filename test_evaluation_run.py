@@ -131,6 +131,7 @@ def _locked_indication_evidence_case(case_id="ie1", taxon="EligibleTaxon"):
         engine_evidence=[EngineEvidenceInput(
             scientific_name=taxon, target_indication="TestIndication",
             notes="A randomized controlled trial reported improved outcomes versus placebo.",
+            result_direction="Positive",
         )],
     )
     case.resolved_outcomes = resolve_expected_outcomes(case)
@@ -167,6 +168,7 @@ def _locked_mapping_mismatch_case(case_id="mismatch1", taxon="MismatchTaxon"):
         engine_evidence=[EngineEvidenceInput(
             scientific_name=taxon, target_indication="TestIndication",
             notes="A randomized controlled trial reported improved outcomes versus placebo.",
+            result_direction="Positive",
         )],
     )
     case.resolved_outcomes = resolve_expected_outcomes(case)

@@ -145,6 +145,11 @@ def _evidence_inputs_to_dataframe(evidence: list) -> pd.DataFrame:
             "Scientific_Name": item.scientific_name,
             "Target_Indication": item.target_indication or "",
             "Notes": item.notes,
+            "Result_Direction": item.result_direction,
+            "Safety_Signal": item.safety_signal,
+            "Regulatory_Status": item.regulatory_status,
+            "Regulatory_Authorization_Status": item.regulatory_authorization_status,
+            "Regulatory_Evidence": item.regulatory_evidence,
         }
         for item in evidence
     ])

@@ -363,7 +363,11 @@ def _final_decision_direction(text: str) -> str:
     return direction
 
 
-def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenceResolution:
+def resolve_scientific_evidence(
+    records: Iterable[Mapping],
+    *,
+    allow_legacy_text_fallback: bool = True,
+) -> ScientificEvidenceResolution:
     """Resolve therapeutic evidence through one structured body-of-evidence model.
 
     This is the authoritative scientific-evidence path for final decisions.
@@ -376,6 +380,7 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
         direction_fn=_final_decision_direction,
         limitation_fn=lambda text: _evidence_limitation_tier(text).value,
         explicit_conflict_fn=_explicit_conflict_language,
+        allow_text_fallback=allow_legacy_text_fallback,
     )
 
     dirs = body.governing_directions

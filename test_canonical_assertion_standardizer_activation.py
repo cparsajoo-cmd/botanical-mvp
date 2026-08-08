@@ -55,3 +55,18 @@ def test_source_result_direction_prevents_unnecessary_llm_call(monkeypatch):
         {"source_type":"PubMed","source_title":"x","source_url":"u","source_year":"2025"},
     )
     assert out["Result_Direction"] == "Positive"
+
+
+def test_new_standardized_record_without_extractor_persists_unknown_direction(monkeypatch):
+    monkeypatch.setattr(es,"extract_evidence_with_llm",None)
+    out=es.standardize_extracted_record(
+        {
+            "Scientific_Name":"Example plant",
+            "Evidence_Level":"High",
+            "Notes":"The intervention was more effective than placebo.",
+            "Target_Indication":"pain",
+            "Dosage_Form":"oral",
+        },
+        {"source_type":"PubMed","source_title":"x","source_url":"u","source_year":"2025"},
+    )
+    assert out["Result_Direction"] == "Unknown"

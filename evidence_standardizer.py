@@ -123,6 +123,8 @@ def standardize_extracted_record(extracted, source_metadata):
             normalized["LLM_Comparator"] = llm.get("comparator", "")
             normalized["LLM_Main_Outcome"] = llm.get("main_outcome", "")
             normalized["LLM_Result_Direction"] = llm.get("result_direction", "")
+            if not normalized.get("Result_Direction") and llm.get("result_direction"):
+                normalized["Result_Direction"] = llm.get("result_direction", "")
             normalized["LLM_Safety_Signal"] = llm.get("safety_signal", "")
             normalized["LLM_Reason"] = llm.get("reason", "")
 
@@ -150,6 +152,16 @@ def standardize_extracted_record(extracted, source_metadata):
 
         except Exception as e:
             normalized["LLM_Reason"] = "LLM extraction failed: " + str(e)
+            if not normalized.get("Result_Direction"):
+                normalized["Result_Direction"] = "Unknown"
+
+    # A newly standardized record must never leave this boundary with an
+    # absent scientific direction. If no source/connector direction exists and
+    # no structured extractor was available/successful, persist Unknown. This
+    # deliberately yields an abstaining downstream decision rather than a
+    # heuristic GO from raw prose.
+    if not normalized.get("Result_Direction"):
+        normalized["Result_Direction"] = "Unknown"
 
     standardized = build_standard_evidence(normalized)
 

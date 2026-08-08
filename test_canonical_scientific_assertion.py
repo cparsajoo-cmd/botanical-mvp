@@ -24,11 +24,11 @@ def test_explicit_structured_unknown_does_not_get_reinterpreted_as_positive():
     r=resolve_record_direction(rec,fallback_fn=lambda _: "positive")
     assert r.direction == CANONICAL_UNCLEAR
 
-def test_text_fallback_is_only_used_when_structured_direction_absent():
+def test_missing_structured_direction_abstains_instead_of_using_text_fallback():
     rec={"assertion_text":"legacy record"}
     r=resolve_record_direction(rec,fallback_fn=lambda _: "mixed")
-    assert r.direction == CANONICAL_MIXED
-    assert r.provenance == "text_fallback"
+    assert r.direction == CANONICAL_UNCLEAR
+    assert r.provenance == "missing_structured_direction"
 
 
 def test_body_assessment_uses_structured_direction_not_conflicting_text_fallback():
@@ -69,7 +69,7 @@ def test_structured_mixed_governing_direction_is_material_conflict():
     r=resolve_scientific_evidence(records)
     assert r.signal == ScientificEvidenceSignal.CONFLICT
 
-def test_legacy_text_fallback_mixed_is_not_automatically_hard_conflict():
+def test_legacy_unstructured_mixed_text_abstains_until_backfilled():
     from final_decision_policy import resolve_scientific_evidence, ScientificEvidenceSignal
     records=[{
         "source_type":"SYSTEMATIC_REVIEW",
@@ -77,8 +77,5 @@ def test_legacy_text_fallback_mixed_is_not_automatically_hard_conflict():
         "source_year":2025,
         "evidence_record_id":"legacy-mixed",
     }]
-    r=resolve_scientific_evidence(records)
-    assert r.signal in {
-        ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-        ScientificEvidenceSignal.CONFLICT,
-    }
+    r=resolve_scientific_evidence(records, allow_legacy_text_fallback=False)
+    assert r.signal == ScientificEvidenceSignal.UNRESOLVED

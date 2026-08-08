@@ -85,6 +85,7 @@ def resolve_record_direction(
     record: Mapping,
     *,
     fallback_fn: Callable[[str], str],
+    allow_text_fallback: bool = False,
 ) -> CanonicalDirection:
     """Resolve one evidence record to exactly one canonical direction."""
     candidates=(
@@ -102,9 +103,14 @@ def resolve_record_direction(
         if normalized == CANONICAL_UNCLEAR:
             return CanonicalDirection(CANONICAL_UNCLEAR,provenance,str(raw or ""))
 
-    text=str(record.get("assertion_text") or record.get("text") or "")
-    fallback=normalize_direction(fallback_fn(text)) or CANONICAL_UNCLEAR
-    return CanonicalDirection(fallback,"text_fallback","")
+    if allow_text_fallback:
+        text=str(record.get("assertion_text") or record.get("text") or "")
+        fallback=normalize_direction(fallback_fn(text)) or CANONICAL_UNCLEAR
+        return CanonicalDirection(fallback,"text_fallback","")
+
+    # Fail-safe production rule: raw prose is not an authoritative scientific
+    # assertion. A record without structured direction must not be promoted.
+    return CanonicalDirection(CANONICAL_UNCLEAR,"missing_structured_direction","")
 
 
 CANONICAL_SAFETY_SERIOUS="serious"

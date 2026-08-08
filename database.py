@@ -107,6 +107,8 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     # source_authority_reason the deterministic explanation string
     # classify_source_authority() returned.
     "source_authority", "source_authority_score", "source_authority_reason",
+    # Phase — canonical regulatory authorization state.
+    "regulatory_authorization_status",
 }
 
 
@@ -706,6 +708,7 @@ def save_evidence_record(record):
         "detected_dosage_forms": record.get("Detected_Dosage_Forms", ""),
         "detected_indications": record.get("Detected_Indications", ""),
         "regulatory_evidence": record.get("Regulatory_Evidence", ""),
+        "regulatory_authorization_status": record.get("Regulatory_Authorization_Status") or None,
         "evidence_score": _safe_int(record.get("Evidence_Score", 0)),
 
         "plant": record.get("Plant", ""),
@@ -874,6 +877,7 @@ def load_evidence_records():
             "Detected_Dosage_Forms": item.get("detected_dosage_forms", ""),
             "Detected_Indications": item.get("detected_indications", ""),
             "Regulatory_Evidence": item.get("regulatory_evidence", ""),
+            "Regulatory_Authorization_Status": item.get("regulatory_authorization_status", ""),
             "Evidence_Score": item.get("evidence_score", 0),
 
             "Plant": item.get("plant", ""),

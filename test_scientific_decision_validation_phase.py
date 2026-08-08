@@ -24,6 +24,7 @@ def _engine_status(n):
         plant_compounds_df=_build_plant_df(candidates, q.indication),
         compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
         evidence_df=evidence_df, use_live_search=False,
+        allow_legacy_text_fallback=True,
     )
     output = engine.run(indication=q.indication, dosage_form=q.dosage_form, market=q.market)
     target = load_gold_case(n).validation_unit.taxon.lower().split()[0]

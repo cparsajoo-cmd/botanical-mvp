@@ -167,6 +167,7 @@ def assess_evidence_body(
     direction_fn: Callable[[str], str],
     limitation_fn: Callable[[str], str],
     explicit_conflict_fn: Callable[[str], bool] | None = None,
+    allow_text_fallback: bool = True,
 ) -> EvidenceBodyAssessment:
     rows = []
     seen = set()
@@ -178,7 +179,11 @@ def assess_evidence_body(
         text = str(rec.get("assertion_text") or rec.get("text") or "")
         stype = _norm_source_type(rec)
         assessed, meth, directness = _structured_domain_state(rec, stype)
-        canonical_direction = resolve_record_direction(rec, fallback_fn=direction_fn)
+        canonical_direction = resolve_record_direction(
+            rec,
+            fallback_fn=direction_fn,
+            allow_text_fallback=allow_text_fallback,
+        )
         rows.append({
             "identity": ident,
             "source_type": stype,

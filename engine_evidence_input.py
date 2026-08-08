@@ -100,7 +100,7 @@ from typing import Optional
 @dataclass(frozen=True)
 class EngineEvidenceInput:
     """Frozen: cannot be mutated after construction to smuggle in an
-    extra attribute at runtime. Exactly four fields, all plain
+    extra attribute at runtime. Only plain production evidence fields, all
     strings (or a plain list of strings) — see module docstring for
     why each exists and what production channel each maps to.
     target_indication is Optional[str] = None — see "WHY
@@ -110,13 +110,18 @@ class EngineEvidenceInput:
     target_indication: Optional[str] = None
     notes: str = ""
     compound_activity_targets: tuple = ()
+    result_direction: str = ""
+    safety_signal: str = ""
+    regulatory_status: str = ""
+    regulatory_authorization_status: str = ""
+    regulatory_evidence: str = ""
 
 
 class EngineEvidenceOrigin(str, Enum):
     """Provenance of a GoldCase's engine_evidence — see gold_case.py's
     GoldCase.engine_evidence_origin. Deliberately NOT a field on
     EngineEvidenceInput itself: EngineEvidenceInput's field set is a
-    locked structural invariant (exactly four fields — see
+    locked structural invariant (the declared plain production evidence fields — see
     test_structural_leakage_boundary.py), and provenance is metadata
     ABOUT how a case's evidence was obtained, not part of what the
     engine consumes. Lives at the GoldCase level instead.

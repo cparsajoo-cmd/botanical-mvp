@@ -506,7 +506,7 @@ OUTPUT_COLUMNS = [
 # unchanged at 23/24 (0.958) — these fixes targeted generalization on
 # UNSEEN text, not the holdout itself, and none of the 24 cases happen
 # to exercise either bug pattern.
-DECISION_ENGINE_VERSION = "1.7.0"
+DECISION_ENGINE_VERSION = "1.8.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -914,6 +914,7 @@ class BotanicalRDCandidateEngine:
         evidence_records_df=None,
         data_source_reliable=True,
         scoring_config=None,
+        allow_legacy_text_fallback=False,
     ):
         # Task 3 — externalized, versioned scoring weights. Defaults to
         # DEFAULT_SCORING_CONFIG (byte-identical to the pre-Task-3
@@ -922,6 +923,7 @@ class BotanicalRDCandidateEngine:
 
         self.evidence_df = self._to_dataframe(evidence_df)
         self.use_live_search = use_live_search
+        self.allow_legacy_text_fallback = bool(allow_legacy_text_fallback)
 
         # Task 11.1 — default before run() has built the real index
         # (see run()'s own call to _build_scientific_evidence_index()).
@@ -1857,7 +1859,8 @@ class BotanicalRDCandidateEngine:
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
                     scientific_evidence_resolution = resolve_scientific_evidence(
-                        evidence_contributing_records
+                        evidence_contributing_records,
+                        allow_legacy_text_fallback=self.allow_legacy_text_fallback,
                     )
                     final_decision = decide_final(
                         eligibility_decision,

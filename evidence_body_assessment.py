@@ -46,6 +46,7 @@ class EvidenceBodyAssessment:
     newest_governing_year: int | None
     has_newer_contradiction: bool
     has_explicit_conflict: bool
+    has_structured_mixed_direction: bool
     structured_domain_coverage: float
     unassessed_domains: tuple[str, ...]
     serious_methodological_concerns: tuple[str, ...]
@@ -196,7 +197,7 @@ def assess_evidence_body(
     if not recognized:
         return EvidenceBodyAssessment(
             BodyDirection.UNRESOLVED, BodyCertainty.NOT_ASSESSABLE,
-            (), (), 0, len(rows), 0, None, False, False, 0.0,
+            (), (), 0, len(rows), 0, None, False, False, False, 0.0,
             _METHOD_DOMAINS, (), (),
             "No recognized clinical synthesis, monograph, trial, or observational tier was available.",
         )
@@ -205,6 +206,11 @@ def assess_evidence_body(
     top = [r for r in recognized if r["rank"] == best_rank]
     dirs = {r["direction"] for r in top}
     explicit_top_conflict = any(r["explicit_conflict"] for r in top)
+    structured_mixed_direction = any(
+        r["direction"] == "mixed"
+        and r.get("direction_provenance") != "text_fallback"
+        for r in top
+    )
     limitation_count = sum(r["limitation"] != "none" for r in top)
     firm_count = sum(r["limitation"] == "firm_uncertainty" for r in top)
     years = [r["year"] for r in top if r["year"] is not None]
@@ -294,8 +300,9 @@ def assess_evidence_body(
         f"directions={sorted(dirs)}; material limitations={limitation_count}; "
         f"structured domain coverage={coverage:.2f}; unassessed={list(unassessed)}; "
         f"methodological concerns={list(methodological)}; directness concerns={list(directness)}; "
-        f"explicit top-tier conflict={explicit_top_conflict}; newer contradiction={newer_contradiction}; "
-        f"body certainty={certainty.value}."
+        f"explicit top-tier conflict={explicit_top_conflict}; "
+        f"structured mixed direction={structured_mixed_direction}; "
+        f"newer contradiction={newer_contradiction}; body certainty={certainty.value}."
     )
     return EvidenceBodyAssessment(
         direction=direction,
@@ -308,6 +315,7 @@ def assess_evidence_body(
         newest_governing_year=newest_top,
         has_newer_contradiction=newer_contradiction,
         has_explicit_conflict=explicit_top_conflict,
+        has_structured_mixed_direction=structured_mixed_direction,
         structured_domain_coverage=coverage,
         unassessed_domains=unassessed,
         serious_methodological_concerns=methodological,

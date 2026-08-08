@@ -57,6 +57,7 @@ def standardize_extracted_record(extracted, source_metadata):
         "Primary_Outcome", "Result_Direction", "Safety_Signal",
         "Adverse_Events", "Interactions_Structured", "Effect_Size", "P_Value",
         "Administration_Route", "Plant_Part", "Extraction_Method", "Duration",
+        "Regulatory_Authorization_Status",
         "Mechanism", "Target", "Data_Quality_Score",
         # PHASE 2 audit finding (PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md
         # section 3c) — multi_source_collector._save_records_from_connector()

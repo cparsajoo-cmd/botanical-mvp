@@ -84,6 +84,11 @@ from typing import Any, FrozenSet, Optional, Tuple
 from assertion_vocabulary import SeverityLevel
 from safety_assertion_engine import SafetyAssertion, SafetyConfidence, AssertionPolarity
 from regulatory_scope_assessment import assess_regulatory_scope, detect_dose_threshold_violation
+from regulatory_authorization import (
+    AuthorizationStatus,
+    normalize_authorization_status,
+    is_market_blocking,
+)
 
 
 # ======================================================================
@@ -468,6 +473,7 @@ def classify_regulatory_finding(
     candidate_dosage_form: str = "",
     candidate_context_text: str = "",
     evidence_ids: Tuple[str, ...] = (),
+    authorization_statuses: Tuple[str, ...] = (),
 ) -> RegulatoryFinding:
     """Builds a RegulatoryFinding from ``regulatory_barrier_classifier
     .classify_regulatory_barriers()``'s output plus ``has_evidence_text``/
@@ -517,14 +523,35 @@ def classify_regulatory_finding(
     """
     barrier_types = frozenset(barrier_types or frozenset())
 
+    normalized_authorizations = tuple(
+        normalize_authorization_status(x) for x in authorization_statuses
+    )
+    blocking_authorization = next(
+        (x for x in normalized_authorizations if is_market_blocking(x)), None
+    )
+    pending_authorization = (
+        AuthorizationStatus.PENDING in normalized_authorizations
+        and blocking_authorization is None
+    )
+
+    # This field is authoritative only when supplied by a connector/source
+    # that has already matched jurisdiction/product context.  Do not infer it
+    # from absence or prose.
+    if blocking_authorization is not None:
+        barrier_types = barrier_types | {"Authorization absent / denied"}
+    elif pending_authorization:
+        barrier_types = barrier_types | {"Authorization pending"}
+
     dose_finding = None
     if has_evidence_text and not barrier_types and finding_text:
         dose_finding = detect_dose_threshold_violation(finding_text, candidate_context_text)
         if dose_finding is not None and dose_finding.violates is not False:
             barrier_types = barrier_types | {"Dose-dependent regulatory restriction"}
 
-    is_prohibited = "Prohibited / banned" in barrier_types or (
-        dose_finding is not None and dose_finding.violates is True
+    is_prohibited = (
+        "Prohibited / banned" in barrier_types
+        or "Authorization absent / denied" in barrier_types
+        or (dose_finding is not None and dose_finding.violates is True)
     )
     is_restricted = bool(barrier_types) and not is_prohibited
 
@@ -555,7 +582,18 @@ def classify_regulatory_finding(
         "plant_part_specific": FindingScope.PLANT_PART_SPECIFIC,
         "preparation_specific": FindingScope.PREPARATION_SPECIFIC,
     }
-    if status == RegulatoryDataStatus.PROHIBITED and confirmed_scope is None and _ft:
+    if (
+        status == RegulatoryDataStatus.PROHIBITED
+        and blocking_authorization is not None
+        and confirmed_scope is None
+    ):
+        # The structured authorization field is defined to be emitted only
+        # after jurisdiction/product-context matching by the source connector.
+        # Therefore its relevance is already resolved and must not be sent back
+        # to text scope heuristics.
+        scope = FindingScope.PREPARATION_SPECIFIC
+        relevance = ContextRelevance.RELEVANT
+    elif status == RegulatoryDataStatus.PROHIBITED and confirmed_scope is None and _ft:
         if ("external use" in _ft or "topical" in _ft) and any(
             token in _cdf for token in ("oral", "internal", "capsule", "tablet", "extract")
         ):
@@ -582,6 +620,13 @@ def classify_regulatory_finding(
 
     if status == RegulatoryDataStatus.INSUFFICIENT_DATA:
         reason = "No evidence text was available to evaluate regulatory status for this row."
+    elif blocking_authorization is not None:
+        reason = (
+            "Structured regulatory authorization state is market-blocking for "
+            f"the matched jurisdiction/product context: {blocking_authorization.value}."
+        )
+    elif pending_authorization:
+        reason = "Structured regulatory authorization state is pending; automatic marketability cannot be confirmed."
     elif dose_finding is not None and "Dose-dependent regulatory restriction" in barrier_types:
         if dose_finding.violates:
             reason = (

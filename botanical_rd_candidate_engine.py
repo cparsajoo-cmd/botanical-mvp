@@ -506,7 +506,7 @@ OUTPUT_COLUMNS = [
 # unchanged at 23/24 (0.958) — these fixes targeted generalization on
 # UNSEEN text, not the holdout itself, and none of the 24 cases happen
 # to exercise either bug pattern.
-DECISION_ENGINE_VERSION = "1.6.0"
+DECISION_ENGINE_VERSION = "1.7.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1833,6 +1833,11 @@ class BotanicalRDCandidateEngine:
                         evidence_ids=_safety_gate_evidence_ids,
                         assertions=_structured_safety_assertions,
                     )
+                    _authorization_states = tuple(
+                        str(_rec.get("regulatory_authorization_status") or "").strip()
+                        for _rec in evidence_contributing_records
+                        if str(_rec.get("regulatory_authorization_status") or "").strip()
+                    )
                     _regulatory_finding = _classify_regulatory_finding(
                         barrier_types=(
                             frozenset(regulatory_barrier_result.barrier_types)
@@ -1848,6 +1853,7 @@ class BotanicalRDCandidateEngine:
                             if str(x or "").strip()
                         ),
                         evidence_ids=_regulatory_gate_evidence_ids,
+                        authorization_statuses=_authorization_states,
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
                     scientific_evidence_resolution = resolve_scientific_evidence(
@@ -3610,6 +3616,9 @@ class BotanicalRDCandidateEngine:
                 "regulatory_status": self._pick(row, ["Regulatory_Status", "regulatory_status"]) or "",
                 "novel_food_status": self._pick(row, ["Novel_Food_Status", "novel_food_status"]) or "",
                 "regulatory_evidence": self._pick(row, ["Regulatory_Evidence", "regulatory_evidence"]) or "",
+                "regulatory_authorization_status": self._pick(
+                    row, ["Regulatory_Authorization_Status", "regulatory_authorization_status"]
+                ) or "",
                 "pmid": self._pick(row, ["PMID", "pmid"]) or "",
                 "doi": self._pick(row, ["DOI", "doi"]) or "",
                 "sample_size": self._pick(row, ["Sample_Size", "sample_size", "LLM_Sample_Size"]) or "",

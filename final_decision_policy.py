@@ -400,6 +400,7 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             bool(set(dirs) & {DIRECTION_NEGATIVE, DIRECTION_NULL})
             or body.has_newer_contradiction
             or body.has_explicit_conflict
+            or body.has_structured_mixed_direction
         )
         if hard_opposition:
             return ScientificEvidenceResolution(

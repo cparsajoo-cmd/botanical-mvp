@@ -55,3 +55,30 @@ def test_body_assessment_uses_structured_direction_not_conflicting_text_fallback
         limitation_fn=lambda _: "none",
     )
     assert body.direction == BodyDirection.SUPPORTIVE
+
+
+def test_structured_mixed_governing_direction_is_material_conflict():
+    from final_decision_policy import resolve_scientific_evidence, ScientificEvidenceSignal
+    records=[{
+        "source_type":"SYSTEMATIC_REVIEW",
+        "source_result_direction":"Mixed",
+        "assertion_text":"Source-reported structured direction is mixed.",
+        "source_year":2025,
+        "evidence_record_id":"mixed-a",
+    }]
+    r=resolve_scientific_evidence(records)
+    assert r.signal == ScientificEvidenceSignal.CONFLICT
+
+def test_legacy_text_fallback_mixed_is_not_automatically_hard_conflict():
+    from final_decision_policy import resolve_scientific_evidence, ScientificEvidenceSignal
+    records=[{
+        "source_type":"SYSTEMATIC_REVIEW",
+        "assertion_text":"Meta-analysis found benefit but results were mixed across outcomes.",
+        "source_year":2025,
+        "evidence_record_id":"legacy-mixed",
+    }]
+    r=resolve_scientific_evidence(records)
+    assert r.signal in {
+        ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+        ScientificEvidenceSignal.CONFLICT,
+    }

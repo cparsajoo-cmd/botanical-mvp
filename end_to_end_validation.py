@@ -122,6 +122,7 @@ class RetrievedEvidence:
     source_authority: Optional[str] = None
     evidence_quality: Optional[str] = None
     source_available: bool = True
+    publication_year: Optional[int] = None
 
     def article_identity(self) -> str:
         for prefix, value in (("doi", self.doi), ("pmid", self.pmid), ("nct", self.nct_id)):
@@ -150,6 +151,7 @@ class RetrievedEvidence:
             "Result_Direction": self.evidence_direction or "",
             "Evidence_Level": self.evidence_quality or "",
             "Source_Authority": self.source_authority or "",
+            "Source_Year": self.publication_year or "",
         }
 
 

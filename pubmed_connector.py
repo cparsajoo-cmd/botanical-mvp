@@ -61,12 +61,21 @@ def _parse_pubmed_xml(xml_text: str) -> List[Dict]:
         ]
         abstract = " ".join(abstract_parts)
         journal = _node_text(article.find("./Journal/Title"))
+        pub_date = article.find("./Journal/JournalIssue/PubDate")
+        year = _node_text(pub_date.find("Year")) if pub_date is not None else ""
+        if not year and pub_date is not None:
+            medline_date = _node_text(pub_date.find("MedlineDate"))
+            if medline_date:
+                import re
+                match = re.search(r"\b(19|20)\d{2}\b", medline_date)
+                year = match.group(0) if match else ""
 
         articles.append({
             "PMID": pmid,
             "Title": title,
             "Abstract": abstract,
             "Journal": journal,
+            "Year": year,
             "Source_Type": "PubMed",
             "Source_Organization": "NCBI PubMed",
             "Source_URL": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "",

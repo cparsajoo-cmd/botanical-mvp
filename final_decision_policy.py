@@ -115,102 +115,123 @@ class FinalDecision:
     reason: str
 
 
-def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenceResolution:
-    """Resolve only record-level indication evidence, never pooled text.
+def _parse_publication_year(rec: Mapping) -> int | None:
+    """Best-effort publication year for freshness checks."""
+    for key in ("source_year", "publication_year", "year", "Source_Year", "Publication_Year", "Year"):
+        value = rec.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if len(text) >= 4 and text[:4].isdigit():
+            year = int(text[:4])
+            if 1800 <= year <= 2200:
+                return year
+    return None
 
-    The highest-ranked recognized indication source tier governs. Equally
-    ranked records that disagree are escalated instead of averaged. A top-tier
-    negative/null finding means the efficacy evidence is insufficient for GO;
-    completely unclassified text stays UNRESOLVED and does not manufacture a
-    negative decision.
+
+def _explicit_conflict_language(text: str) -> bool:
+    n = " ".join(str(text or "").lower().split())
+    phrases = (
+        "matter of debate",
+        "remains a matter of debate",
+        "evidence is conflicting",
+        "evidence remains conflicting",
+        "conflicting evidence",
+        "conflicting results",
+        "results are conflicting",
+        "findings are conflicting",
+        "not definitive",
+        "not conclusive",
+        "remains inconclusive",
+        "evidence remains inconclusive",
+        "controversial evidence",
+    )
+    return any(phrase in n for phrase in phrases)
+
+
+def _final_decision_direction(text: str) -> str:
+    """Decision-layer semantic direction without changing calibrated scoring."""
+    direction = interpret_evidence(text).evidence_direction
+    n = " ".join(str(text or "").lower().split())
+    if direction == DIRECTION_UNCLEAR:
+        if any(phrase in n for phrase in (
+            "insufficient evidence to support", "insufficient evidence for",
+            "evidence is insufficient to support", "evidence was insufficient to support",
+            "little to no benefit", "little or no benefit", "no clear benefit",
+            "inconclusive", "trivial-to-small effects", "trivial to small effects",
+            "minimal effect", "minimal effects", "little effect", "little effects",
+        )):
+            direction = DIRECTION_NULL
+        elif (
+            any(phrase in n for phrase in (
+                "appears efficacious", "appeared efficacious", "appears effective",
+                "appeared effective", "showed reductions", "reported reductions",
+                "showed improvement", "reported improvement", "showed improvements",
+                "reported improvements", "evidence suggesting", "evidence suggests",
+                "significant benefit", "significant benefits", "provided significant benefit",
+                "strong scientific evidence", "can reduce", "reduced symptoms", "improved symptoms",
+            ))
+            and any(token in n for token in (
+                "efficacious", "effective", "reduction", "reduce", "improvement",
+                "improv", "benefit", "efficacy",
+            ))
+        ):
+            direction = DIRECTION_POSITIVE
+
+    firm_uncertainty_phrases = (
+        "evidence remains uncertain", "evidence is uncertain", "evidence was uncertain",
+        "insufficient for firm conclusions", "insufficient to draw firm conclusions",
+        "insufficient to draw conclusions", "cannot draw firm conclusions",
+        "no firm conclusions",
+    )
+    cautionary_support_phrases = (
+        "may be beneficial", "might be beneficial", "could be beneficial",
+        "requires confirmation", "require confirmation", "needs confirmation",
+        "need confirmation", "further high-quality trials", "further high quality trials",
+        "further studies are needed", "further studies are required",
+        "additional studies are needed", "additional studies are required",
+        "more research is needed", "more research is required",
+    )
+    if any(phrase in n for phrase in firm_uncertainty_phrases):
+        direction = DIRECTION_NULL
+    elif direction == DIRECTION_POSITIVE and any(phrase in n for phrase in (
+        "evidence varied across studies", "results varied across studies",
+        "findings varied across studies", "mixed findings", "mixed results",
+        "inconsistent findings", "inconsistent results", *cautionary_support_phrases,
+    )):
+        direction = DIRECTION_MIXED
+    return direction
+
+
+def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenceResolution:
+    """Resolve record-level indication evidence with conflict/freshness safeguards.
+
+    The highest-ranked recognized indication tier still governs.  Two narrow
+    safeguards prevent false certainty: (1) explicit controversy language in
+    a governing source escalates rather than being flattened to GO, and (2) a
+    directly relevant clinical study published after the newest governing
+    review can challenge a supportive conclusion when its direction is null or
+    negative.  This does not make lower-tier studies co-equal with reviews; it
+    only prevents an older synthesis from pretending later contradictory data
+    do not exist.
     """
     interpreted = []
+    challengers = []
     for rec in records:
         source_type = str(rec.get("source_type") or "").strip().upper()
-        rank = _INDICATION_SOURCE_RANK.get(source_type)
-        if rank is None:
-            continue
         text = str(rec.get("assertion_text") or rec.get("text") or "")
-        direction = interpret_evidence(text).evidence_direction
-        # Narrow final-decision-only interpretation of explicit review
-        # conclusions.  The calibrated scoring classifier remains untouched;
-        # this layer only prevents clear conclusion language from becoming an
-        # accidental GO/INSUFFICIENT fall-through at the final decision stage.
-        _n = " ".join(text.lower().split())
-        if direction == DIRECTION_UNCLEAR:
-            if any(phrase in _n for phrase in (
-                "insufficient evidence to support",
-                "insufficient evidence for",
-                "evidence is insufficient to support",
-                "evidence was insufficient to support",
-                "little to no benefit", "little or no benefit",
-                "no clear benefit", "inconclusive",
-            )):
-                direction = DIRECTION_NULL
-            elif (
-                any(phrase in _n for phrase in (
-                    "appears efficacious", "appeared efficacious",
-                    "appears effective", "appeared effective",
-                    "showed reductions", "reported reductions",
-                    "showed improvement", "reported improvement",
-                    "showed improvements", "reported improvements",
-                    "evidence suggesting", "evidence suggests",
-                ))
-                and any(token in _n for token in (
-                    "efficacious", "effective", "reduction", "improvement",
-                    "improv", "benefit", "efficacy",
-                ))
-            ):
-                direction = DIRECTION_POSITIVE
-
-        # Preserve uncertainty that is explicitly stated by the evidence itself.
-        # This is semantic, not plant-specific: a supportive conclusion that is
-        # materially hedged (e.g. "may be beneficial", "requires confirmation")
-        # is not equivalent to an unconditional positive finding.  Conversely,
-        # explicit statements that the evidence remains uncertain/insufficient
-        # for firm conclusions cannot be promoted to GO merely because the same
-        # sentence mentions a possible benefit.
-        _firm_uncertainty_phrases = (
-            "evidence remains uncertain",
-            "evidence is uncertain",
-            "evidence was uncertain",
-            "insufficient for firm conclusions",
-            "insufficient to draw firm conclusions",
-            "insufficient to draw conclusions",
-            "cannot draw firm conclusions",
-            "no firm conclusions",
-        )
-        _cautionary_support_phrases = (
-            "may be beneficial",
-            "might be beneficial",
-            "could be beneficial",
-            "requires confirmation",
-            "require confirmation",
-            "needs confirmation",
-            "need confirmation",
-            "further high-quality trials",
-            "further high quality trials",
-            "further studies are needed",
-            "further studies are required",
-            "additional studies are needed",
-            "additional studies are required",
-            "more research is needed",
-            "more research is required",
-        )
-        if any(phrase in _n for phrase in _firm_uncertainty_phrases):
-            direction = DIRECTION_NULL
-        elif direction == DIRECTION_POSITIVE and any(phrase in _n for phrase in (
-            "evidence varied across studies",
-            "results varied across studies",
-            "findings varied across studies",
-            "mixed findings",
-            "mixed results",
-            "inconsistent findings",
-            "inconsistent results",
-            *_cautionary_support_phrases,
-        )):
-            direction = DIRECTION_MIXED
-        interpreted.append((rank, source_type, direction))
+        direction = _final_decision_direction(text)
+        year = _parse_publication_year(rec)
+        explicit_conflict = _explicit_conflict_language(text)
+        rank = _INDICATION_SOURCE_RANK.get(source_type)
+        if rank is not None:
+            interpreted.append((rank, source_type, direction, year, explicit_conflict))
+            continue
+        study_design = str(rec.get("study_design") or "").strip().lower()
+        if source_type in {"CLINICAL_TRIAL", "RANDOMIZED_CONTROLLED_TRIAL", "RANDOMISED_CONTROLLED_TRIAL", "RCT"} or any(
+            token in study_design for token in ("clinical trial", "randomized", "randomised", "rct")
+        ):
+            challengers.append((source_type or "CLINICAL_TRIAL", direction, year))
 
     if not interpreted:
         return ScientificEvidenceResolution(
@@ -224,10 +245,13 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
     source_types = tuple(sorted({x[1] for x in top}))
     ds = set(directions)
 
-    # A single governing tier that is internally mixed but not contradicted by
-    # a separate same-rank positive-vs-null/negative source supports a cautious
-    # decision rather than either an unconditional GO or an expert-conflict
-    # escalation.  Cross-record disagreement remains a true CONFLICT.
+    if any(x[4] for x in top):
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.CONFLICT,
+            "A governing indication source explicitly characterizes the evidence as debated, conflicting, inconclusive, or not definitive; automatic GO is prohibited.",
+            source_types, directions,
+        )
+
     if DIRECTION_POSITIVE in ds and bool(ds & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
         return ScientificEvidenceResolution(
             ScientificEvidenceSignal.CONFLICT,
@@ -247,10 +271,27 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             "The governing indication-evidence tier is supportive but explicitly mixed/inconsistent; a cautious GO is warranted.",
             source_types, directions,
         )
+
     if DIRECTION_POSITIVE in ds:
+        top_years = [x[3] for x in top if x[3] is not None]
+        newest_top_year = max(top_years) if top_years else None
+        if newest_top_year is not None:
+            newer_contradictions = [
+                (stype, direction, year) for stype, direction, year in challengers
+                if year is not None and year > newest_top_year
+                and direction in {DIRECTION_NEGATIVE, DIRECTION_NULL}
+            ]
+            if newer_contradictions:
+                challenger_types = tuple(sorted({x[0] for x in newer_contradictions}))
+                return ScientificEvidenceResolution(
+                    ScientificEvidenceSignal.CONFLICT,
+                    "A directly relevant clinical study published after the newest governing review reports a null/negative direction; the older synthesis is no longer sufficient for an automatic GO and expert review is required.",
+                    tuple(sorted(set(source_types) | set(challenger_types))),
+                    tuple(sorted(set(directions) | {x[1] for x in newer_contradictions})),
+                )
         return ScientificEvidenceResolution(
             ScientificEvidenceSignal.SUPPORTIVE,
-            "The governing indication-evidence tier contains a supportive efficacy direction without an equally ranked contradiction.",
+            "The governing indication-evidence tier contains a supportive efficacy direction without an equally ranked or newer direct contradiction.",
             source_types, directions,
         )
     if ds & {DIRECTION_NEGATIVE, DIRECTION_NULL}:

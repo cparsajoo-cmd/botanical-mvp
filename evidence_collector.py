@@ -132,6 +132,7 @@ def collect_pubmed_evidence(
         # as item["pmid"]); persisting it on the record itself too so it
         # reaches save_evidence_record() instead of only the caller summary.
         extracted["PMID"] = article.get("PMID", "")
+        extracted["Source_Year"] = article.get("Year", "")
 
         standardized = standardize_extracted_record(
             extracted=extracted,
@@ -140,7 +141,7 @@ def collect_pubmed_evidence(
                 "source_title": article["Title"],
                 "source_url": article["Source_URL"],
                 "source_organization": "NCBI PubMed",
-                "source_year": "",
+                "source_year": article.get("Year", ""),
             }
         )
 

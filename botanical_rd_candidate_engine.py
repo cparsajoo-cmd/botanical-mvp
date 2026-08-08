@@ -3421,11 +3421,13 @@ class BotanicalRDCandidateEngine:
                 "authority_factor": classification.score,
                 "source_url": self._pick(row, ["Source_URL", "source_url", "URL", "url"]) or "",
                 "source_type": self._pick(row, ["Source_Type", "source_type"]) or "",
+                "study_design": self._pick(row, ["Study_Type", "study_type", "Study_Design", "study_design"]) or "",
                 "preparation": self._pick(row, ["Preparation", "preparation", "Extraction_Method", "extraction_method"]) or "",
                 "dose": self._pick(row, ["Dose", "dose"]) or "",
                 "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",
                 "population": self._pick(row, ["Population", "population"]) or "",
                 "target_indication": self._pick(row, ["Target_Indication", "target_indication", "Indication", "indication"]) or "",
+                "source_year": self._pick(row, ["Source_Year", "source_year", "Publication_Year", "publication_year", "Year", "year"]) or "",
             })
 
         def _record_source(key, row):

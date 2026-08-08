@@ -1,0 +1,87 @@
+{
+  "version": "decision-holdout-v4/1.0.0",
+  "frozen_on": "2026-08-08",
+  "policy": "Fresh 10-case holdout. Reference labels fixed from publications distinct from engine-side evidence snapshots before engine execution. No production rule may be changed during scoring.",
+  "cases": [
+    {
+      "case_id": "v4_001_hibiscus_hypertension",
+      "botanical": "Hibiscus sabdariffa",
+      "indication": "Mild-to-moderate hypertension",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "34927694",
+      "reference_basis": "2022 systematic review/meta-analysis found BP lowering versus placebo but high heterogeneity and called for more studies to establish dose and duration."
+    },
+    {
+      "case_id": "v4_002_nigella_hypertension",
+      "botanical": "Nigella sativa",
+      "indication": "Hypertension",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "37341696",
+      "reference_basis": "2023 updated meta-analysis found significant SBP/DBP reductions, but very high heterogeneity and described prior findings as controversial."
+    },
+    {
+      "case_id": "v4_003_fennel_dysmenorrhea",
+      "botanical": "Foeniculum vulgare",
+      "indication": "Primary dysmenorrhea",
+      "expected": "GO",
+      "reference_pmid": "34187122",
+      "reference_basis": "Systematic review/meta-analysis found fennel significantly reduced dysmenorrhea intensity versus placebo and was not significantly different from mefenamic acid."
+    },
+    {
+      "case_id": "v4_004_sage_hot_flashes",
+      "botanical": "Salvia officinalis",
+      "indication": "Menopausal hot flashes",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "37489230",
+      "reference_basis": "2023 systematic review/meta-analysis found reduction in hot-flash outcomes but only four studies, high heterogeneity, and recommended broader use only if confirmed by further investigations."
+    },
+    {
+      "case_id": "v4_005_artichoke_hyperlipidemia",
+      "botanical": "Cynara scolymus",
+      "indication": "Hyperlipidemia",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "41270328",
+      "reference_basis": "2025 systematic/meta-analytic synthesis found modest significant cardiometabolic improvements, supporting adjunctive rather than definitive therapy."
+    },
+    {
+      "case_id": "v4_006_vitex_pms",
+      "botanical": "Vitex agnus-castus",
+      "indication": "Premenstrual syndrome",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "28237870",
+      "reference_basis": "Meta-analysis found large pooled benefit but most trials had high risk of bias and heterogeneity was extremely high."
+    },
+    {
+      "case_id": "v4_007_flaxseed_hypertension",
+      "botanical": "Linum usitatissimum",
+      "indication": "Hypertension",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "40365516",
+      "reference_basis": "2025 meta-analysis found BP reduction but very high heterogeneity and explicitly urged careful interpretation and further high-quality RCTs."
+    },
+    {
+      "case_id": "v4_008_fenugreek_t2dm",
+      "botanical": "Trigonella foenum-graecum",
+      "indication": "Type 2 diabetes glycemic control",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "41509111",
+      "reference_basis": "Updated meta-analysis found improvements in several glycemic parameters but very high heterogeneity for some endpoints and requested higher-quality confirmation."
+    },
+    {
+      "case_id": "v4_009_passiflora_anxiety",
+      "botanical": "Passiflora incarnata",
+      "indication": "Anxiety",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "33352740",
+      "reference_basis": "Systematic review found most trials reduced anxiety but effects were less evident in mild anxiety and trials were small/heterogeneous."
+    },
+    {
+      "case_id": "v4_010_silymarin_liver",
+      "botanical": "Silybum marianum",
+      "indication": "Chronic liver disease support",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_pmid": "18334810",
+      "reference_basis": "Systematic review/meta-analysis characterized clinical benefit as controversial and found evidence varied substantially by liver disease and endpoint."
+    }
+  ]
+}

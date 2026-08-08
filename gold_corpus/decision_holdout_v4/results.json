@@ -1,1 +1,144 @@
-
+{
+  "version": "decision-holdout-v4/1.0.0",
+  "rows": [
+    {
+      "case_id": "v4_001_hibiscus_hypertension",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO WITH CAUTION",
+      "match": true,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_002_nigella_hypertension",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_003_fennel_dysmenorrhea",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_004_sage_hot_flashes",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_005_artichoke_hyperlipidemia",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_006_vitex_pms",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_007_flaxseed_hypertension",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_008_fenugreek_t2dm",
+      "expected": "GO WITH CAUTION",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_009_passiflora_anxiety",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v4_010_silymarin_liver",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    }
+  ],
+  "metrics": {
+    "n_scored": 10,
+    "n_correct": 2,
+    "accuracy": 0.2,
+    "macro_f1": 0.14814814814814814,
+    "per_class_recall": {
+      "GO": 1.0,
+      "GO WITH CAUTION": 0.125,
+      "EXPERT REVIEW REQUIRED": 0.0,
+      "NO GO SAFETY": null,
+      "NO GO REGULATORY": null,
+      "INSUFFICIENT EVIDENCE": null
+    },
+    "serious_safety_false_negatives": 0,
+    "regulatory_false_negatives": 0,
+    "false_no_go": 0,
+    "expert_review_overuse": 1,
+    "insufficient_evidence_miss": 0,
+    "confusion_matrix": {
+      "GO": {
+        "GO": 1,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "GO WITH CAUTION": {
+        "GO": 6,
+        "GO WITH CAUTION": 1,
+        "EXPERT REVIEW REQUIRED": 1,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "EXPERT REVIEW REQUIRED": {
+        "GO": 1,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "NO GO SAFETY": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "NO GO REGULATORY": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "INSUFFICIENT EVIDENCE": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      }
+    }
+  }
+}

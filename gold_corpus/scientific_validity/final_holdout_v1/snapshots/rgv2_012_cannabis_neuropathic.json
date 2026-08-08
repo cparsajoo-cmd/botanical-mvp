@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Cannabis sativa — chronic neuropathic pain",
+    "indication": "chronic neuropathic pain",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Cannabis sativa"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CANNABIS_35510826",
+      "scientific_name": "Cannabis sativa",
+      "notes": "Systematic review judged evidence for cannabinoids in chronic neuropathic pain very low certainty and uncertain.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG CANNABIS 35510826",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/35510826/",
+      "pmid": "35510826",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "target_indication": "chronic neuropathic pain",
+      "primary_outcome": "chronic neuropathic pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_CANNABIS_40149508",
+      "scientific_name": "Cannabis sativa",
+      "notes": "Recent review reports moderate efficacy signals for cannabinoids in neuropathic and other chronic pain conditions.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG CANNABIS 40149508",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/40149508/",
+      "pmid": "40149508",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "target_indication": "chronic neuropathic pain",
+      "primary_outcome": "chronic neuropathic pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Colchicum autumnale — oral herbal therapeutic use",
+    "indication": "oral herbal therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Colchicum autumnale"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_COLCHICUM_TOX",
+      "scientific_name": "Colchicum autumnale",
+      "notes": "Autumn crocus poisoning can cause severe gastrointestinal toxicity, multiorgan failure and death; fatal cases are documented.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG COLCHICUM TOX",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2020,
+      "target_indication": "oral herbal therapeutic use",
+      "primary_outcome": "oral herbal therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

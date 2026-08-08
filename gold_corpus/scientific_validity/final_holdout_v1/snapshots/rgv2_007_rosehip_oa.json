@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Rosa canina — osteoarthritis pain",
+    "indication": "osteoarthritis pain",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Rosa canina"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ROSEHIP_REVIEW",
+      "scientific_name": "Rosa canina",
+      "notes": "Randomized-trial synthesis suggests rosehip may reduce osteoarthritis pain, but the evidence base is small and further trials are needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG ROSEHIP REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2009,
+      "target_indication": "osteoarthritis pain",
+      "primary_outcome": "osteoarthritis pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

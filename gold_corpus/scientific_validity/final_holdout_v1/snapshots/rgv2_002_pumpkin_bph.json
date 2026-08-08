@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Cucurbita pepo — lower urinary tract symptoms associated with benign prostatic hyperplasia",
+    "indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Cucurbita pepo"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_PUMPKIN_REVIEW",
+      "scientific_name": "Cucurbita pepo",
+      "notes": "Review of phytotherapy reports pumpkin seed preparations improve lower urinary tract symptoms and can be considered an adjunctive treatment.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG PUMPKIN REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2019,
+      "target_indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "primary_outcome": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_PUMPKIN_TRIAL",
+      "scientific_name": "Cucurbita pepo",
+      "notes": "Randomized trial found clinically meaningful symptom improvement compared with placebo after long-term pumpkin seed treatment.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG PUMPKIN TRIAL",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2014,
+      "target_indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia"
+    }
+  ]
+}

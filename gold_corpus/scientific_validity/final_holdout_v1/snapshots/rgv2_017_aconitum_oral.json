@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Aconitum carmichaelii — unprocessed oral therapeutic use",
+    "indication": "unprocessed oral therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Aconitum carmichaelii"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ACONITE_26243980",
+      "scientific_name": "Aconitum carmichaelii",
+      "notes": "Aconite exposure can cause life-threatening ventricular tachycardia, ventricular fibrillation, cardiotoxicity and fatal poisoning.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG ACONITE 26243980",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/26243980/",
+      "pmid": "26243980",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2015,
+      "target_indication": "unprocessed oral therapeutic use",
+      "primary_outcome": "unprocessed oral therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

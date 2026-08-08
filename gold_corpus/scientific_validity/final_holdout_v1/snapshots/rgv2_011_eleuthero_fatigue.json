@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Eleutherococcus senticosus — fatigue and asthenia",
+    "indication": "fatigue and asthenia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Eleutherococcus senticosus"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ELEUTHERO_34087398",
+      "scientific_name": "Eleutherococcus senticosus",
+      "notes": "Review of clinical literature reports possible benefits for endurance and fatigue-related outcomes.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG ELEUTHERO 34087398",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/34087398/",
+      "pmid": "34087398",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "target_indication": "fatigue and asthenia",
+      "primary_outcome": "fatigue and asthenia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_ELEUTHERO_23740477",
+      "scientific_name": "Eleutherococcus senticosus",
+      "notes": "Controlled study found no overall added benefit of Eleutherococcus on stress-related fatigue outcomes.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG ELEUTHERO 23740477",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/23740477/",
+      "pmid": "23740477",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2013,
+      "target_indication": "fatigue and asthenia"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Ginkgo biloba — symptomatic treatment of dementia",
+    "indication": "symptomatic treatment of dementia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Ginkgo biloba"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_GINKGO_20236541",
+      "scientific_name": "Ginkgo biloba",
+      "notes": "Systematic review found Ginkgo biloba more effective than placebo in dementia, with moderate effect sizes.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG GINKGO 20236541",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20236541/",
+      "pmid": "20236541",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2010,
+      "target_indication": "symptomatic treatment of dementia",
+      "primary_outcome": "symptomatic treatment of dementia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_GINKGO_25506211",
+      "scientific_name": "Ginkgo biloba",
+      "notes": "Meta-analyses confirmed efficacy and good tolerability of standardized Ginkgo biloba extract in dementia.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG GINKGO 25506211",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/25506211/",
+      "pmid": "25506211",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2014,
+      "target_indication": "symptomatic treatment of dementia",
+      "primary_outcome": "symptomatic treatment of dementia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

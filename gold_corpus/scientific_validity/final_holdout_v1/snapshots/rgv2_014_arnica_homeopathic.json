@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Arnica montana — homeopathic treatment of post-traumatic or postoperative pain",
+    "indication": "homeopathic treatment of post-traumatic or postoperative pain",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Arnica montana"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ARNICA_NEG",
+      "scientific_name": "Arnica montana",
+      "notes": "Rigorous clinical evidence does not demonstrate homeopathic Arnica to be more effective than placebo for trauma-related outcomes.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG ARNICA NEG",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2001,
+      "target_indication": "homeopathic treatment of post-traumatic or postoperative pain",
+      "primary_outcome": "homeopathic treatment of post-traumatic or postoperative pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

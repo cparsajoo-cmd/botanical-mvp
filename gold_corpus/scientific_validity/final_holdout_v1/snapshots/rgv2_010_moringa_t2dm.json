@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Moringa oleifera — glycemic control in type 2 diabetes",
+    "indication": "glycemic control in type 2 diabetes",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Moringa oleifera"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_MORINGA_32444043",
+      "scientific_name": "Moringa oleifera",
+      "notes": "Review found several human studies reported reductions in blood glucose, but study designs and sample sizes were limited.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG MORINGA 32444043",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/32444043/",
+      "pmid": "32444043",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2020,
+      "target_indication": "glycemic control in type 2 diabetes",
+      "primary_outcome": "glycemic control in type 2 diabetes",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_MORINGA_29317895",
+      "scientific_name": "Moringa oleifera",
+      "notes": "Randomized clinical trial found Moringa leaf capsules had no effect on glycemic control in type 2 diabetes.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG MORINGA 29317895",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/29317895/",
+      "pmid": "29317895",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2017,
+      "target_indication": "glycemic control in type 2 diabetes"
+    }
+  ]
+}

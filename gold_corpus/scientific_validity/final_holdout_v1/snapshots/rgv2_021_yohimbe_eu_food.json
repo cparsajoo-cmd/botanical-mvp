@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Pausinystalia yohimbe — use of yohimbe bark in an EU food supplement",
+    "indication": "use of yohimbe bark in an EU food supplement",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Pausinystalia yohimbe"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_YOHIMBE_EU",
+      "scientific_name": "Pausinystalia yohimbe",
+      "notes": "European Union food rules prohibit Yohimbe bark and its preparations for use in foods.",
+      "source_type": "REGULATORY",
+      "source_title": "ENG YOHIMBE EU",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2019,
+      "target_indication": "use of yohimbe bark in an EU food supplement"
+    }
+  ]
+}

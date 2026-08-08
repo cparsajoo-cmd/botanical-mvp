@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Phyllanthus niruri — stone clearance after shock-wave lithotripsy",
+    "indication": "stone clearance after shock-wave lithotripsy",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Phyllanthus niruri"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_PHYLLANTHUS_16890682",
+      "scientific_name": "Phyllanthus niruri",
+      "notes": "Clinical study found regular Phyllanthus niruri administration after shock-wave lithotripsy increased the stone-free rate.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG PHYLLANTHUS 16890682",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/16890682/",
+      "pmid": "16890682",
+      "study_design": "Clinical Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2006,
+      "target_indication": "stone clearance after shock-wave lithotripsy"
+    },
+    {
+      "reference_id": "ENG_PHYLLANTHUS_REVIEW",
+      "scientific_name": "Phyllanthus niruri",
+      "notes": "Clinical literature review reports favorable stone-clearance and urinary-risk-factor signals after lithotripsy.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG PHYLLANTHUS REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2018,
+      "target_indication": "stone clearance after shock-wave lithotripsy",
+      "primary_outcome": "stone clearance after shock-wave lithotripsy",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

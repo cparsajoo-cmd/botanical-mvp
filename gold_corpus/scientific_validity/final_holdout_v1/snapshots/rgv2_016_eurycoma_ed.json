@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Eurycoma longifolia — erectile dysfunction",
+    "indication": "erectile dysfunction",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Eurycoma longifolia"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EURYCOMA_REVIEW",
+      "scientific_name": "Eurycoma longifolia",
+      "notes": "Evidence from only a small number of trials did not show a significant overall improvement in erectile-function scores; heterogeneity was high and more trials are required.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG EURYCOMA REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2015,
+      "target_indication": "erectile dysfunction",
+      "primary_outcome": "erectile dysfunction",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

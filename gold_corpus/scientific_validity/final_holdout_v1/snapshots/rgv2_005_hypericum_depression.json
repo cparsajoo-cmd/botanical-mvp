@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Hypericum perforatum — mild to moderate depression",
+    "indication": "mild to moderate depression",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Hypericum perforatum"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_HYPERICUM_28064110",
+      "scientific_name": "Hypericum perforatum",
+      "notes": "Systematic review found St John's wort comparable in efficacy to SSRIs for mild-to-moderate depression; longer follow-up is needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG HYPERICUM 28064110",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/28064110/",
+      "pmid": "28064110",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2017,
+      "target_indication": "mild to moderate depression",
+      "primary_outcome": "mild to moderate depression",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_HYPERICUM_INTERACTIONS",
+      "scientific_name": "Hypericum perforatum",
+      "notes": "Clinical review notes substantial drug-interaction potential from enzyme and transporter induction, requiring careful medication review.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG HYPERICUM INTERACTIONS",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2019,
+      "target_indication": "mild to moderate depression",
+      "primary_outcome": "mild to moderate depression",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

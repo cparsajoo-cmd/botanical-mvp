@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Glycine max — menopausal hot flushes",
+    "indication": "menopausal hot flushes",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Glycine max"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_SOY_POS",
+      "scientific_name": "Glycine max",
+      "notes": "Meta-analysis of soy isoflavone trials found significant reductions in hot-flash frequency and severity.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG SOY POS",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2012,
+      "target_indication": "menopausal hot flushes",
+      "primary_outcome": "menopausal hot flushes",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_SOY_NULL",
+      "scientific_name": "Glycine max",
+      "notes": "Systematic review found results across soy phytoestrogen trials inconsistent and not sufficiently conclusive for vasomotor symptoms.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG SOY NULL",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2014,
+      "target_indication": "menopausal hot flushes",
+      "primary_outcome": "menopausal hot flushes",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Urtica dioica — symptomatic benign prostatic hyperplasia",
+    "indication": "symptomatic benign prostatic hyperplasia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Urtica dioica"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_URTICA_23487561",
+      "scientific_name": "Urtica dioica",
+      "notes": "Randomized double-blind study reported symptomatic improvement in men with benign prostatic hyperplasia.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG URTICA 23487561",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/23487561/",
+      "pmid": "23487561",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2013,
+      "target_indication": "symptomatic benign prostatic hyperplasia"
+    },
+    {
+      "reference_id": "ENG_URTICA_REVIEW",
+      "scientific_name": "Urtica dioica",
+      "notes": "Review describes promising clinical effects of nettle root in BPH but notes limited characterization and need for stronger evidence.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG URTICA REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2007,
+      "target_indication": "symptomatic benign prostatic hyperplasia",
+      "primary_outcome": "symptomatic benign prostatic hyperplasia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

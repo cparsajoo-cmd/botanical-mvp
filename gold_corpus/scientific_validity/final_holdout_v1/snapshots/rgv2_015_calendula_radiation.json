@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Calendula officinalis — prevention of acute radiation dermatitis",
+    "indication": "prevention of acute radiation dermatitis",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Calendula officinalis"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CALENDULA_MIX",
+      "scientific_name": "Calendula officinalis",
+      "notes": "Clinical evidence for preventing radiation dermatitis is inconsistent: one randomized study reported improvement and another found no improvement.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG CALENDULA MIX",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2019,
+      "target_indication": "prevention of acute radiation dermatitis",
+      "primary_outcome": "prevention of acute radiation dermatitis",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

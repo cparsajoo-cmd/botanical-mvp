@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Cannabis sativa — CBD-rich extract as an EU food supplement ingredient",
+    "indication": "CBD-rich extract as an EU food supplement ingredient",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Cannabis sativa"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CBD_NOVEL",
+      "scientific_name": "Cannabis sativa",
+      "notes": "CBD-rich Cannabis sativa extracts are treated as novel foods in the EU and cannot be placed on the market as food supplements without Union authorization.",
+      "source_type": "REGULATORY",
+      "source_title": "ENG CBD NOVEL",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2024,
+      "target_indication": "CBD-rich extract as an EU food supplement ingredient"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Ruscus aculeatus — chronic venous insufficiency symptoms",
+    "indication": "chronic venous insufficiency symptoms",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Ruscus aculeatus"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_RUSCUS_12040966",
+      "scientific_name": "Ruscus aculeatus",
+      "notes": "Randomized placebo-controlled study found a Ruscus aculeatus preparation effective and safe for chronic venous insufficiency.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG RUSCUS 12040966",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/12040966/",
+      "pmid": "12040966",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2002,
+      "target_indication": "chronic venous insufficiency symptoms"
+    },
+    {
+      "reference_id": "ENG_RUSCUS_REVIEW",
+      "scientific_name": "Ruscus aculeatus",
+      "notes": "Clinical review reports sustained effective use of Ruscus extract-containing preparations for chronic venous disease.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG RUSCUS REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2016,
+      "target_indication": "chronic venous insufficiency symptoms",
+      "primary_outcome": "chronic venous insufficiency symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

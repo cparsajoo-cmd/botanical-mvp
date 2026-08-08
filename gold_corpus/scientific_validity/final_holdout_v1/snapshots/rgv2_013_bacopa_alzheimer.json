@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Bacopa monnieri — treatment of Alzheimer disease",
+    "indication": "treatment of Alzheimer disease",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Bacopa monnieri"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_BACOPA_REVIEW",
+      "scientific_name": "Bacopa monnieri",
+      "notes": "Systematic review found very low-certainty evidence and no demonstrated difference from placebo or donepezil for Alzheimer disease.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG BACOPA REVIEW",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "target_indication": "treatment of Alzheimer disease",
+      "primary_outcome": "treatment of Alzheimer disease",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

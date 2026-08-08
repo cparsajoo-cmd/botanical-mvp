@@ -1,0 +1,44 @@
+{
+  "question": {
+    "question": "Scientific decision for Melaleuca alternifolia — topical treatment of mild to moderate acne",
+    "indication": "topical treatment of mild to moderate acne",
+    "dosage_form": "topical",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Melaleuca alternifolia"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_TTO_10800248",
+      "scientific_name": "Melaleuca alternifolia",
+      "notes": "Systematic review suggests tea tree oil may be effective for acne, but evidence is promising rather than compelling.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG TTO 10800248",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/10800248/",
+      "pmid": "10800248",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2000,
+      "target_indication": "topical treatment of mild to moderate acne",
+      "primary_outcome": "topical treatment of mild to moderate acne",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_TTO_27000386",
+      "scientific_name": "Melaleuca alternifolia",
+      "notes": "Clinical study found tea-tree oil products significantly improved mild-to-moderate acne and were well tolerated.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "ENG TTO 27000386",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27000386/",
+      "pmid": "27000386",
+      "study_design": "Clinical Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2017,
+      "target_indication": "topical treatment of mild to moderate acne"
+    }
+  ]
+}

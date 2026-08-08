@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Acmella oleracea — Acmella oleracea extract as an EU novel food ingredient",
+    "indication": "Acmella oleracea extract as an EU novel food ingredient",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Acmella oleracea"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ACMELLA_EU",
+      "scientific_name": "Acmella oleracea",
+      "notes": "The EU authorisation procedure for Acmella oleracea extract was terminated without addition to the Union list of authorised novel foods.",
+      "source_type": "REGULATORY",
+      "source_title": "ENG ACMELLA EU",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "target_indication": "Acmella oleracea extract as an EU novel food ingredient"
+    }
+  ]
+}

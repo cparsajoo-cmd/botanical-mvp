@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Epimedium sagittatum — Epimedium sagittatum as a traditional food/novel food in the EU",
+    "indication": "Epimedium sagittatum as a traditional food/novel food in the EU",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Epimedium sagittatum"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EPIMEDIUM_EU",
+      "scientific_name": "Epimedium sagittatum",
+      "notes": "The EU procedure for placing Epimedium sagittatum on the market as a traditional food was terminated without updating the Union list.",
+      "source_type": "REGULATORY",
+      "source_title": "ENG EPIMEDIUM EU",
+      "source_url": "",
+      "pmid": "",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2026,
+      "target_indication": "Epimedium sagittatum as a traditional food/novel food in the EU"
+    }
+  ]
+}

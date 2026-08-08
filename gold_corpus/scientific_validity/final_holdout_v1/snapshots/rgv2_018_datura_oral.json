@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Datura stramonium — oral therapeutic use",
+    "indication": "oral therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Datura stramonium"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_DATURA_20861718",
+      "scientific_name": "Datura stramonium",
+      "notes": "Ingestion of Datura species can result in severe anticholinergic toxicity with hallucinations, tachycardia, confusion and dangerous poisoning.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG DATURA 20861718",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20861718/",
+      "pmid": "20861718",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2012,
+      "target_indication": "oral therapeutic use",
+      "primary_outcome": "oral therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

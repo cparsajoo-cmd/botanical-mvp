@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Atropa belladonna — oral herbal therapeutic use",
+    "indication": "oral herbal therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Atropa belladonna"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_BELLADONNA_39364183",
+      "scientific_name": "Atropa belladonna",
+      "notes": "Belladonna poisoning can produce severe neurotoxicity including seizures, coma and anticholinergic toxicity.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "ENG BELLADONNA 39364183",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/39364183/",
+      "pmid": "39364183",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2024,
+      "target_indication": "oral herbal therapeutic use",
+      "primary_outcome": "oral herbal therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

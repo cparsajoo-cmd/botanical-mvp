@@ -1,1 +1,12 @@
-
+{
+  "version": "decision-holdout-v3/1.0.0",
+  "frozen_on": "2026-08-08",
+  "policy": "Fresh holdout. Reference labels were fixed from publications distinct from engine-side evidence snapshots before engine execution. No production rule may be changed during scoring.",
+  "cases": [
+    {"case_id":"v3_001_ginger_cinv","botanical":"Zingiber officinale","indication":"Chemotherapy-induced nausea and vomiting","expected":"EXPERT REVIEW REQUIRED","reference_pmid":"38102373","reference_basis":"2023 MASCC/ESMO evidence review found conflicting evidence and made no recommendation for ingested ginger."},
+    {"case_id":"v3_002_cranberry_ruti","botanical":"Vaccinium macrocarpon","indication":"Recurrent urinary tract infection prevention","expected":"GO","reference_pmid":"37068952","reference_basis":"2023 Cochrane review found moderate-certainty evidence that cranberry products reduce symptomatic culture-verified UTIs overall and in several relevant groups."},
+    {"case_id":"v3_003_peppermint_ibs","botanical":"Mentha piperita","indication":"Irritable bowel syndrome","expected":"GO","reference_pmid":"38604221","reference_basis":"2024 guideline-focused systematic screening reported peppermint oil as strongly recommended for IBS, particularly pain and flatulence."},
+    {"case_id":"v3_004_rhodiola_fatigue","botanical":"Rhodiola rosea","indication":"Fatigue","expected":"EXPERT REVIEW REQUIRED","reference_pmid":"22643043","reference_basis":"Systematic review concluded the efficacy literature for Rhodiola in physical and mental fatigue is contradictory."},
+    {"case_id":"v3_005_hawthorn_hf","botanical":"Crataegus monogyna","indication":"Chronic heart failure adjunctive support","expected":"GO WITH CAUTION","reference_pmid":"42277690","reference_basis":"2026 network meta-analysis supports therapeutic potential of plant extracts including hawthorn as adjunctive therapy but explicitly calls for cautious interpretation because of limited studies and scarce direct comparative evidence."}
+  ]
+}

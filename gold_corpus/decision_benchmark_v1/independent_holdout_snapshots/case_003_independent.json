@@ -1,6 +1,6 @@
 {
-  "case_number": 1,
-  "snapshot_id": "case001-independent-web-2026-08-08",
+  "case_number": 3,
+  "snapshot_id": "case003-independent-web-2026-08-08",
   "capture_metadata": {
     "retrieval_method": "independent public search capture",
     "retrieval_date": "2026-08-08",
@@ -17,7 +17,7 @@
     "Tilia cordata"
   ],
   "question": {
-    "question": "What is the scientific decision for Melissa officinalis L. for Sleep and relaxation as Infusion in EU?",
+    "question": "What is the scientific decision for Matricaria chamomilla L. for Sleep and relaxation as Infusion in EU?",
     "indication": "Sleep and relaxation",
     "dosage_form": "Infusion",
     "market": "EU"

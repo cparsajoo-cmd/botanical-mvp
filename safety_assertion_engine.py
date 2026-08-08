@@ -53,6 +53,18 @@ class SafetyAssertionType(str, Enum):
     PHOTOSENSITIVITY = "photosensitivity"
     ALLERGIC_RISK = "allergic_risk"
     NARROW_THERAPEUTIC_INDEX_INTERACTION = "narrow_therapeutic_index_interaction"
+    GERIATRIC_RESTRICTION = "geriatric_restriction"
+    HYPERTENSION = "hypertension"
+    HYPOTENSION = "hypotension"
+    DIABETES_INTERACTION = "diabetes_interaction"
+    CNS_DEPRESSION = "cns_depression"
+    SEROTONERGIC_TOXICITY = "serotonergic_toxicity"
+    CARCINOGENICITY = "carcinogenicity"
+    GENOTOXICITY = "genotoxicity"
+    REPRODUCTIVE_TOXICITY = "reproductive_toxicity"
+    MAJOR_REGULATORY_SAFETY_WARNING = "major_regulatory_safety_warning"
+    SERIOUS_ADVERSE_EVENT = "serious_adverse_event"
+    FATAL_ADVERSE_EVENT = "fatal_adverse_event"
     REASSURANCE = "reassurance"
 
 
@@ -163,6 +175,7 @@ _POPULATION = {
     SafetyAssertionType.PEDIATRIC_RESTRICTION: (r"\bpa?ediatric\b", r"\bchildren\b", r"\binfants?\b"),
     SafetyAssertionType.HEPATIC_IMPAIRMENT: (r"\bhepatic impairment\b", r"\bliver disease\b"),
     SafetyAssertionType.RENAL_IMPAIRMENT: (r"\brenal impairment\b", r"\bkidney disease\b"),
+    SafetyAssertionType.GERIATRIC_RESTRICTION: (r"\bgeriatric\b", r"\belderly\b", r"\bolder adults?\b"),
 }
 _RISK_PATTERNS = {
     SafetyAssertionType.QT_PROLONGATION: (r"\b(?:prolong(?:s|ed|ation)?|increase(?:s|d)?)\b.{0,35}\bqt(?:c)?\b", r"\btorsades de pointes\b"),
@@ -184,6 +197,20 @@ _MECHANISM = {
     SafetyAssertionType.PGP_INTERACTION: (r"\bp[- ]?glycoprotein\b", r"\bp[- ]?gp\b"),
 }
 _NTI = (r"\bnarrow therapeutic (?:index|window)\b", r"\btherapeutic drug monitoring\b")
+
+_DIRECT_SERIOUS_RISKS = {
+    SafetyAssertionType.CARCINOGENICITY: (r"\b(?:carcinogenic(?:ity)?|causes? cancer|tumou?rigenic)\b",),
+    SafetyAssertionType.GENOTOXICITY: (r"\b(?:genotoxic(?:ity)?|mutagenic(?:ity)?|chromosomal damage|dna damage)\b",),
+    SafetyAssertionType.REPRODUCTIVE_TOXICITY: (r"\b(?:reproductive toxicity|embryotoxic(?:ity)?|fetotoxic(?:ity)?|teratogenic(?:ity)?)\b",),
+    SafetyAssertionType.SEROTONERGIC_TOXICITY: (r"\b(?:serotonin syndrome|serotonergic toxicity)\b",),
+    SafetyAssertionType.CNS_DEPRESSION: (r"\b(?:severe |profound )?(?:cns|central nervous system) depression\b",),
+    SafetyAssertionType.HYPERTENSION: (r"\b(?:severe |marked |dangerous )?hypertension\b", r"\bhypertensive crisis\b"),
+    SafetyAssertionType.HYPOTENSION: (r"\b(?:severe |marked |dangerous )?hypotension\b",),
+    SafetyAssertionType.DIABETES_INTERACTION: (r"\b(?:antidiabetic|hypoglyc(?:a|e)mic)\b.{0,60}\b(?:interaction|potentiat|severe hypoglyc(?:a|e)mia)\b", r"\bsevere hypoglyc(?:a|e)mia\b"),
+}
+_FATAL_AE = (r"\bfatal adverse events?\b", r"\bdeath(?:s)?\b.{0,50}\b(?:associated with|reported after|due to|caused by)\b", r"\b(?:associated with|caused|resulted in)\b.{0,50}\bdeath(?:s)?\b")
+_SERIOUS_AE = (r"\bserious adverse events?\b", r"\badverse events?\b.{0,50}\b(?:hospitali[sz]ation|life[- ]threatening|disability)\b")
+_REGULATORY_MAJOR = (r"\b(?:boxed|black box) warning\b", r"\b(?:fda|ema|mhra|tga|health canada)\b.{0,50}\b(?:safety warning|safety communication|serious risk)\b")
 
 
 def _affected_populations(unit_norm: str) -> Tuple[str, ...]:
@@ -229,6 +256,7 @@ def classify_safety_assertions(
     preparation: str = "",
     dose_dependency: str = "unknown",
     route: str = "",
+    affected_population: Tuple[str, ...] = (),
 ) -> Tuple[SafetyAssertion, ...]:
     """Return all meaningful structured safety assertions in one record.
 
@@ -238,7 +266,7 @@ def classify_safety_assertions(
     assertions: list[SafetyAssertion] = []
     for unit in _units(text):
         n = _norm(unit)
-        populations = _affected_populations(n)
+        populations = tuple(dict.fromkeys(tuple(affected_population) + _affected_populations(n)))
 
         reassurance = _has(n, _REASSURANCE)
         if reassurance:
@@ -333,6 +361,29 @@ def classify_safety_assertions(
                     preparation=preparation, dose_dependency=dose_dependency, route=route,
                     affected_population=populations, reason=f"Direct {kind.value} safety assertion.",
                 ))
+
+        # High-consequence safety outcomes use explicit causal/diagnostic
+        # language. These are intentionally plant-agnostic and conservative.
+        fatal_hit = _has(n, _FATAL_AE)
+        serious_ae_hit = _has(n, _SERIOUS_AE)
+        regulatory_hit = _has(n, _REGULATORY_MAJOR)
+        if fatal_hit:
+            assertions.append(_mk(kind=SafetyAssertionType.FATAL_ADVERSE_EVENT, severity=SeverityLevel.SERIOUS, polarity=AssertionPolarity.RISK_PRESENT, unit=unit, matched=fatal_hit, authority=authority, authority_score=authority_score, evidence_record_id=evidence_record_id, source_url=source_url, preparation=preparation, dose_dependency=dose_dependency, route=route, affected_population=populations, reason="Fatal adverse-event/death safety assertion."))
+        if serious_ae_hit:
+            assertions.append(_mk(kind=SafetyAssertionType.SERIOUS_ADVERSE_EVENT, severity=SeverityLevel.SERIOUS, polarity=AssertionPolarity.RISK_PRESENT, unit=unit, matched=serious_ae_hit, authority=authority, authority_score=authority_score, evidence_record_id=evidence_record_id, source_url=source_url, preparation=preparation, dose_dependency=dose_dependency, route=route, affected_population=populations, reason="Serious adverse-event safety assertion."))
+        if regulatory_hit:
+            assertions.append(_mk(kind=SafetyAssertionType.MAJOR_REGULATORY_SAFETY_WARNING, severity=SeverityLevel.SERIOUS, polarity=AssertionPolarity.RISK_PRESENT, unit=unit, matched=regulatory_hit, authority=authority, authority_score=authority_score, evidence_record_id=evidence_record_id, source_url=source_url, preparation=preparation, dose_dependency=dose_dependency, route=route, affected_population=populations, reason="Major regulator/boxed safety warning."))
+        if not _has(n, _PROTECTIVE_CONTEXT):
+            for kind, patterns in _DIRECT_SERIOUS_RISKS.items():
+                hit = _has(n, patterns)
+                if hit:
+                    # CNS depression / hypertension / hypotension are serious
+                    # only when severe/marked/crisis language is present.
+                    if kind in {SafetyAssertionType.CNS_DEPRESSION, SafetyAssertionType.HYPERTENSION, SafetyAssertionType.HYPOTENSION} and not re.search(r"\b(?:severe|profound|marked|dangerous|crisis)\b", n):
+                        sev = SeverityLevel.MODERATE
+                    else:
+                        sev = SeverityLevel.SERIOUS
+                    assertions.append(_mk(kind=kind, severity=sev, polarity=AssertionPolarity.RISK_PRESENT, unit=unit, matched=hit, authority=authority, authority_score=authority_score, evidence_record_id=evidence_record_id, source_url=source_url, preparation=preparation, dose_dependency=dose_dependency, route=route, affected_population=populations, reason=f"Direct {kind.value} safety assertion."))
 
         if not _has(n, _PROTECTIVE_CONTEXT):
             tox = _has(n, _ORGAN_TOXICITY)

@@ -1642,6 +1642,9 @@ class BotanicalRDCandidateEngine:
                             preparation=str(_rec.get("preparation") or ""),
                             dose_dependency=(str(_rec.get("dose") or "unknown") if _rec.get("dose") else "unknown"),
                             route=str(_rec.get("route") or ""),
+                            affected_population=tuple(
+                                x.strip().lower() for x in str(_rec.get("population") or "").replace(";", ",").split(",") if x.strip()
+                            ),
                         ))
                     if not _structured_safety_assertions:
                         _structured_safety_assertions = list(pooled_safety_assertions)

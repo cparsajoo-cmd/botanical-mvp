@@ -143,12 +143,24 @@ def lookup_therapeutic_area(indication: object) -> Optional[TherapeuticArea]:
     indication_tokens = set(indication_norm.split())
     best_area = None
     best_overlap = 0
+    best_coverage = 0.0
     for area in THERAPEUTIC_AREAS.values():
-        name_tokens = set(_norm(area.canonical_name).split())
-        overlap = len(name_tokens & indication_tokens)
-        if overlap >= 2 and overlap > best_overlap:
-            best_area = area
-            best_overlap = overlap
+        # Free-text clinical questions often contain extra words between the
+        # curated phrase tokens (e.g. "fasting blood glucose" vs
+        # "fasting glucose"). Compare token sets across the canonical name,
+        # aliases and direct clinical terms instead of requiring contiguous
+        # substring matches. Two shared informative tokens are required to
+        # avoid one-word accidental matches.
+        for phrase in (area.canonical_name, *area.aliases, *area.query_terms):
+            phrase_tokens = set(_norm(phrase).split())
+            if not phrase_tokens:
+                continue
+            overlap = len(phrase_tokens & indication_tokens)
+            coverage = overlap / len(phrase_tokens)
+            if overlap >= 2 and (overlap > best_overlap or (overlap == best_overlap and coverage > best_coverage)):
+                best_area = area
+                best_overlap = overlap
+                best_coverage = coverage
     return best_area
 
 

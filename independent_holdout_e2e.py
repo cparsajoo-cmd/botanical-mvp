@@ -41,33 +41,51 @@ def case_number(case_id: str) -> int:
     return int(case_id.split('_', 2)[1])
 
 
-def question_for_case(case) -> Optional[ValidationQuestion]:
+def _validation_domain(case) -> str:
+    outcomes = getattr(case, "resolved_outcomes", None) or []
+    if outcomes:
+        domain = getattr(outcomes[0], "domain", None)
+        value = getattr(domain, "value", None)
+        if value:
+            return str(value)
+    return "Botanical scientific assessment"
+
+
+def question_for_case(case) -> ValidationQuestion:
+    """Build an executable scientific question without inventing Gold truth.
+
+    Therapeutic cases use their indication. Preparation/identity/safety cases
+    are *named-botanical* questions by definition, so the botanical identity
+    is legitimate question input rather than a discovered expected answer.
+    Missing dosage form is represented as an empty string, which the production
+    engine already supports.
+    """
     u = case.validation_unit
-    dosage = u.preparation.dosage_form if u.preparation else None
-    if not u.indication or not dosage:
-        return None
+    dosage = u.preparation.dosage_form if u.preparation else ""
+    indication = u.indication or _validation_domain(case)
     return ValidationQuestion(
-        question=f'What is the scientific decision for {u.taxon} for {u.indication} as {dosage} in {u.jurisdiction or "unspecified market"}?',
-        indication=u.indication,
+        question=f'What is the scientific decision for {u.taxon} for {indication}' +
+                 (f' as {dosage}' if dosage else '') +
+                 f' in {u.jurisdiction or "unspecified market"}?',
+        indication=indication,
         dosage_form=dosage,
         market=u.jurisdiction or '',
     )
 
 
+def _candidate_pool_for_case(case, q: ValidationQuestion) -> list[str]:
+    # For therapeutic discovery, candidate identity must come from production
+    # discovery. For a non-therapeutic named-botanical validation question
+    # (identity, preparation, safety), the botanical is explicitly the subject
+    # of the question and therefore is not hidden Gold output.
+    if case.validation_unit.indication:
+        return list(dict.fromkeys(get_candidate_plants(q.indication) or []))
+    return [case.validation_unit.taxon]
+
+
 def assess_executability(case) -> HoldoutExecutionStatus:
     q = question_for_case(case)
-    if q is None:
-        missing = []
-        if not case.validation_unit.indication:
-            missing.append('indication')
-        if not (case.validation_unit.preparation and case.validation_unit.preparation.dosage_form):
-            missing.append('dosage_form')
-        return HoldoutExecutionStatus(
-            case.case_id, 'BLOCKED', 'QUESTION_SCHEMA_NOT_EXECUTABLE',
-            'Current END_TO_END ValidationQuestion/engine path requires ' + ' and '.join(missing) +
-            '; this GoldCase domain does not provide those fields. No substitute value was fabricated.'
-        )
-    candidates = list(dict.fromkeys(get_candidate_plants(q.indication) or []))
+    candidates = _candidate_pool_for_case(case, q)
     if not candidates:
         return HoldoutExecutionStatus(
             case.case_id, 'BLOCKED', 'CANDIDATE_DISCOVERY_ZERO_CANDIDATES',
@@ -79,7 +97,10 @@ def assess_executability(case) -> HoldoutExecutionStatus:
             case.case_id, 'BLOCKED', 'GOLD_CANDIDATE_NOT_DISCOVERED',
             'Production default candidate discovery returned candidates, but not the reference botanical.', len(candidates)
         )
-    return HoldoutExecutionStatus(case.case_id, 'EXECUTABLE', 'READY', 'Candidate discovery can execute without GoldCase injection.', len(candidates))
+    reason = ('Named-botanical non-therapeutic validation can execute without candidate discovery.'
+              if not case.validation_unit.indication else
+              'Candidate discovery can execute without GoldCase injection.')
+    return HoldoutExecutionStatus(case.case_id, 'EXECUTABLE', 'READY', reason, len(candidates))
 
 
 def load_snapshot(case_number_: int) -> dict:

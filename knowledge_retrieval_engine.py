@@ -1,5 +1,12 @@
 import pandas as pd
 
+from global_plant_candidate_database import GLOBAL_PLANT_CANDIDATES
+from therapeutic_area_registry import (
+    get_candidate_hypotheses,
+    get_related_concepts,
+    lookup_therapeutic_area,
+)
+
 
 CANDIDATE_KNOWLEDGE_MAP = {
     "Sleep and relaxation": [
@@ -44,8 +51,64 @@ CANDIDATE_KNOWLEDGE_MAP = {
 }
 
 
+def _norm_indication(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
 def get_candidate_plants(indication):
-    return CANDIDATE_KNOWLEDGE_MAP.get(indication, [])
+    """Return discovery hypotheses for an indication without exact-string gating.
+
+    The legacy map remains a backward-compatible seed, but unknown/free-text
+    indications are resolved through the existing therapeutic-area registry and
+    global plant candidate database. Related areas are used only as *search
+    hypotheses* (never as evidence), which is already the contract of
+    therapeutic_area_registry.py. This removes the previous six-indication
+    exact-match blocker without adding per-holdout rules.
+    """
+    query = str(indication or "").strip()
+    if not query:
+        return []
+
+    out = []
+    seen = set()
+
+    def add(name):
+        key = _norm_indication(name)
+        if name and key and key not in seen:
+            seen.add(key)
+            out.append(str(name).strip())
+
+    # Preserve historical ordering for existing exact production inputs.
+    for plant in CANDIDATE_KNOWLEDGE_MAP.get(query, []):
+        add(plant)
+
+    area = lookup_therapeutic_area(query)
+    if area is None:
+        return out
+
+    allowed_concepts = {area.canonical_name}
+    # One hop is deliberately bounded: broad enough for closely related search
+    # hypotheses (e.g. stress/anxiety) but not an uncontrolled graph expansion.
+    allowed_concepts.update(get_related_concepts(area.canonical_name, max_hops=1))
+
+    for plant in get_candidate_hypotheses(area.canonical_name):
+        add(plant)
+
+    for record in GLOBAL_PLANT_CANDIDATES:
+        indications = record.get("Indications", ()) or ()
+        for candidate_indication in indications:
+            candidate_area = lookup_therapeutic_area(candidate_indication)
+            if candidate_area is not None and candidate_area.canonical_name in allowed_concepts:
+                add(record.get("Scientific_Name", ""))
+                break
+
+    # Related concepts may themselves carry explicit hypothesis pools even when
+    # the global plant table is sparse. They remain candidate hypotheses only.
+    for concept in sorted(allowed_concepts - {area.canonical_name}):
+        for plant in get_candidate_hypotheses(concept):
+            add(plant)
+
+    return out
 
 
 def _safe_col(df, col):

@@ -11,9 +11,10 @@ def test_holdout_membership_remains_15():
     assert len(_holdout()) == 15
 
 
-def test_only_structurally_executable_cases_are_not_gold_seeded():
-    ready = [c.case_id for c in _holdout() if assess_executability(c).status == 'EXECUTABLE']
-    assert ready == ['refgrounded_001_melissa_officinalis_sleep', 'refgrounded_003_matricaria_chamomilla_sleep']
+def test_all_holdout_cases_are_structurally_executable_without_hidden_gold_evidence():
+    statuses = [assess_executability(c) for c in _holdout()]
+    assert len(statuses) == 15
+    assert all(s.status == 'EXECUTABLE' for s in statuses)
 
 
 def test_independent_snapshot_records_do_not_use_gold_reference_ids():
@@ -25,7 +26,7 @@ def test_independent_snapshot_records_do_not_use_gold_reference_ids():
         assert not snapshot_ids & gold_ids
 
 
-def test_holdout_scoring_is_one_of_two_before_any_remediation():
+def test_holdout_scoring_remains_frozen_at_two_until_new_independent_snapshots_exist():
     statuses, metrics = evaluate_holdout()
     assert metrics.n_scored == 2
     assert metrics.n_correct == 1

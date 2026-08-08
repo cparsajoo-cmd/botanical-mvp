@@ -1,0 +1,124 @@
+{
+  "case_number": 1,
+  "snapshot_id": "case001-independent-web-2026-08-08",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants"
+  },
+  "candidate_pool": [
+    "Melissa officinalis",
+    "Valeriana officinalis",
+    "Passiflora incarnata",
+    "Matricaria chamomilla",
+    "Lavandula angustifolia",
+    "Humulus lupulus",
+    "Tilia cordata"
+  ],
+  "question": {
+    "question": "What is the scientific decision for Melissa officinalis L. for Sleep and relaxation as Infusion in EU?",
+    "indication": "Sleep and relaxation",
+    "dosage_form": "Infusion",
+    "market": "EU"
+  },
+  "records": [
+    {
+      "reference_id": "PMID_39683592",
+      "scientific_name": "Melissa officinalis",
+      "notes": "Randomized double-blind placebo-controlled crossover study; standardized Melissa officinalis extract significantly reduced insomnia severity and improved sleep quality.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Effects of Melissa officinalis Phytosome on Sleep Quality",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/39683592/",
+      "pmid": "39683592",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_41226605",
+      "scientific_name": "Melissa officinalis",
+      "notes": "Review of human clinical trials reported potential improvement in sleep quality with Melissa officinalis, while noting heterogeneity and limited evidence.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Unraveling the Effects of Melissa officinalis L. on Cognition and Sleep Quality",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/41226605/",
+      "pmid": "41226605",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_39106912",
+      "scientific_name": "Matricaria chamomilla",
+      "notes": "Systematic review and meta-analysis evaluated chamomile for sleep; some sleep outcomes improved, but evidence varied across studies and no adverse events were reported.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Effects of chamomile (Matricaria chamomilla L.) on sleep",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/39106912/",
+      "pmid": "39106912",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_21939549",
+      "scientific_name": "Matricaria chamomilla",
+      "notes": "Randomized placebo-controlled pilot study found no benefit on primary sleep efficiency or total sleep time endpoints, with mixed secondary sleep diary findings.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "A randomized placebo-controlled pilot study of chamomile extract for chronic primary insomnia",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21939549/",
+      "pmid": "21939549",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_17145239",
+      "scientific_name": "Valeriana officinalis",
+      "notes": "Systematic review of randomized placebo-controlled trials evaluated valerian for sleep quality; results suggested possible subjective benefit but methodological limitations remained.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Valerian for sleep: a systematic review and meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17145239/",
+      "pmid": "17145239",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_21294203",
+      "scientific_name": "Passiflora incarnata",
+      "notes": "Double-blind placebo-controlled study of passionflower herbal tea found significantly better subjective sleep quality than placebo in healthy adults.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Passiflora incarnata herbal tea on subjective sleep quality",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21294203/",
+      "pmid": "21294203",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "Herbal tea",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_26133206",
+      "scientific_name": "Lavandula angustifolia",
+      "notes": "Randomized study reported better self-reported sleep quality with inhaled lavender plus sleep hygiene compared with sleep hygiene alone.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Effect of Inhaled Lavender and Sleep Hygiene on Self-Reported Sleep Issues",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/26133206/",
+      "pmid": "26133206",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "Inhalation",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_20628685",
+      "scientific_name": "Humulus lupulus",
+      "notes": "Review found some improvements in sleep parameters with valerian alone or combined with hops, but concluded stronger randomized trials were needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Treating primary insomnia - the efficacy of valerian and hops",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20628685/",
+      "pmid": "20628685",
+      "target_indication": "Sleep and relaxation",
+      "dosage_form": "",
+      "source_available": true
+    }
+  ]
+}
+

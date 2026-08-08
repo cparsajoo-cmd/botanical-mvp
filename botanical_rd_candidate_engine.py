@@ -417,7 +417,7 @@ OUTPUT_COLUMNS = [
 # Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
 # unless a caller explicitly populates
 # self._canonical_regulatory_by_plant before calling run().
-DECISION_ENGINE_VERSION = "1.3.0"
+DECISION_ENGINE_VERSION = "1.4.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -3432,6 +3432,13 @@ class BotanicalRDCandidateEngine:
                 "reported_direction": self._pick(row, ["Evidence_Direction", "evidence_direction", "Result_Direction", "result_direction"]) or "",
                 "pmid": self._pick(row, ["PMID", "pmid"]) or "",
                 "doi": self._pick(row, ["DOI", "doi"]) or "",
+                "sample_size": self._pick(row, ["Sample_Size", "sample_size", "LLM_Sample_Size"]) or "",
+                "comparator": self._pick(row, ["Comparator", "comparator", "LLM_Comparator"]) or "",
+                "primary_outcome": self._pick(row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome", "LLM_Main_Outcome"]) or "",
+                "risk_of_bias": self._pick(row, ["Risk_of_Bias", "risk_of_bias"]) or "",
+                "applicability_classification": self._pick(row, ["Applicability_Classification", "applicability_classification"]) or "",
+                "applicability_missing_dimensions": self._pick(row, ["Applicability_Missing_Dimensions", "applicability_missing_dimensions"]) or "",
+                "applicability_detected_mismatches": self._pick(row, ["Applicability_Detected_Mismatches", "applicability_detected_mismatches"]) or "",
             })
 
         def _record_source(key, row):

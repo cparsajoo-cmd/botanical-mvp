@@ -26,12 +26,23 @@ def test_independent_snapshot_records_do_not_use_gold_reference_ids():
         assert not snapshot_ids & gold_ids
 
 
-def test_holdout_scoring_remains_frozen_at_two_until_new_independent_snapshots_exist():
+def test_full_holdout_is_scored_after_all_independent_snapshots_are_frozen():
     statuses, metrics = evaluate_holdout()
-    assert metrics.n_scored == 2
-    assert metrics.n_correct == 1
-    assert metrics.accuracy == 0.5
-    assert len([s for s in statuses if s.status == 'BLOCKED']) == 13
+    assert metrics.n_scored == 15
+    assert metrics.n_correct == 5
+    assert metrics.accuracy == 5 / 15
+    assert len([s for s in statuses if s.status == 'BLOCKED']) == 0
+
+
+def test_all_frozen_snapshots_declare_no_gold_truth_used_for_retrieval():
+    snap_dir = OUT / 'independent_holdout_snapshots'
+    snapshots = sorted(snap_dir.glob('case_*_independent.json'))
+    assert len(snapshots) == 15
+    for path in snapshots:
+        snap = json.loads(path.read_text())
+        assert snap['capture_metadata']['gold_truth_used_for_retrieval'] is False
+        assert 'expected' not in snap
+        assert 'actual' not in snap
 
 
 def test_case003_mismatch_is_preserved_not_tuned_away():

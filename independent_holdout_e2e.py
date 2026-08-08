@@ -22,7 +22,7 @@ from scientific_decision_validation import DecisionComparison, derive_reference_
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / 'gold_corpus' / 'decision_benchmark_v1'
 SNAPSHOT_DIR = OUT / 'independent_holdout_snapshots'
-SNAPSHOT_VERSION = 'independent-holdout-e2e/1.0.0'
+SNAPSHOT_VERSION = 'independent-holdout-e2e/1.2.0'
 
 @dataclass(frozen=True)
 class HoldoutExecutionStatus:

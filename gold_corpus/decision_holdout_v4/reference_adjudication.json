@@ -1,0 +1,14 @@
+{
+  "version": "decision-holdout-v4-adjudication/1.0.0",
+  "adjudicated_on": "2026-08-08",
+  "policy": "Reference-only adjudication. Production engine logic is unchanged. Historical frozen labels remain preserved.",
+  "overrides": {
+    "v4_003_fennel_dysmenorrhea": {
+      "historical_expected": "GO",
+      "adjudicated_expected": "GO WITH CAUTION",
+      "reason": "The 2021 meta-analysis was strongly supportive, but a newer 2026 systematic review/meta-analysis characterizes Apiaceae/fennel as potentially effective adjunct therapy and explicitly states that further high-quality trials are essential; this supports caution rather than unconditional GO.",
+      "historical_reference_pmid": "34187122",
+      "newer_adjudication_pmid": "41653970"
+    }
+  }
+}

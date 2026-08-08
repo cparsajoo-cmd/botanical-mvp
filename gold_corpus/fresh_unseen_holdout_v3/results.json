@@ -1,0 +1,109 @@
+{
+  "version": "decision-holdout-v3/1.0.0",
+  "rows": [
+    {
+      "case_id": "v3_001_ginger_cinv",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v3_002_cranberry_ruti",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true,
+      "score": 0.0
+    },
+    {
+      "case_id": "v3_003_peppermint_ibs",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true,
+      "score": 0.0
+    },
+    {
+      "case_id": "v3_004_rhodiola_fatigue",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    },
+    {
+      "case_id": "v3_005_hawthorn_hf",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false,
+      "score": 0.0
+    }
+  ],
+  "metrics": {
+    "n_scored": 5,
+    "n_correct": 2,
+    "accuracy": 0.4,
+    "macro_f1": 0.5714285714285715,
+    "per_class_recall": {
+      "GO": 1.0,
+      "GO WITH CAUTION": 0.0,
+      "EXPERT REVIEW REQUIRED": 0.0,
+      "NO GO SAFETY": null,
+      "NO GO REGULATORY": null,
+      "INSUFFICIENT EVIDENCE": null
+    },
+    "serious_safety_false_negatives": 0,
+    "regulatory_false_negatives": 0,
+    "false_no_go": 0,
+    "expert_review_overuse": 0,
+    "insufficient_evidence_miss": 0,
+    "confusion_matrix": {
+      "GO": {
+        "GO": 2,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "GO WITH CAUTION": {
+        "GO": 1,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "EXPERT REVIEW REQUIRED": {
+        "GO": 2,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "NO GO SAFETY": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "NO GO REGULATORY": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      },
+      "INSUFFICIENT EVIDENCE": {
+        "GO": 0,
+        "GO WITH CAUTION": 0,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 0,
+        "INSUFFICIENT EVIDENCE": 0
+      }
+    }
+  }
+}

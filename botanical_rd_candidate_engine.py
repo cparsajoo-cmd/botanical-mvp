@@ -1433,10 +1433,23 @@ class BotanicalRDCandidateEngine:
                     # zero — never its sign — exactly like quality_factor
                     # and applicability_factor already do inside
                     # interpret_evidence().
+                    # Audit fix (2026-08-08): evidence_direction now
+                    # resolved per-record via canonical_scientific_
+                    # assertion.resolve_record_direction() (structured
+                    # source/LLM direction first, per-record text
+                    # fallback last) instead of re-guessing from the
+                    # pooled multi-source `raw_evidence` blob alone —
+                    # see evidence_interpretation.interpret_evidence()'s
+                    # `contributing_records` parameter and
+                    # _resolve_pooled_direction() for the precedence and
+                    # aggregation rule. study_design/quality/
+                    # applicability are unchanged, still derived from
+                    # the pooled blob — out of scope for this pass.
                     evidence_interpretation_result = interpret_evidence(
                         raw_evidence,
                         clinical_weight=self.scoring_config.evidence_clinical,
                         source_authority_factor=evidence_authority_factor,
+                        contributing_records=evidence_contributing_records,
                     )
                     study_design = evidence_interpretation_result.study_design
                     evidence_direction = evidence_interpretation_result.evidence_direction

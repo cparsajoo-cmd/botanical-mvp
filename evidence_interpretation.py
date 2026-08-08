@@ -70,7 +70,23 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Mapping, Optional, Sequence
+
+# Phase — per-record structured-direction resolution (audit: this module's
+# classify_evidence_direction() was, until now, the ONLY thing production
+# ever called for direction, applied to a pooled multi-source text blob
+# built by botanical_rd_candidate_engine._collect_raw_evidence(). It never
+# consulted a record's own Result_Direction/LLM_Result_Direction even when
+# one already existed. canonical_scientific_assertion.resolve_record_direction()
+# already implements the correct precedence (structured source assertion >
+# LLM extraction > legacy reported direction > per-record text fallback)
+# and is already used correctly by the Reference-Grounded Validation
+# decision path (evidence_body_assessment.py / final_decision_policy.py).
+# This import lets interpret_evidence() use that SAME function -- not a
+# second, parallel precedence implementation -- when per-record data is
+# available. See interpret_evidence()'s `contributing_records` parameter
+# below for what changes and what stays byte-identical.
+from canonical_scientific_assertion import resolve_record_direction
 
 # ---------------------------------------------------------------------
 # Study_Design values
@@ -563,6 +579,16 @@ class EvidenceInterpretation:
     matched_positive: List[str] = field(default_factory=list)
     matched_null: List[str] = field(default_factory=list)
     matched_negative: List[str] = field(default_factory=list)
+    # Per-contributing-record provenance of `evidence_direction`, in the
+    # same order as the `contributing_records` argument that produced it
+    # (e.g. "source_result_direction", "llm_result_direction",
+    # "text_fallback", "missing_structured_direction"). Empty when
+    # `contributing_records` wasn't supplied (blob-only legacy path) --
+    # see interpret_evidence()'s docstring. Purely diagnostic: nothing
+    # downstream reads this to make a decision; it exists so a specific
+    # row's direction can be audited back to its source without re-running
+    # the classifier by hand.
+    direction_provenance: List[str] = field(default_factory=list)
 
 
 def classify_study_design(text: str) -> str:
@@ -676,10 +702,60 @@ def classify_evidence_quality(text: str, study_design: str) -> str:
     return QUALITY_MODERATE
 
 
+def _resolve_pooled_direction(contributing_records: Sequence[Mapping]):
+    """Resolves ONE overall direction for a set of contributing evidence
+    records, preferring each record's OWN structured direction over
+    re-guessing from pooled text.
+
+    Per record, via resolve_record_direction() (the same function the
+    Reference-Grounded Validation decision path already uses -- not a
+    second precedence implementation):
+      1. source_result_direction (structured source assertion)
+      2. llm_result_direction (structured LLM extraction)
+      3. reported_direction (legacy adapter value)
+      4. text_fallback: classify_evidence_direction() run on THAT
+         record's OWN text/assertion_text -- never the multi-source
+         pooled blob. This alone is expected to help even for records
+         with no structured direction at all: the Reference-Grounded
+         Validation v2 root-cause finding was that direction language
+         got diluted/lost once multiple records' text was concatenated
+         into one blob before classification; classifying each record
+         individually removes that dilution regardless of vocabulary
+         coverage.
+
+    Aggregation across records is intentionally simple and conservative,
+    reusing the direction values direction_contribution_ratio already
+    knows how to score -- no new direction value is introduced:
+      - no informative (non-"unclear") record direction -> "unclear"
+      - exactly one distinct informative direction -> that direction
+      - more than one distinct informative direction -> "mixed"
+
+    Returns (direction, provenance_list) where provenance_list is in the
+    same order as `contributing_records`.
+    """
+    resolved = [
+        resolve_record_direction(
+            rec,
+            fallback_fn=lambda t: classify_evidence_direction(t)[0],
+            allow_text_fallback=True,
+        )
+        for rec in contributing_records
+    ]
+    provenance = [r.provenance for r in resolved]
+    informative = {r.direction for r in resolved if r.direction != DIRECTION_UNCLEAR}
+
+    if not informative:
+        return DIRECTION_UNCLEAR, provenance
+    if len(informative) == 1:
+        return next(iter(informative)), provenance
+    return DIRECTION_MIXED, provenance
+
+
 def interpret_evidence(
     text: Optional[str],
     clinical_weight: float = DEFAULT_CLINICAL_WEIGHT,
     source_authority_factor: float = 1.0,
+    contributing_records: Optional[Sequence[Mapping]] = None,
 ) -> EvidenceInterpretation:
     """Single entry point: interprets one evidence text and returns a
     Study_Design / Evidence_Direction / Evidence_Quality /
@@ -704,7 +780,24 @@ def interpret_evidence(
     piece of evidence therefore becomes a LARGER-magnitude negative
     contribution, never a positive one.
 
-    botanical_rd_candidate_engine.py's current call site does not pass
+    `contributing_records` (audit: wires resolve_record_direction() into
+    the main scoring path, matching what the Reference-Grounded
+    Validation decision path already does) is the list of per-source
+    record dicts that were pooled into `text` -- exactly what
+    botanical_rd_candidate_engine._collect_raw_evidence() already
+    returns as its 4th value (`evidence_contributing_records`) and
+    already threads through the row loop for Safety/Regulatory gate
+    evidence ids. Optional and defaults to None: every existing caller
+    (final_decision_policy.py's `_final_decision_direction`,
+    end_to_end_validation.py, every test) is byte-identical, since
+    `study_design` and `evidence_direction` are still computed from the
+    pooled `text` exactly as before whenever this argument is omitted or
+    empty. When it IS supplied and non-empty, `evidence_direction` (and
+    only `evidence_direction` -- `study_design`/`quality`/
+    `applicability` are unchanged, out of scope for this pass) is
+    resolved per-record via `_resolve_pooled_direction()` instead of by
+    re-running the text classifier on the pooled blob; see that
+    function's docstring for the precedence and aggregation rule. Botanical_rd_candidate_engine.py's current call site does not pass
     per-source authority data (its raw_evidence argument is a merged,
     multi-source text blob assembled by _collect_raw_evidence() before
     this function ever runs, with no per-source Source_Organization/
@@ -719,6 +812,9 @@ def interpret_evidence(
     """
     study_design = classify_study_design(text)
     direction, pos_hits, null_hits, neg_hits = classify_evidence_direction(text)
+    direction_provenance: List[str] = []
+    if contributing_records:
+        direction, direction_provenance = _resolve_pooled_direction(contributing_records)
     applicability = classify_evidence_applicability(text, study_design)
     quality = classify_evidence_quality(text, study_design)
     is_completed = applicability == APPLICABILITY_DIRECT
@@ -743,4 +839,5 @@ def interpret_evidence(
         matched_positive=pos_hits,
         matched_null=null_hits,
         matched_negative=neg_hits,
+        direction_provenance=direction_provenance,
     )

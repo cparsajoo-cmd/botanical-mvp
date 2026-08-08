@@ -1,25 +1,27 @@
 {
-  "benchmark": "independent-holdout-e2e/1.0.0",
+  "benchmark": "independent-holdout-e2e/1.2.0",
   "holdout_n_total": 15,
   "holdout_n_structurally_executable": 15,
   "holdout_n_structurally_blocked": 0,
-  "holdout_n_scored": 2,
-  "holdout_n_pending_independent_snapshot": 13,
-  "accuracy_on_scored_subset": 0.5,
-  "macro_f1_on_scored_subset": 0.6666666666666666,
+  "holdout_n_scored": 15,
+  "holdout_n_pending_independent_snapshot": 0,
+  "accuracy": 0.3333333333333333,
+  "macro_f1": 0.303030303030303,
+  "n_correct": 5,
+  "n_mismatched": 10,
   "serious_safety_false_negatives": 0,
   "regulatory_false_negatives": 0,
   "false_no_go": 0,
-  "expert_review_overuse": 0,
-  "insufficient_evidence_miss": 0,
+  "expert_review_overuse": 1,
+  "insufficient_evidence_miss": 2,
   "confusion_matrix": {
     "GO": {
-      "GO": 1,
+      "GO": 4,
       "GO WITH CAUTION": 0,
       "EXPERT REVIEW REQUIRED": 0,
       "NO GO SAFETY": 0,
       "NO GO REGULATORY": 0,
-      "INSUFFICIENT EVIDENCE": 0
+      "INSUFFICIENT EVIDENCE": 1
     },
     "GO WITH CAUTION": {
       "GO": 1,
@@ -35,7 +37,7 @@
       "EXPERT REVIEW REQUIRED": 0,
       "NO GO SAFETY": 0,
       "NO GO REGULATORY": 0,
-      "INSUFFICIENT EVIDENCE": 0
+      "INSUFFICIENT EVIDENCE": 6
     },
     "NO GO SAFETY": {
       "GO": 0,
@@ -54,12 +56,12 @@
       "INSUFFICIENT EVIDENCE": 0
     },
     "INSUFFICIENT EVIDENCE": {
-      "GO": 0,
+      "GO": 1,
       "GO WITH CAUTION": 0,
-      "EXPERT REVIEW REQUIRED": 0,
+      "EXPERT REVIEW REQUIRED": 1,
       "NO GO SAFETY": 0,
       "NO GO REGULATORY": 0,
-      "INSUFFICIENT EVIDENCE": 0
+      "INSUFFICIENT EVIDENCE": 1
     }
   },
   "scored_cases": [
@@ -84,168 +86,272 @@
       "expected": "GO WITH CAUTION",
       "actual": "GO",
       "match": false
-    }
-  ],
-  "structural_blockers": [],
-  "pending_snapshot_cases": [
+    },
     {
       "case_id": "refgrounded_004_ginkgo_biloba_cognitive",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 2,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_004_independent.json",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": true
     },
     {
       "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 19,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_005_independent.json",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "GO",
+      "match": false
     },
     {
       "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_007_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_008_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 19,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_009_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
     },
     {
       "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 19,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_010_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
     },
     {
       "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 26,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_011_independent.json",
+      "expected": "GO",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 17,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_012_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
     },
     {
       "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_013_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_014_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_015_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 1,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_017_independent.json",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false
     },
     {
       "case_id": "refgrounded_023_momordica_charantia_null_fbg",
-      "status": "BLOCKED",
-      "reason_code": "INDEPENDENT_SNAPSHOT_MISSING",
-      "reason": "Case is structurally executable, but no independently captured frozen retrieval snapshot is present.",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
       "candidate_count": 32,
-      "snapshot_file": null,
-      "expected": null,
-      "actual": null,
-      "match": null
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_023_independent.json",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "EXPERT REVIEW REQUIRED",
+      "match": false
     }
   ],
+  "structural_blockers": [],
+  "pending_snapshot_cases": [],
   "mismatch_rca": [
     {
-      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
-      "expected": "GO WITH CAUTION",
-      "actual": "GO",
       "responsible_stage": "Evidence Interpretation -> Final Decision",
       "responsible_modules": [
         "evidence_interpretation.py",
         "final_decision_policy.py",
         "botanical_rd_candidate_engine.py"
       ],
-      "root_cause": "The independently retrieved governing systematic review is mixed/conditional across sleep endpoints. The current six-class production policy has no scientific-evidence path from a single conditional/mixed supportive source to GO WITH CAUTION: GO WITH CAUTION is emitted only for ELIGIBLE_WITH_RESTRICTIONS (safety/regulatory restriction). Accordingly this scientific caveat is lost and the eligible candidate falls through to GO.",
+      "root_cause": "The governing chamomile review is positive for some sleep endpoints but explicitly non-supportive for others. Production collapses this conditional efficacy pattern to positive/eligible and has no scientific-evidence route to GO WITH CAUTION; that class is currently emitted from safety/regulatory restrictions only.",
+      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Interpretation -> Final Decision",
+      "responsible_modules": [
+        "evidence_interpretation.py",
+        "final_decision_policy.py"
+      ],
+      "root_cause": "Two independently retrieved systematic reviews are not converted into a governing negative/null or conflict state. The phrase \"insufficient evidence to support\" is classified unclear, and unresolved scientific evidence falls through to GO once eligibility passes. This converts uncertainty into a positive final decision.",
+      "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "GO",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport / Botanical Identity Matching",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py"
+      ],
+      "root_cause": "The retrieved EMA record is indexed under the binomial scientific name while the named candidate retains the botanical author suffix. The evidence index uses literal normalized strings rather than the engine taxon-matching logic, so the preparation record is not attached to the candidate. The row therefore reports no direct evidence and becomes INSUFFICIENT EVIDENCE instead of expert review.",
+      "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport / Botanical Identity Matching",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py"
+      ],
+      "root_cause": "The Ginkgo EMA preparation record is present in the snapshot but is lost at candidate evidence indexing because botanical-author variants are not canonicalized consistently between evidence rows and named candidates.",
+      "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Interpretation",
+      "responsible_modules": [
+        "evidence_interpretation.py",
+        "botanical_rd_candidate_engine.py"
+      ],
+      "root_cause": "The systematic review conclusion that chamomile appears efficacious and safe for GAD is left unclear by the calibrated phrase classifier, while the clinical-trial sentence containing a positive symptom result plus a non-significant relapse endpoint becomes mixed. The aggregate therefore loses the high-level supportive conclusion and falls to INSUFFICIENT EVIDENCE.",
+      "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
+      "expected": "GO",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport / Domain Routing",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py",
+        "final_decision_policy.py"
+      ],
+      "root_cause": "The Kew identity record is independently retrieved, but the production evidence path is indication-centric and the botanical-name variant does not attach to the candidate evidence index. Identity/quality evidence therefore does not become a domain-level reviewable decision state.",
+      "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport -> Safety",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py",
+        "eligibility_gate.py"
+      ],
+      "root_cause": "The EMA dabigatran caution is in the frozen input but never reaches candidate safety text because the evidence record and candidate use different taxonomic-name forms. Safety_Severity remains none and the row is marked incomplete for missing safety/regulatory evidence rather than being routed to expert review.",
+      "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport / Botanical Identity Matching",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py"
+      ],
+      "root_cause": "The independently retrieved EMA preparation specification is not attached to the named Hypericum candidate because evidence indexing and candidate matching do not share one canonical botanical-identity key.",
+      "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Evidence Transport / Domain Routing",
+      "responsible_modules": [
+        "botanical_rd_candidate_engine.py",
+        "final_decision_policy.py"
+      ],
+      "root_cause": "The Kew accepted-species evidence is present but identity/quality evidence is not transported into a first-class final-decision domain for this named-botanical E2E path; taxonomic author variation also prevents normal candidate evidence attachment.",
+      "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "remediation_applied": false
+    },
+    {
+      "responsible_stage": "Reference Currency / Evidence Conflict",
+      "responsible_modules": [
+        "gold_corpus/decision_benchmark_v1",
+        "final_decision_policy.py"
+      ],
+      "root_cause": "Independent retrieval found a 2024 null/insufficient systematic review and a newer 2025 meta-analysis reporting significant FBG reduction. Production correctly recognizes equally ranked opposing directions as conflict and requests expert review. The frozen Gold reference still expects INSUFFICIENT EVIDENCE from the older evidence state, so this mismatch is primarily a benchmark/reference-currency issue rather than a demonstrated engine error.",
+      "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "EXPERT REVIEW REQUIRED",
       "remediation_applied": false
     }
   ],
-  "interpretation": "All 15 frozen holdout members are now structurally executable without Gold evidence injection. Only two have independently captured frozen retrieval snapshots, so accuracy remains conditional on those two scored cases. The remaining 13 are pending independent snapshot capture, not blocked by question schema or candidate discovery."
+  "interpretation": "All 15 pre-frozen prospective holdout members were executed against independently captured public-source snapshots. No production decision rule or Gold expected label was changed after snapshot freeze. The observed accuracy is therefore the first full unseen-holdout decision score for this benchmark version. Mismatches include both production-engine failures and one reference-currency conflict."
 }

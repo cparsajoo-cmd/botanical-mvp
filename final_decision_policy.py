@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import re
 from typing import Iterable, Mapping
 
 from interaction_severity_classifier import (
@@ -150,7 +151,22 @@ def _evidence_limitation_tier(text: str) -> EvidenceLimitationTier:
         "alongside standard therapy",
         "potentially effective",
     )
-    return EvidenceLimitationTier.CAUTION if any(x in n for x in caution) else EvidenceLimitationTier.NONE
+    if any(x in n for x in caution):
+        return EvidenceLimitationTier.CAUTION
+
+    # General linguistic forms of the same certainty limitations.  These are
+    # deliberately concept-based rather than plant/indication phrases.
+    caution_patterns = (
+        r"\bheterogeneity\b.{0,28}\b(high|very high|substantial|considerable|remain|remains|present)\b",
+        r"\b(high|very high|substantial|considerable)\b.{0,28}\bheterogeneity\b",
+        r"\b(certainty|quality)\b.{0,24}\b(low|very low|limited|variable|varied)\b",
+        r"\b(studies|trials)\b.{0,18}\b(were|are)?\s*(small|limited|few)\b",
+        r"\b(reporting|methodological|study)\s+quality\b.{0,24}\b(varied|variable|low|limited)\b",
+        r"\bfurther\b.{0,36}\b(trials|studies|research|investigation)\b.{0,24}\b(needed|required|warranted|essential)\b",
+        r"\b(cautious|careful)\s+interpretation\b",
+        r"\b(populations|interventions|preparations|outcomes|results|findings)\b.{0,28}\b(varied|variable|heterogeneous)\b",
+    )
+    return EvidenceLimitationTier.CAUTION if any(re.search(pat, n) for pat in caution_patterns) else EvidenceLimitationTier.NONE
 
 
 class ScientificEvidenceSignal(str, Enum):
@@ -242,6 +258,8 @@ def _final_decision_direction(text: str) -> str:
             "little to no benefit", "little or no benefit", "no clear benefit",
             "inconclusive", "trivial-to-small effects", "trivial to small effects",
             "minimal effect", "minimal effects", "little effect", "little effects",
+            "little to no difference", "little or no difference",
+            "no significant beneficial effect", "no meaningful difference",
         )):
             direction = DIRECTION_NULL
         elif (
@@ -252,10 +270,17 @@ def _final_decision_direction(text: str) -> str:
                 "reported improvements", "evidence suggesting", "evidence suggests",
                 "significant benefit", "significant benefits", "provided significant benefit",
                 "strong scientific evidence", "can reduce", "reduced symptoms", "improved symptoms",
+                "support benefit", "supports benefit", "supporting efficacy",
+                "evidence of benefit", "beneficial effects", "beneficial effect",
+                "improved glycemic control", "improved clinical outcomes",
+                "increased markedly", "good results",
+                "therapeutic indications", "therapeutic indication",
+                "prophylactic and restorative", "supporting mental and physical capacities",
             ))
             and any(token in n for token in (
                 "efficacious", "effective", "reduction", "reduce", "improvement",
-                "improv", "benefit", "efficacy",
+                "improv", "benefit", "efficacy", "therapeutic",
+                "prophylactic", "restorative", "supporting",
             ))
         ):
             direction = DIRECTION_POSITIVE
@@ -403,6 +428,15 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             "Equally ranked governing indication sources contain opposing efficacy directions; automatic averaging is prohibited.",
             source_types, directions,
         )
+    # Equally ranked positive + unresolved evidence is not the same as clean
+    # confirmation.  Preserve the unresolved component as decision uncertainty.
+    if DIRECTION_POSITIVE in ds and DIRECTION_UNCLEAR in ds:
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+            "Equally ranked governing evidence contains a positive direction plus an unresolved/uncertain component; unconditional GO would overstate certainty.",
+            source_types, directions,
+        )
+
     if DIRECTION_MIXED in ds:
         non_mixed = ds - {DIRECTION_MIXED, DIRECTION_UNCLEAR}
         if non_mixed & {DIRECTION_NEGATIVE, DIRECTION_NULL}:
@@ -443,6 +477,23 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             )
 
     if DIRECTION_POSITIVE in ds:
+        # A positive governing synthesis is not equivalent to high-certainty
+        # evidence.  If any equally ranked governing source explicitly carries
+        # a caution-level limitation (heterogeneity, risk of bias, small/limited
+        # studies, need for confirmation, etc.), preserve that uncertainty in
+        # the decision rather than flattening the tier to unconditional support.
+        if any(x[5] == EvidenceLimitationTier.CAUTION for x in top):
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+                "The governing indication-evidence tier is positive but at least one equally ranked source explicitly reports material certainty limitations; a cautious GO is warranted.",
+                source_types, directions,
+            )
+        if any(x[5] == EvidenceLimitationTier.FIRM_UNCERTAINTY for x in top):
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.CONFLICT,
+                "The governing indication-evidence tier contains a positive direction but also firm uncertainty language; automatic GO is not justified.",
+                source_types, directions,
+            )
         top_years = [x[3] for x in top if x[3] is not None]
         newest_top_year = max(top_years) if top_years else None
         if newest_top_year is not None:
@@ -524,10 +575,13 @@ def decide_final(
         return FinalDecision(FinalDecisionStatus.GO_WITH_CAUTION, scientific.reason)
     if eligibility.status == EligibilityStatus.INCOMPLETE:
         return FinalDecision(FinalDecisionStatus.INSUFFICIENT_EVIDENCE, eligibility.gate_reason)
-    if scientific.signal == ScientificEvidenceSignal.INSUFFICIENT:
-        return FinalDecision(FinalDecisionStatus.INSUFFICIENT_EVIDENCE, scientific.reason)
     if eligibility.status == EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS:
         return FinalDecision(FinalDecisionStatus.GO_WITH_CAUTION, eligibility.gate_reason)
+    if scientific.signal in {
+        ScientificEvidenceSignal.INSUFFICIENT,
+        ScientificEvidenceSignal.UNRESOLVED,
+    }:
+        return FinalDecision(FinalDecisionStatus.INSUFFICIENT_EVIDENCE, scientific.reason)
     return FinalDecision(FinalDecisionStatus.GO, "Safety/regulatory eligibility passed and no governing scientific evidence requires abstention.")
 
 

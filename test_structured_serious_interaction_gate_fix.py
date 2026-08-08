@@ -187,7 +187,13 @@ def test_negative_control_mild_non_high_risk_interaction_stays_eligible():
         alt="AltPlantMildInteraction",
     )
     assert row["Eligibility_Status"] == "eligible"
-    assert bool(row["Eligible_For_Normal_Ranking"]) is True
+    # Safety eligibility remains clear: a mild interaction is not a hard gate.
+    # Normal ranking is a separate final-scientific-decision question.  This
+    # fixture contains no therapeutic efficacy evidence, so the structured
+    # final decision correctly abstains instead of treating "safety eligible"
+    # as evidence of efficacy.
+    assert row["Final_Decision_Status"] == "INSUFFICIENT EVIDENCE"
+    assert bool(row["Eligible_For_Normal_Ranking"]) is False
     assert row["Gate_Results"]["safety"]["status"] == GateStatus.PASSED
     assert HARD_GATE_SIGNAL_TERM not in row["Safety_Flags"]
 

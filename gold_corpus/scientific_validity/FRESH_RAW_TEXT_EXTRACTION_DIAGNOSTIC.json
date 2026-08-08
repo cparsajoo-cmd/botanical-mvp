@@ -1,0 +1,54 @@
+{
+  "version": "fresh-raw-text-extraction-diagnostic/1.0.0",
+  "date": "2026-08-08",
+  "purpose": "Diagnostic only: measure legacy raw-text semantic interpretation on unseen real-source conclusion language. No structured Result_Direction supplied.",
+  "result": {
+    "correct": 1,
+    "total": 6,
+    "accuracy": 0.16666666666666666
+  },
+  "cases": [
+    {
+      "source": "PMID 34449930",
+      "botanical": "Melissa officinalis",
+      "expected": "positive",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "mixed"
+    },
+    {
+      "source": "PMID 33197673",
+      "botanical": "Berberis vulgaris",
+      "expected": "null",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "unclear"
+    },
+    {
+      "source": "PMID 28165166",
+      "botanical": "Cissus quadrangularis",
+      "expected": "positive",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "unclear"
+    },
+    {
+      "source": "PMID 22994579",
+      "botanical": "Orthosiphon stamineus",
+      "expected": "positive",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "unclear"
+    },
+    {
+      "source": "PMID 11428178",
+      "botanical": "Dioscorea villosa",
+      "expected": "null",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "null"
+    },
+    {
+      "source": "PMID 28878245",
+      "botanical": "Centella asiatica",
+      "expected": "null",
+      "legacy_evidence_interpretation": "unclear",
+      "legacy_final_direction": "unclear"
+    }
+  ]
+}

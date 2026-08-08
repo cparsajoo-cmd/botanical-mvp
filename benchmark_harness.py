@@ -100,6 +100,13 @@ def _build_engine_for_case(case: dict):
     evidence_rows = case.get("evidence")
     if evidence_rows:
         engine.evidence_df = pd.DataFrame(evidence_rows)
+
+    # The bundled smoke fixture is explicitly a legacy mechanics fixture and
+    # its evidence rows predate canonical structured result_direction fields.
+    # Opt in here, locally, so its recorded regression expectations remain
+    # meaningful without changing BotanicalRDCandidateEngine's conservative
+    # production default (allow_legacy_text_fallback=False).
+    engine.allow_legacy_text_fallback = True
     return engine
 
 

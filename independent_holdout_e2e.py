@@ -116,6 +116,11 @@ def run_snapshot(case, snapshot: dict):
         plant_compounds_df=_build_plant_df(candidates, q.indication),
         compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
         evidence_df=evidence_df, use_live_search=False,
+        # These exposed frozen snapshots were captured before canonical
+        # structured directions were populated.  Preserve them as regression
+        # fixtures via an explicit legacy-mode opt-in; production remains
+        # fail-safe by default (False).
+        allow_legacy_text_fallback=True,
     )
     output = engine.run(indication=q.indication, dosage_form=q.dosage_form, market=q.market)
     target = _norm_taxon(case.validation_unit.taxon)

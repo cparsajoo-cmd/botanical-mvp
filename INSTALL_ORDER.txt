@@ -1,23 +1,36 @@
-CANONICAL ASSERTION PROVENANCE FIX — INSTALL ORDER
+CI 9-FAILURE REMEDIATION — CHANGED FILES ONLY
 
-1) Add these files to the repository root (replace existing files where applicable):
-   - backfill_canonical_assertions.py
-   - test_backfill_canonical_assertions.py
+Replace these five files in the repository root:
+1. decision_holdout_v2.py
+2. independent_holdout_e2e.py
+3. benchmark_harness.py
+4. test_structural_leakage_boundary.py
+5. test_phase4_eligibility_gate_desired_behavior.py
 
-2) Add these files under migrations/:
-   - migrations/0009_add_llm_assertion_provenance.sql
-   - migrations/0009_add_llm_assertion_provenance_down.sql
+What this remediation does:
+- Keeps BotanicalRDCandidateEngine production default conservative:
+  allow_legacy_text_fallback=False is NOT changed.
+- Exposed/legacy frozen regression snapshots explicitly opt into legacy text
+  fallback because they predate canonical structured result_direction coverage.
+- The synthetic benchmark smoke fixture explicitly opts into the same legacy
+  mode; it remains an engineering regression fixture, not scientific validation.
+- Structural leakage tests are updated to assert the CURRENT declared plain
+  production evidence fields instead of the obsolete four-field contract.
+- The ranking-partition wiring test locally opts into legacy fallback so it
+  tests ranking partition behavior rather than structured-direction authority.
 
-3) BEFORE running backfill with --apply, execute:
-   migrations/0009_add_llm_assertion_provenance.sql
-   against the production Supabase database.
+Verification in the supplied snapshot:
+python -m pytest -q \
+  test_structural_leakage_boundary.py \
+  test_structured_final_decision_authority.py \
+  test_independent_holdout_e2e.py \
+  test_benchmark_harness.py \
+  test_phase4_eligibility_gate_desired_behavior.py
 
-4) Run a dry-run first:
-   python backfill_canonical_assertions.py --limit 100
+Result: 65 passed, 0 failed.
 
-5) Only after reviewing the dry-run, use --apply on a small staged sample.
-
-IMPORTANT:
-- LLM result direction is now stored in llm_result_direction, never result_direction.
-- LLM safety signal is now stored in llm_safety_signal, never safety_signal.
-- Existing source/connector assertions and existing LLM assertions are never overwritten.
+Note: a full-suite run in the local review environment could not collect all
+modules because supabase and streamlit are not installed there. This is an
+environment dependency limitation, not a test failure in these changed files.
+GitHub Actions already has those project dependencies and is the authoritative
+full-suite check after replacement.

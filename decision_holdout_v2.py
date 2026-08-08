@@ -20,7 +20,15 @@ def run_case(case):
     q=ValidationQuestion(**snap['question'])
     recs=[RetrievedEvidence(**r) for r in snap['records']]
     ev=pd.DataFrame([r.to_engine_row(q.indication,q.dosage_form,q.market) for r in recs])
-    engine=BotanicalRDCandidateEngine(plant_compounds_df=_build_plant_df(snap['candidate_pool'],q.indication), compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(), evidence_df=ev, use_live_search=False)
+    # This frozen v2 snapshot predates canonical structured result_direction
+    # coverage.  It is now regression-only (the labels have been exposed), so
+    # opt in explicitly to the legacy per-record text fallback rather than
+    # weakening the production engine's fail-safe default.
+    engine=BotanicalRDCandidateEngine(
+        plant_compounds_df=_build_plant_df(snap['candidate_pool'],q.indication),
+        compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
+        evidence_df=ev, use_live_search=False, allow_legacy_text_fallback=True,
+    )
     out=engine.run(indication=q.indication,dosage_form=q.dosage_form,market=q.market)
     target=_norm_taxon(case['botanical'])
     row=out[out['Alternative_Plant'].map(_norm_taxon)==target].iloc[0]

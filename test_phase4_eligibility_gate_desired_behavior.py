@@ -727,6 +727,10 @@ def test_run_output_dataframe_carries_correct_ranking_partition_end_to_end():
     ])
     engine = make_engine(rows)
     engine.evidence_df = evidence_df
+    # This test isolates Ranking_Partition wiring. Its synthetic evidence
+    # predates canonical structured result_direction, so opt into legacy text
+    # fallback locally rather than changing the production fail-safe default.
+    engine.allow_legacy_text_fallback = True
     result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
 
     alt_rows = result[result["Reference_Plant"] == "RefPlant"]

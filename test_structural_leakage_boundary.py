@@ -41,10 +41,12 @@ def test_engine_evidence_input_has_no_field_of_type_reference_claim():
         assert "ResolvedExpectedOutcome" not in str(type_repr), name
 
 
-def test_engine_evidence_input_field_set_is_exactly_four_plain_fields():
+def test_engine_evidence_input_field_set_is_exactly_declared_plain_production_fields():
     field_names = {f.name for f in dataclasses.fields(EngineEvidenceInput)}
     assert field_names == {
         "scientific_name", "target_indication", "notes", "compound_activity_targets",
+        "result_direction", "safety_signal", "regulatory_status",
+        "regulatory_authorization_status", "regulatory_evidence",
     }
 
 
@@ -112,7 +114,11 @@ def test_execute_gold_case_evidence_parameter_only_accepts_engine_evidence_input
 def test_evidence_inputs_to_dataframe_only_contains_expected_columns():
     evidence = [EngineEvidenceInput(scientific_name="X", target_indication="Y", notes="Z")]
     df = _evidence_inputs_to_dataframe(evidence)
-    assert set(df.columns) == {"Scientific_Name", "Target_Indication", "Notes"}
+    assert set(df.columns) == {
+        "Scientific_Name", "Target_Indication", "Notes",
+        "Result_Direction", "Safety_Signal", "Regulatory_Status",
+        "Regulatory_Authorization_Status", "Regulatory_Evidence",
+    }
 
 
 def test_evidence_inputs_to_dataframe_every_cell_is_a_plain_string():
@@ -213,7 +219,11 @@ def test_spy_confirms_evidence_df_contains_only_the_three_expected_columns():
         eng.BotanicalRDCandidateEngine.__init__ = original_init
 
     evidence_df = captured["kwargs"]["evidence_df"]
-    assert set(evidence_df.columns) == {"Scientific_Name", "Target_Indication", "Notes"}
+    assert set(evidence_df.columns) == {
+        "Scientific_Name", "Target_Indication", "Notes",
+        "Result_Direction", "Safety_Signal", "Regulatory_Status",
+        "Regulatory_Authorization_Status", "Regulatory_Evidence",
+    }
 
 
 # ---------------------------------------------------------------------

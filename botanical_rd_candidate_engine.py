@@ -1718,7 +1718,7 @@ class BotanicalRDCandidateEngine:
                     elif final_decision.status == FinalDecisionStatus.INSUFFICIENT_EVIDENCE:
                         decision = "Insufficient evidence — governing evidence does not support GO"
                     elif final_decision.status == FinalDecisionStatus.GO_WITH_CAUTION:
-                        decision = "Go with caution — regulatory or safety restrictions apply"
+                        decision = "Go with caution — governing scientific evidence is supportive but requires caution"
 
                     gate_results["eligibility"] = {
                         "gate_name": "eligibility",
@@ -3407,6 +3407,7 @@ class BotanicalRDCandidateEngine:
                 "dose": self._pick(row, ["Dose", "dose"]) or "",
                 "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",
                 "population": self._pick(row, ["Population", "population"]) or "",
+                "target_indication": self._pick(row, ["Target_Indication", "target_indication", "Indication", "indication"]) or "",
             })
 
         def _record_source(key, row):
@@ -3720,24 +3721,49 @@ class BotanicalRDCandidateEngine:
             return max(entry["authority_factor"] for entry in entries)
 
         compound_text = evidence_index.get(compound_key, "")
-        problem_text = evidence_index.get(problem_key, "")
 
-        primary = " ".join(part for part in (compound_text, problem_text) if part).strip()
+        # Direct botanical + indication evidence must not disappear merely
+        # because the candidate also has compound-level evidence.  Select only
+        # plant records whose own structured target indication matches this
+        # question, avoiding the old whole-plant pooling contamination while
+        # preserving directly relevant clinical/review evidence.
+        plant_key = _botanical_taxonomy.taxon_match_key(plant)
+        direct_plant_records = [
+            rec for rec in records_index.get(plant_key, [])
+            if problem_key
+            and self._norm(rec.get("target_indication") or "") == problem_key
+        ]
+        direct_plant_text = " ".join(
+            str(rec.get("text") or "").strip()
+            for rec in direct_plant_records
+            if str(rec.get("text") or "").strip()
+        )
+
+        primary = " ".join(part for part in (compound_text, direct_plant_text) if part).strip()
 
         if primary:
+            compound_records = list(records_index.get(compound_key, []))
+            contributing_records = []
+            seen = set()
+            for rec in compound_records + direct_plant_records:
+                rid = rec.get("evidence_record_id")
+                sig = rid or (rec.get("source_url"), rec.get("text"))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                contributing_records.append(rec)
+
             sources = list(dict.fromkeys(
-                source_index.get(compound_key, []) + source_index.get(problem_key, [])
+                source_index.get(compound_key, [])
+                + [str(rec.get("source_url")) for rec in direct_plant_records if rec.get("source_url")]
             ))
-            authority_factor = _strongest_authority_factor((compound_key, problem_key))
-            contributing_records = (
-                records_index.get(compound_key, []) + records_index.get(problem_key, [])
-            )
+            factors = [float(rec.get("authority_factor") or 0.0) for rec in contributing_records]
+            authority_factor = max(factors) if factors else _strongest_authority_factor((compound_key,))
             return primary[:6000], sources, authority_factor, contributing_records
 
-        # No compound-specific evidence found anywhere — fall back to
+        # No compound-specific or direct plant+indication evidence found — fall back to
         # whatever's known about the plant in general, clearly weaker
         # but still better than treating it as zero evidence outright.
-        plant_key = _botanical_taxonomy.taxon_match_key(plant)
         plant_text = evidence_index.get(plant_key, "")
         return (
             plant_text.strip()[:6000],

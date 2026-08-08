@@ -73,6 +73,7 @@ def _safety_domain_requires_review(records: Iterable[Mapping]) -> bool:
 
 class ScientificEvidenceSignal(str, Enum):
     SUPPORTIVE = "supportive"
+    SUPPORTIVE_WITH_CAUTION = "supportive_with_caution"
     CONFLICT = "conflict"
     INSUFFICIENT = "insufficient"
     UNRESOLVED = "unresolved"
@@ -131,22 +132,50 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             continue
         text = str(rec.get("assertion_text") or rec.get("text") or "")
         direction = interpret_evidence(text).evidence_direction
-        # Narrow final-decision-only fallback for review conclusions that the
-        # scoring classifier intentionally leaves unclassified.  Keeping these
-        # patterns here prevents decision benchmarking from changing the frozen
-        # evidence-direction calibration used elsewhere in the engine.
+        # Narrow final-decision-only interpretation of explicit review
+        # conclusions.  The calibrated scoring classifier remains untouched;
+        # this layer only prevents clear conclusion language from becoming an
+        # accidental GO/INSUFFICIENT fall-through at the final decision stage.
         _n = " ".join(text.lower().split())
         if direction == DIRECTION_UNCLEAR:
-            if (
-                ("evidence suggesting" in _n or "evidence suggests" in _n)
-                and any(token in _n for token in ("improv", "benefit", "effective", "efficacy"))
-            ):
-                direction = DIRECTION_POSITIVE
-            elif any(token in _n for token in (
+            if any(phrase in _n for phrase in (
+                "insufficient evidence to support",
+                "insufficient evidence for",
+                "evidence is insufficient to support",
+                "evidence was insufficient to support",
                 "little to no benefit", "little or no benefit",
                 "no clear benefit", "inconclusive",
             )):
                 direction = DIRECTION_NULL
+            elif (
+                any(phrase in _n for phrase in (
+                    "appears efficacious", "appeared efficacious",
+                    "appears effective", "appeared effective",
+                    "showed reductions", "reported reductions",
+                    "showed improvement", "reported improvement",
+                    "showed improvements", "reported improvements",
+                    "evidence suggesting", "evidence suggests",
+                ))
+                and any(token in _n for token in (
+                    "efficacious", "effective", "reduction", "improvement",
+                    "improv", "benefit", "efficacy",
+                ))
+            ):
+                direction = DIRECTION_POSITIVE
+
+        # A review can be supportive while explicitly reporting material
+        # heterogeneity/endpoint inconsistency.  Preserve that uncertainty as
+        # MIXED rather than collapsing it to an unconditional positive.
+        if direction == DIRECTION_POSITIVE and any(phrase in _n for phrase in (
+            "evidence varied across studies",
+            "results varied across studies",
+            "findings varied across studies",
+            "mixed findings",
+            "mixed results",
+            "inconsistent findings",
+            "inconsistent results",
+        )):
+            direction = DIRECTION_MIXED
         interpreted.append((rank, source_type, direction))
 
     if not interpreted:
@@ -161,12 +190,27 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
     source_types = tuple(sorted({x[1] for x in top}))
     ds = set(directions)
 
-    if DIRECTION_MIXED in ds or (
-        DIRECTION_POSITIVE in ds and bool(ds & {DIRECTION_NEGATIVE, DIRECTION_NULL})
-    ):
+    # A single governing tier that is internally mixed but not contradicted by
+    # a separate same-rank positive-vs-null/negative source supports a cautious
+    # decision rather than either an unconditional GO or an expert-conflict
+    # escalation.  Cross-record disagreement remains a true CONFLICT.
+    if DIRECTION_POSITIVE in ds and bool(ds & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
         return ScientificEvidenceResolution(
             ScientificEvidenceSignal.CONFLICT,
             "Equally ranked governing indication sources contain opposing efficacy directions; automatic averaging is prohibited.",
+            source_types, directions,
+        )
+    if DIRECTION_MIXED in ds:
+        non_mixed = ds - {DIRECTION_MIXED, DIRECTION_UNCLEAR}
+        if non_mixed & {DIRECTION_NEGATIVE, DIRECTION_NULL}:
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.CONFLICT,
+                "Governing indication evidence is mixed and is accompanied by an equally ranked negative/null direction; expert review is required.",
+                source_types, directions,
+            )
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+            "The governing indication-evidence tier is supportive but explicitly mixed/inconsistent; a cautious GO is warranted.",
             source_types, directions,
         )
     if DIRECTION_POSITIVE in ds:
@@ -231,6 +275,8 @@ def decide_final(
         )
     if scientific.signal == ScientificEvidenceSignal.CONFLICT:
         return FinalDecision(FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, scientific.reason)
+    if scientific.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION:
+        return FinalDecision(FinalDecisionStatus.GO_WITH_CAUTION, scientific.reason)
     if eligibility.status == EligibilityStatus.INCOMPLETE:
         return FinalDecision(FinalDecisionStatus.INSUFFICIENT_EVIDENCE, eligibility.gate_reason)
     if scientific.signal == ScientificEvidenceSignal.INSUFFICIENT:
@@ -261,6 +307,8 @@ def final_status_from_engine_row(row: Mapping) -> FinalDecisionStatus:
     if ("insufficient evidence" in decision_class or "insufficient data" in decision_class
             or decision_class.startswith("incomplete")):
         return FinalDecisionStatus.INSUFFICIENT_EVIDENCE
+    if "go with caution" in decision_class:
+        return FinalDecisionStatus.GO_WITH_CAUTION
     if eligibility == EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS.value:
         return FinalDecisionStatus.GO_WITH_CAUTION
     return FinalDecisionStatus.GO

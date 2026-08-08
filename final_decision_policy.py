@@ -71,6 +71,88 @@ def _safety_domain_requires_review(records: Iterable[Mapping]) -> bool:
     return False
 
 
+
+
+class EvidenceLimitationTier(str, Enum):
+    NONE = "none"
+    CAUTION = "caution"
+    FIRM_UNCERTAINTY = "firm_uncertainty"
+
+
+def _evidence_limitation_tier(text: str) -> EvidenceLimitationTier:
+    """Decision-layer certainty semantics derived only from supplied evidence text.
+
+    This deliberately does not infer hidden limitations from plant identity or
+    benchmark labels.  It recognizes publication-level language that explicitly
+    limits certainty, generalisability, durability, or stand-alone use.
+    """
+    n = " ".join(str(text or "").lower().replace("–", "-").replace("—", "-").split())
+    if not n:
+        return EvidenceLimitationTier.NONE
+
+    firm = (
+        "evidence insufficient to establish",
+        "evidence is insufficient to establish",
+        "insufficient to establish clear clinical benefit",
+        "insufficient to establish clinical benefit",
+        "not adequately corroborated",
+        "evidence remains uncertain",
+        "evidence is uncertain",
+        "insufficient for firm conclusions",
+        "insufficient to draw firm conclusions",
+        "cannot draw firm conclusions",
+        "no firm conclusions",
+    )
+    if any(x in n for x in firm):
+        return EvidenceLimitationTier.FIRM_UNCERTAINTY
+
+    caution = (
+        "more evidence is needed",
+        "more evidence is required",
+        "further evidence is needed",
+        "further evidence is required",
+        "further high-quality trials",
+        "further high quality trials",
+        "further rigorous trials",
+        "more rigorous trials",
+        "additional rigorous trials",
+        "larger trials are needed",
+        "large-scale trial is justified",
+        "large scale trial is justified",
+        "long-term effects",
+        "long term effects",
+        "long-term efficacy",
+        "long term efficacy",
+        "high heterogeneity",
+        "very high heterogeneity",
+        "substantial heterogeneity",
+        "extremely high heterogeneity",
+        "risk of bias",
+        "high risk of bias",
+        "methodological weakness",
+        "methodological weaknesses",
+        "methodological limitations",
+        "remaining uncertainties",
+        "remain uncertain",
+        "effects varying",
+        "effect varying",
+        "effects varied",
+        "effect varied",
+        "variability in diagnostic criteria",
+        "variability in outcome measures",
+        "variability in preparations",
+        "small trials",
+        "small studies",
+        "only four studies",
+        "limited number of studies",
+        "adjunctive",
+        "alongside lipid-lowering therapy",
+        "alongside standard therapy",
+        "potentially effective",
+    )
+    return EvidenceLimitationTier.CAUTION if any(x in n for x in caution) else EvidenceLimitationTier.NONE
+
+
 class ScientificEvidenceSignal(str, Enum):
     SUPPORTIVE = "supportive"
     SUPPORTIVE_WITH_CAUTION = "supportive_with_caution"
@@ -192,13 +274,60 @@ def _final_decision_direction(text: str) -> str:
         "additional studies are needed", "additional studies are required",
         "more research is needed", "more research is required",
     )
-    if any(phrase in n for phrase in firm_uncertainty_phrases):
-        direction = DIRECTION_NULL
-    elif direction == DIRECTION_POSITIVE and any(phrase in n for phrase in (
-        "evidence varied across studies", "results varied across studies",
-        "findings varied across studies", "mixed findings", "mixed results",
-        "inconsistent findings", "inconsistent results", *cautionary_support_phrases,
+    limitation_tier = _evidence_limitation_tier(n)
+
+    # Active-comparator trials often report no between-group difference while
+    # explicitly stating that both interventions were effective.  The latter is
+    # a positive efficacy statement; it must not be flattened to a null merely
+    # because the two active arms were similar to each other.
+    if any(phrase in n for phrase in (
+        "both effective", "both were effective", "both treatments were effective",
+        "both interventions were effective", "both groups improved",
+    )) and not any(phrase in n for phrase in (
+        "no benefit", "no clinical benefit", "ineffective", "failed to improve",
     )):
+        direction = DIRECTION_POSITIVE
+
+    # Common synthesis wording that carries a usable direction even when the
+    # calibrated phrase classifier is deliberately conservative.
+    if direction == DIRECTION_UNCLEAR and (
+        any(phrase in n for phrase in (
+            "all included trials positive", "all trials positive",
+            "positive outcomes", "beneficial findings", "potentially effective",
+            "significantly improved", "significantly reduced",
+            "significant improvement", "significant improvements",
+            "significant reduction", "significant reductions",
+        ))
+        or ("significant" in n and any(token in n for token in ("reduction", "reduced", "improvement", "improved")))
+    ):
+        direction = DIRECTION_POSITIVE
+
+    # Explicitly insufficient clinical-benefit conclusions are null for
+    # decision purposes.  This is stronger than a routine limitations sentence.
+    if limitation_tier == EvidenceLimitationTier.FIRM_UNCERTAINTY and any(phrase in n for phrase in (
+        "evidence insufficient to establish", "evidence is insufficient to establish",
+        "insufficient to establish clear clinical benefit",
+        "insufficient to establish clinical benefit",
+    )):
+        direction = DIRECTION_NULL
+    elif any(phrase in n for phrase in firm_uncertainty_phrases):
+        direction = DIRECTION_NULL
+    elif direction == DIRECTION_POSITIVE and (
+        limitation_tier == EvidenceLimitationTier.CAUTION
+        or any(phrase in n for phrase in (
+            "evidence varied across studies", "results varied across studies",
+            "findings varied across studies", "mixed findings", "mixed results",
+            "inconsistent findings", "inconsistent results", *cautionary_support_phrases,
+        ))
+    ):
+        direction = DIRECTION_MIXED
+
+    # Endpoint-level split conclusions are mixed, not a hard null: e.g. one
+    # glycaemic endpoint improves while another is non-significant.
+    if direction in {DIRECTION_POSITIVE, DIRECTION_NULL, DIRECTION_UNCLEAR} and (
+        any(x in n for x in ("beneficial", "improved", "reduced", "positive"))
+        and any(x in n for x in ("not significant", "not statistically significant", "non-significant", "nonsignificant"))
+    ):
         direction = DIRECTION_MIXED
     return direction
 
@@ -223,9 +352,10 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
         direction = _final_decision_direction(text)
         year = _parse_publication_year(rec)
         explicit_conflict = _explicit_conflict_language(text)
+        limitation_tier = _evidence_limitation_tier(text)
         rank = _INDICATION_SOURCE_RANK.get(source_type)
         if rank is not None:
-            interpreted.append((rank, source_type, direction, year, explicit_conflict))
+            interpreted.append((rank, source_type, direction, year, explicit_conflict, limitation_tier))
             continue
         study_design = str(rec.get("study_design") or "").strip().lower()
         if source_type in {"CLINICAL_TRIAL", "RANDOMIZED_CONTROLLED_TRIAL", "RANDOMISED_CONTROLLED_TRIAL", "RCT"} or any(
@@ -234,6 +364,21 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             challengers.append((source_type or "CLINICAL_TRIAL", direction, year))
 
     if not interpreted:
+        direct_directions = {x[1] for x in challengers}
+        if DIRECTION_POSITIVE in direct_directions and not (direct_directions & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+                "Supportive direct clinical evidence is available, but no higher-tier synthesis/monograph governs the indication; a cautious GO is warranted rather than full certainty.",
+                tuple(sorted({x[0] for x in challengers})),
+                tuple(sorted(direct_directions)),
+            )
+        if DIRECTION_POSITIVE in direct_directions and (direct_directions & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.CONFLICT,
+                "Direct clinical evidence contains opposing efficacy directions and no higher-tier synthesis resolves the conflict.",
+                tuple(sorted({x[0] for x in challengers})),
+                tuple(sorted(direct_directions)),
+            )
         return ScientificEvidenceResolution(
             ScientificEvidenceSignal.UNRESOLVED,
             "No recognized indication-evidence source tier was available for record-level resolution.",
@@ -261,16 +406,41 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
     if DIRECTION_MIXED in ds:
         non_mixed = ds - {DIRECTION_MIXED, DIRECTION_UNCLEAR}
         if non_mixed & {DIRECTION_NEGATIVE, DIRECTION_NULL}:
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.CONFLICT,
-                "Governing indication evidence is mixed and is accompanied by an equally ranked negative/null direction; expert review is required.",
-                source_types, directions,
-            )
+            # A mixed synthesis already encodes endpoint/study variability.  A
+            # second positive or null component within the same top tier is not
+            # automatically a hard contradiction unless a source is explicitly
+            # conflict/firm-insufficiency language (handled above/below).
+            if DIRECTION_POSITIVE not in non_mixed:
+                return ScientificEvidenceResolution(
+                    ScientificEvidenceSignal.CONFLICT,
+                    "Governing indication evidence is mixed and is accompanied by an equally ranked negative/null direction; expert review is required.",
+                    source_types, directions,
+                )
         return ScientificEvidenceResolution(
             ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-            "The governing indication-evidence tier is supportive but explicitly mixed/inconsistent; a cautious GO is warranted.",
+            "The governing indication-evidence tier is supportive but explicitly mixed/inconsistent or limitation-qualified; a cautious GO is warranted.",
             source_types, directions,
         )
+
+    # A governing synthesis may be too cautious to claim efficacy on its own,
+    # yet a lower-tier direct trial can provide supportive corroboration.  That
+    # combination warrants caution rather than either a full GO or a hard
+    # insufficiency decision.
+    if ds <= {DIRECTION_UNCLEAR} and any(
+        x[5] in {EvidenceLimitationTier.CAUTION, EvidenceLimitationTier.FIRM_UNCERTAINTY}
+        for x in top
+    ):
+        supportive_challengers = [
+            x for x in challengers if x[1] in {DIRECTION_POSITIVE, DIRECTION_MIXED}
+        ]
+        if supportive_challengers:
+            challenger_types = tuple(sorted({x[0] for x in supportive_challengers}))
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+                "The governing synthesis is limitation-qualified while direct clinical evidence is supportive; a cautious GO is warranted rather than full certainty.",
+                tuple(sorted(set(source_types) | set(challenger_types))),
+                tuple(sorted(set(directions) | {x[1] for x in supportive_challengers})),
+            )
 
     if DIRECTION_POSITIVE in ds:
         top_years = [x[3] for x in top if x[3] is not None]

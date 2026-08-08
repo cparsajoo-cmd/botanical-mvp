@@ -1,0 +1,52 @@
+{
+  "case_number": 9,
+  "snapshot_id": "case009-independent-web-2026-08-08-v2",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture (PubMed/EMA/Kew)",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants / named-botanical path",
+    "query_basis": "question and structured case context only; reference answer/label not used for source selection"
+  },
+  "candidate_pool": [
+    "Valeriana officinalis",
+    "Melissa officinalis",
+    "Passiflora incarnata",
+    "Lavandula angustifolia",
+    "Humulus lupulus",
+    "Matricaria chamomilla",
+    "Withania somnifera",
+    "Gynostemma pentaphyllum",
+    "Ziziphus jujuba",
+    "Piper methysticum",
+    "Scutellaria baicalensis",
+    "Panax ginseng",
+    "Rhodiola rosea",
+    "Eleutherococcus senticosus",
+    "Schisandra chinensis",
+    "Lepidium meyenii",
+    "Ilex paraguariensis",
+    "Camellia sinensis",
+    "Cordyceps sinensis"
+  ],
+  "question": {
+    "question": "What is the scientific decision for Melissa officinalis L. for Mental stress and mood disorders as Herbal tea in EU?",
+    "indication": "Mental stress and mood disorders",
+    "dosage_form": "Herbal tea",
+    "market": "EU",
+    "product_type": "Botanical"
+  },
+  "records": [
+    {
+      "reference_id": "EMA_MELISSA_STRESS_INDEPENDENT",
+      "scientific_name": "Melissa officinalis",
+      "notes": "EMA HMPC concludes that melissa leaf can be used for relief of mild symptoms of stress and to aid sleep on the basis of long-standing traditional use; clinical-trial evidence is insufficient but traditional effectiveness is considered plausible.",
+      "source_type": "EMA_HMPC",
+      "source_title": "Melissae folium - herbal medicinal product",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/melissae-folium",
+      "target_indication": "Mental stress and mood disorders",
+      "dosage_form": "Herbal tea",
+      "source_available": true
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "case_number": 23,
+  "snapshot_id": "case023-independent-web-2026-08-08-v2",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture (PubMed/EMA/Kew)",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants / named-botanical path",
+    "query_basis": "question and structured case context only; reference answer/label not used for source selection"
+  },
+  "candidate_pool": [
+    "Gymnema sylvestre",
+    "Momordica charantia",
+    "Morus alba",
+    "Salacia reticulata",
+    "Syzygium cumini",
+    "Camellia sinensis",
+    "Olea europaea",
+    "Vaccinium myrtillus",
+    "Galega officinalis",
+    "Gynostemma pentaphyllum",
+    "Panax ginseng",
+    "Curcuma longa",
+    "Allium sativum",
+    "Nigella sativa",
+    "Aloe vera",
+    "Ocimum tenuiflorum",
+    "Zingiber officinale",
+    "Silybum marianum",
+    "Cichorium intybus",
+    "Phaseolus vulgaris",
+    "Plantago ovata",
+    "Urtica dioica",
+    "Taraxacum officinale",
+    "Arctium lappa",
+    "Melissa officinalis",
+    "Matricaria chamomilla",
+    "Scutellaria baicalensis",
+    "Cynara scolymus",
+    "Berberis vulgaris",
+    "Cinnamomum verum",
+    "Trigonella foenum-graecum",
+    "Serenoa repens"
+  ],
+  "question": {
+    "question": "What is the scientific decision for Momordica charantia L. for reduction of fasting blood glucose in unspecified market?",
+    "indication": "reduction of fasting blood glucose",
+    "dosage_form": "",
+    "market": "",
+    "product_type": "Botanical"
+  },
+  "records": [
+    {
+      "reference_id": "PMID_38274207",
+      "scientific_name": "Momordica charantia",
+      "notes": "2024 systematic review and meta-analysis concluded that the metabolic effect of Momordica charantia could not be determined from available clinical evidence; no significant effect over placebo was observed for fasting blood glucose in the reported change-score meta-analysis.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "The metabolic effect of Momordica charantia cannot be determined based on the available clinical evidence: a systematic review and meta-analysis of randomized clinical trials",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/38274207/",
+      "pmid": "38274207",
+      "target_indication": "reduction of fasting blood glucose",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_41280283",
+      "scientific_name": "Momordica charantia",
+      "notes": "2025 GRADE-adherent meta-analysis of randomized trials found a statistically significant reduction in fasting blood glucose and HbA1c with Momordica charantia in prediabetes or type 2 diabetes, while noting prior quantitative syntheses had contradictory findings.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Efficacy of Momordica charantia in glycaemic control and insulin resistance among patients with prediabetes and type 2 diabetes. A GRADE-adherent meta-analysis of randomised controlled trials",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/41280283/",
+      "pmid": "41280283",
+      "doi": "10.1016/j.metop.2025.100407",
+      "target_indication": "reduction of fasting blood glucose",
+      "source_available": true
+    }
+  ]
+}

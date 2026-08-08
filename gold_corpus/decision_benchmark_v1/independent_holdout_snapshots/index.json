@@ -1,9 +1,84 @@
 {
-  "snapshot_version": "independent-holdout-e2e/1.0.0",
+  "snapshot_version": "independent-holdout-e2e/1.2.0",
   "retrieval_date": "2026-08-08",
   "cases": [
     1,
-    3
+    3,
+    4,
+    5,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    17,
+    23
   ],
-  "gold_truth_used_for_retrieval": false
+  "gold_truth_used_for_retrieval": false,
+  "frozen_snapshot_sha256": [
+    {
+      "file": "case_001_independent.json",
+      "sha256": "7cd978672d6bc42cbc8e68000e1da0b2a7fdb9d01de2ebdf165e6aaa80016c77"
+    },
+    {
+      "file": "case_003_independent.json",
+      "sha256": "37b58959426b42ed6f67eaa980840fa022aac5e3be1a8bf745eab77c824114ff"
+    },
+    {
+      "file": "case_004_independent.json",
+      "sha256": "17718cac7ee867185cc8616976277eccfa84a8ec177ff8bab8e86f1a43d91c12"
+    },
+    {
+      "file": "case_005_independent.json",
+      "sha256": "ea11548f1ea1e281bf5d88ac8dc0db6c6185113ab3d1f838387e9368f91527bb"
+    },
+    {
+      "file": "case_007_independent.json",
+      "sha256": "12f3592b0a0ccf817b1a909a435ef03016f4ffd5a1fabc4bf738e39ef33de3b1"
+    },
+    {
+      "file": "case_008_independent.json",
+      "sha256": "ac5f61badd350744de776a66c2dc3d25552e984256cbef0a5ca303564ca7dce6"
+    },
+    {
+      "file": "case_009_independent.json",
+      "sha256": "cf459badc4b541887cbf9fd034dda6da7c7d5833b47e3eba385d8b9325fca2df"
+    },
+    {
+      "file": "case_010_independent.json",
+      "sha256": "f5edb4f955a2f48951285b5aaade2eb27b18760e3c1ca4a2ac06d0f5340ed3d3"
+    },
+    {
+      "file": "case_011_independent.json",
+      "sha256": "11e30d4b15df122b41e2f6f39ec0805b4ec906722d692013d4586e96b8b00330"
+    },
+    {
+      "file": "case_012_independent.json",
+      "sha256": "0297aa1ee43d8b358140ce9552b81e93270cd129f91f9343484f9eb2367feb2c"
+    },
+    {
+      "file": "case_013_independent.json",
+      "sha256": "7b0e073e217a524f41c818e4e5081172991fc02de243abd0ba328ce889e62320"
+    },
+    {
+      "file": "case_014_independent.json",
+      "sha256": "b57f92c3e128c373080047005899bc836b6d1f88e7fac3541fda8285a6fa4970"
+    },
+    {
+      "file": "case_015_independent.json",
+      "sha256": "d63d273e4caf162c311ed2ec29a9d4ead9bc646b6cc1f4bc4db2d5a180bdee55"
+    },
+    {
+      "file": "case_017_independent.json",
+      "sha256": "42a41cf988d47e73457663476f6bc669dcb6ae90a5c64953f3a0e4472cdb9f3d"
+    },
+    {
+      "file": "case_023_independent.json",
+      "sha256": "e2aa56f60becaa63b92a85d396189b5e9c65d9db254e0d1fd425030a2e62ae5b"
+    }
+  ]
 }

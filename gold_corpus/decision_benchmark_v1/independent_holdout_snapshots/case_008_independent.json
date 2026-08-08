@@ -1,0 +1,34 @@
+{
+  "case_number": 8,
+  "snapshot_id": "case008-independent-web-2026-08-08-v2",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture (PubMed/EMA/Kew)",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants / named-botanical path",
+    "query_basis": "question and structured case context only; reference answer/label not used for source selection"
+  },
+  "candidate_pool": [
+    "Ginkgo biloba L."
+  ],
+  "question": {
+    "question": "What is the scientific decision for Ginkgo biloba L. for Preparation specification as Dry extract in EU?",
+    "indication": "Preparation specification",
+    "dosage_form": "Dry extract",
+    "market": "EU",
+    "product_type": "Botanical"
+  },
+  "records": [
+    {
+      "reference_id": "EMA_GINKGO_FOLIUM_PREP_INDEPENDENT",
+      "scientific_name": "Ginkgo biloba",
+      "notes": "EMA assessment documentation describes Ginkgo biloba dried leaf dry extract with DER 35-67:1 prepared with acetone 60% as a defined herbal preparation.",
+      "source_type": "EMA_HMPC",
+      "source_title": "Assessment report on Ginkgo biloba L., folium",
+      "source_url": "https://www.ema.europa.eu/en/documents/herbal-report/final-assessment-report-ginkgo-biloba-l-folium_en.pdf",
+      "target_indication": "Preparation specification",
+      "dosage_form": "Dry extract",
+      "source_available": true
+    }
+  ]
+}

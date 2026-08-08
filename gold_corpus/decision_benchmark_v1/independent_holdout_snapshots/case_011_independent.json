@@ -1,0 +1,70 @@
+{
+  "case_number": 11,
+  "snapshot_id": "case011-independent-web-2026-08-08-v2",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture (PubMed/EMA/Kew)",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants / named-botanical path",
+    "query_basis": "question and structured case context only; reference answer/label not used for source selection"
+  },
+  "candidate_pool": [
+    "Withania somnifera",
+    "Rhodiola rosea",
+    "Melissa officinalis",
+    "Passiflora incarnata",
+    "Lavandula angustifolia",
+    "Valeriana officinalis",
+    "Matricaria chamomilla",
+    "Humulus lupulus",
+    "Tilia cordata",
+    "Gynostemma pentaphyllum",
+    "Ziziphus jujuba",
+    "Piper methysticum",
+    "Scutellaria baicalensis",
+    "Panax ginseng",
+    "Cimicifuga racemosa",
+    "Trigonella foenum-graecum",
+    "Serenoa repens",
+    "Urtica dioica",
+    "Hypericum perforatum",
+    "Crocus sativus",
+    "Eleutherococcus senticosus",
+    "Schisandra chinensis",
+    "Lepidium meyenii",
+    "Ilex paraguariensis",
+    "Camellia sinensis",
+    "Cordyceps sinensis"
+  ],
+  "question": {
+    "question": "What is the scientific decision for Matricaria chamomilla L. for generalized anxiety disorder in International?",
+    "indication": "generalized anxiety disorder",
+    "dosage_form": "",
+    "market": "International",
+    "product_type": "Botanical"
+  },
+  "records": [
+    {
+      "reference_id": "PMID_31006899",
+      "scientific_name": "Matricaria chamomilla",
+      "notes": "Systematic review and meta-analysis of randomized trials evaluated chamomile for state anxiety, generalized anxiety disorder, insomnia and sleep quality and concluded chamomile appears efficacious and safe for generalized anxiety disorder.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Therapeutic efficacy and safety of chamomile for state anxiety, generalized anxiety disorder, insomnia, and sleep quality",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/31006899/",
+      "pmid": "31006899",
+      "target_indication": "generalized anxiety disorder",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_27912875",
+      "scientific_name": "Matricaria chamomilla",
+      "notes": "Long-term randomized chamomile treatment was reported safe and significantly reduced moderate-to-severe generalized anxiety disorder symptoms, although it did not significantly reduce relapse rate.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Long-term chamomile (Matricaria chamomilla L.) treatment for generalized anxiety disorder: A randomized clinical trial",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27912875/",
+      "pmid": "27912875",
+      "target_indication": "generalized anxiety disorder",
+      "source_available": true
+    }
+  ]
+}

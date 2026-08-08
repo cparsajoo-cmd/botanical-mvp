@@ -1,0 +1,65 @@
+{
+  "case_number": 5,
+  "snapshot_id": "case005-independent-web-2026-08-08-v2",
+  "capture_metadata": {
+    "retrieval_method": "independent public search capture (PubMed/EMA/Kew)",
+    "retrieval_date": "2026-08-08",
+    "gold_truth_used_for_retrieval": false,
+    "candidate_discovery": "knowledge_retrieval_engine.get_candidate_plants / named-botanical path",
+    "query_basis": "question and structured case context only; reference answer/label not used for source selection"
+  },
+  "candidate_pool": [
+    "Valeriana officinalis",
+    "Melissa officinalis",
+    "Passiflora incarnata",
+    "Lavandula angustifolia",
+    "Humulus lupulus",
+    "Matricaria chamomilla",
+    "Tilia cordata",
+    "Withania somnifera",
+    "Gynostemma pentaphyllum",
+    "Ziziphus jujuba",
+    "Piper methysticum",
+    "Scutellaria baicalensis",
+    "Cimicifuga racemosa",
+    "Trigonella foenum-graecum",
+    "Serenoa repens",
+    "Urtica dioica",
+    "Hypericum perforatum",
+    "Crocus sativus",
+    "Rhodiola rosea"
+  ],
+  "question": {
+    "question": "What is the scientific decision for Cimicifuga racemosa (L.) Nutt. for Menopause support as Extract in EU?",
+    "indication": "Menopause support",
+    "dosage_form": "Extract",
+    "market": "EU",
+    "product_type": "Botanical"
+  },
+  "records": [
+    {
+      "reference_id": "PMID_22972105",
+      "scientific_name": "Cimicifuga racemosa",
+      "notes": "Cochrane systematic review concluded that there is currently insufficient evidence to support the use of black cohosh for menopausal symptoms; trial quality was uncertain.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Black cohosh (Cimicifuga spp.) for menopausal symptoms",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22972105/",
+      "pmid": "22972105",
+      "target_indication": "Menopause support",
+      "dosage_form": "Extract",
+      "source_available": true
+    },
+    {
+      "reference_id": "PMID_35403534",
+      "scientific_name": "Cimicifuga racemosa",
+      "notes": "2022 systematic review reported that well-designed studies of isopropanolic black cohosh extract generally showed reductions in hot flushes and improvement in mood, with no significant adverse reactions at recommended doses.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Black cohosh efficacy and safety for menopausal symptoms",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/35403534/",
+      "pmid": "35403534",
+      "target_indication": "Menopause support",
+      "dosage_form": "Extract",
+      "source_available": true
+    }
+  ]
+}

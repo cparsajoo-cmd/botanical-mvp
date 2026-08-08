@@ -161,3 +161,36 @@ def taxon_provenance(name: object) -> dict:
         "is_synonym": is_synonym(raw),
         "source": record.source if record is not None else "unmapped",
     }
+
+
+def taxon_match_key(name: object) -> str:
+    """Return a stable matching key for a scientific botanical name.
+
+    The key resolves known taxonomic synonyms first, then removes only
+    nomenclatural author citations (e.g. ``L.``, ``(L.) Moench``) while
+    preserving an infraspecific rank and epithet when one is present.
+    It is for identity matching only; display/provenance names remain
+    untouched.
+    """
+    raw = accepted_name(name)
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+
+    # Normalize hybrid markers and punctuation around tokens without
+    # guessing at taxonomic synonymy.
+    tokens = text.replace("×", " x ").split()
+    if not tokens:
+        return ""
+
+    # A botanical species identity minimally consists of genus + specific
+    # epithet.  Author citations begin after that in the ordinary binomial
+    # forms seen in EMA/Kew/PubMed records.  Preserve explicit
+    # infraspecific ranks because varieties/subspecies need not be treated
+    # as identical to the parent species.
+    keep = tokens[:2]
+    rank_tokens = {"subsp.", "subsp", "ssp.", "ssp", "var.", "var", "f.", "f", "nothosubsp.", "nothosubsp"}
+    if len(tokens) >= 4 and tokens[2].lower() in rank_tokens:
+        keep = tokens[:4]
+
+    return _norm(" ".join(keep))

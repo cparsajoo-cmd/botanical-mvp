@@ -9,6 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import pandas as pd
+import botanical_taxonomy as _botanical_taxonomy
 
 from concentration_normalizer import parse_concentration, format_concentration_info
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
@@ -3491,7 +3492,7 @@ class BotanicalRDCandidateEngine:
                 )
 
                 if plant:
-                    plant_key = self._norm(plant)
+                    plant_key = _botanical_taxonomy.taxon_match_key(plant)
                     index[plant_key] += " " + text
                     _record_source(plant_key, row)
                     _record_applicability(plant_key, row)
@@ -3522,7 +3523,7 @@ class BotanicalRDCandidateEngine:
                 plant = str(row.get("plant") or "").strip()
 
                 if plant:
-                    plant_key = self._norm(plant)
+                    plant_key = _botanical_taxonomy.taxon_match_key(plant)
                     index[plant_key] += " " + text
                     _record_source(plant_key, row)
                     _record_evidence_record(plant_key, row, text)
@@ -3548,7 +3549,7 @@ class BotanicalRDCandidateEngine:
                 f"ESCOP: {curated.get('escop_status', '')}. "
                 f"Safety: {curated.get('safety_desc', '')}."
             )
-            plant_key = self._norm(plant)
+            plant_key = _botanical_taxonomy.taxon_match_key(plant)
             index[plant_key] += " " + text
             # Curated evidence has no per-record URL, but it does have a
             # named, citable source — record that instead of leaving
@@ -3733,7 +3734,7 @@ class BotanicalRDCandidateEngine:
         # No compound-specific evidence found anywhere — fall back to
         # whatever's known about the plant in general, clearly weaker
         # but still better than treating it as zero evidence outright.
-        plant_key = self._norm(plant)
+        plant_key = _botanical_taxonomy.taxon_match_key(plant)
         plant_text = evidence_index.get(plant_key, "")
         return (
             plant_text.strip()[:6000],
@@ -3764,7 +3765,7 @@ class BotanicalRDCandidateEngine:
         """
         compound_clean = compound.split("[")[0].strip()
         compound_key = self._norm(compound_clean)
-        plant_key = self._norm(plant)
+        plant_key = _botanical_taxonomy.taxon_match_key(plant)
 
         items = (
             applicability_index.get(compound_key, []) +

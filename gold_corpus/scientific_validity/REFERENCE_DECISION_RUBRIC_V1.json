@@ -1,0 +1,35 @@
+{
+  "version": "reference-decision-rubric/1.0.0",
+  "purpose": "Freeze reference-label semantics before any future independent validation.",
+  "principles": {
+    "GO": [
+      "Supportive efficacy with high body-level certainty.",
+      "Normally requires at least two independent concordant high-level syntheses, or an authoritative well-established-use regulatory/clinical monograph with direct applicability.",
+      "No material unresolved safety or regulatory blocker."
+    ],
+    "GO WITH CAUTION": [
+      "Supportive efficacy but certainty below high, including a single synthesis, limited/small evidence body, explicit methodological limitation, or clinically relevant non-hard restriction.",
+      "Caution is not a failure state and must not be promoted to GO solely to increase agreement."
+    ],
+    "EXPERT REVIEW REQUIRED": [
+      "Material conflict among credible evidence, such as supportive versus null/negative evidence at the governing tier, or a newer credible contradiction of older governing evidence.",
+      "Unknown/unclear evidence alone is not conflict.",
+      "A positive high-level synthesis plus an older lower-tier null study is not automatically expert-review conflict."
+    ],
+    "INSUFFICIENT EVIDENCE": [
+      "No demonstrated benefit, null governing evidence, very-low/insufficient evidence without a defensible supportive body, or unresolved direction without material opposing evidence."
+    ],
+    "NO GO SAFETY": [
+      "Applicable serious safety risk established by structured safety evidence; zero serious-safety false negatives tolerated."
+    ],
+    "NO GO REGULATORY": [
+      "Applicable current legal/marketability blocker, including prohibition, exceeded mandatory limit, or structured authorization state not_authorized/denied/terminated for the matched jurisdiction/product context."
+    ]
+  },
+  "anti_leakage": [
+    "Rubric is frozen before future case labels are assigned.",
+    "Do not modify production rules to fit a frozen validation set.",
+    "Do not call uncertainty 'conflict' merely to fill the EXPERT REVIEW class.",
+    "Do not label single-synthesis supportive evidence as GO if the rubric would classify it as CAUTION."
+  ]
+}

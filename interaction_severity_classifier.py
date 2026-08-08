@@ -100,7 +100,7 @@ from severity_assignment_policy import (
     assign_contraindication_severity,
 )
 
-INTERACTION_SEVERITY_CLASSIFIER_VERSION = "1.0.0"
+INTERACTION_SEVERITY_CLASSIFIER_VERSION = "1.1.0"
 
 # The single canonical term this module ever contributes to a hard
 # hit-term set. Deliberately one stable string, not one string per
@@ -178,6 +178,7 @@ _INTERACTION_RELATION_PATTERNS = (
 # Precaution/monitoring-only language -- weaker still, informational.
 _PRECAUTION_PATTERNS = (
     r"\bcaution (?:is )?(?:advised|recommended|required)\b",
+    r"\badvis(?:e|es|ed|ing) caution\b",
     r"\bmay require dose adjustment\b",
     r"\bmonitor(?:ing)? (?:is )?(?:recommended|advised|required)\b",
     r"\bconsult (?:a |your )?(?:physician|doctor|healthcare provider)\b",

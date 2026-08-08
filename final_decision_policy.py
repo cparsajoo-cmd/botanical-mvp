@@ -12,12 +12,63 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping
 
+from interaction_severity_classifier import (
+    InteractionSeverityTier, classify_interaction_assertion,
+)
+
 from eligibility_gate import EligibilityDecision, EligibilityStatus
 from evidence_interpretation import (
     interpret_evidence,
     DIRECTION_POSITIVE, DIRECTION_NEGATIVE, DIRECTION_NULL,
     DIRECTION_MIXED, DIRECTION_UNCLEAR,
 )
+
+
+
+
+class AssessmentDomain(str, Enum):
+    THERAPEUTIC = "therapeutic"
+    PREPARATION_SPEC = "preparation_spec"
+    IDENTITY_QUALITY = "identity_quality"
+    SAFETY = "safety"
+
+
+def assessment_domain_from_indication(indication: object) -> AssessmentDomain:
+    """Map explicit non-therapeutic assessment labels to decision domains.
+
+    This is intentionally narrow: ordinary therapeutic indications remain
+    THERAPEUTIC.  The labels are the public domain names used by the
+    validation/question layer, not plant- or case-specific values.
+    """
+    n = " ".join(str(indication or "").strip().lower().replace("_", " ").split())
+    if n in {"preparation specification", "preparation spec"}:
+        return AssessmentDomain.PREPARATION_SPEC
+    if n in {"identity/quality", "identity quality", "identity and quality"}:
+        return AssessmentDomain.IDENTITY_QUALITY
+    if n == "safety":
+        return AssessmentDomain.SAFETY
+    return AssessmentDomain.THERAPEUTIC
+
+
+def _has_domain_evidence(records: Iterable[Mapping]) -> bool:
+    return any(
+        str(rec.get("assertion_text") or rec.get("text") or "").strip()
+        for rec in records
+    )
+
+
+def _safety_domain_requires_review(records: Iterable[Mapping]) -> bool:
+    for rec in records:
+        text = str(rec.get("assertion_text") or rec.get("text") or "")
+        result = classify_interaction_assertion(text)
+        if result.tier in {
+            InteractionSeverityTier.PRECAUTION_CAUTION,
+            InteractionSeverityTier.MODERATE_INTERACTION,
+            InteractionSeverityTier.SERIOUS_HIGH_RISK_INTERACTION,
+            InteractionSeverityTier.SERIOUS_CONTRAINDICATION,
+        }:
+            return True
+    return False
 
 
 class ScientificEvidenceSignal(str, Enum):
@@ -137,13 +188,47 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
     )
 
 
-def decide_final(eligibility: EligibilityDecision, scientific: ScientificEvidenceResolution) -> FinalDecision:
+def decide_final(
+    eligibility: EligibilityDecision,
+    scientific: ScientificEvidenceResolution,
+    *,
+    assessment_domain: AssessmentDomain = AssessmentDomain.THERAPEUTIC,
+    records: Iterable[Mapping] = (),
+) -> FinalDecision:
     if eligibility.status == EligibilityStatus.NO_GO_REGULATORY:
         return FinalDecision(FinalDecisionStatus.NO_GO_REGULATORY, eligibility.gate_reason)
     if eligibility.status == EligibilityStatus.NO_GO_SAFETY:
         return FinalDecision(FinalDecisionStatus.NO_GO_SAFETY, eligibility.gate_reason)
     if eligibility.status == EligibilityStatus.EXPERT_REVIEW_REQUIRED:
         return FinalDecision(FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, eligibility.gate_reason)
+
+    # Non-therapeutic scientific questions must not silently inherit the
+    # therapeutic efficacy decision path.  Preparation and identity/quality
+    # evidence confirms a domain claim, but does not by itself justify an
+    # automatic product-development GO in this six-class decision framework.
+    # Route an evidenced claim to expert review; absent evidence remains
+    # insufficient.  This is domain-generic and independent of plant identity.
+    if assessment_domain in {AssessmentDomain.PREPARATION_SPEC, AssessmentDomain.IDENTITY_QUALITY}:
+        if _has_domain_evidence(records):
+            return FinalDecision(
+                FinalDecisionStatus.EXPERT_REVIEW_REQUIRED,
+                f"{assessment_domain.value} evidence is present and requires domain-specific expert verification before a development GO.",
+            )
+        return FinalDecision(
+            FinalDecisionStatus.INSUFFICIENT_EVIDENCE,
+            f"No usable {assessment_domain.value} evidence was available for domain-specific assessment.",
+        )
+
+    # A Safety-domain question is itself asking whether a safety finding needs
+    # action.  Explicit interaction precaution/moderate-or-higher language
+    # therefore routes to expert review even when it is not severe enough to
+    # become a therapeutic hard NO-GO.  Hard NO-GO states above remain
+    # authoritative and take precedence.
+    if assessment_domain == AssessmentDomain.SAFETY and _safety_domain_requires_review(records):
+        return FinalDecision(
+            FinalDecisionStatus.EXPERT_REVIEW_REQUIRED,
+            "Safety-domain evidence contains an explicit interaction precaution or stronger interaction assertion requiring expert review.",
+        )
     if scientific.signal == ScientificEvidenceSignal.CONFLICT:
         return FinalDecision(FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, scientific.reason)
     if eligibility.status == EligibilityStatus.INCOMPLETE:

@@ -41,7 +41,7 @@ from comparative_rationale import build_comparative_rationale, build_comparative
 from regulatory_barrier_classifier import classify_regulatory_barriers
 from final_decision_policy import (
     resolve_scientific_evidence, decide_final, FinalDecisionStatus,
-    final_status_from_engine_row,
+    final_status_from_engine_row, assessment_domain_from_indication,
 )
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
 # Phase 4 — Eligibility Gate. See eligibility_gate.py's module docstring
@@ -1690,7 +1690,10 @@ class BotanicalRDCandidateEngine:
                         evidence_contributing_records
                     )
                     final_decision = decide_final(
-                        eligibility_decision, scientific_evidence_resolution
+                        eligibility_decision,
+                        scientific_evidence_resolution,
+                        assessment_domain=assessment_domain_from_indication(indication),
+                        records=evidence_contributing_records,
                     )
 
                     # The structured EligibilityDecision is authoritative.

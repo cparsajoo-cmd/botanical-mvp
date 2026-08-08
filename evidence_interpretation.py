@@ -291,13 +291,24 @@ _POSITIVE_COMPARATIVE_REGEXES = (
     re.compile(r"\bstatistically\s+significant\s+(?:change|improvement|reduction|benefit|effect|effects|difference)\b"),
     re.compile(r"\bsignificant\s+difference\s+between\s+(?:the\s+)?(?:two\s+)?groups\b"),
     re.compile(r"\breduced\s+the\s+(?:total\s+)?number\s+of\b"),
-    re.compile(r"\bsignificantly\s+(?:reduced|improved|lowered|increased)\b"),
+    re.compile(r"\bsignificantly\s+(?:reduces?|reduced|improves?|improved|lowers?|lowered|increases?|increased)\b"),
     re.compile(r"\b(?:greater|larger)\s+improvement\b"),
     re.compile(r"\b(?:clinically\s+meaningful\s+)?lower\s+(?:incidence|severity|rate|risk)\b"),
-    re.compile(r"\b(?:suggested|showed|found)\s+(?:a\s+)?(?:small\s+)?(?:benefit|reduction|improvement|protective\s+effect)\b"),
+    re.compile(r"\b(?:suggested|suggests|showed|shows|found|reports?|reported)\s+(?:a\s+)?(?:small\s+)?(?:benefit|reduction|improvement|protective\s+effect)\b"),
     re.compile(r"\bshorter\s+(?:\w+\s+){0,3}(?:than|compared\s+with|compared\s+to)\s+placebo\b"),
-    re.compile(r"\bimproved\s+(?:several\s+|some\s+|multiple\s+)?(?:clinical\s+)?(?:symptoms?|outcomes?|markers?|scores?|quality\s+of\s+life)\b"),
+    # Generic outcome grammar: allows an indication adjective between the
+    # improvement verb and the endpoint (e.g. "improved osteoarthritis
+    # symptoms") without enumerating plants or diseases.
+    re.compile(r"\bimproved\s+(?:(?!adverse\b|side\s+effect)\w+\s+){0,5}(?:symptoms?|outcomes?|markers?|scores?|function|quality\s+of\s+life)\b"),
     re.compile(r"\b(?:found|showed|reported)\s+(?:a\s+)?(?:reduction|improvement)\s+in\b"),
+    # Benefit-bearing effect adjectives.  These encode outcome polarity, not
+    # a botanical/indication lookup, so "significant adverse effects" is not
+    # accidentally treated as efficacy.
+    re.compile(r"\b(?:exerts?|shows?|demonstrates?|produces?|reports?)\s+significant\s+(?:(?:clinical|therapeutic|beneficial|anxiolytic|protective|hepatoprotective|anti-inflammatory|analgesic)\s+){1,3}effects?\b"),
+    # Common burden-reduction grammar for clinical symptoms and validated
+    # liver-injury markers.
+    re.compile(r"\b(?:significantly|substantially)\s+(?:reduces?|reduced|lowers?|lowered)\s+(?:[a-z-]+\s+){0,4}(?:symptoms?|severity|pain|risk|incidence|transaminases?|aminotransferases?|liver\s+enzymes?)\b"),
+    re.compile(r"\b(?:may|might|can|could)\s+be\s+beneficial(?:\s+for)?\b"),
 )
 
 def _positive_comparative_hits(text: str) -> List[str]:

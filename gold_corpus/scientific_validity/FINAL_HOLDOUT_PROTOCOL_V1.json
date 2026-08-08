@@ -1,7 +1,14 @@
 {
-  "version": "scientific-validity-final-holdout/1.0.0",
+  "version": "reference-grounded-final-holdout/1.0.0",
   "engine_version_required": "1.4.0",
-  "purpose": "One finite, final external-validation benchmark for Scientific Decision Engine v1 decision support.",
+  "validation_type": "reference_grounded_not_human_expert_agreement",
+  "allowed_claim": "Reference-grounded validated for the frozen benchmark/domain, if and only if the release gate passes.",
+  "forbidden_claims": [
+    "validated against human experts",
+    "expert agreement demonstrated",
+    "clinically validated",
+    "regulatory approval demonstrated"
+  ],
   "design": {
     "n_cases": 24,
     "classes": {
@@ -14,10 +21,14 @@
     },
     "reference_frozen_before_engine_run": true,
     "engine_blinded_to_reference_labels": true,
-    "exclude_all_cases_used_for_remediation": true,
-    "independent_human_adjudicators_min": 2,
-    "inter_rater_agreement_min": 0.7,
-    "adjudication_disagreements_resolved_before_freeze": true
+    "exclude_all_cases_used_for_engine_remediation": true,
+    "reference_defining_evidence_must_not_be_supplied_to_engine": true,
+    "reference_provenance_required_for_every_case": true,
+    "reference_source_priority": [
+      "regulatory authority decision/monograph for safety or regulatory classes",
+      "current high-quality systematic review/meta-analysis for efficacy classes",
+      "authoritative evidence-based monograph/guideline where appropriate"
+    ]
   },
   "release_thresholds": {
     "accuracy_min": 0.8,
@@ -29,5 +40,5 @@
     "regulatory_false_negatives_max": 0,
     "INSUFFICIENT_EVIDENCE_miss_rate_max": 0.2
   },
-  "rule": "If the frozen benchmark fails, v1 is not scientifically validated. Do not tune on the final holdout; open a new engine version and a new future holdout instead."
+  "anti_overfitting_rule": "If this frozen final holdout fails, do not tune engine 1.4.0 on its labels and rerun it as if independent. Open a new engine version; the failed set becomes regression-only, and any future validity estimate requires a newly frozen independent set."
 }

@@ -543,7 +543,10 @@ def test_deterministic_output_contract_locked_engineering_regression():
     # (design review item 2 — NORMAL / PRELIMINARY_OR_EXPERT_REVIEW /
     # EXCLUDED_NO_GO, see eligibility_gate.RankingPartition) is a new,
     # additive column.
-    assert len(result.columns) == 82
+    #
+    # Bumped 82 -> 83 by Scientific Decision Validation: Final_Decision_Status
+    # is the explicit six-class source-of-truth for final scientific decisions.
+    assert len(result.columns) == 83
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns

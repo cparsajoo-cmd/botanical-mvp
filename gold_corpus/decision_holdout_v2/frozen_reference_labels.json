@@ -1,0 +1,12 @@
+{
+  "version": "decision-holdout-v2/1.0.0",
+  "frozen_on": "2026-08-08",
+  "policy": "Reference labels were fixed from a source distinct from the engine-side evidence snapshot before engine execution.",
+  "cases": [
+    {"case_id":"v2_001_lavender_anxiety","botanical":"Lavandula angustifolia","indication":"Anxiety","expected":"GO","reference_pmid":"37325306","reference_basis":"2023 systematic review/meta-analysis found essential oils effective for anxiety; lavender was among effective interventions."},
+    {"case_id":"v2_002_boswellia_joint","botanical":"Boswellia serrata","indication":"Joint & muscle comfort","expected":"GO","reference_pmid":"38365549","reference_basis":"2024 systematic review/meta-analysis supports Boswellia serrata extract for osteoarthritis outcomes."},
+    {"case_id":"v2_003_silymarin_liver","botanical":"Silybum marianum","indication":"Liver support / detox","expected":"GO WITH CAUTION","reference_pmid":"38579127","reference_basis":"2024 systematic review/meta-analysis reports metabolic, liver injury and histology improvements but explicitly states effects require confirmation."},
+    {"case_id":"v2_004_garlic_cardiovascular","botanical":"Allium sativum","indication":"Cardiovascular / circulation","expected":"GO WITH CAUTION","reference_pmid":"40628369","reference_basis":"2025 dose-response meta-analysis found a significant SBP reduction but no significant DBP effect and calls for further high-quality trials."},
+    {"case_id":"v2_005_elderberry_respiratory","botanical":"Sambucus nigra","indication":"Cold & flu / respiratory","expected":"INSUFFICIENT EVIDENCE","reference_pmid":"33827515","reference_basis":"2021 systematic review found possible treatment benefits but judged both benefit and harm evidence uncertain and insufficient for firm conclusions."}
+  ]
+}

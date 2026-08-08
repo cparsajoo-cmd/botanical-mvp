@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Silybum marianum for Chronic liver disease support?",
+    "indication": "Chronic liver disease support",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Silybum marianum"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_12427501",
+      "scientific_name": "Silybum marianum",
+      "notes": "Systematic review and meta-analysis of milk thistle for liver disease found the evidence insufficient to establish clear clinical benefit across liver diseases and emphasized limitations of the available trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Milk thistle for the treatment of liver disease",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/12427501/",
+      "pmid": "12427501",
+      "target_indication": "Chronic liver disease support",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2002
+    },
+    {
+      "reference_id": "PUBMED_40221681",
+      "scientific_name": "Silybum marianum",
+      "notes": "Recent meta-analysis of randomized trials found silymarin significantly reduced AST and ALT across liver-injury etiologies, supporting biochemical benefit.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Meta-analysis on randomized trials targeting liver injury with silymarin",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/40221681/",
+      "pmid": "40221681",
+      "target_indication": "Chronic liver disease support",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025
+    }
+  ]
+}

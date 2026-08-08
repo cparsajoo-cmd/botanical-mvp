@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Nigella sativa for Hypertension?",
+    "indication": "Hypertension",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Nigella sativa"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_27512971",
+      "scientific_name": "Nigella sativa",
+      "notes": "Meta-analysis of randomized controlled trials found short-term Nigella sativa significantly reduced systolic and diastolic blood pressure, but stated that more evidence is needed to strengthen the evidence and assess long-term effects.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "A systematic review and meta-analysis of randomized controlled trials investigating Nigella sativa on blood pressure",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/27512971/",
+      "pmid": "27512971",
+      "target_indication": "Hypertension",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2016
+    },
+    {
+      "reference_id": "PUBMED_33957004",
+      "scientific_name": "Nigella sativa",
+      "notes": "Randomized double-blind placebo-controlled trial in hypertensive patients found Nigella sativa seed oil produced additional antihypertensive effects with no renal, hepatic, or patient-reported adverse events.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Nigella sativa seeds oil in hypertensive patients",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/33957004/",
+      "pmid": "33957004",
+      "target_indication": "Hypertension",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2021
+    }
+  ]
+}

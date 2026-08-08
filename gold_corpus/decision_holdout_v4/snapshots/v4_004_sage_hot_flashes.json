@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Salvia officinalis for Menopausal hot flashes?",
+    "indication": "Menopausal hot flashes",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Salvia officinalis"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_33615001",
+      "scientific_name": "Salvia officinalis",
+      "notes": "Randomized double-blind placebo-controlled trial found Salvia officinalis significantly reduced menopausal rating and hot-flush severity scores and was well tolerated.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Effectiveness and tolerability of a standardized extract from Salvia officinalis in menopausal complaints",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/33615001/",
+      "pmid": "33615001",
+      "target_indication": "Menopausal hot flashes",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2021
+    }
+  ]
+}

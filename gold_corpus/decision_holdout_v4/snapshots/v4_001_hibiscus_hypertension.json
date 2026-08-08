@@ -1,1 +1,41 @@
-v4_001_hibiscus_hypertension.json
+{
+  "question": {
+    "question": "What is the scientific decision for Hibiscus sabdariffa for Mild-to-moderate hypertension?",
+    "indication": "Mild-to-moderate hypertension",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Hibiscus sabdariffa"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_34694241",
+      "scientific_name": "Hibiscus sabdariffa",
+      "notes": "Systematic review and meta-analysis of 13 randomized trials found Hibiscus sabdariffa significantly reduced systolic and diastolic blood pressure versus placebo in mild-to-moderate hypertension; effects were not significant in the metabolic-syndrome subgroup and further RCTs are required to define long-term efficacy and who benefits most.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Efficacy of Hibiscus sabdariffa on Reducing Blood Pressure in Patients With Mild-to-Moderate Hypertension",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/34694241/",
+      "pmid": "34694241",
+      "target_indication": "Mild-to-moderate hypertension",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022
+    },
+    {
+      "reference_id": "PUBMED_20018807",
+      "scientific_name": "Hibiscus sabdariffa",
+      "notes": "Randomized double-blind placebo-controlled trial found hibiscus tea lowered systolic blood pressure versus placebo after six weeks, while the diastolic difference was not statistically significant.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Hibiscus sabdariffa L. tea lowers blood pressure in prehypertensive and mildly hypertensive adults",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20018807/",
+      "pmid": "20018807",
+      "target_indication": "Mild-to-moderate hypertension",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2010
+    }
+  ]
+}

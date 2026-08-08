@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Foeniculum vulgare for Primary dysmenorrhea?",
+    "indication": "Primary dysmenorrhea",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Foeniculum vulgare"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_23559811",
+      "scientific_name": "Foeniculum vulgare",
+      "notes": "Placebo-controlled trial found fennel produced significantly greater pain relief than placebo in primary dysmenorrhea and concluded fennel was effective for menstrual pain.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Effect of fennel on pain intensity in dysmenorrhoea",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/23559811/",
+      "pmid": "23559811",
+      "target_indication": "Primary dysmenorrhea",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2012
+    },
+    {
+      "reference_id": "PUBMED_41653970",
+      "scientific_name": "Foeniculum vulgare",
+      "notes": "2026 systematic review/meta-analysis of Apiaceae plants found fennel-containing evidence potentially effective for dysmenorrhea, including positive outcomes versus standard treatments, while noting that further high-quality trials are essential.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Efficacy of herbaceous Apiaceae plants in primary dysmenorrhea",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/41653970/",
+      "pmid": "41653970",
+      "target_indication": "Primary dysmenorrhea",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2026
+    }
+  ]
+}

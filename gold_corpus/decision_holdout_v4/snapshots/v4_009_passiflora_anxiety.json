@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Passiflora incarnata for Anxiety?",
+    "indication": "Anxiety",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Passiflora incarnata"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_24140586",
+      "scientific_name": "Passiflora incarnata",
+      "notes": "Clinical review concluded that the putative efficacy of Passiflora is not adequately corroborated because clinical studies have important methodological weaknesses and more rigorous trials are needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Passiflora incarnata: ethnopharmacology, clinical application, safety and evaluation of clinical trials",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24140586/",
+      "pmid": "24140586",
+      "target_indication": "Anxiety",
+      "study_design": "Systematic Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2013
+    },
+    {
+      "reference_id": "PUBMED_11679026",
+      "scientific_name": "Passiflora incarnata",
+      "notes": "Small double-blind randomized controlled trial in generalized anxiety disorder found Passiflora extract and oxazepam both effective with no significant end-of-trial difference; the authors stated that a large-scale trial is justified.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Passionflower in the treatment of generalized anxiety: a pilot double-blind randomized controlled trial with oxazepam",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11679026/",
+      "pmid": "11679026",
+      "target_indication": "Anxiety",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2001
+    }
+  ]
+}

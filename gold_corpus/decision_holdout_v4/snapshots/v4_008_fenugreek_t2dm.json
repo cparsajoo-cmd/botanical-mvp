@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Trigonella foenum-graecum for Type 2 diabetes glycemic control?",
+    "indication": "Type 2 diabetes glycemic control",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Trigonella foenum-graecum"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_37762302",
+      "scientific_name": "Trigonella foenum-graecum",
+      "notes": "Systematic review and meta-analysis of randomized trials found fenugreek significantly improved fasting glucose, post-load glucose and HbA1c, with no severe adverse events although mild gastrointestinal effects occurred.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "The Effect of Fenugreek in Type 2 Diabetes and Prediabetes",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/37762302/",
+      "pmid": "37762302",
+      "target_indication": "Type 2 diabetes glycemic control",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2023
+    },
+    {
+      "reference_id": "PUBMED_36837450",
+      "scientific_name": "Trigonella foenum-graecum",
+      "notes": "Meta-analysis reported beneficial HbA1c findings but fasting and postprandial glucose estimates were not significant and stated that study quality and heterogeneity remain concerns requiring rigorous trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Effect of Fenugreek on Hyperglycemia",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/36837450/",
+      "pmid": "36837450",
+      "target_indication": "Type 2 diabetes glycemic control",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2023
+    }
+  ]
+}

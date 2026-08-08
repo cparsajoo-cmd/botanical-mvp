@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Vitex agnus-castus for Premenstrual syndrome?",
+    "indication": "Premenstrual syndrome",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Vitex agnus-castus"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_29063202",
+      "scientific_name": "Vitex agnus-castus",
+      "notes": "Systematic review of eight randomized trials reported all included trials positive for Vitex in PMS/PMDD and generally good tolerability, while noting variability in diagnostic criteria, outcome measures and preparations.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Vitex agnus castus for premenstrual syndrome and premenstrual dysphoric disorder",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/29063202/",
+      "pmid": "29063202",
+      "target_indication": "Premenstrual syndrome",
+      "study_design": "Systematic Review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2017
+    },
+    {
+      "reference_id": "PUBMED_22359078",
+      "scientific_name": "Vitex agnus-castus",
+      "notes": "Randomized double-blind placebo-controlled trial found significant improvement in premenstrual symptoms with Vitex compared with placebo.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Therapeutic effect of Vitex agnus castus in patients with premenstrual syndrome",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22359078/",
+      "pmid": "22359078",
+      "target_indication": "Premenstrual syndrome",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2012
+    }
+  ]
+}

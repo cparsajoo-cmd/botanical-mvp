@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Cynara scolymus for Hyperlipidemia?",
+    "indication": "Hyperlipidemia",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Cynara scolymus"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_28609140",
+      "scientific_name": "Cynara scolymus",
+      "notes": "Systematic review and meta-analysis of randomized trials found artichoke extract significantly reduced total cholesterol, LDL cholesterol and triglycerides, suggesting a role alongside lipid-lowering therapy in hyperlipidemia.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Lipid-lowering activity of artichoke extracts",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/28609140/",
+      "pmid": "28609140",
+      "target_indication": "Hyperlipidemia",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2018
+    },
+    {
+      "reference_id": "PUBMED_18424099",
+      "scientific_name": "Cynara scolymus",
+      "notes": "Randomized double-blind placebo-controlled trial found a modest but statistically favorable reduction in total cholesterol with standardized artichoke leaf extract; LDL, HDL and triglyceride differences were not significant.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Artichoke leaf extract reduces plasma cholesterol",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18424099/",
+      "pmid": "18424099",
+      "target_indication": "Hyperlipidemia",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2008
+    }
+  ]
+}

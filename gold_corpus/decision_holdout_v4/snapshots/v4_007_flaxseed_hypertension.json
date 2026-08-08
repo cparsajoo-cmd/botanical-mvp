@@ -1,0 +1,41 @@
+{
+  "question": {
+    "question": "What is the scientific decision for Linum usitatissimum for Hypertension?",
+    "indication": "Hypertension",
+    "dosage_form": "oral",
+    "market": ""
+  },
+  "candidate_pool": [
+    "Linum usitatissimum"
+  ],
+  "records": [
+    {
+      "reference_id": "PUBMED_26071633",
+      "scientific_name": "Linum usitatissimum",
+      "notes": "Systematic review and meta-analysis of controlled trials found flaxseed supplementation significantly reduced systolic and diastolic blood pressure overall, with effects varying by duration and supplement type.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Effects of flaxseed supplements on blood pressure",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/26071633/",
+      "pmid": "26071633",
+      "target_indication": "Hypertension",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2016
+    },
+    {
+      "reference_id": "PUBMED_30562057",
+      "scientific_name": "Linum usitatissimum",
+      "notes": "Clinical-trial review described a significant beneficial cardiovascular effect of dietary flaxseed while emphasizing both what is known and remaining uncertainties.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Dietary flaxseed: what we know and do not know about its effects on cardiovascular disease",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/30562057/",
+      "pmid": "30562057",
+      "target_indication": "Hypertension",
+      "study_design": "Review of Clinical Trials",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2019
+    }
+  ]
+}

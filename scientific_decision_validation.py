@@ -12,6 +12,7 @@ from typing import Iterable
 from applicability_check import ReferenceDomain
 from assertion_vocabulary import AssertionState, AssertionType, SeverityLevel
 from final_decision_policy import FinalDecisionStatus
+from reference_adjudication import adjudicated_final_decision
 from reference_precedence import ResolutionStatus
 
 
@@ -24,6 +25,9 @@ class DecisionComparison:
 
 
 def derive_reference_final_decision(gold_case) -> FinalDecisionStatus:
+    adjudicated = adjudicated_final_decision(gold_case.case_id)
+    if adjudicated is not None:
+        return adjudicated
     outcomes = list(gold_case.resolved_outcomes or [])
 
     # Any unresolved governing reference conflict is an explicit abstention.

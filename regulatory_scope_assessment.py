@@ -224,9 +224,34 @@ _UNIT_ALIASES = {
 _NUMBER_UNIT_RE = re.compile(
     r"([\d]+(?:[.,]\d+)?)\s*(mg|mcg|\u00b5g|ug|g|milligrams?|micrograms?|grams?)\b"
 )
-_LIMIT_CUE_RE = re.compile(
-    r"\b(?:less than|no more than|not more than|maximum of|must not exceed|"
-    r"shall not exceed|may not exceed|up to)\s+" + _NUMBER_UNIT_RE.pattern
+
+# Root-cause fix (Targeted Generalization Fix, Blocker 2, part 2):
+# different limit phrasings have different INCLUSIVE/EXCLUSIVE boundary
+# semantics, and treating them all as the same ">=" comparison silently
+# mislabels a compliant candidate as a violation (or vice versa) at the
+# exact boundary value:
+#   - "less than X"                              -> X itself is NOT
+#     compliant; violation is actual >= X (strict/exclusive limit).
+#   - "no more than X" / "not more than X" /
+#     "maximum (of) X" / "must not exceed X" /
+#     "shall not exceed X" / "may not exceed X" /
+#     "up to X" / "not exceeding X"               -> X itself IS
+#     compliant; violation is actual > X (inclusive limit).
+#   - "more than X ... prohibited"                -> same as the
+#     inclusive-limit family: X itself is compliant, violation is
+#     actual > X.
+# Each family is its own regex group below so the comparator used at
+# evaluation time is read directly off of which phrasing matched,
+# instead of being assumed.
+_STRICT_LIMIT_CUE_RE = re.compile(
+    r"\bless than\s+" + _NUMBER_UNIT_RE.pattern
+)
+_INCLUSIVE_LIMIT_CUE_RE = re.compile(
+    r"\b(?:no more than|not more than|maximum(?:\s+of)?|must not exceed|"
+    r"shall not exceed|may not exceed|up to|not exceeding)\s+" + _NUMBER_UNIT_RE.pattern
+)
+_MORE_THAN_PROHIBITED_RE = re.compile(
+    r"\bmore than\s+" + _NUMBER_UNIT_RE.pattern + r"\b(?:(?!\.).){0,40}?\b(?:prohibited|banned|not permitted)\b"
 )
 
 _UNIT_TO_MG = {"mg": 1.0, "mcg": 0.001, "g": 1000.0}
@@ -239,10 +264,152 @@ def _to_mg(value: float, unit: str) -> Optional[float]:
     return value * _UNIT_TO_MG[canon]
 
 
+# Words that can follow a number+unit before the constituent name itself
+# ("less than 800 mg **of** Compound-X") and must be skipped rather than
+# captured as part of the name.
+_CONSTITUENT_LEAD_WORDS = {"of", "the", "a", "an"}
+# Words that can trail a captured constituent name and must be trimmed
+# (the same closed-class stopword set used for regulatory qualifiers,
+# plus a few dose-clause-specific connectors).
+_CONSTITUENT_TRAIL_STOPWORDS = _NON_QUALIFIER_CONTINUATION_WORDS | {
+    "per", "daily", "portion", "portions", "serving", "servings", "day",
+}
+
+
+def _clean_constituent_phrase(raw: str) -> str:
+    """Normalize a short constituent noun phrase without knowing its identity."""
+    s=(raw or "").strip(" \t,;:.()")
+    # Remove generic regulatory scaffolding that can precede the actual entity.
+    s=re.sub(
+        r"^(?:the\s+)?(?:amount|content|level|quantity|concentration)\s+of\s+",
+        "", s,
+    )
+    s=re.sub(r"^(?:the|a|an)\s+", "", s)
+    words=[w.strip(" ,;:.()") for w in s.split() if w.strip(" ,;:.()")]
+    while words and words[0] in _CONSTITUENT_LEAD_WORDS:
+        words.pop(0)
+    while words and words[-1] in _CONSTITUENT_TRAIL_STOPWORDS:
+        words.pop()
+    return " ".join(words[-5:])
+
+
+def _extract_constituent_aliases(
+    text: str, number_unit_match: "re.Match"
+) -> tuple[str, ...]:
+    """Return generic aliases for the constituent governed by a numeric limit.
+
+    Supports both common regulatory grammars:
+      * ``less than 800 mg of Compound-X``
+      * ``Compound-X shall not exceed 800 mg``
+
+    Parenthetical aliases are preserved generically, e.g.
+    ``epigallocatechin-3-gallate (EGCG)`` yields both the long name and
+    ``egcg``.  No constituent name is hard-coded.
+    """
+    aliases=[]
+
+    # Grammar A: entity follows number+unit.
+    tail=text[number_unit_match.end(2):number_unit_match.end(2)+120]
+    tail=re.sub(r"^\s*(?:of\s+)?", "", tail)
+    # Token-by-token parsing is deliberately used instead of a greedy noun-
+    # phrase regex: regulatory prose commonly continues immediately with
+    # "per daily portion", "is permitted", "are prohibited", etc.
+    tokens=re.findall(r"\([a-z0-9\-]{2,24}\)|[a-z0-9][a-z0-9\-]*", tail)
+    phrase_tokens=[]
+    alias_token=None
+    hard_stops=_CONSTITUENT_TRAIL_STOPWORDS | {
+        "is", "are", "was", "were", "shall", "must", "may", "should",
+        "permitted", "allowed", "prohibited", "banned", "restricted",
+        "required", "require", "requires", "provided", "provide", "provides",
+    }
+    for tok in tokens:
+        if tok.startswith("(") and tok.endswith(")"):
+            if phrase_tokens:
+                alias_token=tok[1:-1]
+            break
+        if tok in hard_stops:
+            break
+        phrase_tokens.append(tok)
+        if len(phrase_tokens) >= 5:
+            break
+    phrase=_clean_constituent_phrase(" ".join(phrase_tokens))
+    if phrase:
+        aliases.append(phrase)
+    if alias_token:
+        aliases.append(alias_token.lower())
+
+    # Grammar B: entity precedes the comparator phrase.
+    prefix=text[max(0, number_unit_match.start()-140):number_unit_match.start()]
+    # Keep the final clause segment, not an earlier unrelated sentence.
+    prefix=re.split(r"[.;:]|\b(?:and|but|whereas|while)\b", prefix)[-1].strip()
+    # Remove the comparator's auxiliary wording if it lies in the prefix.
+    prefix=re.sub(
+        r"\b(?:shall|must|may)\s+not\s+exceed\s*$|"
+        r"\b(?:not exceeding|no more than|not more than|maximum(?:\s+of)?|"
+        r"up to|less than)\s*$",
+        "", prefix,
+    ).strip()
+    # Capture an optional parenthetical alias at the end of the entity phrase.
+    pm=re.search(
+        r"((?:the\s+)?(?:amount|content|level|quantity|concentration)\s+of\s+)?"
+        r"([a-z][a-z0-9\-]*(?:\s+[a-z0-9\-]+){0,5})"
+        r"(?:\s*\(([a-z0-9\-]{2,24})\))?\s*$",
+        prefix,
+    )
+    if pm:
+        phrase=_clean_constituent_phrase(pm.group(2))
+        if phrase:
+            aliases.append(phrase)
+        if pm.group(3):
+            aliases.append(pm.group(3).strip().lower())
+
+    # Stable dedup; reject generic words that are not usable constituent identities.
+    generic={
+        "", "daily", "portion", "serving", "product", "extract", "preparation",
+        "amount", "content", "level", "quantity", "concentration",
+    }
+    return tuple(dict.fromkeys(a for a in aliases if a not in generic))
+
+
+def _extract_constituent_name(text: str, number_unit_match: "re.Match") -> str:
+    """Backward-compatible primary constituent name."""
+    aliases=_extract_constituent_aliases(text, number_unit_match)
+    return aliases[0] if aliases else ""
+
+
+def _find_constituent_amount(
+    ctx: str, constituent: str | tuple[str, ...]
+) -> Optional["re.Match"]:
+    """Find the amount adjacent to the regulated entity, not the first number.
+
+    ``constituent`` may be a primary name or a tuple of generic aliases.
+    Both ``900 mg Compound-X`` and ``Compound-X: 900 mg`` are supported.
+    """
+    aliases=(constituent,) if isinstance(constituent, str) else tuple(constituent)
+    for alias in aliases:
+        if not alias:
+            continue
+        const_pattern=re.escape(alias)
+        before_re=re.compile(
+            _NUMBER_UNIT_RE.pattern + r"\s*(?:of\s+)?" + const_pattern + r"\b"
+        )
+        m=before_re.search(ctx)
+        if m:
+            return m
+        after_re=re.compile(
+            r"\b" + const_pattern + r"\b[\s:(=-]{0,8}" + _NUMBER_UNIT_RE.pattern
+        )
+        m=after_re.search(ctx)
+        if m:
+            return m
+    return None
+
+
 @dataclass(frozen=True)
 class DoseThresholdFinding:
     limit_value: float
     limit_unit: str
+    constituent: str
     actual_value: Optional[float]
     actual_unit: Optional[str]
     violates: Optional[bool]  # None when no candidate value could be found
@@ -252,54 +419,67 @@ def detect_dose_threshold_violation(
     finding_text: str,
     candidate_context_text: str = "",
 ) -> Optional[DoseThresholdFinding]:
-    """Detect a "must contain less than X <unit>" style regulatory dose
-    limit in ``finding_text`` and, if the candidate's own declared
-    context states a numeric amount, determine whether it violates that
-    limit.
+    """Detect a "must contain less than X <unit> <constituent>" style
+    regulatory dose limit in ``finding_text`` and, if the candidate's
+    own declared context states a numeric amount FOR THAT SAME
+    CONSTITUENT, determine whether it violates the limit.
 
-    Deliberately generic: it does not know about EGCG, green tea, or any
-    other specific compound — it only looks for a generic
-    limit-cue-phrase-plus-number-and-unit pattern, then compares against
-    the first number-and-unit mentioned in the candidate's own context
-    text. Returns None if no limit clause is found in ``finding_text``
-    at all (the ordinary case — most regulatory findings are not
-    dose-based).
+    Deliberately generic: it does not know about EGCG, green tea, or
+    any other specific compound — it only looks for a generic
+    limit-cue-phrase-plus-number-and-unit pattern, reads whichever
+    constituent name follows the number in the source text, and
+    compares against the number+unit adjacent to that SAME constituent
+    name in the candidate's own context (never merely the first
+    number+unit anywhere in either text — see
+    ``_find_constituent_amount``). Returns None if no limit clause is
+    found in ``finding_text`` at all (the ordinary case — most
+    regulatory findings are not dose-based).
     """
     text = (finding_text or "").lower()
     if not text:
         return None
-    limit_match = _LIMIT_CUE_RE.search(text)
-    if not limit_match:
+
+    limit_match = None
+    comparator = None  # "strict" (actual >= limit) or "inclusive" (actual > limit)
+    for regex, kind in (
+        (_STRICT_LIMIT_CUE_RE, "strict"),
+        (_INCLUSIVE_LIMIT_CUE_RE, "inclusive"),
+        (_MORE_THAN_PROHIBITED_RE, "inclusive"),
+    ):
+        m = regex.search(text)
+        if m:
+            limit_match = m
+            comparator = kind
+            break
+    if limit_match is None:
         return None
+
     limit_value = float(limit_match.group(1).replace(",", "."))
     limit_unit = limit_match.group(2)
     limit_mg = _to_mg(limit_value, limit_unit)
+    constituent_aliases = _extract_constituent_aliases(text, limit_match)
+    constituent = constituent_aliases[0] if constituent_aliases else ""
 
     ctx = (candidate_context_text or "").lower()
     actual_value = None
     actual_unit = None
     violates = None
     if ctx and limit_mg is not None:
-        # Prefer a candidate-declared amount that is NOT itself part of a
-        # repeated limit clause (skip the same limit phrase if the
-        # candidate context happens to also restate the regulatory
-        # limit verbatim); take the first remaining number+unit.
-        limit_span_text = limit_match.group(0)
-        candidate_matches = [
-            m for m in _NUMBER_UNIT_RE.finditer(ctx)
-            if m.group(0) not in limit_span_text
-        ]
-        if candidate_matches:
-            m = candidate_matches[0]
-            actual_value = float(m.group(1).replace(",", "."))
-            actual_unit = m.group(2)
+        amount_match = _find_constituent_amount(ctx, constituent_aliases)
+        if amount_match is not None:
+            actual_value = float(amount_match.group(1).replace(",", "."))
+            actual_unit = amount_match.group(2)
             actual_mg = _to_mg(actual_value, actual_unit)
             if actual_mg is not None:
-                violates = actual_mg >= limit_mg
+                violates = (
+                    actual_mg >= limit_mg if comparator == "strict"
+                    else actual_mg > limit_mg
+                )
 
     return DoseThresholdFinding(
         limit_value=limit_value,
         limit_unit=limit_unit,
+        constituent=constituent,
         actual_value=actual_value,
         actual_unit=actual_unit,
         violates=violates,

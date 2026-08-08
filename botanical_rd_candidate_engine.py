@@ -463,7 +463,41 @@ OUTPUT_COLUMNS = [
 # with harm-framing "cause X" language used throughout the safety
 # vocabulary) — see the root-cause report's "Remaining Scientific
 # Risks" section.
-DECISION_ENGINE_VERSION = "1.5.0"
+# 1.5.1 — Targeted Generalization Fix (post-1.5.0 independent review).
+# Two generic blockers found in the 1.5.0 patch, fixed without touching
+# any holdout case, botanical name, PMID, or case ID:
+#   - evidence_interpretation.py: clause-scoped negation (added in
+#     1.5.0) treated sentence punctuation and contrastive conjunctions
+#     as scope boundaries but not the coordinating conjunction "and",
+#     so a negative SAFETY clause ("No serious adverse events were
+#     reported") could still wrongly cancel a separate, independently
+#     true positive EFFICACY clause joined by "and" ("symptoms improved
+#     significantly"). Added "and" as a clause boundary (a deliberate,
+#     documented simplification — see _negation_scope_start's
+#     docstring), plus explicit non-inferiority handling ("not inferior
+#     to"/"non-inferior to" is a fixed clinical-trial-design term, never
+#     a real negation) and a missing null-finding phrase ("not/no
+#     different from placebo").
+#   - regulatory_scope_assessment.py's dose-threshold comparator (added
+#     in 1.5.0) compared a regulatory limit against the FIRST number+
+#     unit found anywhere in the candidate's context text, regardless
+#     of which constituent it belonged to — a candidate context
+#     mentioning multiple substances' quantities ("100 mg vitamin C and
+#     900 mg Compound-X") could be wrongly compared using the unrelated
+#     first number. Rewrote the comparator to extract which constituent
+#     a limit clause names and only compare against a quantity adjacent
+#     to that SAME constituent name in the candidate context. Also
+#     fixed boundary semantics that 1.5.0 treated uniformly: "less than
+#     X" is a strict/exclusive limit (X itself violates), while "no
+#     more than/maximum/not exceeding X" and "more than X ...
+#     prohibited" are inclusive limits (X itself is compliant) — each
+#     phrasing family now uses its own correct comparator.
+# Neither fix changes any scoring weight or threshold; both are pure
+# text-interpretation corrections. Exposed 24-case regression set
+# unchanged at 23/24 (0.958) — these fixes targeted generalization on
+# UNSEEN text, not the holdout itself, and none of the 24 cases happen
+# to exercise either bug pattern.
+DECISION_ENGINE_VERSION = "1.5.2"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s

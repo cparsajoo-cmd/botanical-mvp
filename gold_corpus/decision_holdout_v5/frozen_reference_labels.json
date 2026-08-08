@@ -1,0 +1,87 @@
+{
+  "version": "decision-holdout-v5/1.0.0",
+  "frozen_on": "2026-08-08",
+  "policy": "Ten new cases selected after v4 remediation. Reference labels fixed before engine execution. Reference locators are distinct from engine-side evidence locators. No production logic changed during scoring.",
+  "cases": [
+    {
+      "case_id": "v5_001_curcuma_knee_oa",
+      "botanical": "Curcuma longa",
+      "indication": "Knee osteoarthritis pain and function",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "42254374",
+      "reference_basis": "2026 umbrella review found efficacy signals but substantial methodological/clinical heterogeneity and only three high-quality reviews."
+    },
+    {
+      "case_id": "v5_002_ashwagandha_stress",
+      "botanical": "Withania somnifera",
+      "indication": "Stress and anxiety",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "41644067",
+      "reference_basis": "2026 meta-analysis found promising benefit but called for high-quality trials to address heterogeneity and establish dosing/duration."
+    },
+    {
+      "case_id": "v5_003_cinnamon_t2dm",
+      "botanical": "Cinnamomum verum",
+      "indication": "Type 2 diabetes glycemic control",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "38917435",
+      "reference_basis": "Recent systematic/meta-analytic evidence supports metabolic effects but is not sufficient for unconditional therapeutic replacement; formulation/dose heterogeneity remains relevant."
+    },
+    {
+      "case_id": "v5_004_serenoa_bph",
+      "botanical": "Serenoa repens",
+      "indication": "Lower urinary tract symptoms due to benign prostatic enlargement",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference_pmid": "37345871",
+      "reference_basis": "2023 Cochrane review found Serenoa alone provides little to no difference in urinary symptoms or quality of life."
+    },
+    {
+      "case_id": "v5_005_psyllium_constipation",
+      "botanical": "Plantago ovata",
+      "indication": "Chronic constipation",
+      "expected": "GO",
+      "reference_pmid": "40620304",
+      "reference_basis": "2025 review describes psyllium husk as a gold-standard bowel regulator with therapeutic effects in constipation."
+    },
+    {
+      "case_id": "v5_006_aristolochia_safety",
+      "botanical": "Aristolochia fangchi",
+      "indication": "Oral therapeutic use",
+      "expected": "NO GO SAFETY",
+      "reference_pmid": "33815744",
+      "reference_basis": "Updated meta-analysis links aristolochic-acid exposure to markedly increased urinary tract cancer risk."
+    },
+    {
+      "case_id": "v5_007_comfrey_oral",
+      "botanical": "Symphytum officinale",
+      "indication": "Oral use for musculoskeletal complaints",
+      "expected": "NO GO SAFETY",
+      "reference_pmid": "41993578",
+      "reference_basis": "Modern review emphasizes toxicological risks and development of PA-depleted topical\u2014not oral\u2014formulations."
+    },
+    {
+      "case_id": "v5_008_saffron_depression",
+      "botanical": "Crocus sativus",
+      "indication": "Depressive symptoms",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "41693488",
+      "reference_basis": "2026 GRADE-assessed meta-analysis found significant benefit but very high heterogeneity across major outcomes."
+    },
+    {
+      "case_id": "v5_009_pelargonium_ari",
+      "botanical": "Pelargonium sidoides",
+      "indication": "Acute respiratory tract infection",
+      "expected": "GO WITH CAUTION",
+      "reference_pmid": "24146345",
+      "reference_basis": "Cochrane synthesis reports possible efficacy for selected ARIs but evidence is preparation/condition dependent and heterogeneous."
+    },
+    {
+      "case_id": "v5_010_kava_anxiety",
+      "botanical": "Piper methysticum",
+      "indication": "Anxiety",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_pmid": "30396607",
+      "reference_basis": "Efficacy evidence exists for anxiety, but clinically important hepatotoxicity concerns and disputed causality make expert benefit-risk review appropriate."
+    }
+  ]
+}

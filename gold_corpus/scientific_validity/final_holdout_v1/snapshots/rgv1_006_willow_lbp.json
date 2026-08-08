@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Salix alba — chronic nonspecific low back pain",
+    "indication": "chronic nonspecific low back pain",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Salix alba"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_WILLOW_16625605",
+      "scientific_name": "Salix alba",
+      "notes": "Review found white willow bark better than placebo for short-term low back pain, but additional trials and better reporting are needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Herbal medicine for low back pain",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/16625605/",
+      "pmid": "16625605",
+      "target_indication": "chronic nonspecific low back pain",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2006,
+      "primary_outcome": "chronic nonspecific low back pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

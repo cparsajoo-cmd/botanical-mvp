@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Trifolium pratense — menopausal hot flushes",
+    "indication": "menopausal hot flushes",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Trifolium pratense"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CLOVER_33920485",
+      "scientific_name": "Trifolium pratense",
+      "notes": "Meta-analysis reported improvement of menopausal hot flushes with standardized red clover isoflavones.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Red clover menopause meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/33920485/",
+      "pmid": "33920485",
+      "target_indication": "menopausal hot flushes",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "primary_outcome": "menopausal hot flushes",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_CLOVER_15107199",
+      "scientific_name": "Trifolium pratense",
+      "notes": "Review described randomized-trial data for red clover as conflicting and not definitive.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Red clover menopausal health",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/15107199/",
+      "pmid": "15107199",
+      "target_indication": "menopausal hot flushes",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2004,
+      "primary_outcome": "menopausal hot flushes",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

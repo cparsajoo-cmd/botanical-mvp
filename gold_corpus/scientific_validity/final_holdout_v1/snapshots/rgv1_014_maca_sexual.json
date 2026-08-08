@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Lepidium meyenii — sexual dysfunction",
+    "indication": "sexual dysfunction",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Lepidium meyenii"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_MACA_21782365",
+      "scientific_name": "Lepidium meyenii",
+      "notes": "Review concluded evidence for maca in sexual dysfunction was insufficient and more rigorous trials were required.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "CAM sexual dysfunction review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21782365/",
+      "pmid": "21782365",
+      "target_indication": "sexual dysfunction",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2011,
+      "primary_outcome": "sexual dysfunction",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_MACA_41696741",
+      "scientific_name": "Lepidium meyenii",
+      "notes": "Recent systematic review states evidence for Maca remains insufficient and requires larger high-quality trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Herbal supplements erectile dysfunction",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/41696741/",
+      "pmid": "41696741",
+      "target_indication": "sexual dysfunction",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "primary_outcome": "sexual dysfunction",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

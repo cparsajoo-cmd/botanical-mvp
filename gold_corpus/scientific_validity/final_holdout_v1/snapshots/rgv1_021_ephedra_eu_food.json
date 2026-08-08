@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Ephedra sinica — use as ingredient in an EU food supplement",
+    "indication": "use as ingredient in an EU food supplement",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Ephedra sinica"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EPHEDRA_EU",
+      "scientific_name": "Ephedra sinica",
+      "notes": "European Union food rules list Ephedra herb and preparations from Ephedra species among substances prohibited for use in foods.",
+      "source_type": "REGULATORY",
+      "source_title": "EU Annex III Ephedra status",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "use as ingredient in an EU food supplement",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2015
+    }
+  ]
+}

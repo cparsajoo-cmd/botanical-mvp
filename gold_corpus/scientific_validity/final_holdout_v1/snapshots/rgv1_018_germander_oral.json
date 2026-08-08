@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Teucrium chamaedrys — oral therapeutic use",
+    "indication": "oral therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Teucrium chamaedrys"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_GERMANDER_SAFETY",
+      "scientific_name": "Teucrium chamaedrys",
+      "notes": "Germander has caused multiple clinically apparent hepatocellular liver injuries; severe cases and fatalities have been reported.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Germander hepatotoxicity review",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "oral therapeutic use",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2018,
+      "primary_outcome": "oral therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

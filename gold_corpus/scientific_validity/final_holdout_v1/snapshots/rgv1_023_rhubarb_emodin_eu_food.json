@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Rheum palmatum — root extract containing emodin in an EU food supplement",
+    "indication": "root extract containing emodin in an EU food supplement",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Rheum palmatum"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EMODIN_EU_REG",
+      "scientific_name": "Rheum palmatum",
+      "notes": "EU Annex III Part A prohibits emodin and all preparations in which emodin is present; the proposed rhubarb extract is declared to contain emodin.",
+      "source_type": "REGULATORY",
+      "source_title": "EU emodin prohibition summary",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "root extract containing emodin in an EU food supplement",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2021
+    }
+  ]
+}

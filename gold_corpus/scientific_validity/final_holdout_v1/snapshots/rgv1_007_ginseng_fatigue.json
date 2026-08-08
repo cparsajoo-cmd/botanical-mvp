@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Panax ginseng — fatigue",
+    "indication": "fatigue",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Panax ginseng"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_GINSENG_2023_REVIEW",
+      "scientific_name": "Panax ginseng",
+      "notes": "Systematic review and meta-analysis found ginseng formulas improved fatigue severity with a small effect size; rigorous randomized trials and standardized use are still needed.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Ginseng formulas for fatigue",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "fatigue",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2023,
+      "primary_outcome": "fatigue",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

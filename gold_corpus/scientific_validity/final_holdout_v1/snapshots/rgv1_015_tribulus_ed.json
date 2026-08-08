@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Tribulus terrestris — erectile dysfunction",
+    "indication": "erectile dysfunction",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Tribulus terrestris"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_TRIB_41696741",
+      "scientific_name": "Tribulus terrestris",
+      "notes": "Recent systematic review states evidence for Tribulus terrestris remains insufficient for erectile dysfunction and needs larger high-quality trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Herbal supplements erectile dysfunction",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/41696741/",
+      "pmid": "41696741",
+      "target_indication": "erectile dysfunction",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "primary_outcome": "erectile dysfunction",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

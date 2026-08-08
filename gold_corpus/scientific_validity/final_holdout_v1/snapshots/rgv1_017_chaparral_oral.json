@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Larrea tridentata — oral therapeutic use",
+    "indication": "oral therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Larrea tridentata"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CHAPARRAL_24099027",
+      "scientific_name": "Larrea tridentata",
+      "notes": "Review of herbal liver injury identifies chaparral as associated with severe hepatotoxicity including acute liver failure and cirrhosis.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Herbal complementary medicine liver injury",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24099027/",
+      "pmid": "24099027",
+      "target_indication": "oral therapeutic use",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2013,
+      "primary_outcome": "oral therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

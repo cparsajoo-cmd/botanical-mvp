@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Chelidonium majus — oral therapeutic use",
+    "indication": "oral therapeutic use",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Chelidonium majus"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_CELANDINE_SAFETY",
+      "scientific_name": "Chelidonium majus",
+      "notes": "Greater celandine has been repeatedly associated with clinically apparent acute hepatocellular liver injury and jaundice after oral use.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Greater celandine hepatotoxicity review",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "oral therapeutic use",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "primary_outcome": "oral therapeutic use",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

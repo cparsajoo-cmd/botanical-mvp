@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Hedera helix — productive cough",
+    "indication": "productive cough",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Hedera helix"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_IVY_33523253",
+      "scientific_name": "Hedera helix",
+      "notes": "Systematic review reports that included studies concluded ivy leaf extract was effective and safe for cough due to respiratory tract infections and bronchitis.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Ivy leaf for acute respiratory tract infections",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/33523253/",
+      "pmid": "33523253",
+      "target_indication": "productive cough",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "primary_outcome": "productive cough",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_IVY_20976077",
+      "scientific_name": "Hedera helix",
+      "notes": "Systematic review of clinical trials evaluated ivy leaf preparations for acute upper respiratory infections and reported therapeutic benefit signals.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Clinical trials of ivy leaf",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/20976077/",
+      "pmid": "20976077",
+      "target_indication": "productive cough",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2011,
+      "primary_outcome": "productive cough",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

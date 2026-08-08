@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Mentha pulegium — oral use of pennyroyal essential oil",
+    "indication": "oral use of pennyroyal essential oil",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Mentha pulegium"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_PENNYROYAL_SAFETY",
+      "scientific_name": "Mentha pulegium",
+      "notes": "Oral pennyroyal oil poisoning can cause seizures, coma, cardiovascular collapse, acute hepatic necrosis, multiorgan failure and death.",
+      "source_type": "CLINICAL_TRIAL",
+      "source_title": "Pennyroyal toxicity case evidence",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "oral use of pennyroyal essential oil",
+      "study_design": "Randomized Controlled Trial",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 1996
+    }
+  ]
+}

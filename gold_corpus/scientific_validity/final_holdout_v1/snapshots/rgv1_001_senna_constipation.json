@@ -1,1 +1,47 @@
-
+{
+  "question": {
+    "question": "Scientific decision for Senna alexandrina — short-term treatment of occasional constipation",
+    "indication": "short-term treatment of occasional constipation",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Senna alexandrina"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_SENNA_33767108",
+      "scientific_name": "Senna alexandrina",
+      "notes": "Review found good evidence to recommend senna as a first-line laxative for chronic constipation.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Over-the-counter therapies for chronic constipation",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/33767108/",
+      "pmid": "33767108",
+      "target_indication": "short-term treatment of occasional constipation",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "primary_outcome": "short-term treatment of occasional constipation",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_SENNA_40888045",
+      "scientific_name": "Senna alexandrina",
+      "notes": "Review of dietary management reports senna supplements among commonly recommended strategies for chronic constipation.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Dietary management of chronic constipation",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/40888045/",
+      "pmid": "40888045",
+      "target_indication": "short-term treatment of occasional constipation",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "primary_outcome": "short-term treatment of occasional constipation",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

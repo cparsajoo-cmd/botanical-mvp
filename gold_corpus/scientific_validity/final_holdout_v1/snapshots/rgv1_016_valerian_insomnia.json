@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Valeriana officinalis — insomnia",
+    "indication": "insomnia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Valeriana officinalis"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_VALERIAN_25644982",
+      "scientific_name": "Valeriana officinalis",
+      "notes": "Systematic review found no convincing evidence that valerian preparations were effective for insomnia.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Herbal medicine for insomnia",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/25644982/",
+      "pmid": "25644982",
+      "target_indication": "insomnia",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2015,
+      "primary_outcome": "insomnia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

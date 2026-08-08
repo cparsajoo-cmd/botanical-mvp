@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Echinacea purpurea — prevention or treatment of the common cold",
+    "indication": "prevention or treatment of the common cold",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Echinacea purpurea"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ECHIN_40311928",
+      "scientific_name": "Echinacea purpurea",
+      "notes": "2025 meta-analysis reported Echinacea purpurea reduced treatment duration and episode incidence for upper respiratory tract infection.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Echinacea purpurea URTI",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/40311928/",
+      "pmid": "40311928",
+      "target_indication": "prevention or treatment of the common cold",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2025,
+      "primary_outcome": "prevention or treatment of the common cold",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_ECHIN_24554461",
+      "scientific_name": "Echinacea purpurea",
+      "notes": "Cochrane review found Echinacea products had not been shown to provide benefits for treating colds, with at most weak prevention benefit.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Echinacea common cold Cochrane",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24554461/",
+      "pmid": "24554461",
+      "target_indication": "prevention or treatment of the common cold",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2014,
+      "primary_outcome": "prevention or treatment of the common cold",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

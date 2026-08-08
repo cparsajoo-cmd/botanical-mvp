@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Aloe vera — irritable bowel syndrome symptoms",
+    "indication": "irritable bowel syndrome symptoms",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Aloe vera"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ALOE_30153721",
+      "scientific_name": "Aloe vera",
+      "notes": "Meta-analysis of three randomized trials with 151 patients found Aloe vera improved IBS symptoms versus placebo, but the evidence body was small.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Aloe vera IBS meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/30153721/",
+      "pmid": "30153721",
+      "target_indication": "irritable bowel syndrome symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2018,
+      "primary_outcome": "irritable bowel syndrome symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

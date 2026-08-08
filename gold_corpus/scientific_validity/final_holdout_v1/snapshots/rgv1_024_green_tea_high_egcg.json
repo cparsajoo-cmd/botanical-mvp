@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Camellia sinensis — green tea extract providing 900 mg EGCG per daily portion in an EU food supplement",
+    "indication": "green tea extract providing 900 mg EGCG per daily portion in an EU food supplement",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Camellia sinensis"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EGCG_EU_REG",
+      "scientific_name": "Camellia sinensis",
+      "notes": "EU rules require green tea extract foods to contain less than 800 mg EGCG per daily portion; the proposed daily portion provides 900 mg.",
+      "source_type": "REGULATORY",
+      "source_title": "EU green tea EGCG restriction summary",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "green tea extract providing 900 mg EGCG per daily portion in an EU food supplement",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2022
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Garcinia cambogia — weight loss in adults",
+    "indication": "weight loss in adults",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Garcinia cambogia"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_GARCINIA_21197150",
+      "scientific_name": "Garcinia cambogia",
+      "notes": "Review found Garcinia extracts may cause short-term weight loss, but the magnitude was small and clinical relevance uncertain.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Garcinia weight loss meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/21197150/",
+      "pmid": "21197150",
+      "target_indication": "weight loss in adults",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2011,
+      "primary_outcome": "weight loss in adults",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_GARCINIA_22530711",
+      "scientific_name": "Garcinia cambogia",
+      "notes": "Review concluded there is still little evidence to support the effectiveness and long-term benefits of Garcinia cambogia extracts.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Garcinia efficacy safety review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/22530711/",
+      "pmid": "22530711",
+      "target_indication": "weight loss in adults",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2012,
+      "primary_outcome": "weight loss in adults",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

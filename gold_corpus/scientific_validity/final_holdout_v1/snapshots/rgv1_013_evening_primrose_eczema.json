@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Oenothera biennis — atopic eczema",
+    "indication": "atopic eczema",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Oenothera biennis"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_EPO_38360611",
+      "scientific_name": "Oenothera biennis",
+      "notes": "Recent review found evening primrose oil did not demonstrate effectiveness for chronic hand dermatitis and evidence for eczema remains weak.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Evening primrose review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/38360611/",
+      "pmid": "38360611",
+      "target_indication": "atopic eczema",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2024,
+      "primary_outcome": "atopic eczema",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_EPO_11134919",
+      "scientific_name": "Oenothera biennis",
+      "notes": "Systematic review found insufficient evidence to recommend evening primrose oil for atopic eczema.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Atopic eczema treatments review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11134919/",
+      "pmid": "11134919",
+      "target_indication": "atopic eczema",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2000,
+      "primary_outcome": "atopic eczema",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

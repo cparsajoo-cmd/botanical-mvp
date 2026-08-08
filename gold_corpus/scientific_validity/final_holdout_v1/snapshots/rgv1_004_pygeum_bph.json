@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Prunus africana — lower urinary tract symptoms associated with benign prostatic hyperplasia",
+    "indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Prunus africana"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_PYGEUM_11099686",
+      "scientific_name": "Prunus africana",
+      "notes": "Systematic review found Pygeum africanum modestly but significantly improved urologic symptoms and urinary flow measures.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Pygeum africanum BPH",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11099686/",
+      "pmid": "11099686",
+      "target_indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2000,
+      "primary_outcome": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_PYGEUM_11276294",
+      "scientific_name": "Prunus africana",
+      "notes": "Review of phytotherapy for BPH reports Pygeum africanum may be a useful treatment option, while noting limitations in reporting.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Phytotherapy for BPH",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/11276294/",
+      "pmid": "11276294",
+      "target_indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2000,
+      "primary_outcome": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

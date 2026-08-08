@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Cimicifuga racemosa — menopausal vasomotor symptoms",
+    "indication": "menopausal vasomotor symptoms",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Cimicifuga racemosa"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_COHOSH_35403534",
+      "scientific_name": "Cimicifuga racemosa",
+      "notes": "Review concluded black cohosh was effective for vasomotor symptoms but called for further clinical trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Black cohosh efficacy",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/35403534/",
+      "pmid": "35403534",
+      "target_indication": "menopausal vasomotor symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "primary_outcome": "menopausal vasomotor symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_COHOSH_18585461",
+      "scientific_name": "Cimicifuga racemosa",
+      "notes": "Review found randomized trials did not consistently demonstrate an effect of black cohosh on menopausal symptoms.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Black cohosh menopause review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18585461/",
+      "pmid": "18585461",
+      "target_indication": "menopausal vasomotor symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2008,
+      "primary_outcome": "menopausal vasomotor symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

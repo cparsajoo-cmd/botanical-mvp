@@ -1,0 +1,30 @@
+{
+  "question": {
+    "question": "Scientific decision for Harpagophytum procumbens — chronic nonspecific low back pain",
+    "indication": "chronic nonspecific low back pain",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Harpagophytum procumbens"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_HARPAGO_17212570",
+      "scientific_name": "Harpagophytum procumbens",
+      "notes": "Higher-quality trials suggest Devil's Claw can reduce pain, but methodological quality is generally poor and important caveats require further high-quality trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Devil's Claw review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/17212570/",
+      "pmid": "17212570",
+      "target_indication": "chronic nonspecific low back pain",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2007,
+      "primary_outcome": "chronic nonspecific low back pain",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

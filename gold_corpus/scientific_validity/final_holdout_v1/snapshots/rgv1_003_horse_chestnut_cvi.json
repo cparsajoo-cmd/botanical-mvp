@@ -1,0 +1,47 @@
+{
+  "question": {
+    "question": "Scientific decision for Aesculus hippocastanum — chronic venous insufficiency symptoms",
+    "indication": "chronic venous insufficiency symptoms",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Aesculus hippocastanum"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_AESCULUS_15106197",
+      "scientific_name": "Aesculus hippocastanum",
+      "notes": "Systematic review found improvement in chronic venous insufficiency signs and symptoms with horse chestnut seed extract compared with placebo.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Horse chestnut seed extract for CVI",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/15106197/",
+      "pmid": "15106197",
+      "target_indication": "chronic venous insufficiency symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2004,
+      "primary_outcome": "chronic venous insufficiency symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    },
+    {
+      "reference_id": "ENG_AESCULUS_9828868",
+      "scientific_name": "Aesculus hippocastanum",
+      "notes": "Earlier systematic review found horse chestnut seed extract improved symptoms of chronic venous insufficiency in randomized trials.",
+      "source_type": "SYSTEMATIC_REVIEW",
+      "source_title": "Horse chestnut seed extract for CVI",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/9828868/",
+      "pmid": "9828868",
+      "target_indication": "chronic venous insufficiency symptoms",
+      "study_design": "Systematic Review and Meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 1998,
+      "primary_outcome": "chronic venous insufficiency symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": "assessed"
+    }
+  ]
+}

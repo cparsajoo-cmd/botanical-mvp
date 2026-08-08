@@ -1,0 +1,27 @@
+{
+  "question": {
+    "question": "Scientific decision for Aloe ferox — leaf preparation containing hydroxyanthracene derivatives in an EU food supplement",
+    "indication": "leaf preparation containing hydroxyanthracene derivatives in an EU food supplement",
+    "dosage_form": "oral",
+    "market": "EU"
+  },
+  "candidate_pool": [
+    "Aloe ferox"
+  ],
+  "records": [
+    {
+      "reference_id": "ENG_ALOE_EU_REG",
+      "scientific_name": "Aloe ferox",
+      "notes": "EU rules prohibit preparations from Aloe species leaves containing hydroxyanthracene derivatives in foods because of genotoxic and carcinogenic safety concerns.",
+      "source_type": "REGULATORY",
+      "source_title": "EU Aloe hydroxyanthracene restriction summary",
+      "source_url": "",
+      "pmid": "",
+      "target_indication": "leaf preparation containing hydroxyanthracene derivatives in an EU food supplement",
+      "study_design": "",
+      "source_authority": "regulatory",
+      "evidence_quality": "high",
+      "publication_year": 2021
+    }
+  ]
+}

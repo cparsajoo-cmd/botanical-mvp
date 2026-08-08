@@ -294,6 +294,13 @@ def final_status_from_engine_row(row: Mapping) -> FinalDecisionStatus:
     This keeps the public engine output contract stable while still allowing a
     structured benchmark comparison.
     """
+    structured_status = str(row.get("Final_Decision_Status") or "").strip()
+    if structured_status:
+        try:
+            return FinalDecisionStatus(structured_status)
+        except ValueError:
+            pass
+
     eligibility = str(row.get("Eligibility_Status") or "")
     decision_class = str(row.get("Decision_Class") or "").lower()
     if eligibility == EligibilityStatus.NO_GO_REGULATORY.value:

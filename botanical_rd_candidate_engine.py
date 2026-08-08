@@ -292,6 +292,10 @@ OUTPUT_COLUMNS = [
     "Gate_Type",
     "Gate_Reason",
     "Gate_Evidence_IDs",
+    # Structured six-class scientific decision. This is the authoritative
+    # decision state for validation/consumers; legacy Decision_Class remains
+    # for backward-compatible score-tier presentation.
+    "Final_Decision_Status",
     # Correction round — finding-specific evidence traceability (not
     # just the row-level union above). See eligibility_gate.py's
     # SafetyFinding.evidence_ids / RegulatoryFinding.evidence_ids and
@@ -1955,6 +1959,7 @@ class BotanicalRDCandidateEngine:
                             "Gate_Reason": eligibility_decision.gate_reason,
                             "Gate_Evidence_IDs": "; ".join(eligibility_decision.gate_evidence_ids)
                                 if eligibility_decision.gate_evidence_ids else "",
+                            "Final_Decision_Status": final_decision.status.value,
                             "Safety_Gate_Evidence_IDs": "; ".join(eligibility_decision.safety_finding.evidence_ids)
                                 if eligibility_decision.safety_finding.evidence_ids else "",
                             "Regulatory_Gate_Evidence_IDs": "; ".join(eligibility_decision.regulatory_finding.evidence_ids)
@@ -2380,6 +2385,19 @@ class BotanicalRDCandidateEngine:
                     best["Decision_Class"] = "Insufficient evidence — governing evidence does not support GO"
                 elif _merged_eligibility.status == _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS:
                     best["Decision_Class"] = "Go with caution — regulatory or safety restrictions apply"
+
+                if _merged_eligibility.status == _EligibilityStatus.NO_GO_SAFETY:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.NO_GO_SAFETY.value
+                elif _merged_eligibility.status == _EligibilityStatus.NO_GO_REGULATORY:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.NO_GO_REGULATORY.value
+                elif _merged_eligibility.status == _EligibilityStatus.EXPERT_REVIEW_REQUIRED or _group_has_scientific_conflict:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.EXPERT_REVIEW_REQUIRED.value
+                elif _merged_eligibility.status == _EligibilityStatus.INCOMPLETE or _group_has_scientific_insufficiency:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.INSUFFICIENT_EVIDENCE.value
+                elif _merged_eligibility.status == _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.GO_WITH_CAUTION.value
+                else:
+                    best["Final_Decision_Status"] = FinalDecisionStatus.GO.value
 
                 _merged_final_status = final_status_from_engine_row(best)
                 _final_blocks_normal_ranking = _merged_final_status in {

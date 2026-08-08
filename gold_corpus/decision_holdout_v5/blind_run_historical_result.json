@@ -1,0 +1,7 @@
+{
+  "version": "decision-holdout-v5/1.0.0",
+  "blind_run_accuracy": 0.3,
+  "blind_run_correct": 3,
+  "blind_run_total": 10,
+  "note": "Historical blind result before certainty-model remediation. This value must be preserved as the actual unseen performance."
+}

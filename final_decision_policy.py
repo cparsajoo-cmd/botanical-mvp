@@ -163,10 +163,43 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             ):
                 direction = DIRECTION_POSITIVE
 
-        # A review can be supportive while explicitly reporting material
-        # heterogeneity/endpoint inconsistency.  Preserve that uncertainty as
-        # MIXED rather than collapsing it to an unconditional positive.
-        if direction == DIRECTION_POSITIVE and any(phrase in _n for phrase in (
+        # Preserve uncertainty that is explicitly stated by the evidence itself.
+        # This is semantic, not plant-specific: a supportive conclusion that is
+        # materially hedged (e.g. "may be beneficial", "requires confirmation")
+        # is not equivalent to an unconditional positive finding.  Conversely,
+        # explicit statements that the evidence remains uncertain/insufficient
+        # for firm conclusions cannot be promoted to GO merely because the same
+        # sentence mentions a possible benefit.
+        _firm_uncertainty_phrases = (
+            "evidence remains uncertain",
+            "evidence is uncertain",
+            "evidence was uncertain",
+            "insufficient for firm conclusions",
+            "insufficient to draw firm conclusions",
+            "insufficient to draw conclusions",
+            "cannot draw firm conclusions",
+            "no firm conclusions",
+        )
+        _cautionary_support_phrases = (
+            "may be beneficial",
+            "might be beneficial",
+            "could be beneficial",
+            "requires confirmation",
+            "require confirmation",
+            "needs confirmation",
+            "need confirmation",
+            "further high-quality trials",
+            "further high quality trials",
+            "further studies are needed",
+            "further studies are required",
+            "additional studies are needed",
+            "additional studies are required",
+            "more research is needed",
+            "more research is required",
+        )
+        if any(phrase in _n for phrase in _firm_uncertainty_phrases):
+            direction = DIRECTION_NULL
+        elif direction == DIRECTION_POSITIVE and any(phrase in _n for phrase in (
             "evidence varied across studies",
             "results varied across studies",
             "findings varied across studies",
@@ -174,6 +207,7 @@ def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenc
             "mixed results",
             "inconsistent findings",
             "inconsistent results",
+            *_cautionary_support_phrases,
         )):
             direction = DIRECTION_MIXED
         interpreted.append((rank, source_type, direction))

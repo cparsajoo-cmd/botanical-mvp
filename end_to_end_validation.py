@@ -134,6 +134,7 @@ class RetrievedEvidence:
 
     def to_engine_row(self, indication: str, dosage_form: str, market: str) -> dict:
         return {
+            "Evidence_Record_ID": self.reference_id,
             "Scientific_Name": self.scientific_name,
             "Target_Indication": self.target_indication or indication,
             "Dosage_Form": self.dosage_form or dosage_form,

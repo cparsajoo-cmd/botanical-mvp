@@ -38,6 +38,10 @@ from structured_rationale import (
 )
 from comparative_rationale import build_comparative_rationale, build_comparative_rationale_structured
 from regulatory_barrier_classifier import classify_regulatory_barriers
+from final_decision_policy import (
+    resolve_scientific_evidence, decide_final, FinalDecisionStatus,
+    final_status_from_engine_row,
+)
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
 # Phase 4 — Eligibility Gate. See eligibility_gate.py's module docstring
 # for why this is a separate, self-contained module rather than more
@@ -408,7 +412,7 @@ OUTPUT_COLUMNS = [
 # Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
 # unless a caller explicitly populates
 # self._canonical_regulatory_by_plant before calling run().
-DECISION_ENGINE_VERSION = "1.1.0"
+DECISION_ENGINE_VERSION = "1.2.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1474,7 +1478,14 @@ class BotanicalRDCandidateEngine:
                         market=market,
                     )
                     market_status = self._market_evidence_status(raw_evidence)
-                    regulatory_barrier_result = classify_regulatory_barriers(raw_evidence)
+                    _regulatory_assertion_text = " ".join(
+                        str(_r.get("assertion_text") or "")
+                        for _r in evidence_contributing_records
+                        if str(_r.get("assertion_text") or "").strip()
+                    )
+                    regulatory_barrier_result = classify_regulatory_barriers(
+                        _regulatory_assertion_text or raw_evidence
+                    )
 
                     # How many distinct plants (in the WHOLE database,
                     # independent of this indication) already contain the
@@ -1620,7 +1631,9 @@ class BotanicalRDCandidateEngine:
                         ):
                             _safety_gate_evidence_ids.append(_rec_id)
                         if regulatory_barrier_result.barrier_types:
-                            _rec_barrier_result = classify_regulatory_barriers(_rec_text)
+                            _rec_barrier_result = classify_regulatory_barriers(
+                                _rec.get("assertion_text") or _rec_text
+                            )
                             if _rec_barrier_result.has_barrier:
                                 _regulatory_gate_evidence_ids.append(_rec_id)
                     _safety_gate_evidence_ids = tuple(dict.fromkeys(_safety_gate_evidence_ids))
@@ -1634,7 +1647,7 @@ class BotanicalRDCandidateEngine:
                     _structured_safety_assertions = []
                     for _rec in evidence_contributing_records:
                         _structured_safety_assertions.extend(_classify_safety_assertions(
-                            _rec.get("text") or "",
+                            _rec.get("assertion_text") or _rec.get("text") or "",
                             evidence_record_id=str(_rec.get("evidence_record_id") or ""),
                             authority=str(_rec.get("authority_label") or "Unknown Source"),
                             authority_score=float(_rec.get("authority_factor") or 0.5),
@@ -1667,9 +1680,48 @@ class BotanicalRDCandidateEngine:
                         ),
                         has_evidence_text=_row_has_evidence_text,
                         same_plant=_row_same_plant,
+                        finding_text=_regulatory_assertion_text,
+                        candidate_dosage_form=dosage_form,
                         evidence_ids=_regulatory_gate_evidence_ids,
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
+                    scientific_evidence_resolution = resolve_scientific_evidence(
+                        evidence_contributing_records
+                    )
+                    final_decision = decide_final(
+                        eligibility_decision, scientific_evidence_resolution
+                    )
+
+                    # The structured EligibilityDecision is authoritative.
+                    # _decision_class() is called earlier for backward-compatible
+                    # score-tier logic, but it does not have the record-level
+                    # scope/context available here. Reconcile only hard/abstention
+                    # states so the displayed final recommendation cannot disagree
+                    # with the structured gate.
+                    if eligibility_decision.status == _EligibilityStatus.NO_GO_SAFETY:
+                        decision = "Safety concern — not suitable without expert review"
+                    elif eligibility_decision.status == _EligibilityStatus.NO_GO_REGULATORY:
+                        decision = REGULATORY_PROHIBITION_DECISION_CLASS
+                    elif eligibility_decision.status == _EligibilityStatus.EXPERT_REVIEW_REQUIRED:
+                        decision = (
+                            "Expert review required — not eligible for normal ranking "
+                            "until safety/regulatory scope is confirmed"
+                        )
+                    elif eligibility_decision.status == _EligibilityStatus.INCOMPLETE:
+                        decision = "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+                    elif final_decision.status == FinalDecisionStatus.EXPERT_REVIEW_REQUIRED:
+                        decision = "Expert review required — conflicting governing scientific evidence"
+                    elif final_decision.status == FinalDecisionStatus.INSUFFICIENT_EVIDENCE:
+                        decision = "Insufficient evidence — governing evidence does not support GO"
+                    elif final_decision.status == FinalDecisionStatus.GO_WITH_CAUTION:
+                        decision = "Go with caution — regulatory or safety restrictions apply"
+
+                    gate_results["eligibility"] = {
+                        "gate_name": "eligibility",
+                        "status": eligibility_decision.status.value,
+                        "reason": eligibility_decision.gate_reason,
+                        "evidence": "; ".join(eligibility_decision.gate_evidence_ids),
+                    }
 
                     # Task 10.2 — Evidence-level Preparation Applicability,
                     # candidate-level summary. Purely additive, read-only
@@ -1878,9 +1930,23 @@ class BotanicalRDCandidateEngine:
                             # Phase 4 — Eligibility Gate. See eligibility_gate.py.
                             "Eligibility_Status": eligibility_decision.status.value,
                             "Hard_No_Go": eligibility_decision.hard_no_go,
-                            "Eligible_For_Normal_Ranking": eligibility_decision.eligible_for_normal_ranking,
-                            "Ranking_Partition": eligibility_decision.ranking_partition.value,
-                            "Score_Validity": eligibility_decision.score_validity.value,
+                            "Eligible_For_Normal_Ranking": final_decision.status in {
+                                FinalDecisionStatus.GO, FinalDecisionStatus.GO_WITH_CAUTION
+                            },
+                            "Ranking_Partition": (
+                                _RankingPartition.EXCLUDED_NO_GO.value
+                                if final_decision.status in {FinalDecisionStatus.NO_GO_SAFETY, FinalDecisionStatus.NO_GO_REGULATORY}
+                                else _RankingPartition.PRELIMINARY_OR_EXPERT_REVIEW.value
+                                if final_decision.status in {FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, FinalDecisionStatus.INSUFFICIENT_EVIDENCE}
+                                else _RankingPartition.NORMAL.value
+                            ),
+                            "Score_Validity": (
+                                _ScoreValidity.AUDIT_ONLY.value
+                                if final_decision.status in {FinalDecisionStatus.NO_GO_SAFETY, FinalDecisionStatus.NO_GO_REGULATORY}
+                                else _ScoreValidity.PRELIMINARY.value
+                                if final_decision.status in {FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, FinalDecisionStatus.INSUFFICIENT_EVIDENCE}
+                                else _ScoreValidity.VALID.value
+                            ),
                             "Gate_Type": eligibility_decision.gate_type,
                             "Gate_Reason": eligibility_decision.gate_reason,
                             "Gate_Evidence_IDs": "; ".join(eligibility_decision.gate_evidence_ids)
@@ -1903,7 +1969,10 @@ class BotanicalRDCandidateEngine:
                             "Regulatory_Scope": eligibility_decision.regulatory_finding.scope.value,
                             "Regulatory_Context_Relevance": eligibility_decision.regulatory_finding.context_relevance.value,
                             "Data_Completeness": eligibility_decision.data_completeness.value,
-                            "Requires_Expert_Review": eligibility_decision.requires_expert_review,
+                            "Requires_Expert_Review": (
+                                eligibility_decision.requires_expert_review
+                                or final_decision.status == FinalDecisionStatus.EXPERT_REVIEW_REQUIRED
+                            ),
                             # Internal-only — used by _merge_multi_compound_matches
                             # to correctly recompute Decision_Class_AH after a
                             # merge, then dropped by the final
@@ -2151,6 +2220,19 @@ class BotanicalRDCandidateEngine:
             if _rank(new_decision) > _rank(tightest):
                 new_decision = tightest
 
+            # Preserve scientific abstention states across compound merging.
+            # These states were derived from record-level evidence and must not
+            # be overwritten by a higher merged score.
+            _group_decisions = tuple(str(v) for v in group["Decision_Class"])
+            _group_has_scientific_conflict = any(
+                d.startswith("Expert review required — conflicting governing scientific evidence")
+                for d in _group_decisions
+            )
+            _group_has_scientific_insufficiency = any(
+                d.startswith("Insufficient evidence — governing evidence does not support GO")
+                for d in _group_decisions
+            )
+
             best["Reference_Compound"] = "; ".join(distinct_ref_compounds)
             best["Shared_or_Similar_Compound"] = "; ".join(distinct_matched)
             best["R&D_Opportunity_Score"] = new_score
@@ -2274,7 +2356,52 @@ class BotanicalRDCandidateEngine:
                 best["Regulatory_Scope"] = _merged_eligibility.regulatory_finding.scope.value
                 best["Regulatory_Context_Relevance"] = _merged_eligibility.regulatory_finding.context_relevance.value
                 best["Data_Completeness"] = _merged_eligibility.data_completeness.value
-                best["Requires_Expert_Review"] = _merged_eligibility.requires_expert_review
+
+                # Reconcile the merged row with the same six-class final
+                # decision semantics used before merging.  Eligibility remains
+                # authoritative for hard safety/regulatory outcomes, while a
+                # governing scientific conflict/insufficiency remains an
+                # abstention even if the multi-compound score rises.
+                if _merged_eligibility.status == _EligibilityStatus.NO_GO_SAFETY:
+                    best["Decision_Class"] = "Safety concern — not suitable without expert review"
+                elif _merged_eligibility.status == _EligibilityStatus.NO_GO_REGULATORY:
+                    best["Decision_Class"] = REGULATORY_PROHIBITION_DECISION_CLASS
+                elif _merged_eligibility.status == _EligibilityStatus.EXPERT_REVIEW_REQUIRED:
+                    best["Decision_Class"] = "Expert review required — unresolved safety/regulatory context"
+                elif _group_has_scientific_conflict:
+                    best["Decision_Class"] = "Expert review required — conflicting governing scientific evidence"
+                elif _merged_eligibility.status == _EligibilityStatus.INCOMPLETE:
+                    best["Decision_Class"] = "Incomplete — insufficient safety/regulatory evidence for a validated recommendation"
+                elif _group_has_scientific_insufficiency:
+                    best["Decision_Class"] = "Insufficient evidence — governing evidence does not support GO"
+                elif _merged_eligibility.status == _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS:
+                    best["Decision_Class"] = "Go with caution — regulatory or safety restrictions apply"
+
+                _merged_final_status = final_status_from_engine_row(best)
+                _final_blocks_normal_ranking = _merged_final_status in {
+                    FinalDecisionStatus.NO_GO_SAFETY,
+                    FinalDecisionStatus.NO_GO_REGULATORY,
+                    FinalDecisionStatus.EXPERT_REVIEW_REQUIRED,
+                    FinalDecisionStatus.INSUFFICIENT_EVIDENCE,
+                }
+                best["Eligible_For_Normal_Ranking"] = not _final_blocks_normal_ranking
+                if _merged_final_status in {
+                    FinalDecisionStatus.NO_GO_SAFETY, FinalDecisionStatus.NO_GO_REGULATORY
+                }:
+                    best["Ranking_Partition"] = _RankingPartition.EXCLUDED_NO_GO.value
+                    best["Score_Validity"] = _ScoreValidity.AUDIT_ONLY.value
+                elif _merged_final_status in {
+                    FinalDecisionStatus.EXPERT_REVIEW_REQUIRED, FinalDecisionStatus.INSUFFICIENT_EVIDENCE
+                }:
+                    best["Ranking_Partition"] = _RankingPartition.PRELIMINARY_OR_EXPERT_REVIEW.value
+                    best["Score_Validity"] = _ScoreValidity.PRELIMINARY.value
+                else:
+                    best["Ranking_Partition"] = _merged_eligibility.ranking_partition.value
+                    best["Score_Validity"] = _merged_eligibility.score_validity.value
+                best["Requires_Expert_Review"] = (
+                    _merged_eligibility.requires_expert_review
+                    or _merged_final_status == FinalDecisionStatus.EXPERT_REVIEW_REQUIRED
+                )
 
             # Same reasoning as Safety_Flags/Interaction_Flags just
             # above, applied to negative evidence (audit 4.15): if ANY
@@ -3254,12 +3381,24 @@ class BotanicalRDCandidateEngine:
                 return
             record_id = self._pick(row, ["Evidence_Record_ID", "evidence_record_id"])
             classification = classify_source_authority_from_row(row)
+            assertion_text = " ".join(
+                str(row.get(col))
+                for col in (
+                    "Notes", "Regulatory_Evidence", "Safety_Signal",
+                    "Primary_Outcome", "Result_Direction", "Evidence_Type",
+                    "Evidence_Level", "Clinical_Level", "Meta_Level",
+                    "Drug_Interaction_Level", "Safety_Level",
+                )
+                if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip()
+            )
             evidence_records_index[key].append({
                 "evidence_record_id": record_id or None,
                 "text": text,
+                "assertion_text": assertion_text or text,
                 "authority_label": classification.label,
                 "authority_factor": classification.score,
                 "source_url": self._pick(row, ["Source_URL", "source_url", "URL", "url"]) or "",
+                "source_type": self._pick(row, ["Source_Type", "source_type"]) or "",
                 "preparation": self._pick(row, ["Preparation", "preparation", "Extraction_Method", "extraction_method"]) or "",
                 "dose": self._pick(row, ["Dose", "dose"]) or "",
                 "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",

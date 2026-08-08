@@ -129,16 +129,17 @@ def test_case006_style_serious_contraindication_is_no_longer_a_false_negative():
     assert bool(row["Eligible_For_Normal_Ranking"]) is False
     assert row["Gate_Results"]["safety"]["status"] == GateStatus.FAILED
 
-    # Missing-context requirement (item 6): production never confirms
-    # scope, so this resolves to EXPERT_REVIEW_REQUIRED, not an
-    # automatic NO_GO_SAFETY -- but it is never a silent PASS either.
-    assert row["Eligibility_Status"] == "expert_review_required"
-    assert row["Gate_Results"]["eligibility"]["status"] == "expert_review_required"
-    assert row["Decision_Class"].startswith("Expert review required")
+    # Root-cause remediation: an explicit serious contraindication with no
+    # candidate-limiting preparation/dose/route/population qualifier is
+    # treated as broad/relevant rather than permanently UNKNOWN.
+    assert row["Eligibility_Status"] == "no_go_safety"
+    assert row["Gate_Results"]["eligibility"]["status"] == "no_go_safety"
+    assert row["Decision_Class"] == "Safety concern — not suitable without expert review"
 
-    # Non-compensation (item 5, ranking half): never lands in the
-    # normal ranking partition regardless of score.
-    assert row["Ranking_Partition"] == RankingPartition.PRELIMINARY_OR_EXPERT_REVIEW.value
+    # Non-compensation (item 5, ranking half): a confirmed broad serious
+    # contraindication is a hard safety no-go and is excluded from normal
+    # candidate ranking regardless of score.
+    assert row["Ranking_Partition"] == RankingPartition.EXCLUDED_NO_GO.value
     assert row["Ranking_Partition"] != RankingPartition.NORMAL.value
 
     # Traceable back to the structured signal, not a guess.
@@ -347,7 +348,8 @@ def test_traceability_to_specific_evidence_record_id():
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlantTraceability")
     ].iloc[0]
 
-    assert row["Eligibility_Status"] == "expert_review_required"
+    assert row["Eligibility_Status"] == "no_go_safety"
+    assert row["Ranking_Partition"] == RankingPartition.EXCLUDED_NO_GO.value
     safety_ids = [x.strip() for x in str(row["Safety_Gate_Evidence_IDs"]).split(";") if x.strip()]
     assert safety_ids == ["EV-INTERACTION-002"]
     assert "EV-EFFICACY-001" not in safety_ids

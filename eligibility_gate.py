@@ -372,6 +372,7 @@ def classify_safety_finding(
         if confidence_source else SafetyConfidence.INSUFFICIENT
     )
     evidence_conflict = bool(risk_assertions and reassuring_assertions)
+    serious_assertions = tuple(a for a in risk_assertions if a.severity == SeverityLevel.SERIOUS)
     assertion_evidence_ids = tuple(dict.fromkeys(a.evidence_record_id for a in assertions if a.evidence_record_id))
     evidence_ids = tuple(dict.fromkeys(tuple(evidence_ids) + assertion_evidence_ids))
     severity_rule = next((a.severity_rule for a in risk_assertions if a.severity == SeverityLevel.SERIOUS), "legacy-hard-term-policy")
@@ -382,16 +383,35 @@ def classify_safety_finding(
 
     if confirmed_scope is not None:
         scope = confirmed_scope
+    elif serious_assertions:
+        # Root-cause remediation: a serious structured assertion that carries
+        # no candidate-limiting preparation/dose/route/population qualifier is
+        # broad for the botanical record rather than unknowable by default.
+        # If a qualifier exists, retain the narrowest honest structured scope
+        # and require context matching before a hard no-go.
+        _a = serious_assertions[0]
+        if _a.affected_population:
+            scope = FindingScope.POPULATION_SPECIFIC
+        elif (
+            (_a.dose_dependency and _a.dose_dependency != "unknown")
+            or any(token in str(_a.source_sentence or "").lower() for token in ("dose", "doses", "dosage", "threshold"))
+        ):
+            scope = FindingScope.DOSE_SPECIFIC
+        elif _a.preparation or _a.route:
+            scope = FindingScope.PREPARATION_SPECIFIC
+        else:
+            scope = FindingScope.SPECIES_WIDE
     else:
         scope = FindingScope.UNKNOWN
 
     if confirmed_context_relevance is not None:
         relevance = confirmed_context_relevance
+    elif serious_assertions and scope == FindingScope.SPECIES_WIDE:
+        relevance = ContextRelevance.RELEVANT
     else:
         relevance = ContextRelevance.UNKNOWN
 
     same_plant_note = "Reference plant matched to itself; " if same_plant else ""
-    serious_assertions = tuple(a for a in risk_assertions if a.severity == SeverityLevel.SERIOUS)
     if serious_assertions:
         kinds = ", ".join(sorted({a.assertion_type.value for a in serious_assertions}))
         reason = (
@@ -443,6 +463,8 @@ def classify_regulatory_finding(
     same_plant: bool,
     confirmed_scope: Optional[FindingScope] = None,
     confirmed_context_relevance: Optional[ContextRelevance] = None,
+    finding_text: str = "",
+    candidate_dosage_form: str = "",
     evidence_ids: Tuple[str, ...] = (),
 ) -> RegulatoryFinding:
     """Builds a RegulatoryFinding from ``regulatory_barrier_classifier
@@ -481,6 +503,19 @@ def classify_regulatory_finding(
         confirmed_context_relevance if confirmed_context_relevance is not None
         else ContextRelevance.UNKNOWN
     )
+
+    # Root-cause remediation for explicit route/preparation exceptions.  The
+    # classifier already established that a prohibition exists; this block
+    # only decides whether the source text makes that prohibition applicable
+    # to the candidate context.  It never creates a prohibition by itself.
+    _ft = str(finding_text or "").lower()
+    _cdf = str(candidate_dosage_form or "").lower()
+    if status == RegulatoryDataStatus.PROHIBITED and confirmed_scope is None and _ft:
+        if ("external use" in _ft or "topical" in _ft) and any(
+            token in _cdf for token in ("oral", "internal", "capsule", "tablet", "extract")
+        ):
+            scope = FindingScope.PREPARATION_SPECIFIC
+            relevance = ContextRelevance.RELEVANT
 
     if status == RegulatoryDataStatus.INSUFFICIENT_DATA:
         reason = "No evidence text was available to evaluate regulatory status for this row."
@@ -552,11 +587,17 @@ def evaluate_eligibility(
     """
     reg_prohibited_species_wide = (
         regulatory.status == RegulatoryDataStatus.PROHIBITED
-        and regulatory.scope == FindingScope.SPECIES_WIDE
+        and (
+            regulatory.scope == FindingScope.SPECIES_WIDE
+            or (
+                regulatory.scope != FindingScope.UNKNOWN
+                and regulatory.context_relevance == ContextRelevance.RELEVANT
+            )
+        )
     )
     reg_prohibited_unknown_scope = (
         regulatory.status == RegulatoryDataStatus.PROHIBITED
-        and regulatory.scope != FindingScope.SPECIES_WIDE
+        and not reg_prohibited_species_wide
     )
     safety_no_go = (
         safety.severity == SafetySeverity.SEVERE
@@ -568,7 +609,7 @@ def evaluate_eligibility(
     )
     safety_unknown_scope_concern = (
         safety.severity == SafetySeverity.SEVERE
-        and safety.scope == FindingScope.UNKNOWN
+        and not safety_no_go
         and safety.context_relevance != ContextRelevance.IRRELEVANT
     )
     safety_confirmed_irrelevant = (

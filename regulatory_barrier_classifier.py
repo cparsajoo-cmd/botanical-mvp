@@ -34,13 +34,15 @@ from scientific_phrase_matcher import find_phrase_matches
 
 _BARRIER_TYPES = [
     ("Prohibited / banned", [
-        "banned", "prohibited", "illegal in", "not permitted for sale",
+        "banned", "prohibited", "illegal in", "not permitted for sale", "not permitted",
         "outlawed",
     ]),
     ("Restricted access (prescription/controlled)", [
         "prescription only", "prescription-only", "controlled substance",
         "restricted to licensed practitioners", "requires a prescription",
         "schedule i", "schedule ii", "schedule iii",
+        "restricted supply", "restricts supply",
+        "restricted to registered pharmacies", "under pharmacist supervision",
     ]),
     ("Novel food / pre-market approval required", [
         "novel food", "pre-market approval required", "premarket notification required",

@@ -83,6 +83,7 @@ from typing import Any, FrozenSet, Optional, Tuple
 
 from assertion_vocabulary import SeverityLevel
 from safety_assertion_engine import SafetyAssertion, SafetyConfidence, AssertionPolarity
+from regulatory_scope_assessment import assess_regulatory_scope, detect_dose_threshold_violation
 
 
 # ======================================================================
@@ -465,6 +466,7 @@ def classify_regulatory_finding(
     confirmed_context_relevance: Optional[ContextRelevance] = None,
     finding_text: str = "",
     candidate_dosage_form: str = "",
+    candidate_context_text: str = "",
     evidence_ids: Tuple[str, ...] = (),
 ) -> RegulatoryFinding:
     """Builds a RegulatoryFinding from ``regulatory_barrier_classifier
@@ -477,16 +479,53 @@ def classify_regulatory_finding(
     checked" — that distinction is exactly ``has_evidence_text``,
     supplied by the caller, not derived inside the classifier).
 
-    ``confirmed_scope``/``confirmed_context_relevance``: see
-    classify_safety_finding()'s docstring — same correction-round
-    policy applies here. Being a different alternative plant is not
-    evidence of a species-wide/relevant regulatory finding either; the
-    live production pipeline never supplies either override today, so
-    every live call gets UNKNOWN/UNKNOWN and a PROHIBITED finding
-    resolves to EXPERT_REVIEW_REQUIRED, not an automatic NO_GO_REGULATORY.
+    Root-cause remediation (Reference-Grounded Validation v1, Problem
+    C): two capabilities from ``regulatory_scope_assessment.py`` are
+    layered in here, both purely additive and both scoped to only ever
+    narrow an UNKNOWN default toward a more specific, evidence-grounded
+    answer — never to invent a prohibition that ``barrier_types``
+    itself did not already establish (except for the numeric
+    dose-threshold path, which is its own independent detection because
+    a dose limit is not expressible as a keyword/phrase at all):
+
+    1. ``candidate_context_text`` (typically the candidate's own
+       Target_Indication/question text) lets a documented PROHIBITED
+       finding resolve its scope automatically: no qualifier at all in
+       ``finding_text`` -> species-wide (mirrors
+       ``classify_safety_finding``'s equivalent "no limiting qualifier
+       -> broad by default" rule for serious safety assertions); a
+       qualifier (plant part / preparation / named constituent) that is
+       independently restated in the candidate's own context ->
+       resolved and relevant; a qualifier that is NOT confirmed by the
+       candidate context -> scope stays specific but relevance stays
+       UNKNOWN, so the case still safely falls to
+       EXPERT_REVIEW_REQUIRED rather than either extreme.
+    2. When ``barrier_types`` is empty (no phrase-based barrier found)
+       but ``finding_text`` contains a "must contain less than X units"
+       -style numeric limit clause, ``detect_dose_threshold_violation``
+       compares it against a numeric amount in ``candidate_context_text``.
+       A confirmed violation becomes a "Dose-dependent regulatory
+       restriction" PROHIBITED finding with DOSE_SPECIFIC/RELEVANT scope;
+       a limit that cannot be compared (no candidate amount found)
+       becomes RESTRICTED with unresolved relevance; a confirmed
+       COMPLIANT amount raises no barrier at all.
+
+    ``confirmed_scope``/``confirmed_context_relevance`` (an explicit
+    override, still never supplied by the live production pipeline)
+    take precedence over both of the above when given — see
+    classify_safety_finding()'s docstring for the same pattern.
     """
-    barrier_types = barrier_types or frozenset()
-    is_prohibited = "Prohibited / banned" in barrier_types
+    barrier_types = frozenset(barrier_types or frozenset())
+
+    dose_finding = None
+    if has_evidence_text and not barrier_types and finding_text:
+        dose_finding = detect_dose_threshold_violation(finding_text, candidate_context_text)
+        if dose_finding is not None and dose_finding.violates is not False:
+            barrier_types = barrier_types | {"Dose-dependent regulatory restriction"}
+
+    is_prohibited = "Prohibited / banned" in barrier_types or (
+        dose_finding is not None and dose_finding.violates is True
+    )
     is_restricted = bool(barrier_types) and not is_prohibited
 
     if not has_evidence_text:
@@ -510,15 +549,52 @@ def classify_regulatory_finding(
     # to the candidate context.  It never creates a prohibition by itself.
     _ft = str(finding_text or "").lower()
     _cdf = str(candidate_dosage_form or "").lower()
+    _scope_kind_to_finding_scope = {
+        "species_wide": FindingScope.SPECIES_WIDE,
+        "constituent_specific": FindingScope.CONSTITUENT_SPECIFIC,
+        "plant_part_specific": FindingScope.PLANT_PART_SPECIFIC,
+        "preparation_specific": FindingScope.PREPARATION_SPECIFIC,
+    }
     if status == RegulatoryDataStatus.PROHIBITED and confirmed_scope is None and _ft:
         if ("external use" in _ft or "topical" in _ft) and any(
             token in _cdf for token in ("oral", "internal", "capsule", "tablet", "extract")
         ):
             scope = FindingScope.PREPARATION_SPECIFIC
             relevance = ContextRelevance.RELEVANT
+        elif dose_finding is not None and dose_finding.violates is True:
+            scope = FindingScope.DOSE_SPECIFIC
+            relevance = ContextRelevance.RELEVANT
+        else:
+            _assessment = assess_regulatory_scope(finding_text, candidate_context_text)
+            if _assessment.scope == "species_wide":
+                scope = FindingScope.SPECIES_WIDE
+                relevance = ContextRelevance.RELEVANT
+            elif _assessment.relevant is True:
+                scope = _scope_kind_to_finding_scope.get(_assessment.scope, FindingScope.UNKNOWN)
+                relevance = ContextRelevance.RELEVANT
+            elif _assessment.scope in _scope_kind_to_finding_scope:
+                # A qualifier was found but the candidate's own context
+                # does not confirm it applies — stay honestly unresolved
+                # (falls to EXPERT_REVIEW_REQUIRED), never guess either way.
+                scope = _scope_kind_to_finding_scope[_assessment.scope]
+    elif status == RegulatoryDataStatus.RESTRICTED and confirmed_scope is None and dose_finding is not None:
+        scope = FindingScope.DOSE_SPECIFIC
 
     if status == RegulatoryDataStatus.INSUFFICIENT_DATA:
         reason = "No evidence text was available to evaluate regulatory status for this row."
+    elif dose_finding is not None and "Dose-dependent regulatory restriction" in barrier_types:
+        if dose_finding.violates:
+            reason = (
+                f"Documented regulatory dose limit of {dose_finding.limit_value:g}"
+                f" {dose_finding.limit_unit} is exceeded by the candidate's declared"
+                f" {dose_finding.actual_value:g} {dose_finding.actual_unit}."
+            )
+        else:
+            reason = (
+                f"Documented regulatory dose limit of {dose_finding.limit_value:g}"
+                f" {dose_finding.limit_unit} found; no comparable candidate-declared"
+                " amount could be confirmed."
+            )
     elif is_prohibited:
         reason = "Documented regulatory finding: Prohibited / banned."
     elif is_restricted:
@@ -542,6 +618,7 @@ def classify_regulatory_finding(
         reason=reason,
         evidence_ids=evidence_ids,
     )
+
 
 
 # ======================================================================

@@ -952,15 +952,18 @@ def test_go_investigate_hold_no_go_is_no_go_for_regulatory_prohibition():
 
 
 def test_regulatory_prohibition_end_to_end_through_run():
-    """Correction round: through the real run() pipeline, a
-    'prohibited and banned' text match on a DIFFERENT plant is
-    documented and NOT ignored, but — since production never confirms
-    species-wide/relevant scope — it resolves end-to-end to
-    EXPERT_REVIEW_REQUIRED, not an automatic NO_GO_REGULATORY. See
-    eligibility_gate.py's corrected default policy and
+    """Root-cause remediation (Reference-Grounded Validation v1, Problem
+    C): through the real run() pipeline, a 'prohibited and banned' text
+    match with no candidate-limiting qualifier (no named plant part,
+    preparation, or constituent) now resolves its scope to species-wide
+    by default (see regulatory_scope_assessment.assess_regulatory_scope
+    and eligibility_gate.classify_regulatory_finding's docstring) and
+    reaches an automatic NO_GO_REGULATORY end-to-end, rather than being
+    stuck at EXPERT_REVIEW_REQUIRED forever for lack of a structured
+    scope override production never supplied. This replaces the prior
+    characterization of that gap; see
     test_decision_class_regulatory_prohibition_with_confirmed_scope_is_hard_stop
-    above for proof NO_GO_REGULATORY is still fully reachable when
-    scope IS confirmed."""
+    for the (still valid, unchanged) confirmed-scope path."""
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -983,18 +986,17 @@ def test_regulatory_prohibition_end_to_end_through_run():
     alt_row = result[
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
     ].iloc[0]
-    assert alt_row["Decision_Class"].startswith("Expert review required")
-    assert alt_row["Decision_Class"] != eng.REGULATORY_PROHIBITION_DECISION_CLASS
-    assert alt_row["Eligibility_Status"] == "expert_review_required"
+    assert alt_row["Decision_Class"] == eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    assert alt_row["Eligibility_Status"] == "no_go_regulatory"
     assert bool(alt_row["Eligible_For_Normal_Ranking"]) is False
     # The legacy regulatory gate (unchanged function) still reports
     # FAILED on its own coarser vocabulary -- this is now understood as
     # the coarse/legacy view; Gate_Results["eligibility"] is the
     # authoritative one and must agree with Decision_Class.
     assert alt_row["Gate_Results"]["regulatory"]["status"] == GateStatus.FAILED
-    assert alt_row["Gate_Results"]["eligibility"]["status"] == "expert_review_required"
-    assert alt_row["Decision_Class_AH"] == "G — Hold / insufficient evidence"
-    assert alt_row["Go_Investigate_Hold_NoGo"] == "Hold"
+    assert alt_row["Gate_Results"]["eligibility"]["status"] == "no_go_regulatory"
+    assert alt_row["Decision_Class_AH"] == "H — No-go / safety concern"
+    assert alt_row["Go_Investigate_Hold_NoGo"] == "No-Go"
 
 
 def test_regulatory_prohibition_same_plant_exempt_end_to_end_through_run():
@@ -1008,8 +1010,8 @@ def test_regulatory_prohibition_same_plant_exempt_end_to_end_through_run():
              indication="TestIndication", target="Laxative",
              common_name="", plant_part="", extraction_method=""),
     ]
-    # The banned text is attached to the REFERENCE plant itself, so the
-    # self-matched row (RefPlant vs RefPlant) must be exempt.
+    # The banned text is attached to the REFERENCE plant itself (a
+    # same_plant self-row).
     evidence_df = pd.DataFrame([{
         "Scientific_Name": "RefPlant",
         "Target_Indication": "TestIndication",
@@ -1022,7 +1024,28 @@ def test_regulatory_prohibition_same_plant_exempt_end_to_end_through_run():
     self_row = result[
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "RefPlant")
     ].iloc[0]
-    assert self_row["Decision_Class"] != eng.REGULATORY_PROHIBITION_DECISION_CLASS
+    # Root-cause remediation (Reference-Grounded Validation v1, Problem
+    # C/B): same_plant's exemption was originally meant to guard against
+    # a merged self-row's POOLED multi-compound evidence blob
+    # attributing one incidental compound's regulatory mention to the
+    # whole reference plant (see eligibility_gate.py's module
+    # docstring). It was never meant to let a direct, unambiguous,
+    # unqualified "prohibited and banned" statement about the plant
+    # itself be silently neutralized just because the matched row
+    # happens to be the reference plant compared to itself — the exact
+    # failure mode the reference-grounded holdout's regulatory cases
+    # exposed (a real single-record regulatory prohibition attached to
+    # the candidate is same_plant=True by construction whenever there is
+    # only one candidate in the pool). Scope resolution
+    # (regulatory_scope_assessment.assess_regulatory_scope) no longer
+    # keys off same_plant — it keys off whether a candidate-limiting
+    # qualifier is present in the finding text at all, which is the
+    # actual, evidence-grounded question. The legacy same_plant-derived
+    # NOT_EVALUABLE status on the informational Gate_Results.regulatory
+    # field (from _hard_regulatory_gate(), unchanged) is retained below
+    # for backward compatibility — Decision_Class/Eligibility_Status are
+    # the authoritative fields (see final_decision_policy.py).
+    assert self_row["Decision_Class"] == eng.REGULATORY_PROHIBITION_DECISION_CLASS
     assert self_row["Gate_Results"]["regulatory"]["status"] == GateStatus.NOT_EVALUABLE
     assert "Prohibited / banned" in self_row["Gate_Results"]["regulatory"]["evidence"]
 

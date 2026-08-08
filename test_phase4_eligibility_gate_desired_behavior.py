@@ -634,12 +634,18 @@ def test_regulatory_gate_evidence_ids_are_finding_specific_end_to_end():
         (result["Reference_Plant"] == "RefPlant") & (result["Alternative_Plant"] == "AltPlant")
     ].iloc[0]
 
-    # Regulatory finding was detected (barrier text present), but without
-    # a confirmed scope it resolves to EXPERT_REVIEW_REQUIRED, not a
-    # fabricated automatic NO_GO_REGULATORY -- consistent with every
-    # other test in this file.
+    # Root-cause remediation (Reference-Grounded Validation v1, Problem
+    # C): a documented prohibition with no plant-part/preparation/
+    # constituent qualifier at all is now read as applying to the whole
+    # substance by default (mirrors classify_safety_finding()'s
+    # equivalent "no limiting qualifier -> species-wide" default for
+    # serious safety assertions) and resolves automatically to
+    # NO_GO_REGULATORY, rather than being stuck at EXPERT_REVIEW_REQUIRED
+    # forever for lack of a structured scope override production never
+    # supplies. This replaces the prior characterization of the
+    # pre-remediation gap (see regulatory_scope_assessment.py).
     assert alt_row["Regulatory_Status"] == "prohibited"
-    assert alt_row["Eligibility_Status"] == "expert_review_required"
+    assert alt_row["Eligibility_Status"] == "no_go_regulatory"
 
     regulatory_ids = [x.strip() for x in str(alt_row["Regulatory_Gate_Evidence_IDs"]).split(";") if x.strip()]
     assert regulatory_ids == ["EV-PROHIBITED-102"]

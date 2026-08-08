@@ -197,10 +197,12 @@ def test_regulatory_prohibition_triggers_via_natural_text_notes():
     )]
     result = execute_gold_case_against_engine(case, evidence=evidence)
     output = platform_output_for_gold_case(result)
-    # Correction round: same corrected policy as the safety test above,
-    # for regulatory prohibition.
-    assert output["decision_class"].startswith("Expert review required")
-    assert output["decision_class"] != "Regulatory prohibition — not suitable without regulatory review"
+    # Root-cause remediation (Reference-Grounded Validation v1, Problem
+    # C): an unqualified prohibition (no plant part/preparation/
+    # constituent qualifier) now resolves to species-wide scope by
+    # default and reaches NO_GO_REGULATORY automatically -- see
+    # test_gate_layer.py::test_regulatory_prohibition_end_to_end_through_run.
+    assert output["decision_class"] == "Regulatory prohibition — not suitable without regulatory review"
     assert output["gate_results"]["regulatory"]["status"] == GateStatus.FAILED
 
 

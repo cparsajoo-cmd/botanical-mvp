@@ -280,11 +280,13 @@ def _final_decision_direction(text: str) -> str:
                 "increased markedly", "good results",
                 "therapeutic indications", "therapeutic indication",
                 "prophylactic and restorative", "supporting mental and physical capacities",
+                "commonly recommended", "therapeutic benefit signals",
+                "useful treatment option",
             ))
             and any(token in n for token in (
                 "efficacious", "effective", "reduction", "reduce", "improvement",
                 "improv", "benefit", "efficacy", "therapeutic",
-                "prophylactic", "restorative", "supporting",
+                "prophylactic", "restorative", "supporting", "recommended", "treatment",
             ))
         ):
             direction = DIRECTION_POSITIVE

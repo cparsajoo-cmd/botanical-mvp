@@ -417,7 +417,53 @@ OUTPUT_COLUMNS = [
 # Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
 # unless a caller explicitly populates
 # self._canonical_regulatory_by_plant before calling run().
-DECISION_ENGINE_VERSION = "1.4.0"
+# 1.5.0 — Reference-Grounded Validation v1 remediation. Blind holdout
+# accuracy was 0.375 (release gate FAIL); root-cause analysis found
+# four independent, generalizable gaps (none of them the holdout's own
+# botanical names, PMIDs, or wording — see
+# REFERENCE_GROUNDED_VALIDATION_V1_ROOT_CAUSE_REPORT.md for the full
+# analysis):
+#   - safety_assertion_engine.py: organ-toxicity/fatal-adverse-event
+#     regex vocabulary did not cover plural forms ("liver injuries"),
+#     "fatalities" as a noun, present-tense "cause", or several
+#     standalone severe-outcome terms (multiorgan failure,
+#     cardiovascular collapse, etc.) — a genuine serious safety
+#     assertion could fail to be extracted from ordinary clinical
+#     prose, independent of the (already-correct) same_plant scope
+#     logic.
+#   - regulatory_barrier_classifier.py: only matched past-participle
+#     verb forms ("prohibited", "banned") — present-tense ("prohibits",
+#     "ban") produced zero matches. New find_verb_aware_phrase_matches()
+#     in scientific_phrase_matcher.py fixes this class of bug generally.
+#   - eligibility_gate.py's classify_regulatory_finding(): a documented
+#     regulatory prohibition/restriction could never resolve to a
+#     confirmed scope in live production (always UNKNOWN), so it could
+#     never reach an automatic NO_GO_REGULATORY — mirroring, but never
+#     receiving, the equivalent fix safety's serious-assertion path
+#     already had. New regulatory_scope_assessment.py (qualifier-scope
+#     matching against the candidate's own declared context, plus a
+#     numeric dose-threshold comparator for cases like "must contain
+#     less than 800mg... proposed portion provides 900mg") closes this.
+#   - evidence_interpretation.py: a fixed 30-character negation lookback
+#     window missed negation cues that started a clause well before the
+#     positive phrase they governed (e.g. "no convincing evidence
+#     that... were effective"), and several ordinary scientific-review
+#     phrasings (comparative "better than placebo", "commonly
+#     recommended", "reduced <duration/incidence/severity>", "did not
+#     (consistently) demonstrate an effect") were not recognized in
+#     either direction.
+# Net effect on a 24-case exposed regression re-run (NOT a fresh
+# validation estimate — see the integrity rule in
+# gold_corpus/scientific_validity/final_holdout_v1/FINAL_REFERENCE_GROUNDED_VALIDATION_REPORT.md):
+# accuracy 0.375 -> 0.958 (23/24), serious safety false negatives 2 ->
+# 0, regulatory false negatives 4 -> 0. One case remains unresolved on
+# this regression set (a "may cause short-term weight loss, but
+# magnitude was small and clinical relevance uncertain" phrasing,
+# deliberately not force-classified as positive due to conflict risk
+# with harm-framing "cause X" language used throughout the safety
+# vocabulary) — see the root-cause report's "Remaining Scientific
+# Risks" section.
+DECISION_ENGINE_VERSION = "1.5.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1687,6 +1733,7 @@ class BotanicalRDCandidateEngine:
                         same_plant=_row_same_plant,
                         finding_text=_regulatory_assertion_text,
                         candidate_dosage_form=dosage_form,
+                        candidate_context_text=str(indication or ""),
                         evidence_ids=_regulatory_gate_evidence_ids,
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
@@ -1989,6 +2036,8 @@ class BotanicalRDCandidateEngine:
                             # run(). Never reaches the CSV.
                             "_match_quality": match_quality,
                             "_same_plant": self._norm(ref_plant) == self._norm(alt_plant),
+                            "_candidate_indication_text": str(indication or ""),
+                            "_regulatory_finding_text": _regulatory_assertion_text or raw_evidence or "",
                             "Go_Investigate_Hold_NoGo": go_call,
                             "Scientific_Rationale": sci_rationale,
                             "Commercial_Regulatory_Rationale": comm_reg_rationale,
@@ -2342,6 +2391,12 @@ class BotanicalRDCandidateEngine:
                     has_evidence_text=_merged_has_evidence,
                     same_plant=bool(best.get("_same_plant", False)),
                     evidence_ids=_merged_reg_ids,
+                    finding_text=" ".join(dict.fromkeys(
+                        str(v or "").strip()
+                        for v in group.get("_regulatory_finding_text", [])
+                        if str(v or "").strip()
+                    )),
+                    candidate_context_text=str(best.get("_candidate_indication_text", "") or ""),
                 )
                 _merged_eligibility = _evaluate_eligibility(_merged_safety_finding, _merged_reg_finding)
                 best["Eligibility_Status"] = _merged_eligibility.status.value

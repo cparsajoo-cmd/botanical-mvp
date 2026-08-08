@@ -30,12 +30,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from scientific_phrase_matcher import find_phrase_matches
+from scientific_phrase_matcher import find_phrase_matches, find_verb_aware_phrase_matches
+
+# Root-cause fix (Reference-Grounded Validation v1, Problem C): these are
+# the single-word regulatory-action VERBS whose base/present-tense forms
+# ("prohibit", "prohibits", "ban", "bans") were previously invisible to
+# the classifier — only their past-participle/adjectival form ("banned",
+# "prohibited", "outlawed") was in the phrase list, so real regulatory
+# text phrased as "EU rules prohibit X" or "the law bans Y" produced zero
+# matches. Matched via find_verb_aware_phrase_matches (verb-conjugation
+# aware), separately from the plain phrase list below (which still
+# covers the non-verb, adjective/adverb-phrase entries "illegal in",
+# "not permitted for sale", "not permitted").
+_BARRIER_VERB_TERMS = [
+    ("Prohibited / banned", ["prohibit", "ban", "outlaw"]),
+]
 
 _BARRIER_TYPES = [
     ("Prohibited / banned", [
-        "banned", "prohibited", "illegal in", "not permitted for sale", "not permitted",
-        "outlawed",
+        "illegal in", "not permitted for sale", "not permitted",
     ]),
     ("Restricted access (prescription/controlled)", [
         "prescription only", "prescription-only", "controlled substance",
@@ -98,6 +111,13 @@ def classify_regulatory_barriers(text: Optional[str]) -> RegulatoryBarrierResult
         hits = _matches(lowered, terms)
         if hits:
             barrier_types.append(label)
+            matched_phrases.extend(hits)
+
+    for label, verb_terms in _BARRIER_VERB_TERMS:
+        hits = find_verb_aware_phrase_matches(lowered, verb_terms, lookback=30, negation_window=25)
+        if hits:
+            if label not in barrier_types:
+                barrier_types.append(label)
             matched_phrases.extend(hits)
 
     return RegulatoryBarrierResult(

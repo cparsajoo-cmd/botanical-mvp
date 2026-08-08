@@ -178,13 +178,44 @@ def _has(text: str, phrases: List[str]) -> bool:
 # improvement") from being counted as positive.
 _NEGATION_CUES = ("did not ", "does not ", "was not ", "were not ", "no ", "not ", "failed to ", "neither ", "nor ")
 _NEGATION_LOOKBACK = 30
+_SENTENCE_BOUNDARY_RE = re.compile(
+    r"[.!?;]\s+|,?\s*\b(?:although|but|however|whereas|while|yet)\b\s*,?\s*"
+)
+
+
+def _negation_scope_start(text: str, match_start: int) -> int:
+    """Root-cause fix (Reference-Grounded Validation v1, Problem A): a
+    fixed 30-character lookback window misses a negation cue that
+    starts a clause well before the positive phrase it governs — e.g.
+    "no convincing evidence that valerian preparations were effective"
+    has "no " and "were effective" more than 30 characters apart, so
+    the negation was never detected and the sentence was misread as
+    positive.
+
+    Widens the lookback to the start of the CURRENT CLAUSE — the last
+    sentence-terminating punctuation OR contrastive conjunction
+    ("but"/"although"/"however"/"whereas"/"while"/"yet") before the
+    match, or the start of the text — instead of a fixed character
+    count. Mirrors the sentence-unit negation scope already used
+    elsewhere in this codebase (e.g. safety_assertion_engine.py's
+    per-sentence assertion classification). The contrastive-conjunction
+    boundary matters as much as the sentence boundary: "the endpoint
+    was not significant, although secondary outcomes improved" must not
+    let "not" reach across "although" and cancel the later, separately
+    true positive clause.
+    """
+    boundary = 0
+    for m in _SENTENCE_BOUNDARY_RE.finditer(text, 0, match_start):
+        boundary = m.end()
+    return boundary
 
 
 def _negated_positive_hits(text: str, phrases: List[str]) -> List[str]:
-    """Positive-cue phrases that occur but are immediately preceded (in
-    a short word window) by a negation cue — e.g. "did not demonstrate
-    significant improvement". These are excluded from the positive
-    bucket and instead treated as a null-direction signal."""
+    """Positive-cue phrases that occur but are preceded, within the
+    same sentence, by a negation cue — e.g. "did not demonstrate
+    significant improvement" or "no convincing evidence that ... were
+    effective". These are excluded from the positive bucket and
+    instead treated as a null-direction signal."""
     hits = []
     for phrase in phrases:
         words = phrase.split(" ")
@@ -194,7 +225,7 @@ def _negated_positive_hits(text: str, phrases: List[str]) -> List[str]:
             body = r"\s+".join(re.escape(w) for w in words[:-1]) + r"\s+" + re.escape(words[-1]) + "s?"
         pattern = re.compile(r"\b" + body + r"\b")
         for match in pattern.finditer(text):
-            window_start = max(0, match.start() - _NEGATION_LOOKBACK)
+            window_start = _negation_scope_start(text, match.start())
             preceding = text[window_start:match.start()]
             if any(cue in preceding for cue in _NEGATION_CUES):
                 hits.append(phrase)
@@ -215,7 +246,7 @@ def _positive_hits(text: str, phrases: List[str]) -> List[str]:
         for match in pattern.finditer(text):
             if phrase in negated:
                 continue
-            window_start = max(0, match.start() - _NEGATION_LOOKBACK)
+            window_start = _negation_scope_start(text, match.start())
             preceding = text[window_start:match.start()]
             if any(cue in preceding for cue in _NEGATION_CUES):
                 continue
@@ -247,6 +278,8 @@ POSITIVE_PHRASES = [
     "beat placebo",
     "clinically effective",
     "greater improvement",
+    "better than placebo",
+    "good evidence to recommend",
     "outcomes improved",
     "outcome improved",
     "symptoms improved",
@@ -299,8 +332,13 @@ _POSITIVE_COMPARATIVE_REGEXES = (
     # Generic outcome grammar: allows an indication adjective between the
     # improvement verb and the endpoint (e.g. "improved osteoarthritis
     # symptoms") without enumerating plants or diseases.
-    re.compile(r"\bimproved\s+(?:(?!adverse\b|side\s+effect)\w+\s+){0,5}(?:symptoms?|outcomes?|markers?|scores?|function|quality\s+of\s+life)\b"),
+    re.compile(r"\bimproved\s+(?:(?!adverse\b|side\s+effect)\w+\s+){0,5}(?:symptoms?|outcomes?|markers?|scores?|function|quality\s+of\s+life|severity)\b"),
     re.compile(r"\b(?:found|showed|reported)\s+(?:a\s+)?(?:reduction|improvement)\s+in\b"),
+    # Generic "reduced <endpoint noun>" grammar (e.g. "reduced treatment
+    # duration and episode incidence") — a broader but still generic
+    # counterpart to the "number of" pattern above; endpoint nouns are
+    # abstract clinical-outcome categories, not disease-specific terms.
+    re.compile(r"\breduced\s+(?:(?!adverse\b|side\s+effect)[a-z-]+\s+){0,4}(?:duration|incidence|severity|frequency|recurrence|episodes?)\b"),
     # Benefit-bearing effect adjectives.  These encode outcome polarity, not
     # a botanical/indication lookup, so "significant adverse effects" is not
     # accidentally treated as efficacy.
@@ -345,6 +383,11 @@ NULL_PHRASES = [
     "no association",
     "nonsignificant reduction",
     "nonsignificant reductions",
+    "insufficient evidence to recommend",
+    "not shown to provide benefit",
+    "not been shown to provide benefit",
+    "little evidence to support",
+    "evidence remains weak",
 ]
 
 NEGATIVE_PHRASES = [
@@ -371,6 +414,9 @@ NEGATIVE_PHRASES = [
     "does not seem to be effective",
     "could not be recommended",
     "did not demonstrate beneficial effects",
+    "did not demonstrate effectiveness",
+    "did not demonstrate an effect",
+    "did not consistently demonstrate an effect",
     "neither",
 ]
 

@@ -101,6 +101,121 @@ def _phrase_pattern(term: str) -> Pattern:
     return pattern
 
 
+def _verb_inflection_pattern(word: str) -> str:
+    """Return a regex fragment matching `word` in its base, 3rd-person
+    -s, past/past-participle -ed, and gerund -ing forms.
+
+    Root-cause fix (Reference-Grounded Validation v1, Problem C): several
+    regulatory/safety single-word action terms (e.g. "prohibit", "ban",
+    "restrict") were stored in phrase lists only as their past-participle
+    form ("prohibited", "banned", "restricted"), so real text using the
+    present tense ("EU rules prohibit X", "the law prohibits Y") never
+    matched — the exact same class of bug the plural-form fix addressed
+    for nouns, but for verb conjugation instead.
+
+    This is deliberately a generic, term-agnostic English inflection
+    rule, not a per-word dictionary: it derives base/-s/-ed/-ing purely
+    from the input word's own spelling (silent-e drop, y->i, and the
+    short-stressed-syllable consonant-doubling pattern for monosyllabic
+    CVC words like "ban"). Any word passed through here — whichever
+    inflected form a caller happens to supply — matches the same set of
+    forms, so a caller does not need to know in advance whether a term
+    is regular ("restrict"/"restricted") or doubles its final consonant
+    ("ban"/"banned"). Extra alternatives that happen not to be real
+    English words (e.g. an unused "prohibitted" branch) are harmless:
+    they simply never match real text.
+    """
+    w = word.lower()
+    # Recover a bare stem from common inflected inputs so the function
+    # works the same whether callers supply a base form ("prohibit") or
+    # an already-inflected one ("prohibited", "banned", "restricting").
+    stem = w
+    if stem.endswith("ing") and len(stem) > 4:
+        stem = stem[:-3]
+    elif stem.endswith("ied") and len(stem) > 4:
+        stem = stem[:-3] + "y"
+    elif stem.endswith("ed") and len(stem) > 3:
+        stem = stem[:-2]
+    # Undo a doubled final consonant left over from stripping -ed/-ing
+    # (e.g. "banned" -> "bann" -> "ban", "banning" -> "bann" -> "ban").
+    if len(stem) > 2 and stem[-1] == stem[-2] and stem[-1] not in _VOWELS:
+        stem = stem[:-1]
+
+    forms = {stem}
+    if stem.endswith("y") and len(stem) > 1 and stem[-2] not in _VOWELS:
+        base = stem[:-1]
+        forms.update({base + "ies", base + "ied", stem + "ing"})
+    elif stem.endswith("e") and not stem.endswith("ee"):
+        base = stem[:-1]
+        forms.update({stem + "s", stem + "d", base + "ing"})
+    else:
+        forms.add(stem + "s" if not stem.endswith(("s", "x", "z", "ch", "sh")) else stem + "es")
+        forms.add(stem + "ed")
+        forms.add(stem + "ing")
+        # Short, single-syllable CVC stems (e.g. "ban") double the final
+        # consonant for -ed/-ing ("banned"/"banning"); words stressed
+        # elsewhere ("prohibit") do not. Adding both is harmless (see
+        # docstring) and avoids needing a syllable-stress model.
+        if (
+            len(stem) >= 3
+            and stem[-1] not in _VOWELS
+            and stem[-2] in _VOWELS
+            and stem[-3] not in _VOWELS
+        ):
+            forms.add(stem + stem[-1] + "ed")
+            forms.add(stem + stem[-1] + "ing")
+
+    escaped = sorted((re.escape(f) for f in forms), key=len, reverse=True)
+    return "(?:" + "|".join(escaped) + ")"
+
+
+_VERB_PATTERN_CACHE: Dict[str, Pattern] = {}
+
+
+def _verb_phrase_pattern(term: str) -> Pattern:
+    cached = _VERB_PATTERN_CACHE.get(term)
+    if cached is not None:
+        return cached
+    words = term.split(" ")
+    if len(words) == 1:
+        body = _verb_inflection_pattern(words[0])
+    else:
+        prefix = r"\s+".join(re.escape(w) for w in words[:-1])
+        body = prefix + r"\s+" + _verb_inflection_pattern(words[-1])
+    pattern = re.compile(r"\b" + body + r"\b")
+    _VERB_PATTERN_CACHE[term] = pattern
+    return pattern
+
+
+def find_verb_aware_phrase_matches(
+    text: str,
+    terms: Iterable[str],
+    negation_aware: bool = True,
+    lookback: int = 40,
+    negation_window: int = 25,
+) -> List[str]:
+    """Same contract as ``find_phrase_matches``, but the LAST word of
+    each term is matched with verb-conjugation awareness (base/-s/-ed/
+    -ing) instead of only noun-pluralization. Opt-in, separate function
+    so existing callers of ``find_phrase_matches``/``phrase_present``
+    (noun-phrase call sites, where "-ing"/"-ed" alternatives would be
+    meaningless or could over-match) are completely unaffected."""
+    if not text:
+        return []
+    matched: List[str] = []
+    for term in terms:
+        pattern = _verb_phrase_pattern(term)
+        for match in pattern.finditer(text):
+            if negation_aware:
+                window_start = max(0, match.start() - lookback)
+                preceding = text[window_start:match.start()]
+                if any(cue in preceding[-negation_window:] for cue in NEGATION_CUES):
+                    continue
+            matched.append(term)
+            break
+    return matched
+
+
 def phrase_present(text: str, term: str) -> bool:
     """Word-boundary-aware, simple-plural-aware check for a single
     `term` in `text`. No negation handling — this is the base primitive

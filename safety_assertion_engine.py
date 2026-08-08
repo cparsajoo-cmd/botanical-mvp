@@ -183,9 +183,26 @@ _RISK_PATTERNS = {
     SafetyAssertionType.PHOTOSENSITIVITY: (r"\bphotosensiti(?:vity|sation|zation)\b", r"\bphototoxic(?:ity)?\b"),
     SafetyAssertionType.ALLERGIC_RISK: (r"\banaphylaxis\b", r"\bsevere allergic reaction\b", r"\bhypersensitivity reaction\b"),
 }
+# Root-cause fix (Reference-Grounded Validation v1, Problem B): the
+# causal-anchor pattern only matched the SINGULAR "liver injury"/"renal
+# injury" (the same plural-form bug class fixed elsewhere via
+# scientific_phrase_matcher — this module intentionally stays
+# standard-library/dependency-light, so the fix is applied locally as an
+# explicit (?:y|ies) alternation rather than importing that module) and
+# used a narrow 55-character window, which real prose regularly exceeds
+# when a causal verb is followed by a list of qualifiers before the
+# organ-toxicity noun ("has caused multiple clinically apparent
+# hepatocellular liver injuries..."). The window is widened and the
+# plural form added; the standalone (no-causal-verb-required) tuple
+# below is separately widened with additional organ/systemic-failure
+# outcome nouns that are inherently harm outcomes regardless of which
+# verb introduces them (see the module docstring's list-of-symptoms
+# case: "...can cause seizures, coma, ..., acute hepatic necrosis,
+# multiorgan failure and death" puts the causal verb far from several of
+# its listed consequences).
 _ORGAN_TOXICITY = (
-    r"\b(?:caus(?:e|es|ed)|induc(?:e|es|ed)|associated with|risk of|result(?:s|ed)? in)\b.{0,55}\b(?:hepatotoxicity|liver injury|nephrotoxicity|renal injury|cardiotoxicity|neurotoxicity)\b",
-    r"\b(?:hepatotoxic|nephrotoxic|cardiotoxic|neurotoxic)\b",
+    r"\b(?:caus(?:e|es|ed)|induc(?:e|es|ed)|associated with|risk of|result(?:s|ed)? in|linked to)\b.{0,80}\b(?:hepatotoxicity|liver injur(?:y|ies)|nephrotoxicity|renal injur(?:y|ies)|cardiotoxicity|neurotoxicity)\b",
+    r"\b(?:hepatotoxic|nephrotoxic|cardiotoxic|neurotoxic|hepatocellular liver injur(?:y|ies)|acute hepatic necrosis|hepatic necrosis|multiorgan failure|multi-organ failure|cardiovascular collapse|hepatic failure|renal failure|respiratory failure|status epilepticus)\b",
 )
 _PROTECTIVE_CONTEXT = (
     r"\bprotect(?:s|ed|ive|ion)? against\b", r"\bprevent(?:s|ed|ion)?\b.{0,30}\b(?:toxicity|injury)\b",
@@ -208,7 +225,23 @@ _DIRECT_SERIOUS_RISKS = {
     SafetyAssertionType.HYPOTENSION: (r"\b(?:severe |marked |dangerous )?hypotension\b",),
     SafetyAssertionType.DIABETES_INTERACTION: (r"\b(?:antidiabetic|hypoglyc(?:a|e)mic)\b.{0,60}\b(?:interaction|potentiat|severe hypoglyc(?:a|e)mia)\b", r"\bsevere hypoglyc(?:a|e)mia\b"),
 }
-_FATAL_AE = (r"\bfatal adverse events?\b", r"\bdeath(?:s)?\b.{0,50}\b(?:associated with|reported after|due to|caused by)\b", r"\b(?:associated with|caused|resulted in)\b.{0,50}\bdeath(?:s)?\b")
+# Root-cause fix (Reference-Grounded Validation v1, Problem B): "have
+# been reported" is the standard, plant-agnostic clinical-literature way
+# of reporting an observed fatality ("fatalities have been reported"),
+# distinct from and just as common as the explicit "death(s) caused
+# by/associated with" wording already covered — neither was previously
+# recognized. The causal-anchor pattern is also widened (50 -> 90 chars)
+# and its verb made tense-flexible (caus(?:e|es|ed), not only "caused")
+# so a list of consequences between the causal verb and "death" (as in
+# "can cause seizures, coma, ..., multiorgan failure and death") is
+# still captured.
+_FATAL_AE = (
+    r"\bfatal adverse events?\b",
+    r"\bfatalit(?:y|ies)\b.{0,40}\b(?:reported|observed|documented|occurred)\b",
+    r"\b(?:reported|observed|documented)\b.{0,40}\bfatalit(?:y|ies)\b",
+    r"\bdeath(?:s)?\b.{0,50}\b(?:associated with|reported after|due to|caused by)\b",
+    r"\b(?:associated with|caus(?:e|es|ed)|result(?:s|ed)? in)\b.{0,90}\bdeath(?:s)?\b",
+)
 _SERIOUS_AE = (r"\bserious adverse events?\b", r"\badverse events?\b.{0,50}\b(?:hospitali[sz]ation|life[- ]threatening|disability)\b")
 _REGULATORY_MAJOR = (r"\b(?:boxed|black box) warning\b", r"\b(?:fda|ema|mhra|tga|health canada)\b.{0,50}\b(?:safety warning|safety communication|serious risk)\b")
 

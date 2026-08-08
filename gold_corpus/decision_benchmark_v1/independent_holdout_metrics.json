@@ -1,0 +1,248 @@
+{
+  "benchmark": "independent-holdout-e2e/1.0.0",
+  "holdout_n_total": 15,
+  "holdout_n_scored": 2,
+  "holdout_n_blocked": 13,
+  "accuracy_on_executable_scored_subset": 0.5,
+  "macro_f1_on_executable_scored_subset": 0.6666666666666666,
+  "serious_safety_false_negatives": 0,
+  "regulatory_false_negatives": 0,
+  "false_no_go": 0,
+  "expert_review_overuse": 0,
+  "insufficient_evidence_miss": 0,
+  "confusion_matrix": {
+    "GO": {
+      "GO": 1,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "GO WITH CAUTION": {
+      "GO": 1,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "EXPERT REVIEW REQUIRED": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "NO GO SAFETY": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "NO GO REGULATORY": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    },
+    "INSUFFICIENT EVIDENCE": {
+      "GO": 0,
+      "GO WITH CAUTION": 0,
+      "EXPERT REVIEW REQUIRED": 0,
+      "NO GO SAFETY": 0,
+      "NO GO REGULATORY": 0,
+      "INSUFFICIENT EVIDENCE": 0
+    }
+  },
+  "scored_cases": [
+    {
+      "case_id": "refgrounded_001_melissa_officinalis_sleep",
+      "status": "SCORED",
+      "reason_code": "OK",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 7,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_001_independent.json",
+      "expected": "GO",
+      "actual": "GO",
+      "match": true
+    },
+    {
+      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+      "status": "SCORED",
+      "reason_code": "FINAL_DECISION_MISMATCH",
+      "reason": "Frozen independent snapshot executed successfully.",
+      "candidate_count": 7,
+      "snapshot_file": "gold_corpus/decision_benchmark_v1/independent_holdout_snapshots/case_003_independent.json",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "match": false
+    }
+  ],
+  "blocked_cases": [
+    {
+      "case_id": "refgrounded_004_ginkgo_biloba_cognitive",
+      "status": "BLOCKED",
+      "reason_code": "CANDIDATE_DISCOVERY_ZERO_CANDIDATES",
+      "reason": "Production default candidate discovery returned no candidates for indication \"Cognitive decline / Alzheimer's support\".",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_005_cimicifuga_racemosa_menopausal",
+      "status": "BLOCKED",
+      "reason_code": "CANDIDATE_DISCOVERY_ZERO_CANDIDATES",
+      "reason": "Production default candidate discovery returned no candidates for indication 'Menopause support'.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_007_valeriana_officinalis_preparation_spec",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_008_ginkgo_biloba_preparation_spec",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_009_melissa_officinalis_mental_stress",
+      "status": "BLOCKED",
+      "reason_code": "CANDIDATE_DISCOVERY_ZERO_CANDIDATES",
+      "reason": "Production default candidate discovery returned no candidates for indication 'Mental stress and mood disorders'.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_010_passiflora_incarnata_mental_stress",
+      "status": "BLOCKED",
+      "reason_code": "CANDIDATE_DISCOVERY_ZERO_CANDIDATES",
+      "reason": "Production default candidate discovery returned no candidates for indication 'Mental stress and mood disorders'.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_011_matricaria_chamomilla_indication_evidence",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires dosage_form; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_012_lavandula_angustifolia_sleep",
+      "status": "BLOCKED",
+      "reason_code": "CANDIDATE_DISCOVERY_ZERO_CANDIDATES",
+      "reason": "Production default candidate discovery returned no candidates for indication 'Sleep disorders and temporary insomnia'.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_013_echinacea_purpurea_identity_quality",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication and dosage_form; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_014_ginkgo_biloba_safety_interaction",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_015_hypericum_perforatum_preparation_spec",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_017_matricaria_chamomilla_identity_quality",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires indication and dosage_form; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    },
+    {
+      "case_id": "refgrounded_023_momordica_charantia_null_fbg",
+      "status": "BLOCKED",
+      "reason_code": "QUESTION_SCHEMA_NOT_EXECUTABLE",
+      "reason": "Current END_TO_END ValidationQuestion/engine path requires dosage_form; this GoldCase domain does not provide those fields. No substitute value was fabricated.",
+      "candidate_count": 0,
+      "snapshot_file": null,
+      "expected": null,
+      "actual": null,
+      "match": null
+    }
+  ],
+  "mismatch_rca": [
+    {
+      "case_id": "refgrounded_003_matricaria_chamomilla_sleep",
+      "expected": "GO WITH CAUTION",
+      "actual": "GO",
+      "responsible_stage": "Evidence Interpretation -> Final Decision",
+      "responsible_modules": [
+        "evidence_interpretation.py",
+        "final_decision_policy.py",
+        "botanical_rd_candidate_engine.py"
+      ],
+      "root_cause": "The independently retrieved governing systematic review is mixed/conditional across sleep endpoints. The current six-class production policy has no scientific-evidence path from a single conditional/mixed supportive source to GO WITH CAUTION: GO WITH CAUTION is emitted only for ELIGIBLE_WITH_RESTRICTIONS (safety/regulatory restriction). Accordingly this scientific caveat is lost and the eligible candidate falls through to GO.",
+      "remediation_applied": false
+    }
+  ],
+  "interpretation": "This is the first leakage-controlled prospective holdout result. Accuracy is conditional on the executable/scored subset only; it must not be reported as 15-case accuracy because 13 cases are structurally blocked by the current question/candidate-discovery path."
+}

@@ -102,8 +102,9 @@ class _FakeSupabaseClient:
         return _FakeQuery(self, name)
 
 
-def _make_row(i, *, notes="", title="", result_direction=None, safety_signal=None,
-              scientific_name="Ginkgo biloba", target_indication="cognitive impairment"):
+def _make_row(i, *, notes="", title="", result_direction=None, llm_result_direction=None,
+              safety_signal=None, llm_safety_signal=None, scientific_name="Ginkgo biloba",
+              target_indication="cognitive impairment"):
     return {
         "id": i,
         "target_indication": target_indication,
@@ -113,7 +114,9 @@ def _make_row(i, *, notes="", title="", result_direction=None, safety_signal=Non
         "evidence_level": "High",
         "study_type": "RCT",
         "result_direction": result_direction,
+        "llm_result_direction": llm_result_direction,
         "safety_signal": safety_signal,
+        "llm_safety_signal": llm_safety_signal,
         "plants": {"scientific_name": scientific_name},
         "sources": {"title": title},
     }
@@ -221,8 +224,64 @@ def test_never_overwrites_existing_result_direction(monkeypatch):
     assert stats.skipped_has_direction == 1
     assert stats.extracted == 1
     assert len(extractor.calls) == 1  # row 1 never sent to the LLM at all
-    assert rows[0]["result_direction"] == "Positive"  # untouched
-    assert rows[1]["result_direction"] == "Negative"  # backfilled
+    assert rows[0]["result_direction"] == "Positive"  # source assertion untouched
+    assert rows[0]["llm_result_direction"] is None
+    assert rows[1]["result_direction"] is None  # never masquerade LLM output as source
+    assert rows[1]["llm_result_direction"] == "Negative"  # model provenance preserved
+
+
+# ---------------------------------------------------------------------
+# Provenance boundary: existing LLM direction is never overwritten, and
+# source columns never receive model output.
+# ---------------------------------------------------------------------
+def test_existing_llm_direction_is_never_overwritten(monkeypatch):
+    rows = [_make_row(1, notes="x", llm_result_direction="Positive")]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    monkeypatch.setattr("supabase_data.get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor(result_direction="Negative")
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
+
+    assert stats.skipped_has_direction == 1
+    assert not extractor.calls
+    assert not fake_client.update_calls
+    assert rows[0]["result_direction"] is None
+    assert rows[0]["llm_result_direction"] == "Positive"
+
+
+def test_apply_writes_only_dedicated_llm_assertion_columns(monkeypatch):
+    rows = [_make_row(1, notes="x")]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    monkeypatch.setattr("supabase_data.get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor(result_direction="Positive", safety_signal="Moderate")
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
+
+    payload = fake_client.update_calls[0]["payload"]
+    assert payload == {
+        "llm_result_direction": "Positive",
+        "llm_safety_signal": "Moderate",
+    }
+    assert "result_direction" not in payload
+    assert "safety_signal" not in payload
+
+
+def test_existing_llm_safety_signal_is_not_overwritten(monkeypatch):
+    rows = [_make_row(1, notes="x", llm_safety_signal="Serious")]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    monkeypatch.setattr("supabase_data.get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor(result_direction="Positive", safety_signal="Moderate")
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
+
+    assert rows[0]["llm_result_direction"] == "Positive"
+    assert rows[0]["llm_safety_signal"] == "Serious"
 
 
 # ---------------------------------------------------------------------
@@ -298,6 +357,7 @@ def test_dry_run_never_calls_update(monkeypatch):
     assert stats.updated == 0
     assert not fake_client.update_calls
     assert rows[0]["result_direction"] is None
+    assert rows[0]["llm_result_direction"] is None
 
 
 # ---------------------------------------------------------------------
@@ -316,8 +376,10 @@ def test_safety_signal_backfilled_only_when_blank(monkeypatch):
 
     backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    assert rows[0]["safety_signal"] == "Serious"  # untouched
-    assert rows[1]["safety_signal"] == "Moderate"  # backfilled
+    assert rows[0]["safety_signal"] == "Serious"  # source assertion untouched
+    assert rows[0]["llm_safety_signal"] is None
+    assert rows[1]["safety_signal"] is None  # never masquerade LLM output as source
+    assert rows[1]["llm_safety_signal"] == "Moderate"  # model provenance preserved
 
 
 # ---------------------------------------------------------------------

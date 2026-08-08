@@ -9,7 +9,10 @@ Requirements for --apply:
 - SUPABASE_URL / SUPABASE_KEY
 - OPENAI_API_KEY
 
-This script never overwrites an existing Result_Direction or Safety_Signal.
+This script never overwrites an existing source/connector Result_Direction or
+Safety_Signal, and it never stores model output in those source-authoritative
+columns. LLM-derived values are written only to llm_result_direction and
+llm_safety_signal so provenance remains explicit end-to-end.
 It exists because pre-canonical evidence rows otherwise remain permanently
 unstructured and force the engine to abstain (see
 canonical_scientific_assertion.resolve_record_direction()'s fail-safe rule
@@ -67,7 +70,7 @@ from supabase_data import _fetch_table_df
 
 SELECT_EXPR = (
     "id,target_indication,dosage_form,notes,evidence_type,evidence_level,"
-    "study_type,result_direction,safety_signal,"
+    "study_type,result_direction,llm_result_direction,safety_signal,llm_safety_signal,"
     "plants(scientific_name),sources(title)"
 )
 
@@ -196,7 +199,14 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
     for item in rows:
         stats.scanned += 1
 
-        if not _blank(item.get("result_direction")):
+        # A source/connector assertion is already higher-authority than an LLM
+        # extraction, and an existing LLM assertion must never be overwritten.
+        # Therefore either populated direction means this row needs no direction
+        # backfill. Keeping the old stats field name avoids breaking callers.
+        if (
+            not _blank(item.get("result_direction"))
+            or not _blank(item.get("llm_result_direction"))
+        ):
             stats.skipped_has_direction += 1
             continue
 
@@ -235,9 +245,19 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
             safety = str(out.get("safety_signal") or "").strip()
             stats.extracted += 1
             if apply:
-                payload = {"result_direction": direction}
-                if _blank(item.get("safety_signal")) and safety:
-                    payload["safety_signal"] = safety
+                # CRITICAL provenance boundary: values returned by
+                # extract_evidence_with_llm() are model-derived assertions, not
+                # source/connector assertions. Never write them into
+                # result_direction / safety_signal. The production engine already
+                # transports these dedicated LLM fields separately and resolves
+                # them below source assertions in canonical precedence.
+                payload = {"llm_result_direction": direction}
+                if (
+                    _blank(item.get("safety_signal"))
+                    and _blank(item.get("llm_safety_signal"))
+                    and safety
+                ):
+                    payload["llm_safety_signal"] = safety
                 supabase.table("evidence_records").update(payload).eq(
                     "id", item["id"]
                 ).execute()

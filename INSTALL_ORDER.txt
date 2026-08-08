@@ -1,0 +1,23 @@
+CANONICAL ASSERTION PROVENANCE FIX — INSTALL ORDER
+
+1) Add these files to the repository root (replace existing files where applicable):
+   - backfill_canonical_assertions.py
+   - test_backfill_canonical_assertions.py
+
+2) Add these files under migrations/:
+   - migrations/0009_add_llm_assertion_provenance.sql
+   - migrations/0009_add_llm_assertion_provenance_down.sql
+
+3) BEFORE running backfill with --apply, execute:
+   migrations/0009_add_llm_assertion_provenance.sql
+   against the production Supabase database.
+
+4) Run a dry-run first:
+   python backfill_canonical_assertions.py --limit 100
+
+5) Only after reviewing the dry-run, use --apply on a small staged sample.
+
+IMPORTANT:
+- LLM result direction is now stored in llm_result_direction, never result_direction.
+- LLM safety signal is now stored in llm_safety_signal, never safety_signal.
+- Existing source/connector assertions and existing LLM assertions are never overwritten.

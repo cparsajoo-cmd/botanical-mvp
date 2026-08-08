@@ -2,13 +2,14 @@
   "releasable": false,
   "claim": "NOT YET REFERENCE-GROUNDED VALIDATED",
   "blockers": [
-    "Accuracy=0.375; require >= 0.80.",
-    "Macro-F1=0.41595238095238096; require >= 0.75.",
-    "GO WITH CAUTION recall=0.5; require >= 0.75.",
-    "EXPERT REVIEW REQUIRED recall=0.25; require >= 0.70.",
+    "Accuracy=0.20833333333333334; require >= 0.80.",
+    "Macro-F1=0.3192982456140351; require >= 0.75.",
+    "GO precision=None; require >= 0.85.",
+    "GO WITH CAUTION recall=0.0; require >= 0.75.",
+    "EXPERT REVIEW REQUIRED recall=0.0; require >= 0.70.",
     "Serious safety false negatives=2; zero tolerated.",
-    "Regulatory false negatives=4; zero tolerated.",
-    "INSUFFICIENT EVIDENCE miss rate=0.250; require <= 0.20."
+    "Regulatory false negatives=3; zero tolerated.",
+    "INSUFFICIENT EVIDENCE miss rate=0.500; require <= 0.20."
   ],
   "warnings": []
 }

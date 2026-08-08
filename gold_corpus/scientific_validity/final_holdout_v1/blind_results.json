@@ -1,215 +1,335 @@
 {
-  "version": "reference-grounded-final-holdout-v1/1.0.0",
-  "engine_version": "1.4.0",
+  "version": "reference-grounded-final-holdout-v2/1.0.0",
+  "engine_version": "1.5.2",
   "rows": [
     {
-      "case_id": "rgv1_001_senna_constipation",
-      "botanical": "Senna alexandrina",
+      "case_id": "rgv2_001_ginkgo_dementia",
+      "botanical": "Ginkgo biloba",
       "expected": "GO",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_002_ivy_productive_cough",
-      "botanical": "Hedera helix",
+      "case_id": "rgv2_002_pumpkin_bph",
+      "botanical": "Cucurbita pepo",
       "expected": "GO",
-      "actual": "GO WITH CAUTION",
-      "match": false
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_003_horse_chestnut_cvi",
-      "botanical": "Aesculus hippocastanum",
+      "case_id": "rgv2_003_phyllanthus_stones",
+      "botanical": "Phyllanthus niruri",
       "expected": "GO",
-      "actual": "GO",
-      "match": true
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_004_pygeum_bph",
-      "botanical": "Prunus africana",
+      "case_id": "rgv2_004_ruscus_cvi",
+      "botanical": "Ruscus aculeatus",
       "expected": "GO",
-      "actual": "GO WITH CAUTION",
-      "match": false
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_005_devils_claw_lbp",
-      "botanical": "Harpagophytum procumbens",
-      "expected": "GO WITH CAUTION",
-      "actual": "GO WITH CAUTION",
-      "match": true
-    },
-    {
-      "case_id": "rgv1_006_willow_lbp",
-      "botanical": "Salix alba",
+      "case_id": "rgv2_005_hypericum_depression",
+      "botanical": "Hypericum perforatum",
       "expected": "GO WITH CAUTION",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_007_ginseng_fatigue",
-      "botanical": "Panax ginseng",
+      "case_id": "rgv2_006_urtica_bph",
+      "botanical": "Urtica dioica",
       "expected": "GO WITH CAUTION",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_008_aloe_ibs",
-      "botanical": "Aloe vera",
+      "case_id": "rgv2_007_rosehip_oa",
+      "botanical": "Rosa canina",
       "expected": "GO WITH CAUTION",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_008_teatree_acne",
+      "botanical": "Melaleuca alternifolia",
+      "expected": "GO WITH CAUTION",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "positive",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_009_soy_hotflush",
+      "botanical": "Glycine max",
+      "expected": "EXPERT REVIEW REQUIRED",
       "actual": "GO WITH CAUTION",
-      "match": true
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_009_echinacea_cold",
-      "botanical": "Echinacea purpurea",
-      "expected": "EXPERT REVIEW REQUIRED",
-      "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
-    },
-    {
-      "case_id": "rgv1_010_black_cohosh_menopause",
-      "botanical": "Cimicifuga racemosa",
+      "case_id": "rgv2_010_moringa_t2dm",
+      "botanical": "Moringa oleifera",
       "expected": "EXPERT REVIEW REQUIRED",
       "actual": "GO WITH CAUTION",
-      "match": false
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "null",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_011_red_clover_hot_flush",
-      "botanical": "Trifolium pratense",
-      "expected": "EXPERT REVIEW REQUIRED",
-      "actual": "EXPERT REVIEW REQUIRED",
-      "match": true
-    },
-    {
-      "case_id": "rgv1_012_garcinia_weight",
-      "botanical": "Garcinia cambogia",
+      "case_id": "rgv2_011_eleuthero_fatigue",
+      "botanical": "Eleutherococcus senticosus",
       "expected": "EXPERT REVIEW REQUIRED",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_013_evening_primrose_eczema",
-      "botanical": "Oenothera biennis",
+      "case_id": "rgv2_012_cannabis_neuropathic",
+      "botanical": "Cannabis sativa",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_013_bacopa_alzheimer",
+      "botanical": "Bacopa monnieri",
       "expected": "INSUFFICIENT EVIDENCE",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": true
+      "match": true,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_014_maca_sexual",
-      "botanical": "Lepidium meyenii",
+      "case_id": "rgv2_014_arnica_homeopathic",
+      "botanical": "Arnica montana",
       "expected": "INSUFFICIENT EVIDENCE",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": true
+      "match": true,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_015_tribulus_ed",
-      "botanical": "Tribulus terrestris",
-      "expected": "INSUFFICIENT EVIDENCE",
-      "actual": "INSUFFICIENT EVIDENCE",
-      "match": true
-    },
-    {
-      "case_id": "rgv1_016_valerian_insomnia",
-      "botanical": "Valeriana officinalis",
+      "case_id": "rgv2_015_calendula_radiation",
+      "botanical": "Calendula officinalis",
       "expected": "INSUFFICIENT EVIDENCE",
       "actual": "GO WITH CAUTION",
-      "match": false
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "positive",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_017_chaparral_oral",
-      "botanical": "Larrea tridentata",
+      "case_id": "rgv2_016_eurycoma_ed",
+      "botanical": "Eurycoma longifolia",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "actual": "GO WITH CAUTION",
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_017_aconitum_oral",
+      "botanical": "Aconitum carmichaelii",
       "expected": "NO GO SAFETY",
       "actual": "NO GO SAFETY",
-      "match": true
+      "match": true,
+      "decision_class": "Safety concern — not suitable without expert review",
+      "evidence_direction": "unclear",
+      "eligibility_status": "no_go_safety",
+      "regulatory_status": "clear",
+      "requires_expert_review": true
     },
     {
-      "case_id": "rgv1_018_germander_oral",
-      "botanical": "Teucrium chamaedrys",
+      "case_id": "rgv2_018_datura_oral",
+      "botanical": "Datura stramonium",
       "expected": "NO GO SAFETY",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_019_pennyroyal_oil",
-      "botanical": "Mentha pulegium",
-      "expected": "NO GO SAFETY",
-      "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
-    },
-    {
-      "case_id": "rgv1_020_celandine_oral",
-      "botanical": "Chelidonium majus",
+      "case_id": "rgv2_019_colchicum_oral",
+      "botanical": "Colchicum autumnale",
       "expected": "NO GO SAFETY",
       "actual": "NO GO SAFETY",
-      "match": true
+      "match": true,
+      "decision_class": "Safety concern — not suitable without expert review",
+      "evidence_direction": "unclear",
+      "eligibility_status": "no_go_safety",
+      "regulatory_status": "clear",
+      "requires_expert_review": true
     },
     {
-      "case_id": "rgv1_021_ephedra_eu_food",
-      "botanical": "Ephedra sinica",
+      "case_id": "rgv2_020_belladonna_oral",
+      "botanical": "Atropa belladonna",
+      "expected": "NO GO SAFETY",
+      "actual": "INSUFFICIENT EVIDENCE",
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_021_yohimbe_eu_food",
+      "botanical": "Pausinystalia yohimbe",
       "expected": "NO GO REGULATORY",
-      "actual": "EXPERT REVIEW REQUIRED",
-      "match": false
+      "actual": "NO GO REGULATORY",
+      "match": true,
+      "decision_class": "Regulatory prohibition — not suitable without regulatory review",
+      "evidence_direction": "unclear",
+      "eligibility_status": "no_go_regulatory",
+      "regulatory_status": "prohibited",
+      "requires_expert_review": true
     },
     {
-      "case_id": "rgv1_022_aloe_had_eu_food",
-      "botanical": "Aloe ferox",
+      "case_id": "rgv2_022_cbd_eu_food",
+      "botanical": "Cannabis sativa",
       "expected": "NO GO REGULATORY",
-      "actual": "NO GO SAFETY",
-      "match": false
+      "actual": "GO WITH CAUTION",
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible_with_restrictions",
+      "regulatory_status": "restricted",
+      "requires_expert_review": false
     },
     {
-      "case_id": "rgv1_023_rhubarb_emodin_eu_food",
-      "botanical": "Rheum palmatum",
+      "case_id": "rgv2_023_acmella_eu_food",
+      "botanical": "Acmella oleracea",
+      "expected": "NO GO REGULATORY",
+      "actual": "GO WITH CAUTION",
+      "match": false,
+      "decision_class": "Go with caution — governing scientific evidence is supportive but requires caution",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible_with_restrictions",
+      "regulatory_status": "restricted",
+      "requires_expert_review": false
+    },
+    {
+      "case_id": "rgv2_024_epimedium_eu_food",
+      "botanical": "Epimedium sagittatum",
       "expected": "NO GO REGULATORY",
       "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
-    },
-    {
-      "case_id": "rgv1_024_green_tea_high_egcg",
-      "botanical": "Camellia sinensis",
-      "expected": "NO GO REGULATORY",
-      "actual": "INSUFFICIENT EVIDENCE",
-      "match": false
+      "match": false,
+      "decision_class": "Insufficient evidence — governing evidence does not support GO",
+      "evidence_direction": "unclear",
+      "eligibility_status": "eligible",
+      "regulatory_status": "clear",
+      "requires_expert_review": false
     }
   ],
   "metrics": {
     "n_scored": 24,
-    "n_correct": 9,
-    "accuracy": 0.375,
-    "macro_f1": 0.41595238095238096,
+    "n_correct": 5,
+    "accuracy": 0.20833333333333334,
+    "macro_f1": 0.3192982456140351,
     "per_class_recall": {
-      "GO": 0.25,
-      "GO WITH CAUTION": 0.5,
-      "EXPERT REVIEW REQUIRED": 0.25,
+      "GO": 0.0,
+      "GO WITH CAUTION": 0.0,
+      "EXPERT REVIEW REQUIRED": 0.0,
       "NO GO SAFETY": 0.5,
-      "NO GO REGULATORY": 0.0,
-      "INSUFFICIENT EVIDENCE": 0.75
+      "NO GO REGULATORY": 0.25,
+      "INSUFFICIENT EVIDENCE": 0.5
     },
     "serious_safety_false_negatives": 2,
-    "regulatory_false_negatives": 4,
+    "regulatory_false_negatives": 3,
     "false_no_go": 0,
-    "expert_review_overuse": 1,
-    "insufficient_evidence_miss": 1,
+    "expert_review_overuse": 0,
+    "insufficient_evidence_miss": 2,
     "confusion_matrix": {
       "GO": {
-        "GO": 1,
-        "GO WITH CAUTION": 2,
+        "GO": 0,
+        "GO WITH CAUTION": 0,
         "EXPERT REVIEW REQUIRED": 0,
         "NO GO SAFETY": 0,
         "NO GO REGULATORY": 0,
-        "INSUFFICIENT EVIDENCE": 1
+        "INSUFFICIENT EVIDENCE": 4
       },
       "GO WITH CAUTION": {
         "GO": 0,
-        "GO WITH CAUTION": 2,
+        "GO WITH CAUTION": 0,
         "EXPERT REVIEW REQUIRED": 0,
         "NO GO SAFETY": 0,
         "NO GO REGULATORY": 0,
-        "INSUFFICIENT EVIDENCE": 2
+        "INSUFFICIENT EVIDENCE": 4
       },
       "EXPERT REVIEW REQUIRED": {
         "GO": 0,
-        "GO WITH CAUTION": 1,
-        "EXPERT REVIEW REQUIRED": 1,
+        "GO WITH CAUTION": 2,
+        "EXPERT REVIEW REQUIRED": 0,
         "NO GO SAFETY": 0,
         "NO GO REGULATORY": 0,
         "INSUFFICIENT EVIDENCE": 2
@@ -224,19 +344,19 @@
       },
       "NO GO REGULATORY": {
         "GO": 0,
-        "GO WITH CAUTION": 0,
-        "EXPERT REVIEW REQUIRED": 1,
-        "NO GO SAFETY": 1,
-        "NO GO REGULATORY": 0,
-        "INSUFFICIENT EVIDENCE": 2
+        "GO WITH CAUTION": 2,
+        "EXPERT REVIEW REQUIRED": 0,
+        "NO GO SAFETY": 0,
+        "NO GO REGULATORY": 1,
+        "INSUFFICIENT EVIDENCE": 1
       },
       "INSUFFICIENT EVIDENCE": {
         "GO": 0,
-        "GO WITH CAUTION": 1,
+        "GO WITH CAUTION": 2,
         "EXPERT REVIEW REQUIRED": 0,
         "NO GO SAFETY": 0,
         "NO GO REGULATORY": 0,
-        "INSUFFICIENT EVIDENCE": 3
+        "INSUFFICIENT EVIDENCE": 2
       }
     }
   }

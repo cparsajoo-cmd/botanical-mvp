@@ -18,14 +18,14 @@ def _params(**kwargs):
     return params
 
 
-def search_pubmed(query: str, max_results: int = 20, timeout: float = DEFAULT_TIMEOUT) -> List[str]:
+def search_pubmed(query: str, max_results: int = 20, timeout: float = DEFAULT_TIMEOUT, sort: str = "relevance") -> List[str]:
     response = requests.get(
         f"{NCBI_BASE}/esearch.fcgi",
         params=_params(
             db="pubmed",
             term=query,
             retmax=max(0, int(max_results)),
-            sort="relevance",
+            sort=sort,
             retmode="json",
         ),
         timeout=timeout,
@@ -115,6 +115,7 @@ def search_and_fetch_pubmed(
     query: str,
     max_results: int = 10,
     timeout: float = DEFAULT_TIMEOUT,
+    sort: str = "relevance",
 ) -> List[Dict]:
     """Search PubMed and fetch matching abstracts in one bounded batch.
 
@@ -123,5 +124,5 @@ def search_and_fetch_pubmed(
     minutes. This implementation uses two HTTP calls total and applies an
     explicit timeout to both.
     """
-    pmids = search_pubmed(query, max_results=max_results, timeout=timeout)
+    pmids = search_pubmed(query, max_results=max_results, timeout=timeout, sort=sort)
     return fetch_pubmed_articles(pmids, timeout=timeout)

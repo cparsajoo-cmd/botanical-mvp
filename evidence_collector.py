@@ -17,18 +17,48 @@ def build_pubmed_query(scientific_name, indication, dosage_form):
     return f'"{scientific_name}" AND ({indication}) AND ({" OR ".join(context_terms)})'
 
 
-def build_pubmed_queries(scientific_name, indication, dosage_form):
-    """Return a small, polarity-neutral query portfolio for evidence-set coverage.
+def _indication_core(indication):
+    """Relax indication wording without encoding an expected result.
 
-    A single relevance-ranked PubMed query can be dominated by one study family
-    or one evidence type.  These bounded variants deliberately diversify by
-    evidence *design*, never by desired result direction, so retrieval can see
-    both corroborating and conflicting high-level evidence without using any
-    benchmark label.
+    Validation questions often contain decision-context words (for example
+    "adjunctive support", "prevention", or "symptom management") that are not
+    consistently present in PubMed titles/abstract indexing.  Removing only a
+    small set of generic context modifiers preserves the clinical condition
+    while improving recall.
+    """
+    import re
+
+    text = _clean_query_term(indication)
+    if not text:
+        return ""
+    generic = {
+        "adjunctive", "adjunct", "support", "supportive", "management",
+        "treatment", "therapy", "therapeutic", "prevention", "preventive",
+        "symptoms", "symptom", "control", "clinical",
+    }
+    tokens = re.findall(r"[A-Za-z0-9-]+", text)
+    kept = [token for token in tokens if token.lower() not in generic]
+    return " ".join(kept) or text
+
+
+def _genus_name(scientific_name):
+    parts = _clean_query_term(scientific_name).split()
+    return parts[0] if parts else ""
+
+
+def build_pubmed_queries(scientific_name, indication, dosage_form):
+    """Return a polarity-neutral query portfolio with recall and freshness lanes.
+
+    The portfolio deliberately varies evidence design, taxonomic specificity,
+    indication strictness, and sort order.  It never varies by desired outcome.
+    This prevents an exact botanical/wording match or a highly cited older
+    review from monopolizing the evidence set.
     """
     scientific_name = _clean_query_term(scientific_name)
     indication = _clean_query_term(indication)
     dosage_form = _clean_query_term(dosage_form)
+    core_indication = _indication_core(indication)
+    genus = _genus_name(scientific_name)
 
     base = build_pubmed_query(scientific_name, indication, dosage_form)
     synthesis = (
@@ -40,11 +70,31 @@ def build_pubmed_queries(scientific_name, indication, dosage_form):
         '(randomized OR randomised OR trial OR clinical)'
     )
 
+    # Recall lane: relax only generic decision-context wording and, where
+    # possible, botanical species specificity to genus level.  This is useful
+    # for literature indexed under Crataegus spp. rather than one species.
+    relaxed_name = genus or scientific_name
+    relaxed = (
+        f'({scientific_name!r} OR {relaxed_name!r}) AND ({core_indication or indication}) AND '
+        '(review OR trial OR randomized OR randomised OR meta-analysis)'
+    ).replace("'", '"')
+
     queries = []
-    for query in (base, synthesis, clinical):
+    for query in (base, synthesis, clinical, relaxed):
         if query and query not in queries:
             queries.append(query)
     return queries
+
+
+def build_pubmed_query_plan(scientific_name, indication, dosage_form):
+    """Pair query variants with ranking modes, including one recency lane."""
+    queries = build_pubmed_queries(scientific_name, indication, dosage_form)
+    plan = [(query, "relevance") for query in queries]
+    if queries:
+        # Re-run the relaxed query by publication date so newer direct evidence
+        # gets one bounded opportunity to enter the set.
+        plan.append((queries[-1], "pub date"))
+    return plan
 
 
 def _article_identity(article):
@@ -96,19 +146,18 @@ def collect_pubmed_evidence(
     max_results=10,
     save=True
 ):
-    queries = build_pubmed_queries(
+    query_plan = build_pubmed_query_plan(
         scientific_name=scientific_name,
         indication=indication,
         dosage_form=dosage_form,
     )
 
     # Keep total returned evidence bounded by max_results, while giving each
-    # evidence-design query a chance to contribute.  Each connector call is
-    # itself bounded to max_results and the merged set is deduplicated by PMID
-    # (falling back to URL/title when PMID is unavailable).
+    # evidence-design/recency lane a chance to contribute.  The merged set is
+    # deduplicated by PMID (falling back to URL/title when PMID is unavailable).
     query_results = [
-        search_and_fetch_pubmed(query=query, max_results=max_results)
-        for query in queries
+        search_and_fetch_pubmed(query=query, max_results=max_results, sort=sort)
+        for query, sort in query_plan
     ]
     articles = _balanced_unique_articles(query_results, max_results=max_results)
 

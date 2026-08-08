@@ -12,7 +12,7 @@ def _article(pmid, title):
 
 def test_pubmed_query_portfolio_is_design_diverse_and_polarity_neutral():
     queries = ec.build_pubmed_queries("Sambucus nigra", "respiratory symptoms", "")
-    assert len(queries) == 3
+    assert len(queries) == 4
     joined = " ".join(queries).lower()
     assert "systematic review" in joined
     assert "meta-analysis" in joined
@@ -46,10 +46,12 @@ def test_collect_pubmed_evidence_uses_portfolio_but_keeps_total_bounded(monkeypa
         0: [_article(1, "Broad positive"), _article(2, "Broad follow-up")],
         1: [_article(10, "Systematic review"), _article(1, "Broad positive")],
         2: [_article(20, "Randomized trial")],
+        3: [_article(30, "Relaxed botanical/indication result")],
+        4: [_article(40, "Fresh result")],
     }
 
-    def fake_search(query, max_results):
-        calls.append((query, max_results))
+    def fake_search(query, max_results, sort="relevance"):
+        calls.append((query, max_results, sort))
         return fixtures[len(calls) - 1]
 
     monkeypatch.setattr(ec, "search_and_fetch_pubmed", fake_search)
@@ -64,7 +66,7 @@ def test_collect_pubmed_evidence_uses_portfolio_but_keeps_total_bounded(monkeypa
         save=False,
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 5
     assert len(rows) == 3
     assert [row["pmid"] for row in rows] == ["1", "10", "20"]
 

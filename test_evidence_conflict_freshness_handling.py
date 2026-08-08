@@ -34,7 +34,9 @@ def test_older_direct_null_trial_does_not_override_newer_positive_review():
         rec('Review reported significant benefit and improved symptoms.', year=2025),
         rec('Randomized controlled study found trivial-to-small effects on the target outcome.', source_type='CLINICAL_TRIAL', year=2020, study_design='Randomized Controlled Trial'),
     ])
-    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE
+    # The older trial does not overturn the newer synthesis, but a single
+    # synthesis remains moderate body-level certainty rather than full GO.
+    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
 
 
 def test_missing_year_does_not_invent_freshness_conflict():
@@ -42,11 +44,11 @@ def test_missing_year_does_not_invent_freshness_conflict():
         rec('Review reported significant benefit and improved symptoms.', year=None),
         rec('Randomized controlled study found trivial-to-small effects on the target outcome.', source_type='CLINICAL_TRIAL', year=2025, study_design='Randomized Controlled Trial'),
     ])
-    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE
+    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
 
 
-def test_plain_positive_review_stays_supportive():
+def test_plain_positive_review_is_supportive_but_cautious_when_it_is_the_only_synthesis():
     result = resolve_scientific_evidence([
         rec('Systematic review found significant benefit and improved symptoms.', year=2024),
     ])
-    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE
+    assert result.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION

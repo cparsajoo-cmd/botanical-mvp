@@ -417,7 +417,7 @@ OUTPUT_COLUMNS = [
 # Market_Landscape_EMA_HMPC_* columns — never in Market_Status itself
 # unless a caller explicitly populates
 # self._canonical_regulatory_by_plant before calling run().
-DECISION_ENGINE_VERSION = "1.2.0"
+DECISION_ENGINE_VERSION = "1.3.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -3428,6 +3428,10 @@ class BotanicalRDCandidateEngine:
                 "population": self._pick(row, ["Population", "population"]) or "",
                 "target_indication": self._pick(row, ["Target_Indication", "target_indication", "Indication", "indication"]) or "",
                 "source_year": self._pick(row, ["Source_Year", "source_year", "Publication_Year", "publication_year", "Year", "year"]) or "",
+                "evidence_quality": self._pick(row, ["Evidence_Quality", "evidence_quality", "Evidence_Level", "evidence_level"]) or "",
+                "reported_direction": self._pick(row, ["Evidence_Direction", "evidence_direction", "Result_Direction", "result_direction"]) or "",
+                "pmid": self._pick(row, ["PMID", "pmid"]) or "",
+                "doi": self._pick(row, ["DOI", "doi"]) or "",
             })
 
         def _record_source(key, row):

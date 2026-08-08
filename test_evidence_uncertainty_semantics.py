@@ -16,10 +16,10 @@ def _eligible():
     return SimpleNamespace(status=EligibilityStatus.ELIGIBLE, gate_reason="")
 
 
-def test_unhedged_supportive_review_remains_supportive():
+def test_single_unhedged_supportive_review_is_cautious_at_body_level():
     r = resolve_scientific_evidence([_rec("Meta-analysis found a significant improvement in clinical symptoms versus control.")])
-    assert r.signal is ScientificEvidenceSignal.SUPPORTIVE
-    assert decide_final(_eligible(), r).status is FinalDecisionStatus.GO
+    assert r.signal is ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
+    assert decide_final(_eligible(), r).status is FinalDecisionStatus.GO_WITH_CAUTION
 
 
 def test_may_be_beneficial_is_supportive_with_caution():

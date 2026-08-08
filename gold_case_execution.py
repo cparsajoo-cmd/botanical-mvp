@@ -268,6 +268,7 @@ def platform_output_for_gold_case(result_df: pd.DataFrame) -> dict:
         return {}
     row = result_df.iloc[0]
     return {
+        "final_decision_status": row.get("Final_Decision_Status"),
         "decision_class": row.get("Decision_Class"),
         "decision_class_ah": row.get("Decision_Class_AH"),
         "gate_results": row.get("Gate_Results"),

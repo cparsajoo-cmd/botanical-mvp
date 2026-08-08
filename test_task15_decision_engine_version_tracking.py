@@ -68,7 +68,7 @@ def _run(evidence_df=None):
 
 
 # ---------------------------------------------------------------------
-# 1) DECISION_ENGINE_VERSION exists and equals "1.2.0" (bumped by
+# 1) DECISION_ENGINE_VERSION exists and equals "1.3.0" (bumped by
 #    Phase 4's Eligibility Gate redesign, which changes Decision_Class
 #    for exactly the rows the Phase 4 audit proved were mis-classified
 #    by the pre-Phase-4 same_plant bypass — see
@@ -77,7 +77,7 @@ def _run(evidence_df=None):
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_constant_exists_and_equals_1_0_1():
-    assert eng.DECISION_ENGINE_VERSION == "1.2.0"
+    assert eng.DECISION_ENGINE_VERSION == "1.3.0"
 
 
 # ---------------------------------------------------------------------

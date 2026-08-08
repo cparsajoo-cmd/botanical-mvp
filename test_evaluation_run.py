@@ -16,6 +16,7 @@ from engine_evidence_input import EngineEvidenceInput
 from evaluation_run import (
     build_evaluation_run, EvaluationRunError, InvalidValidationScopeError,
     EvaluationRun, _derive_direction_from_decision_class,
+    _derive_direction_from_final_status,
 )
 from gold_case import GoldCase, GoldCaseReference, ExpectedOutput, DecisionDirection, lock_gold_case
 from metric_report import MetricStatus
@@ -190,6 +191,31 @@ def test_derive_direction_hold():
 
 def test_derive_direction_unrecognized_returns_none():
     assert _derive_direction_from_decision_class("Something made up") is None
+
+
+def test_final_status_direction_mapping_is_authoritative():
+    assert _derive_direction_from_final_status("GO") == DecisionDirection.POSITIVE
+    assert _derive_direction_from_final_status("GO WITH CAUTION") == DecisionDirection.POSITIVE
+    assert _derive_direction_from_final_status("NO GO SAFETY") == DecisionDirection.NEGATIVE
+    assert _derive_direction_from_final_status("NO GO REGULATORY") == DecisionDirection.NEGATIVE
+    assert _derive_direction_from_final_status("INSUFFICIENT EVIDENCE") == DecisionDirection.HOLD
+    assert _derive_direction_from_final_status("EXPERT REVIEW REQUIRED") == DecisionDirection.ABSTAIN
+
+
+def test_derive_direction_structured_go_with_caution_is_positive():
+    assert _derive_direction_from_decision_class(
+        "Go with caution — governing scientific evidence is supportive but requires caution"
+    ) == DecisionDirection.POSITIVE
+
+def test_derive_direction_structured_insufficient_is_hold():
+    assert _derive_direction_from_decision_class(
+        "Insufficient evidence — governing evidence does not support GO"
+    ) == DecisionDirection.HOLD
+
+def test_derive_direction_structured_expert_review_is_abstain():
+    assert _derive_direction_from_decision_class(
+        "Expert review required — conflicting governing scientific evidence"
+    ) == DecisionDirection.ABSTAIN
 
 
 # ---------------------------------------------------------------------

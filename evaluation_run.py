@@ -124,6 +124,12 @@ _NEGATIVE_DECISION_CLASSES = {
 }
 _HOLD_DECISION_CLASSES = {
     "Low priority / insufficient data",
+    "Insufficient evidence — governing evidence does not support GO",
+    "Incomplete — insufficient safety/regulatory evidence for a validated recommendation",
+}
+_ABSTAIN_DECISION_CLASSES = {
+    "Expert review required — conflicting governing scientific evidence",
+    "Expert review required — not eligible for normal ranking until safety/regulatory scope is confirmed",
 }
 
 
@@ -137,8 +143,26 @@ def _derive_direction_from_decision_class(decision_class: Optional[str]) -> Opti
         return DecisionDirection.NEGATIVE
     if decision_class in _HOLD_DECISION_CLASSES:
         return DecisionDirection.HOLD
+    if decision_class in _ABSTAIN_DECISION_CLASSES:
+        return DecisionDirection.ABSTAIN
+    if decision_class and decision_class.startswith("Go with caution"):
+        return DecisionDirection.POSITIVE
     return None
 
+
+
+
+def _derive_direction_from_final_status(status: Optional[str]) -> Optional[DecisionDirection]:
+    """Map the authoritative six-class final decision onto legacy direction metrics."""
+    if status in {"GO", "GO WITH CAUTION"}:
+        return DecisionDirection.POSITIVE
+    if status in {"NO GO SAFETY", "NO GO REGULATORY"}:
+        return DecisionDirection.NEGATIVE
+    if status == "INSUFFICIENT EVIDENCE":
+        return DecisionDirection.HOLD
+    if status == "EXPERT REVIEW REQUIRED":
+        return DecisionDirection.ABSTAIN
+    return None
 
 def _new_evaluation_run_id() -> str:
     return str(uuid.uuid4())
@@ -214,7 +238,10 @@ def build_evaluation_run(
             continue
 
         output = platform_output_for_gold_case(result_df)
-        actual_direction = _derive_direction_from_decision_class(output.get("decision_class"))
+        actual_direction = (
+            _derive_direction_from_final_status(output.get("final_decision_status"))
+            or _derive_direction_from_decision_class(output.get("decision_class"))
+        )
 
         # Phase 3 (Prospective Claim-to-Decision Mapping Proposal):
         # eligibility is now assessed and recorded explicitly for

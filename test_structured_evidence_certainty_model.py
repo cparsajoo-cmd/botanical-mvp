@@ -60,7 +60,7 @@ def test_unresolved_scientific_evidence_never_defaults_to_go():
     d=decide_final(_eligible(), sci)
     assert d.status == FinalDecisionStatus.INSUFFICIENT_EVIDENCE
 
-def test_clean_positive_synthesis_still_supports_go():
+def test_single_clean_positive_synthesis_is_caution_not_unconditional_go():
     records=[{
         "source_type":"SYSTEMATIC_REVIEW",
         "study_design":"Systematic Review and Meta-analysis",
@@ -68,9 +68,9 @@ def test_clean_positive_synthesis_still_supports_go():
         "source_year":2024,
     }]
     r=resolve_scientific_evidence(records)
-    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
     d=decide_final(_eligible(), r)
-    assert d.status == FinalDecisionStatus.GO
+    assert d.status == FinalDecisionStatus.GO_WITH_CAUTION
 
 
 def test_limitation_language_order_variants_are_caution():

@@ -18,13 +18,13 @@ def test_explicit_insufficient_review_conclusion_is_null_not_unresolved():
     assert r.signal == ScientificEvidenceSignal.INSUFFICIENT
 
 
-def test_explicit_appears_efficacious_review_conclusion_is_supportive():
+def test_explicit_appears_efficacious_single_review_is_supportive_with_caution():
     r = resolve_scientific_evidence([{
         "source_type": "SYSTEMATIC_REVIEW",
         "assertion_text": "The systematic review concluded the intervention appears efficacious and safe for the target disorder.",
     }])
-    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE
-    assert decide_final(_eligible(), r).status == FinalDecisionStatus.GO
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
+    assert decide_final(_eligible(), r).status == FinalDecisionStatus.GO_WITH_CAUTION
 
 
 def test_supportive_review_with_explicit_across_study_variation_maps_to_caution():

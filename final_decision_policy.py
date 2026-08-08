@@ -24,6 +24,10 @@ from evidence_interpretation import (
     DIRECTION_MIXED, DIRECTION_UNCLEAR,
 )
 
+from evidence_body_assessment import (
+    BodyDirection, BodyCertainty, assess_evidence_body,
+)
+
 
 
 
@@ -271,7 +275,7 @@ def _final_decision_direction(text: str) -> str:
                 "significant benefit", "significant benefits", "provided significant benefit",
                 "strong scientific evidence", "can reduce", "reduced symptoms", "improved symptoms",
                 "support benefit", "supports benefit", "supporting efficacy",
-                "evidence of benefit", "beneficial effects", "beneficial effect",
+                "evidence of benefit", "some benefit", "beneficial effects", "beneficial effect",
                 "improved glycemic control", "improved clinical outcomes",
                 "increased markedly", "good results",
                 "therapeutic indications", "therapeutic indication",
@@ -358,175 +362,70 @@ def _final_decision_direction(text: str) -> str:
 
 
 def resolve_scientific_evidence(records: Iterable[Mapping]) -> ScientificEvidenceResolution:
-    """Resolve record-level indication evidence with conflict/freshness safeguards.
+    """Resolve therapeutic evidence through one structured body-of-evidence model.
 
-    The highest-ranked recognized indication tier still governs.  Two narrow
-    safeguards prevent false certainty: (1) explicit controversy language in
-    a governing source escalates rather than being flattened to GO, and (2) a
-    directly relevant clinical study published after the newest governing
-    review can challenge a supportive conclusion when its direction is null or
-    negative.  This does not make lower-tier studies co-equal with reviews; it
-    only prevents an older synthesis from pretending later contradictory data
-    do not exist.
+    This is the authoritative scientific-evidence path for final decisions.
+    It deliberately separates effect direction from certainty and prevents
+    legacy score/text fall-through from becoming a default GO.
     """
-    interpreted = []
-    challengers = []
-    for rec in records:
-        source_type = str(rec.get("source_type") or "").strip().upper()
-        text = str(rec.get("assertion_text") or rec.get("text") or "")
-        direction = _final_decision_direction(text)
-        year = _parse_publication_year(rec)
-        explicit_conflict = _explicit_conflict_language(text)
-        limitation_tier = _evidence_limitation_tier(text)
-        rank = _INDICATION_SOURCE_RANK.get(source_type)
-        if rank is not None:
-            interpreted.append((rank, source_type, direction, year, explicit_conflict, limitation_tier))
-            continue
-        study_design = str(rec.get("study_design") or "").strip().lower()
-        if source_type in {"CLINICAL_TRIAL", "RANDOMIZED_CONTROLLED_TRIAL", "RANDOMISED_CONTROLLED_TRIAL", "RCT"} or any(
-            token in study_design for token in ("clinical trial", "randomized", "randomised", "rct")
-        ):
-            challengers.append((source_type or "CLINICAL_TRIAL", direction, year))
-
-    if not interpreted:
-        direct_directions = {x[1] for x in challengers}
-        if DIRECTION_POSITIVE in direct_directions and not (direct_directions & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-                "Supportive direct clinical evidence is available, but no higher-tier synthesis/monograph governs the indication; a cautious GO is warranted rather than full certainty.",
-                tuple(sorted({x[0] for x in challengers})),
-                tuple(sorted(direct_directions)),
-            )
-        if DIRECTION_POSITIVE in direct_directions and (direct_directions & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.CONFLICT,
-                "Direct clinical evidence contains opposing efficacy directions and no higher-tier synthesis resolves the conflict.",
-                tuple(sorted({x[0] for x in challengers})),
-                tuple(sorted(direct_directions)),
-            )
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.UNRESOLVED,
-            "No recognized indication-evidence source tier was available for record-level resolution.",
-        )
-
-    best_rank = min(x[0] for x in interpreted)
-    top = [x for x in interpreted if x[0] == best_rank]
-    directions = tuple(sorted({x[2] for x in top}))
-    source_types = tuple(sorted({x[1] for x in top}))
-    ds = set(directions)
-
-    if any(x[4] for x in top):
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.CONFLICT,
-            "A governing indication source explicitly characterizes the evidence as debated, conflicting, inconclusive, or not definitive; automatic GO is prohibited.",
-            source_types, directions,
-        )
-
-    if DIRECTION_POSITIVE in ds and bool(ds & {DIRECTION_NEGATIVE, DIRECTION_NULL}):
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.CONFLICT,
-            "Equally ranked governing indication sources contain opposing efficacy directions; automatic averaging is prohibited.",
-            source_types, directions,
-        )
-    # Equally ranked positive + unresolved evidence is not the same as clean
-    # confirmation.  Preserve the unresolved component as decision uncertainty.
-    if DIRECTION_POSITIVE in ds and DIRECTION_UNCLEAR in ds:
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-            "Equally ranked governing evidence contains a positive direction plus an unresolved/uncertain component; unconditional GO would overstate certainty.",
-            source_types, directions,
-        )
-
-    if DIRECTION_MIXED in ds:
-        non_mixed = ds - {DIRECTION_MIXED, DIRECTION_UNCLEAR}
-        if non_mixed & {DIRECTION_NEGATIVE, DIRECTION_NULL}:
-            # A mixed synthesis already encodes endpoint/study variability.  A
-            # second positive or null component within the same top tier is not
-            # automatically a hard contradiction unless a source is explicitly
-            # conflict/firm-insufficiency language (handled above/below).
-            if DIRECTION_POSITIVE not in non_mixed:
-                return ScientificEvidenceResolution(
-                    ScientificEvidenceSignal.CONFLICT,
-                    "Governing indication evidence is mixed and is accompanied by an equally ranked negative/null direction; expert review is required.",
-                    source_types, directions,
-                )
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-            "The governing indication-evidence tier is supportive but explicitly mixed/inconsistent or limitation-qualified; a cautious GO is warranted.",
-            source_types, directions,
-        )
-
-    # A governing synthesis may be too cautious to claim efficacy on its own,
-    # yet a lower-tier direct trial can provide supportive corroboration.  That
-    # combination warrants caution rather than either a full GO or a hard
-    # insufficiency decision.
-    if ds <= {DIRECTION_UNCLEAR} and any(
-        x[5] in {EvidenceLimitationTier.CAUTION, EvidenceLimitationTier.FIRM_UNCERTAINTY}
-        for x in top
-    ):
-        supportive_challengers = [
-            x for x in challengers if x[1] in {DIRECTION_POSITIVE, DIRECTION_MIXED}
-        ]
-        if supportive_challengers:
-            challenger_types = tuple(sorted({x[0] for x in supportive_challengers}))
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-                "The governing synthesis is limitation-qualified while direct clinical evidence is supportive; a cautious GO is warranted rather than full certainty.",
-                tuple(sorted(set(source_types) | set(challenger_types))),
-                tuple(sorted(set(directions) | {x[1] for x in supportive_challengers})),
-            )
-
-    if DIRECTION_POSITIVE in ds:
-        # A positive governing synthesis is not equivalent to high-certainty
-        # evidence.  If any equally ranked governing source explicitly carries
-        # a caution-level limitation (heterogeneity, risk of bias, small/limited
-        # studies, need for confirmation, etc.), preserve that uncertainty in
-        # the decision rather than flattening the tier to unconditional support.
-        if any(x[5] == EvidenceLimitationTier.CAUTION for x in top):
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
-                "The governing indication-evidence tier is positive but at least one equally ranked source explicitly reports material certainty limitations; a cautious GO is warranted.",
-                source_types, directions,
-            )
-        if any(x[5] == EvidenceLimitationTier.FIRM_UNCERTAINTY for x in top):
-            return ScientificEvidenceResolution(
-                ScientificEvidenceSignal.CONFLICT,
-                "The governing indication-evidence tier contains a positive direction but also firm uncertainty language; automatic GO is not justified.",
-                source_types, directions,
-            )
-        top_years = [x[3] for x in top if x[3] is not None]
-        newest_top_year = max(top_years) if top_years else None
-        if newest_top_year is not None:
-            newer_contradictions = [
-                (stype, direction, year) for stype, direction, year in challengers
-                if year is not None and year > newest_top_year
-                and direction in {DIRECTION_NEGATIVE, DIRECTION_NULL}
-            ]
-            if newer_contradictions:
-                challenger_types = tuple(sorted({x[0] for x in newer_contradictions}))
-                return ScientificEvidenceResolution(
-                    ScientificEvidenceSignal.CONFLICT,
-                    "A directly relevant clinical study published after the newest governing review reports a null/negative direction; the older synthesis is no longer sufficient for an automatic GO and expert review is required.",
-                    tuple(sorted(set(source_types) | set(challenger_types))),
-                    tuple(sorted(set(directions) | {x[1] for x in newer_contradictions})),
-                )
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.SUPPORTIVE,
-            "The governing indication-evidence tier contains a supportive efficacy direction without an equally ranked or newer direct contradiction.",
-            source_types, directions,
-        )
-    if ds & {DIRECTION_NEGATIVE, DIRECTION_NULL}:
-        return ScientificEvidenceResolution(
-            ScientificEvidenceSignal.INSUFFICIENT,
-            "The governing indication-evidence tier is negative/null and therefore does not support a GO decision.",
-            source_types, directions,
-        )
-    return ScientificEvidenceResolution(
-        ScientificEvidenceSignal.UNRESOLVED,
-        "The governing indication-evidence tier could not be assigned a usable efficacy direction.",
-        source_types, directions,
+    records = tuple(records)
+    body = assess_evidence_body(
+        records,
+        direction_fn=_final_decision_direction,
+        limitation_fn=lambda text: _evidence_limitation_tier(text).value,
+        explicit_conflict_fn=_explicit_conflict_language,
     )
 
+    dirs = body.governing_directions
+    types = body.governing_source_types
+
+    if body.direction == BodyDirection.NULL_OR_NEGATIVE:
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.INSUFFICIENT,
+            "The structured body of evidence is governed by null/negative efficacy findings. " + body.reason,
+            types, dirs,
+        )
+
+    if body.direction == BodyDirection.UNRESOLVED:
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.UNRESOLVED,
+            "The structured body of evidence cannot support a defensible efficacy direction. " + body.reason,
+            types, dirs,
+        )
+
+    if body.direction == BodyDirection.MIXED:
+        hard_opposition = (
+            bool(set(dirs) & {DIRECTION_NEGATIVE, DIRECTION_NULL})
+            or body.has_newer_contradiction
+            or body.has_explicit_conflict
+        )
+        if hard_opposition:
+            return ScientificEvidenceResolution(
+                ScientificEvidenceSignal.CONFLICT,
+                "The structured body of evidence contains clinically meaningful opposing directions or a newer contradiction. " + body.reason,
+                types, dirs,
+            )
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+            "The structured body of evidence is supportive but internally mixed/unresolved. " + body.reason,
+            types, dirs,
+        )
+
+    # SUPPORTIVE: certainty now controls whether support is strong enough for
+    # unconditional GO.  A single synthesis or direct-trial-only body is not
+    # silently promoted to high certainty.
+    if body.certainty == BodyCertainty.HIGH:
+        return ScientificEvidenceResolution(
+            ScientificEvidenceSignal.SUPPORTIVE,
+            "The structured body of evidence is supportive with high body-level certainty. " + body.reason,
+            types, dirs,
+        )
+
+    return ScientificEvidenceResolution(
+        ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION,
+        "The structured body of evidence is supportive but certainty is below high. " + body.reason,
+        types, dirs,
+    )
 
 def decide_final(
     eligibility: EligibilityDecision,

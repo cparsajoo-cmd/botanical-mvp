@@ -252,6 +252,7 @@ def test_platform_output_shape():
     result = execute_gold_case_against_engine(case)
     output = platform_output_for_gold_case(result)
     assert set(output.keys()) == {
+        "final_decision_status",
         "decision_class", "decision_class_ah", "gate_results",
         "grade_certainty", "rd_opportunity_score",
     }

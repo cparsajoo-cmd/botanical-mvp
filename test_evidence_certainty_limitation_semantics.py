@@ -31,11 +31,11 @@ def test_positive_review_needing_more_evidence_is_caution():
     assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
 
 
-def test_plain_supportive_review_without_limitations_stays_supportive():
+def test_plain_supportive_single_review_is_body_level_caution():
     r = resolve_scientific_evidence([
         rec("SYSTEMATIC_REVIEW", "Meta-analysis found significant improvement versus placebo.")
     ])
-    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
 
 
 def test_insufficient_to_establish_benefit_is_null_direction():

@@ -55,32 +55,52 @@ def _evidence():
 
 
 def test_engine_evidence_on_gold_case_field_alone_is_not_used_by_execute_gold_case_against_engine():
-    """STILL TRUE AFTER THE FIX — this function's own contract never
-    changed. execute_gold_case_against_engine() (called directly, not
-    through the wrapper) reads only its own `evidence` parameter,
-    never gold_case.engine_evidence — by design, documented in its own
-    docstring. Calling it directly with evidence=None still ignores a
-    populated GoldCase.engine_evidence field. The unification fix
-    lives in the WRAPPER (execute_gold_case_with_readiness_gate()),
-    which now computes the effective evidence before calling this
-    lower-level function — see tests below."""
+    """Direct execution must ignore GoldCase.engine_evidence unless it is
+    supplied through the explicit ``evidence=`` parameter.
+
+    The engine may still locate its own independent regulatory/monograph
+    evidence, so the old assertion that the minimum-evidence gate must be
+    NOT_EVALUABLE is no longer valid.  The stable invariant is that merely
+    populating GoldCase.engine_evidence must not change direct-execution
+    output relative to the same case with that field empty.
+    """
     from dataclasses import replace
 
     case = build_gold_case_refgrounded_003_matricaria_chamomilla_sleep()
     case_with_evidence_on_field_only = replace(case, engine_evidence=_evidence())
 
-    result_df = execute_gold_case_against_engine(
-        case_with_evidence_on_field_only,
-        evidence=None,  # NOT passed through, even though the case's own field is populated
+    kwargs = dict(
+        evidence=None,
         compound_profiles_df=pd.DataFrame(),
         scientific_evidence_df=pd.DataFrame(),
         use_live_search=False,
     )
+    with_field = execute_gold_case_against_engine(
+        case_with_evidence_on_field_only, **kwargs
+    )
+    without_field = execute_gold_case_against_engine(case, **kwargs)
 
-    row = result_df.iloc[0]
-    gate = row["Gate_Results"]["minimum_evidence"]
-    assert gate["status"].value == "not_evaluable"
-    assert "No direct evidence is recorded" in gate["reason"]
+    assert not with_field.empty
+    assert not without_field.empty
+
+    # The populated GoldCase.engine_evidence field must not leak into this
+    # lower-level direct-execution path. Independent engine/corpus evidence
+    # is allowed, so compare the decision-relevant outputs rather than
+    # assuming there can be no evidence at all.
+    cols = [
+        "Gate_Results",
+        "Study_Design",
+        "Evidence_Direction",
+        "Evidence_Quality",
+        "Final_Decision_Status",
+    ]
+    for col in cols:
+        assert with_field.iloc[0][col] == without_field.iloc[0][col]
+
+    # In particular, the explicit RCT supplied only on GoldCase.engine_evidence
+    # must not appear as the direct execution's minimum-evidence provenance.
+    gate = with_field.iloc[0]["Gate_Results"]["minimum_evidence"]
+    assert gate["evidence"] != "Clinical / human evidence"
 
 
 def test_evidence_passed_only_via_parameter_now_reaches_execution_after_the_fix():

@@ -1,9 +1,12 @@
 """Backfill missing canonical scientific assertions in Supabase.
 
 Usage:
-  python backfill_canonical_assertions.py              # dry-run
-  python backfill_canonical_assertions.py --apply      # write missing fields
-  python backfill_canonical_assertions.py --apply --limit 500
+  python backfill_canonical_assertions.py --limit 100       # dry-run one bounded batch
+  python backfill_canonical_assertions.py --apply --limit 500  # write one bounded batch
+
+Each invocation fetches ONLY rows whose source and LLM direction fields are
+still NULL, ordered by id and capped by --limit. Re-running apply mode therefore
+continues from the next unfinished rows instead of downloading the whole table.
 
 Requirements for --apply:
 - SUPABASE_URL / SUPABASE_KEY
@@ -66,7 +69,6 @@ from dataclasses import dataclass, field
 
 from database import get_supabase_client
 from llm_extractor import extract_evidence_with_llm
-from supabase_data import _fetch_table_df
 
 SELECT_EXPR = (
     "id,target_indication,dosage_form,notes,evidence_type,evidence_level,"
@@ -177,21 +179,46 @@ def _extract_with_retry(record, *, dosage_form, indication, sleep_fn=time.sleep)
     raise last_error
 
 
-def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
-    supabase = get_supabase_client()
+def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
+    """Fetch only unfinished rows needed for this batch.
 
-    # Ordered, paginated, retried-per-page fetch -- see the module
-    # docstring's bug #1. strict=True: a page that never succeeds after
-    # retries must raise (IncompletePaginationError) rather than let this
-    # backfill quietly treat a partial table as the whole table, exactly
-    # the failure mode strict mode exists to rule out for the embedding
-    # backfill.
-    df = _fetch_table_df(
-        "evidence_records", select_expr=SELECT_EXPR, order_by="id", strict=True
-    )
-    rows = df.to_dict(orient="records")
-    if limit:
-        rows = rows[: int(limit)]
+    The previous implementation reused the full-table pagination helper and then
+    sliced locally. On a 22k+ row table that meant a --limit 100 run still
+    downloaded every evidence row, unnecessarily consuming Supabase egress.
+
+    Server-side NULL filters plus an explicit order and limit make each run
+    bounded, deterministic, and resumable: rows updated by one apply run no
+    longer match the next run.
+    """
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = (
+                supabase.table("evidence_records")
+                .select(SELECT_EXPR)
+                .is_("result_direction", "null")
+                .is_("llm_result_direction", "null")
+                .order("id")
+                .limit(int(limit))
+                .execute()
+            )
+            return response.data or []
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < 2:
+                sleep_fn(0.5 * (attempt + 1))
+    raise RuntimeError(
+        f"Could not fetch canonical-assertion candidate batch after 3 attempts: {last_error}"
+    ) from last_error
+
+
+def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
+    supabase = get_supabase_client()
+    limit = int(limit or 100)
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+
+    rows = _fetch_candidate_batch(supabase, limit=limit, sleep_fn=sleep_fn)
 
     stats = BackfillCanonicalAssertionsStats()
     failures = []
@@ -199,10 +226,9 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
     for item in rows:
         stats.scanned += 1
 
-        # A source/connector assertion is already higher-authority than an LLM
-        # extraction, and an existing LLM assertion must never be overwritten.
-        # Therefore either populated direction means this row needs no direction
-        # backfill. Keeping the old stats field name avoids breaking callers.
+        # Defense-in-depth: the server-side query already excludes these rows.
+        # Keep the guard so a mocked/stale response can never overwrite an
+        # existing source or LLM direction.
         if (
             not _blank(item.get("result_direction"))
             or not _blank(item.get("llm_result_direction"))
@@ -216,11 +242,6 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
         source_title = source.get("title") or ""
 
         if _blank(notes) and _blank(source_title):
-            # Nothing for the LLM to read -- would only ever come back
-            # "Unknown" at the cost of a real API call. Kept as its own
-            # bucket rather than silently folded into `failed` or
-            # `extracted`, so a full-run reconciliation can tell "no
-            # source text exists" apart from "extraction was attempted".
             stats.skipped_no_extractable_text += 1
             continue
 
@@ -245,12 +266,6 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
             safety = str(out.get("safety_signal") or "").strip()
             stats.extracted += 1
             if apply:
-                # CRITICAL provenance boundary: values returned by
-                # extract_evidence_with_llm() are model-derived assertions, not
-                # source/connector assertions. Never write them into
-                # result_direction / safety_signal. The production engine already
-                # transports these dedicated LLM fields separately and resolves
-                # them below source assertions in canonical precedence.
                 payload = {"llm_result_direction": direction}
                 if (
                     _blank(item.get("safety_signal"))
@@ -262,7 +277,7 @@ def backfill(*, apply=False, limit=None, sleep_fn=time.sleep):
                     "id", item["id"]
                 ).execute()
                 stats.updated += 1
-        except Exception as exc:  # noqa: BLE001 - captured into failures, not swallowed
+        except Exception as exc:  # noqa: BLE001
             stats.failed += 1
             failures.append({"id": item.get("id"), "error": str(exc)})
 

@@ -60,6 +60,29 @@ every disjoint bucket below it; and a dedicated
 notes text are not sent to the LLM at all (they can only ever come back
 "Unknown", which is not worth the API call and would otherwise be
 indistinguishable in the stats from a row that WAS extracted).
+
+AUDIT NOTE (2026-08-09) -- root cause of the real scanned=0 incident found
+and fixed. The quota-safe rewrite of ``_fetch_candidate_batch`` (above)
+filtered server-side on BOTH ``result_direction IS NULL`` AND
+``llm_result_direction IS NULL``. That is wrong against the real table:
+``database.py::save_evidence_record()`` writes ``result_direction=""``
+(empty string), not NULL, for every legacy row that never had a
+source-asserted direction -- confirmed by reading that function directly,
+not assumed. So on the real ~22,570-row table almost no row has a true SQL
+NULL result_direction, and PostgREST's ``is.null`` only matches true NULL
+-- ANDing it with the (correctly NULL-by-default, brand-new)
+llm_result_direction filter excluded essentially every row, producing
+scanned=0 even though ~22,470 rows were still unprocessed. Fixed by
+filtering server-side on ``llm_result_direction IS NULL`` alone -- the
+column this script owns and controls end-to-end -- and leaving the
+existing NaN/None/""-aware ``_blank()`` guard inside the row loop as the
+sole gate on the legacy ``result_direction``/``safety_signal`` columns,
+whatever shape (NULL, "", or a real value) they happen to hold. Proven by
+test_backfill_canonical_assertions.py::
+test_empty_string_result_direction_is_still_scanned_not_excluded, which
+reproduces the real table's shape (22,570 rows, 100 already backfilled,
+the rest with result_direction="") rather than the None-only shape the
+earlier tests used.
 """
 from __future__ import annotations
 
@@ -186,9 +209,29 @@ def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
     sliced locally. On a 22k+ row table that meant a --limit 100 run still
     downloaded every evidence row, unnecessarily consuming Supabase egress.
 
-    Server-side NULL filters plus an explicit order and limit make each run
-    bounded, deterministic, and resumable: rows updated by one apply run no
-    longer match the next run.
+    BUG FOUND (2026-08-09 audit) that made this return scanned=0 against the
+    real table: this used to also filter server-side on
+    ``.is_("result_direction", "null")``. PostgREST's ``is.null`` matches only
+    a true SQL NULL. But ``database.py::save_evidence_record()`` -- the actual
+    ingestion path for the ~22,570 existing evidence_records rows -- writes
+    ``record.get("Result_Direction", "")``, i.e. an empty string "" for every
+    row that never had a source-asserted direction, not NULL. So on the real
+    table almost no row has ``result_direction IS NULL``, and ANDing that
+    filter with the (correctly NULL-by-default, since it's a brand-new column)
+    ``llm_result_direction IS NULL`` filter excluded essentially every row --
+    hence scanned=0 even though ~22,470 rows still need processing.
+
+    Fix: filter server-side ONLY on ``llm_result_direction IS NULL`` -- the
+    column this script itself owns and which is genuinely NULL for every row
+    it hasn't touched yet (and non-NULL, so excluded, for the 100 rows already
+    backfilled). This alone makes each run bounded, deterministic, and
+    resumable: rows updated by one apply run no longer match the next run's
+    filter, regardless of whatever legacy value (NULL or "") their
+    result_direction column happens to hold. The existing "" vs NULL vs NaN
+    aware ``_blank()`` guard on ``result_direction``/``llm_result_direction``
+    inside the row loop below still runs as defense-in-depth and correctly
+    routes any row that DOES have a real source direction into
+    ``skipped_has_direction`` without spending an LLM call on it.
     """
     last_error = None
     for attempt in range(3):
@@ -196,7 +239,6 @@ def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
             response = (
                 supabase.table("evidence_records")
                 .select(SELECT_EXPR)
-                .is_("result_direction", "null")
                 .is_("llm_result_direction", "null")
                 .order("id")
                 .limit(int(limit))

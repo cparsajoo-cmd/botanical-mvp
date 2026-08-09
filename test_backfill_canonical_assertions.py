@@ -185,17 +185,70 @@ def test_server_side_batch_fetch_is_bounded_and_filtered(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=False, limit=100, sleep_fn=lambda s: None)
 
+    # id=1 is excluded server-side (llm_result_direction already set). id=2
+    # (result_direction="Negative", llm_result_direction still NULL) IS
+    # downloaded -- server-side filtering is on llm_result_direction only,
+    # see the 2026-08-09 audit note -- but is routed to skipped_has_direction
+    # client-side instead of consuming an LLM call.
     assert stats.scanned == 100
-    assert len(extractor.calls) == 100
+    assert stats.skipped_has_direction == 1
+    assert stats.extracted == 99
+    assert len(extractor.calls) == 99
     assert not failures
     assert stats.reconciles()
     assert fake_client.is_calls == [
-        ("result_direction", "null"),
         ("llm_result_direction", "null"),
     ]
     assert fake_client.limit_calls == [100]
     assert fake_client.order_calls == ["id"]
     assert fake_client.range_calls == []  # no full-table pagination / no excess egress
+
+
+def test_empty_string_result_direction_is_still_scanned_not_excluded(monkeypatch):
+    """Reproduces the real scanned=0 incident against the live table.
+
+    database.py::save_evidence_record() writes result_direction="" (not
+    NULL) for every legacy row that never had a source-asserted direction.
+    A server-side filter that ANDs `result_direction IS NULL` with
+    `llm_result_direction IS NULL` therefore excludes almost every real row,
+    since almost none of them have a true SQL NULL result_direction. This
+    test builds exactly that shape -- 22,570 rows, 100 already backfilled
+    (llm_result_direction set), the other 22,470 with result_direction=""
+    and llm_result_direction=None -- and proves a --limit 100 dry-run scans
+    100 real candidate rows, not zero.
+    """
+    rows = []
+    for i in range(1, 22571):
+        if i <= 100:
+            rows.append(_make_row(i, notes=f"note {i}", llm_result_direction="Positive"))
+        else:
+            row = _make_row(i, notes=f"note {i}")
+            row["result_direction"] = ""  # legacy default, not None
+            rows.append(row)
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    stats, failures = backfill_mod.backfill(apply=True, limit=100, sleep_fn=lambda s: None)
+
+    assert stats.scanned == 100
+    assert stats.extracted == 100
+    assert stats.updated == 100
+    assert not failures
+    assert stats.reconciles()
+    # The first candidate batch must be ids 101..200 (1..100 were already
+    # backfilled, 22,470 legacy rows have result_direction="" not NULL).
+    assert [r["id"] for r in rows if 101 <= r["id"] <= 200 and r.get("llm_result_direction")] == list(range(101, 201))
+
+    # Next batch must be a disjoint set of 100 different rows (201..300),
+    # not the same 100 rows scanned again.
+    stats2, _ = backfill_mod.backfill(apply=True, limit=100, sleep_fn=lambda s: None)
+    assert stats2.scanned == 100
+    assert [r["id"] for r in rows if 201 <= r["id"] <= 300 and r.get("llm_result_direction")] == list(range(201, 301))
+
+    # No pre-existing legacy result_direction was ever overwritten.
+    assert all(r["result_direction"] == "" for r in rows[300:22570])
 
 
 def test_apply_is_resumable_next_batch_excludes_rows_just_updated(monkeypatch):
@@ -258,9 +311,14 @@ def test_never_overwrites_existing_result_direction(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    # Server-side filtering means the completed row is not downloaded at all.
-    assert stats.scanned == 1
-    assert stats.skipped_has_direction == 0
+    # Server-side filtering is only on llm_result_direction (see the 2026-08-09
+    # audit note in backfill_canonical_assertions.py: filtering server-side on
+    # result_direction IS NULL too caused the real scanned=0 incident, since
+    # legacy rows hold "" there, not NULL). So row 1 IS downloaded, but the
+    # client-side _blank() guard still correctly routes it to
+    # skipped_has_direction instead of spending an LLM call on it.
+    assert stats.scanned == 2
+    assert stats.skipped_has_direction == 1
     assert stats.extracted == 1
     assert len(extractor.calls) == 1
     assert rows[0]["result_direction"] == "Positive"  # source assertion untouched
@@ -462,7 +520,13 @@ def test_full_run_reconciles_with_mixed_row_kinds(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    # Six completed source-directed rows are filtered out before download.
-    assert stats.scanned == 24
+    # Server-side filtering is on llm_result_direction only (see the
+    # 2026-08-09 audit note), so all 30 rows are downloaded; the six
+    # completed source-directed rows are then skipped client-side instead
+    # of being excluded from the download.
+    assert stats.scanned == 30
+    assert stats.skipped_has_direction == 6
+    assert stats.skipped_no_extractable_text == 4
+    assert stats.extracted == 20
     assert stats.reconciles()
     assert stats.updated == stats.extracted

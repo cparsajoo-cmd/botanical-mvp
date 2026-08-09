@@ -41,6 +41,8 @@ class _FakeQuery:
         self._name = name
         self._order_col = None
         self._range = None
+        self._limit = None
+        self._is_filters = []
         self._pending_update = None
         self._eq_filters = []
 
@@ -55,6 +57,16 @@ class _FakeQuery:
 
     def range(self, start, end):
         self._range = (start, end)
+        return self
+
+    def is_(self, col, value):
+        self._is_filters.append((col, value))
+        self._client.is_calls.append((col, value))
+        return self
+
+    def limit(self, size):
+        self._limit = int(size)
+        self._client.limit_calls.append(int(size))
         return self
 
     def update(self, payload):
@@ -77,17 +89,21 @@ class _FakeQuery:
             return SimpleNamespace(data=[self._pending_update])
 
         if self._order_col is None:
-            # Exactly the production bug this test suite exists to catch:
-            # pagination without a preceding .order() is not deterministic
-            # and PostgREST silently caps unbounded selects.
-            raise AssertionError(
-                ".range() was called without a preceding .order() -- "
-                "pagination is not guaranteed deterministic without it."
-            )
-        start, end = self._range
-        self._client.range_calls.append((start, end))
-        page = self._client.rows[start : end + 1]
-        return SimpleNamespace(data=page)
+            raise AssertionError("select must be explicitly ordered")
+
+        rows = list(self._client.rows)
+        for col, value in self._is_filters:
+            if value == "null":
+                rows = [r for r in rows if r.get(col) is None]
+        rows.sort(key=lambda r: r.get(self._order_col))
+
+        if self._range is not None:
+            start, end = self._range
+            self._client.range_calls.append((start, end))
+            rows = rows[start : end + 1]
+        if self._limit is not None:
+            rows = rows[: self._limit]
+        return SimpleNamespace(data=rows)
 
 
 class _FakeSupabaseClient:
@@ -97,6 +113,8 @@ class _FakeSupabaseClient:
         self.order_calls: list[str] = []
         self.select_calls: list[str] = []
         self.update_calls: list[dict] = []
+        self.is_calls: list[tuple[str, str]] = []
+        self.limit_calls: list[int] = []
 
     def table(self, name):
         return _FakeQuery(self, name)
@@ -155,25 +173,44 @@ def _no_real_sleep(monkeypatch):
 # ---------------------------------------------------------------------
 # Bug #1 regression: pagination must not silently truncate.
 # ---------------------------------------------------------------------
-def test_pagination_scans_every_row_across_multiple_pages(monkeypatch):
-    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 2501)]  # > 2 pages @1000
+def test_server_side_batch_fetch_is_bounded_and_filtered(monkeypatch):
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 2501)]
+    # Already-completed rows must not be returned by the server-side query.
+    rows[0]["llm_result_direction"] = "Positive"
+    rows[1]["result_direction"] = "Negative"
     fake_client = _FakeSupabaseClient(rows)
     monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
-    monkeypatch.setattr(
-        "supabase_data.get_supabase_client", lambda: fake_client
-    )
     extractor = _FakeExtractor()
     monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
 
-    stats, failures = backfill_mod.backfill(apply=False, sleep_fn=lambda s: None)
+    stats, failures = backfill_mod.backfill(apply=False, limit=100, sleep_fn=lambda s: None)
 
-    assert stats.scanned == 2500
-    assert len(extractor.calls) == 2500
+    assert stats.scanned == 100
+    assert len(extractor.calls) == 100
     assert not failures
     assert stats.reconciles()
-    # Every page must have been ordered before ranged.
-    assert fake_client.order_calls and all(c == "id" for c in fake_client.order_calls)
-    assert len(fake_client.range_calls) >= 3  # 2500 rows / 1000 page_size
+    assert fake_client.is_calls == [
+        ("result_direction", "null"),
+        ("llm_result_direction", "null"),
+    ]
+    assert fake_client.limit_calls == [100]
+    assert fake_client.order_calls == ["id"]
+    assert fake_client.range_calls == []  # no full-table pagination / no excess egress
+
+
+def test_apply_is_resumable_next_batch_excludes_rows_just_updated(monkeypatch):
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 6)]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    first, _ = backfill_mod.backfill(apply=True, limit=2, sleep_fn=lambda s: None)
+    second, _ = backfill_mod.backfill(apply=True, limit=2, sleep_fn=lambda s: None)
+
+    assert first.updated == 2
+    assert second.updated == 2
+    assert [r["id"] for r in rows if r.get("llm_result_direction")] == [1, 2, 3, 4]
 
 
 def test_unordered_range_call_raises_not_silently_truncates(monkeypatch):
@@ -221,9 +258,11 @@ def test_never_overwrites_existing_result_direction(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    assert stats.skipped_has_direction == 1
+    # Server-side filtering means the completed row is not downloaded at all.
+    assert stats.scanned == 1
+    assert stats.skipped_has_direction == 0
     assert stats.extracted == 1
-    assert len(extractor.calls) == 1  # row 1 never sent to the LLM at all
+    assert len(extractor.calls) == 1
     assert rows[0]["result_direction"] == "Positive"  # source assertion untouched
     assert rows[0]["llm_result_direction"] is None
     assert rows[1]["result_direction"] is None  # never masquerade LLM output as source
@@ -244,7 +283,9 @@ def test_existing_llm_direction_is_never_overwritten(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    assert stats.skipped_has_direction == 1
+    # Existing LLM direction is filtered out before download.
+    assert stats.scanned == 0
+    assert stats.skipped_has_direction == 0
     assert not extractor.calls
     assert not fake_client.update_calls
     assert rows[0]["result_direction"] is None
@@ -421,6 +462,7 @@ def test_full_run_reconciles_with_mixed_row_kinds(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    assert stats.scanned == 30
+    # Six completed source-directed rows are filtered out before download.
+    assert stats.scanned == 24
     assert stats.reconciles()
     assert stats.updated == stats.extracted

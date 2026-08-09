@@ -15,10 +15,15 @@ name: Backfill Canonical Assertions
           - apply
         default: dry-run
       limit:
-        description: "Maximum number of evidence records to process"
+        description: "Records per batch"
         required: true
         type: string
         default: "100"
+      batches:
+        description: "How many batches to run back-to-back in this one job (stops early if a batch fails or the table is exhausted)"
+        required: true
+        type: string
+        default: "1"
       confirm_apply:
         description: "For apply only: type exactly APPLY CANONICAL ASSERTIONS"
         required: false
@@ -31,10 +36,14 @@ permissions:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Sized for up to ~15 batches at --limit 500 (~20 min/batch observed in
+    # practice) while staying under GitHub-hosted runners' 360-minute cap.
+    # If you request more batches than that, raise this alongside batches.
+    timeout-minutes: 320
     env:
       MODE: ${{ inputs.mode }}
       LIMIT: ${{ inputs.limit }}
+      BATCHES: ${{ inputs.batches }}
       CONFIRM_APPLY: ${{ inputs.confirm_apply }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -63,6 +72,11 @@ jobs:
             exit 1
           fi
 
+          if ! [[ "$BATCHES" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::batches must be a positive integer."
+            exit 1
+          fi
+
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::error::Missing GitHub Actions secret: OPENAI_API_KEY"
             exit 1
@@ -85,19 +99,19 @@ jobs:
         if: ${{ inputs.mode == 'dry-run' }}
         run: |
           set -euo pipefail
-          python backfill_canonical_assertions.py --limit "$LIMIT" | tee backfill_output.log
+          python backfill_canonical_assertions.py --limit "$LIMIT" --max-batches "$BATCHES" | tee backfill_output.log
 
       - name: Run canonical assertion backfill (apply)
         if: ${{ inputs.mode == 'apply' && inputs.confirm_apply == 'APPLY CANONICAL ASSERTIONS' }}
         run: |
           set -euo pipefail
-          python backfill_canonical_assertions.py --apply --limit "$LIMIT" | tee backfill_output.log
+          python backfill_canonical_assertions.py --apply --limit "$LIMIT" --max-batches "$BATCHES" | tee backfill_output.log
 
       - name: Print summary
         if: always()
         run: |
           if [ -f backfill_output.log ]; then
-            summary_line=$(grep -E '^scanned=' backfill_output.log || true)
+            summary_line=$(grep -E '^(scanned=|batches_run=)' backfill_output.log || true)
             if [ -n "$summary_line" ]; then
               echo "$summary_line"
             else

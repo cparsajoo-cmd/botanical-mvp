@@ -530,3 +530,87 @@ def test_full_run_reconciles_with_mixed_row_kinds(monkeypatch):
     assert stats.extracted == 20
     assert stats.reconciles()
     assert stats.updated == stats.extracted
+
+
+# ---------------------------------------------------------------------
+# run_multiple_batches: lets one workflow run do several sequential
+# batches without a human re-triggering it between them (2026-08-09).
+# ---------------------------------------------------------------------
+def test_multi_batch_stops_when_table_is_exhausted(monkeypatch):
+    # 250 unprocessed rows, batches of 100 -> 100, 100, 50 (scanned<limit stops it).
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 251)]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    result, failures = backfill_mod.run_multiple_batches(
+        apply=True, limit=100, max_batches=10, sleep_fn=lambda s: None
+    )
+
+    assert not failures
+    assert result.stopped_reason == "exhausted"
+    assert result.batches_run == 3
+    assert [b.scanned for b in result.batch_stats] == [100, 100, 50]
+    assert result.total("extracted") == 250
+    assert result.total("updated") == 250
+    assert all(r.get("llm_result_direction") == "Positive" for r in rows)
+
+
+def test_multi_batch_stops_immediately_on_first_batch_failure(monkeypatch):
+    # First row's 3 attempts (2 retries) all fail; the rest of that batch
+    # would succeed, but the run must not start a second batch afterward.
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 301)]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor(fail_times=3)
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    result, failures = backfill_mod.run_multiple_batches(
+        apply=True, limit=100, max_batches=10, sleep_fn=lambda s: None
+    )
+
+    assert result.stopped_reason == "batch_failed"
+    assert result.batches_run == 1
+    assert len(failures) == 1
+    assert failures[0]["id"] == 1
+    # No second batch was ever attempted.
+    assert result.total("scanned") == 100
+
+
+def test_multi_batch_stops_at_max_batches_with_work_still_remaining(monkeypatch):
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 1001)]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    result, failures = backfill_mod.run_multiple_batches(
+        apply=True, limit=100, max_batches=3, sleep_fn=lambda s: None
+    )
+
+    assert not failures
+    assert result.stopped_reason == "max_batches_reached"
+    assert result.batches_run == 3
+    assert result.total("scanned") == 300
+    # Rows 301..1000 remain untouched -- proving the cap, not exhaustion, stopped it.
+    assert all(r.get("llm_result_direction") is None for r in rows[300:])
+
+
+def test_multi_batch_dry_run_never_writes_across_batches(monkeypatch):
+    rows = [_make_row(i, notes=f"note {i}") for i in range(1, 151)]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    result, failures = backfill_mod.run_multiple_batches(
+        apply=False, limit=100, max_batches=5, sleep_fn=lambda s: None
+    )
+
+    assert not failures
+    # apply=False means llm_result_direction never gets set, so every batch
+    # re-scans the same unprocessed rows -- it never reaches "exhausted" and
+    # instead runs until max_batches, which is expected dry-run behavior.
+    assert result.stopped_reason == "max_batches_reached"
+    assert all(r.get("llm_result_direction") is None for r in rows)

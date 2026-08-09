@@ -326,14 +326,106 @@ def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
     return stats, failures
 
 
+@dataclass
+class MultiBatchResult:
+    """Cumulative outcome of running several sequential batches in one process.
+
+    Lets one GitHub Actions run do the work of many manual clicks. Design
+    choices, per the 2026-08-09 conversation that requested this:
+
+    - Runs are still simple sequential per-row calls underneath -- this does
+      NOT add concurrency/parallel OpenAI calls, which would be a separate,
+      larger architecture change. It only removes the need for a human to
+      re-trigger the workflow between batches.
+    - Stops immediately (does not start a next batch) the moment any batch
+      reports failed > 0, so a systematic problem can't silently burn through
+      thousands of rows before a person notices.
+    - Stops cleanly (not an error) the moment a batch scans fewer rows than
+      requested, since -- given _fetch_candidate_batch's llm_result_direction
+      filter -- that means every remaining row in evidence_records has already
+      been processed.
+    - Each batch's writes (rows already updated before a later batch fails)
+      remain in Supabase; nothing is rolled back. That's intentional --
+      per-row updates are already atomic and independent of each other.
+    """
+
+    batch_stats: list = field(default_factory=list)
+    stopped_reason: str = ""  # "exhausted" | "batch_failed" | "max_batches_reached"
+
+    @property
+    def batches_run(self) -> int:
+        return len(self.batch_stats)
+
+    def total(self, field_name: str) -> int:
+        return sum(getattr(s, field_name) for s in self.batch_stats)
+
+    def as_summary_line(self) -> str:
+        return (
+            f"batches_run={self.batches_run} "
+            f"stopped_reason={self.stopped_reason} "
+            f"total_scanned={self.total('scanned')} "
+            f"total_skipped_has_direction={self.total('skipped_has_direction')} "
+            f"total_skipped_no_extractable_text={self.total('skipped_no_extractable_text')} "
+            f"total_extracted={self.total('extracted')} "
+            f"total_failed={self.total('failed')} "
+            f"total_updated={self.total('updated')}"
+        )
+
+
+def run_multiple_batches(*, apply=False, limit=100, max_batches=1, sleep_fn=time.sleep):
+    """Runs up to max_batches sequential calls to backfill(), stopping early
+    on exhaustion (no more unprocessed rows) or on the first batch with any
+    row failure. Returns (MultiBatchResult, failures_from_the_stopping_batch).
+    """
+    if max_batches < 1:
+        raise ValueError("max_batches must be a positive integer")
+
+    result = MultiBatchResult()
+    for _ in range(max_batches):
+        stats, failures = backfill(apply=apply, limit=limit, sleep_fn=sleep_fn)
+        result.batch_stats.append(stats)
+        print(f"batch {result.batches_run}: {stats.as_log_line()}")
+
+        if stats.failed > 0:
+            result.stopped_reason = "batch_failed"
+            return result, failures
+
+        if stats.scanned < limit:
+            result.stopped_reason = "exhausted"
+            return result, []
+
+    result.stopped_reason = "max_batches_reached"
+    return result, []
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int)
+    ap.add_argument(
+        "--max-batches",
+        type=int,
+        default=1,
+        help="Run up to this many sequential batches in one process, stopping "
+        "early if a batch fails or if evidence_records is exhausted.",
+    )
     args = ap.parse_args()
-    stats, failures = backfill(apply=args.apply, limit=args.limit)
-    print(stats.as_log_line())
-    if failures:
-        print("Failures:")
-        for row in failures[:20]:
-            print(row)
+
+    if args.max_batches and args.max_batches > 1:
+        result, failures = run_multiple_batches(
+            apply=args.apply, limit=args.limit or 100, max_batches=args.max_batches
+        )
+        print(result.as_summary_line())
+        if failures:
+            print("Failures in the batch that stopped the run:")
+            for row in failures[:20]:
+                print(row)
+        if result.stopped_reason == "batch_failed":
+            raise SystemExit(1)
+    else:
+        stats, failures = backfill(apply=args.apply, limit=args.limit)
+        print(stats.as_log_line())
+        if failures:
+            print("Failures:")
+            for row in failures[:20]:
+                print(row)

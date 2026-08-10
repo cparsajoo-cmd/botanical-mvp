@@ -53,6 +53,31 @@ def test_empty_or_none_text_has_no_barrier():
     assert classify_regulatory_barriers(None).has_barrier is False
 
 
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-10, RGV v2 rerun against
+# rgv2_024_epimedium_eu_food): a terminated EU market-authorization
+# procedure is the same kind of barrier as an explicit "novel food"
+# requirement even when the source sentence never uses the word
+# "novel" (this real text says "traditional food" instead).
+# ---------------------------------------------------------------------
+def test_terminated_procedure_without_updating_union_list_is_a_barrier():
+    result = classify_regulatory_barriers(
+        "The EU procedure for placing Epimedium sagittatum on the market as "
+        "a traditional food was terminated without updating the Union list."
+    )
+    assert result.has_barrier is True
+    assert result.barrier_types == ["Novel food / pre-market approval required"]
+
+
+def test_without_updating_the_union_list_alone_is_a_barrier():
+    result = classify_regulatory_barriers(
+        "Multiple procedures for this extract were terminated without "
+        "updating the Union list of authorised novel foods."
+    )
+    assert result.has_barrier is True
+    assert "Novel food / pre-market approval required" in result.barrier_types
+
+
 if __name__ == "__main__":
     import sys
 

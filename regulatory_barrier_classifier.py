@@ -60,6 +60,18 @@ _BARRIER_TYPES = [
     ("Novel food / pre-market approval required", [
         "novel food", "pre-market approval required", "premarket notification required",
         "not on the positive list", "requires novel food authorization",
+        # Root-cause fix (2026-08-10, RGV v2 regression against
+        # rgv2_024_epimedium_eu_food): a real EU novel-food/traditional-food
+        # market-authorization procedure can be described as "terminated
+        # without updating the Union list" without ever using the literal
+        # word "novel" in that sentence (rgv2_022/023's texts happened to
+        # say "novel foods" explicitly; this one says "traditional food").
+        # The underlying regulatory fact -- a market-placement procedure
+        # ended with no addition to the authorized list -- is the same
+        # category of barrier regardless of which food-category label the
+        # source sentence uses.
+        "terminated without updating the union list",
+        "without updating the union list",
     ]),
     ("Import / export restriction", [
         "import restricted", "export restricted", "cites-listed", "cites listed",

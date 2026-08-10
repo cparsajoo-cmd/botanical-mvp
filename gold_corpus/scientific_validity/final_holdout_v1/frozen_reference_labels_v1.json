@@ -1,0 +1,225 @@
+{
+  "version": "reference-grounded-final-holdout-v1/1.0.0",
+  "frozen_on": "2026-08-08",
+  "engine_version": "1.4.0",
+  "reference_labels_frozen_before_engine_run": true,
+  "reference_defining_evidence_excluded_from_engine_input": true,
+  "cases": [
+    {
+      "case_id": "rgv1_001_senna_constipation",
+      "botanical": "Senna alexandrina",
+      "indication": "short-term treatment of occasional constipation",
+      "expected": "GO",
+      "reference_locator": "EMA Sennae folium EU herbal monograph / EMA medicines herbal page",
+      "reference_id": "EMA_SENNA_FOLIUM",
+      "reference_basis": "EMA/HMPC concludes senna leaf preparations can be used short term for occasional constipation."
+    },
+    {
+      "case_id": "rgv1_002_ivy_productive_cough",
+      "botanical": "Hedera helix",
+      "indication": "productive cough",
+      "expected": "GO",
+      "reference_locator": "EMA European Union herbal monograph Hedera helix folium",
+      "reference_id": "EMA_HEDERA_MONOGRAPH",
+      "reference_basis": "EMA monograph classifies ivy leaf as well-established use as expectorant for productive cough."
+    },
+    {
+      "case_id": "rgv1_003_horse_chestnut_cvi",
+      "botanical": "Aesculus hippocastanum",
+      "indication": "chronic venous insufficiency symptoms",
+      "expected": "GO",
+      "reference_locator": "PMID:23152216",
+      "reference_id": "PMID_23152216",
+      "reference_basis": "Cochrane review concludes horse chestnut seed extract is efficacious and safe short-term treatment for CVI."
+    },
+    {
+      "case_id": "rgv1_004_pygeum_bph",
+      "botanical": "Prunus africana",
+      "indication": "lower urinary tract symptoms associated with benign prostatic hyperplasia",
+      "expected": "GO",
+      "reference_locator": "PMID:11869585",
+      "reference_id": "PMID_11869585",
+      "reference_basis": "Systematic review concludes standardized Pygeum africanum may be a useful treatment option for BPH/LUTS."
+    },
+    {
+      "case_id": "rgv1_005_devils_claw_lbp",
+      "botanical": "Harpagophytum procumbens",
+      "indication": "chronic nonspecific low back pain",
+      "expected": "GO WITH CAUTION",
+      "reference_locator": "PMID:26630428",
+      "reference_id": "PMID_26630428",
+      "reference_basis": "Cochrane update finds possible pain benefit but evidence moderate quality at best and calls for better trials."
+    },
+    {
+      "case_id": "rgv1_006_willow_lbp",
+      "botanical": "Salix alba",
+      "indication": "chronic nonspecific low back pain",
+      "expected": "GO WITH CAUTION",
+      "reference_locator": "PMID:25536022",
+      "reference_id": "PMID_25536022",
+      "reference_basis": "Cochrane review reports moderate-quality short-term benefit but limited evidence base and need for larger trials."
+    },
+    {
+      "case_id": "rgv1_007_ginseng_fatigue",
+      "botanical": "Panax ginseng",
+      "indication": "fatigue",
+      "expected": "GO WITH CAUTION",
+      "reference_locator": "PMC9239648",
+      "reference_id": "PMC_9239648",
+      "reference_basis": "Meta-analysis suggests benefit for fatigue, while evidence remains limited and heterogeneous."
+    },
+    {
+      "case_id": "rgv1_008_aloe_ibs",
+      "botanical": "Aloe vera",
+      "indication": "irritable bowel syndrome symptoms",
+      "expected": "GO WITH CAUTION",
+      "reference_locator": "PMID:39110917",
+      "reference_id": "PMID_39110917",
+      "reference_basis": "Recent systematic evidence notes small effects and low-to-very-low certainty despite positive signals."
+    },
+    {
+      "case_id": "rgv1_009_echinacea_cold",
+      "botanical": "Echinacea purpurea",
+      "indication": "prevention or treatment of the common cold",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_locator": "PMID:24554461 + PMID:40311928",
+      "reference_id": "REF_ECHINACEA_CONFLICT",
+      "reference_basis": "Cochrane found no demonstrated treatment benefit/possible weak prevention benefit, whereas a newer meta-analysis reports efficacy; meaningful synthesis conflict."
+    },
+    {
+      "case_id": "rgv1_010_black_cohosh_menopause",
+      "botanical": "Cimicifuga racemosa",
+      "indication": "menopausal vasomotor symptoms",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_locator": "PMID:22972105 + PMID:37192826",
+      "reference_id": "REF_BLACK_COHOSH_CONFLICT",
+      "reference_basis": "Older Cochrane found insufficient evidence while updated meta-analysis reports significant improvement."
+    },
+    {
+      "case_id": "rgv1_011_red_clover_hot_flush",
+      "botanical": "Trifolium pratense",
+      "indication": "menopausal hot flushes",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_locator": "PMID:24323914 + PMID:17239573",
+      "reference_id": "REF_RED_CLOVER_CONFLICT",
+      "reference_basis": "Cochrane found no conclusive efficacy while another meta-analysis reported a marginally significant effect."
+    },
+    {
+      "case_id": "rgv1_012_garcinia_weight",
+      "botanical": "Garcinia cambogia",
+      "indication": "weight loss in adults",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference_locator": "PMID:31984610 + PMID:32951714",
+      "reference_id": "REF_GARCINIA_CONFLICT",
+      "reference_basis": "High-level reviews conflict between no sufficient recommendation/no effect and statistically significant anthropometric reductions."
+    },
+    {
+      "case_id": "rgv1_013_evening_primrose_eczema",
+      "botanical": "Oenothera biennis",
+      "indication": "atopic eczema",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference_locator": "PMID:23633319",
+      "reference_id": "PMID_23633319",
+      "reference_basis": "Cochrane review found evening primrose oil lacks effect on eczema."
+    },
+    {
+      "case_id": "rgv1_014_maca_sexual",
+      "botanical": "Lepidium meyenii",
+      "indication": "sexual dysfunction",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference_locator": "PMID:20691074",
+      "reference_id": "PMID_20691074",
+      "reference_basis": "Systematic review found only limited evidence and too few trials for firm conclusions."
+    },
+    {
+      "case_id": "rgv1_015_tribulus_ed",
+      "botanical": "Tribulus terrestris",
+      "indication": "erectile dysfunction",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference_locator": "PMID:40219032",
+      "reference_id": "PMID_40219032",
+      "reference_basis": "Recent systematic evidence rates effectiveness evidence as low."
+    },
+    {
+      "case_id": "rgv1_016_valerian_insomnia",
+      "botanical": "Valeriana officinalis",
+      "indication": "insomnia",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference_locator": "PMID:38359657",
+      "reference_id": "PMID_38359657",
+      "reference_basis": "2024 umbrella review found no evidence of efficacy for treatment of insomnia."
+    },
+    {
+      "case_id": "rgv1_017_chaparral_oral",
+      "botanical": "Larrea tridentata",
+      "indication": "oral therapeutic use",
+      "expected": "NO GO SAFETY",
+      "reference_locator": "NIH LiverTox Chaparral NBK548355",
+      "reference_id": "LIVERTOX_CHAPARRAL",
+      "reference_basis": "Chaparral linked to clinically apparent liver injury including acute liver failure and transplantation."
+    },
+    {
+      "case_id": "rgv1_018_germander_oral",
+      "botanical": "Teucrium chamaedrys",
+      "indication": "oral therapeutic use",
+      "expected": "NO GO SAFETY",
+      "reference_locator": "NIH LiverTox Germander NBK548282",
+      "reference_id": "LIVERTOX_GERMANDER",
+      "reference_basis": "Germander linked to multiple severe liver injuries and fatalities."
+    },
+    {
+      "case_id": "rgv1_019_pennyroyal_oil",
+      "botanical": "Mentha pulegium",
+      "indication": "oral use of pennyroyal essential oil",
+      "expected": "NO GO SAFETY",
+      "reference_locator": "NIH LiverTox Pennyroyal Oil NBK548673",
+      "reference_id": "LIVERTOX_PENNYROYAL",
+      "reference_basis": "Oral pennyroyal oil is highly toxic and associated with seizures, multiorgan failure, acute liver failure and death."
+    },
+    {
+      "case_id": "rgv1_020_celandine_oral",
+      "botanical": "Chelidonium majus",
+      "indication": "oral therapeutic use",
+      "expected": "NO GO SAFETY",
+      "reference_locator": "NIH LiverTox Greater Celandine NBK548684",
+      "reference_id": "LIVERTOX_CELANDINE",
+      "reference_basis": "Greater celandine has multiple documented cases of clinically apparent acute hepatocellular liver injury."
+    },
+    {
+      "case_id": "rgv1_021_ephedra_eu_food",
+      "botanical": "Ephedra sinica",
+      "indication": "use as ingredient in an EU food supplement",
+      "expected": "NO GO REGULATORY",
+      "reference_locator": "European Commission / Regulation (EU) 2015/403 Annex III",
+      "reference_id": "EU_2015_403_EPHEDRA",
+      "reference_basis": "Ephedra herb and preparations from Ephedra species are prohibited for use in foods under Annex III."
+    },
+    {
+      "case_id": "rgv1_022_aloe_had_eu_food",
+      "botanical": "Aloe ferox",
+      "indication": "leaf preparation containing hydroxyanthracene derivatives in an EU food supplement",
+      "expected": "NO GO REGULATORY",
+      "reference_locator": "Regulation (EU) 2021/468 Annex III Part A",
+      "reference_id": "EU_2021_468_ALOE",
+      "reference_basis": "Preparations from Aloe leaf containing hydroxyanthracene derivatives are in Annex III Part A/prohibited."
+    },
+    {
+      "case_id": "rgv1_023_rhubarb_emodin_eu_food",
+      "botanical": "Rheum palmatum",
+      "indication": "root extract containing emodin in an EU food supplement",
+      "expected": "NO GO REGULATORY",
+      "reference_locator": "Regulation (EU) 2021/468 Annex III Part A",
+      "reference_id": "EU_2021_468_EMODIN",
+      "reference_basis": "Emodin and all preparations in which it is present are prohibited under Annex III Part A."
+    },
+    {
+      "case_id": "rgv1_024_green_tea_high_egcg",
+      "botanical": "Camellia sinensis",
+      "indication": "green tea extract providing 900 mg EGCG per daily portion in an EU food supplement",
+      "expected": "NO GO REGULATORY",
+      "reference_locator": "Regulation (EU) 2022/2340",
+      "reference_id": "EU_2022_2340_EGCG",
+      "reference_basis": "EU restriction requires foods with green tea extracts to provide less than 800 mg EGCG per daily portion."
+    }
+  ]
+}

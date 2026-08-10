@@ -21,6 +21,7 @@ from eligibility_gate import (
     classify_regulatory_finding,
     evaluate_eligibility,
     EligibilityStatus,
+    RegulatoryDataStatus,
 )
 from evidence_interpretation import classify_evidence_direction, DIRECTION_POSITIVE, DIRECTION_NULL
 from final_decision_policy import _final_decision_direction
@@ -128,6 +129,69 @@ def test_classify_regulatory_finding_end_to_end_dose_violation_is_no_go():
         finding_text="regulation requires daily portions to provide less than 100 mg of this compound.",
         candidate_context_text="daily portion providing 250 mg of this compound",
     )
+    regulatory_decision = evaluate_eligibility(
+        classify_safety_finding(hit_terms=frozenset(), flagged_terms=frozenset(), has_evidence_text=True, same_plant=True),
+        finding,
+    )
+    assert regulatory_decision.status == EligibilityStatus.NO_GO_REGULATORY
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-10, RGV v2 rerun against
+# rgv2_022_cbd_eu_food and rgv2_023_acmella_eu_food). Both real evidence
+# texts are correctly recognized by regulatory_barrier_classifier as
+# "Novel food / pre-market approval required" (a product with no
+# granted market authorization), but classify_regulatory_finding's
+# is_prohibited check only ever looked for "Prohibited / banned" --
+# a novel-food requirement with no authorization was RESTRICTED, not
+# PROHIBITED, so real cases resolved to GO WITH CAUTION instead of
+# NO GO REGULATORY. same_plant=True (as in both real cases, where the
+# candidate pool is only the plant itself) on purpose, matching how the
+# real validation harness calls the engine for a self-lookup.
+# ---------------------------------------------------------------------
+def test_classify_regulatory_finding_end_to_end_novel_food_no_authorization_is_no_go():
+    text = (
+        "CBD-rich Cannabis sativa extracts are treated as novel foods in the EU "
+        "and cannot be placed on the market as food supplements without Union authorization."
+    )
+    barrier_result = classify_regulatory_barriers(text)
+    assert barrier_result.barrier_types == ["Novel food / pre-market approval required"]
+    finding = classify_regulatory_finding(
+        barrier_types=frozenset(barrier_result.barrier_types),
+        has_evidence_text=True,
+        same_plant=True,
+        finding_text=text,
+        # Real candidate context text (rgv2_022_cbd_eu_food's own
+        # indication) restates "extract", the same qualifier the
+        # finding text uses -- this is what lets scope resolve to
+        # RELEVANT instead of staying UNKNOWN.
+        candidate_context_text="CBD-rich extract as an EU food supplement ingredient",
+    )
+    assert finding.status == RegulatoryDataStatus.PROHIBITED
+    regulatory_decision = evaluate_eligibility(
+        classify_safety_finding(hit_terms=frozenset(), flagged_terms=frozenset(), has_evidence_text=True, same_plant=True),
+        finding,
+    )
+    assert regulatory_decision.status == EligibilityStatus.NO_GO_REGULATORY
+
+
+def test_classify_regulatory_finding_end_to_end_terminated_novel_food_procedure_is_no_go():
+    text = (
+        "The EU authorisation procedure for Acmella oleracea extract was terminated "
+        "without addition to the Union list of authorised novel foods."
+    )
+    barrier_result = classify_regulatory_barriers(text)
+    assert "Novel food / pre-market approval required" in barrier_result.barrier_types
+    finding = classify_regulatory_finding(
+        barrier_types=frozenset(barrier_result.barrier_types),
+        has_evidence_text=True,
+        same_plant=True,
+        finding_text=text,
+        # Real candidate context text (rgv2_023_acmella_eu_food's own
+        # indication), same reasoning as above.
+        candidate_context_text="Acmella oleracea extract as an EU food supplement ingredient",
+    )
+    assert finding.status == RegulatoryDataStatus.PROHIBITED
     regulatory_decision = evaluate_eligibility(
         classify_safety_finding(hit_terms=frozenset(), flagged_terms=frozenset(), has_evidence_text=True, same_plant=True),
         finding,

@@ -548,8 +548,22 @@ def classify_regulatory_finding(
         if dose_finding is not None and dose_finding.violates is not False:
             barrier_types = barrier_types | {"Dose-dependent regulatory restriction"}
 
+    # Root-cause fix (2026-08-10, RGV v2 regression against
+    # rgv2_022_cbd_eu_food and rgv2_023_acmella_eu_food): this is the
+    # actual production path (called from botanical_rd_candidate_engine.py's
+    # per-row eligibility evaluation), distinct from the older
+    # _hard_regulatory_gate()/_decision_class() pair in that module which
+    # was fixed earlier the same day but turned out not to be what
+    # real engine.run() output goes through. Both real cases were
+    # correctly classified by regulatory_barrier_classifier as "Novel
+    # food / pre-market approval required" (verified directly), but that
+    # barrier type was previously RESTRICTED, not PROHIBITED, here -- a
+    # novel-food requirement with no granted authorization means the
+    # product legally cannot be sold, the same real-world market-access
+    # block as an explicit ban, so it belongs in is_prohibited.
     is_prohibited = (
         "Prohibited / banned" in barrier_types
+        or "Novel food / pre-market approval required" in barrier_types
         or "Authorization absent / denied" in barrier_types
         or (dose_finding is not None and dose_finding.violates is True)
     )
@@ -641,7 +655,7 @@ def classify_regulatory_finding(
                 " amount could be confirmed."
             )
     elif is_prohibited:
-        reason = "Documented regulatory finding: Prohibited / banned."
+        reason = f"Documented regulatory finding: {', '.join(sorted(barrier_types)) if barrier_types else 'Prohibited / banned'}."
     elif is_restricted:
         reason = f"Documented regulatory finding(s): {', '.join(sorted(barrier_types))}."
     else:

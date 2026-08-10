@@ -1,9 +1,11 @@
 name: RGV Regression Check
 
-# Manual only. Reruns the exposed Reference-Grounded Validation case set
-# (currently only v2 -- see the 2026-08-10 note in
-# gold_corpus/scientific_validity/final_holdout_v1/ about v1's labels
-# being lost) against whatever engine code is on the selected branch.
+# Manual only. Reruns one of the two exposed Reference-Grounded Validation
+# case sets (v1 or v2 -- select via the "tag" input) against whatever
+# engine code is on the selected branch. See the 2026-08-10 note in
+# run_final_reference_holdout_v1.py for why v1 and v2 now use separate,
+# versioned label/result filenames (they used to share one filename and
+# v2's run silently destroyed v1's frozen labels).
 #
 # This is explicitly a REGRESSION check, not a fresh/independent validity
 # estimate -- these 24 cases are exposed (the engine has effectively "seen"
@@ -18,7 +20,16 @@ name: RGV Regression Check
 # sandboxed/offline environment -- that's why it's a workflow, not
 # something run locally.
 "on":
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Which exposed case set to run as a regression check"
+        required: true
+        type: choice
+        options:
+          - v1
+          - v2
+        default: v2
 
 permissions:
   contents: read
@@ -28,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      TAG: ${{ inputs.tag }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -62,10 +74,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run RGV regression (currently the v2 case set)
+      - name: Run RGV regression (selected case set)
         run: |
           set -euo pipefail
-          python run_final_reference_holdout_v1.py > rgv_run_full.log 2>&1 || {
+          python run_final_reference_holdout_v1.py --tag "$TAG" > rgv_run_full.log 2>&1 || {
             echo "::error::run_final_reference_holdout_v1.py failed -- see the log below."
             cat rgv_run_full.log
             exit 1
@@ -76,11 +88,12 @@ jobs:
         run: |
           set -euo pipefail
           BASE="gold_corpus/scientific_validity/final_holdout_v1"
-          echo "===== metrics (blind_results.json) ====="
-          python -m json.tool "$BASE/blind_results.json"
+          echo "===== tag: $TAG ====="
+          echo "===== metrics (blind_results_${TAG}.json) ====="
+          python -m json.tool "$BASE/blind_results_${TAG}.json"
           echo
-          echo "===== release gate (release_gate_result.json) ====="
-          python -m json.tool "$BASE/release_gate_result.json"
+          echo "===== release gate (release_gate_result_${TAG}.json) ====="
+          python -m json.tool "$BASE/release_gate_result_${TAG}.json"
 
       - name: Upload full run log (only shown if something looked wrong above)
         if: always()

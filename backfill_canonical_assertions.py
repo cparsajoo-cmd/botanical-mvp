@@ -89,6 +89,7 @@ from __future__ import annotations
 import argparse
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from database import get_supabase_client
 from llm_extractor import extract_evidence_with_llm
@@ -96,8 +97,10 @@ from llm_extractor import extract_evidence_with_llm
 SELECT_EXPR = (
     "id,target_indication,dosage_form,notes,evidence_type,evidence_level,"
     "study_type,result_direction,llm_result_direction,safety_signal,llm_safety_signal,"
-    "plants(scientific_name),sources(title)"
+    "canonical_backfill_checked_at,plants(scientific_name),sources(title)"
 )
+
+CHECKED_AT_COLUMN = "canonical_backfill_checked_at"
 
 MAX_EXTRACTION_RETRIES = 2
 
@@ -202,6 +205,20 @@ def _extract_with_retry(record, *, dosage_form, indication, sleep_fn=time.sleep)
     raise last_error
 
 
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _mark_checked(supabase, record_id):
+    """Marks a skipped row as decided, WITHOUT touching result_direction,
+    llm_result_direction, or llm_safety_signal -- only canonical_backfill_checked_at.
+    This is what keeps a row from being re-scanned forever (see the
+    2026-08-10 note on _fetch_candidate_batch)."""
+    supabase.table("evidence_records").update(
+        {CHECKED_AT_COLUMN: _now_iso()}
+    ).eq("id", record_id).execute()
+
+
 def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
     """Fetch only unfinished rows needed for this batch.
 
@@ -232,6 +249,28 @@ def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
     inside the row loop below still runs as defense-in-depth and correctly
     routes any row that DOES have a real source direction into
     ``skipped_has_direction`` without spending an LLM call on it.
+
+    BUG FOUND (2026-08-10, from real batch logs) with the fix above: rows
+    routed to ``skipped_has_direction`` were never written back to
+    Supabase at all -- correct in that no LLM call or overwrite happened,
+    but it meant their ``llm_result_direction`` stayed NULL forever, so
+    they matched this same filter again in every subsequent batch. In
+    production this showed up as skipped_has_direction climbing
+    (0, 0, 369, 479, 494 across five consecutive batches) while extracted
+    fell toward zero: batches were increasingly re-scanning the same
+    already-decided rows instead of reaching new ones, and a run would
+    never naturally reach ``scanned < limit`` ("exhausted") because that
+    permanently-NULL pool kept refilling every batch's results.
+
+    Fix: added a dedicated ``canonical_backfill_checked_at`` column (see
+    the migration note in ``backfill()`` below) that is set, in apply
+    mode, for every row this script has made a final decision about --
+    extracted, skipped for already having a direction, or skipped for
+    having no extractable text -- but deliberately left NULL for rows
+    that raised an exception, so a failed row is retried on the next run
+    instead of being silently marked done. The candidate filter now
+    checks this column instead of ``llm_result_direction``, so a row can
+    never re-enter the query results once this script has looked at it.
     """
     last_error = None
     for attempt in range(3):
@@ -239,7 +278,7 @@ def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
             response = (
                 supabase.table("evidence_records")
                 .select(SELECT_EXPR)
-                .is_("llm_result_direction", "null")
+                .is_(CHECKED_AT_COLUMN, "null")
                 .order("id")
                 .limit(int(limit))
                 .execute()
@@ -255,6 +294,18 @@ def _fetch_candidate_batch(supabase, *, limit: int, sleep_fn=time.sleep):
 
 
 def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
+    """Requires the canonical_backfill_checked_at column (see migration note
+    below) to already exist on evidence_records -- run once in Supabase's
+    SQL editor before using this script:
+
+        alter table evidence_records
+        add column if not exists canonical_backfill_checked_at timestamptz;
+
+    This column, not llm_result_direction, is what marks a row as "this
+    script has made a final decision about it" (see the 2026-08-10 note on
+    _fetch_candidate_batch above for why llm_result_direction alone wasn't
+    enough).
+    """
     supabase = get_supabase_client()
     limit = int(limit or 100)
     if limit < 1:
@@ -276,6 +327,8 @@ def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
             or not _blank(item.get("llm_result_direction"))
         ):
             stats.skipped_has_direction += 1
+            if apply:
+                _mark_checked(supabase, item["id"])
             continue
 
         plant = item.get("plants") or {}
@@ -285,6 +338,8 @@ def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
 
         if _blank(notes) and _blank(source_title):
             stats.skipped_no_extractable_text += 1
+            if apply:
+                _mark_checked(supabase, item["id"])
             continue
 
         record = {
@@ -308,7 +363,10 @@ def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
             safety = str(out.get("safety_signal") or "").strip()
             stats.extracted += 1
             if apply:
-                payload = {"llm_result_direction": direction}
+                payload = {
+                    "llm_result_direction": direction,
+                    CHECKED_AT_COLUMN: _now_iso(),
+                }
                 if (
                     _blank(item.get("safety_signal"))
                     and _blank(item.get("llm_safety_signal"))
@@ -320,6 +378,10 @@ def backfill(*, apply=False, limit=100, sleep_fn=time.sleep):
                 ).execute()
                 stats.updated += 1
         except Exception as exc:  # noqa: BLE001
+            # Deliberately do NOT mark checked_at here: a row that raised an
+            # exception (transient OpenAI/Supabase failure) must still match
+            # the candidate filter on the next run so it gets retried,
+            # instead of being silently treated as done.
             stats.failed += 1
             failures.append({"id": item.get("id"), "error": str(exc)})
 
@@ -384,7 +446,7 @@ def run_multiple_batches(*, apply=False, limit=100, max_batches=1, sleep_fn=time
     for _ in range(max_batches):
         stats, failures = backfill(apply=apply, limit=limit, sleep_fn=sleep_fn)
         result.batch_stats.append(stats)
-        print(f"batch {result.batches_run}: {stats.as_log_line()}")
+        print(f"batch {result.batches_run}: {stats.as_log_line()}", flush=True)
 
         if stats.failed > 0:
             result.stopped_reason = "batch_failed"

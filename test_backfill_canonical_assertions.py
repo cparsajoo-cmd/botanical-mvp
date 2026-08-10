@@ -176,7 +176,11 @@ def _no_real_sleep(monkeypatch):
 def test_server_side_batch_fetch_is_bounded_and_filtered(monkeypatch):
     rows = [_make_row(i, notes=f"note {i}") for i in range(1, 2501)]
     # Already-completed rows must not be returned by the server-side query.
+    # canonical_backfill_checked_at, not llm_result_direction, is the real
+    # "already decided" marker (see the 2026-08-10 audit note) -- id=1
+    # represents a row a previous apply run already extracted and marked.
     rows[0]["llm_result_direction"] = "Positive"
+    rows[0]["canonical_backfill_checked_at"] = "2026-08-09T00:00:00+00:00"
     rows[1]["result_direction"] = "Negative"
     fake_client = _FakeSupabaseClient(rows)
     monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
@@ -185,11 +189,12 @@ def test_server_side_batch_fetch_is_bounded_and_filtered(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=False, limit=100, sleep_fn=lambda s: None)
 
-    # id=1 is excluded server-side (llm_result_direction already set). id=2
-    # (result_direction="Negative", llm_result_direction still NULL) IS
-    # downloaded -- server-side filtering is on llm_result_direction only,
-    # see the 2026-08-09 audit note -- but is routed to skipped_has_direction
-    # client-side instead of consuming an LLM call.
+    # id=1 is excluded server-side (canonical_backfill_checked_at already
+    # set). id=2 (result_direction="Negative", checked_at still NULL) IS
+    # downloaded -- server-side filtering is on canonical_backfill_checked_at
+    # -- but is routed to skipped_has_direction client-side instead of
+    # consuming an LLM call. apply=False means nothing gets marked checked
+    # here either.
     assert stats.scanned == 100
     assert stats.skipped_has_direction == 1
     assert stats.extracted == 99
@@ -197,7 +202,7 @@ def test_server_side_batch_fetch_is_bounded_and_filtered(monkeypatch):
     assert not failures
     assert stats.reconciles()
     assert fake_client.is_calls == [
-        ("llm_result_direction", "null"),
+        ("canonical_backfill_checked_at", "null"),
     ]
     assert fake_client.limit_calls == [100]
     assert fake_client.order_calls == ["id"]
@@ -220,7 +225,9 @@ def test_empty_string_result_direction_is_still_scanned_not_excluded(monkeypatch
     rows = []
     for i in range(1, 22571):
         if i <= 100:
-            rows.append(_make_row(i, notes=f"note {i}", llm_result_direction="Positive"))
+            row = _make_row(i, notes=f"note {i}", llm_result_direction="Positive")
+            row["canonical_backfill_checked_at"] = "2026-08-09T00:00:00+00:00"
+            rows.append(row)
         else:
             row = _make_row(i, notes=f"note {i}")
             row["result_direction"] = ""  # legacy default, not None
@@ -311,20 +318,22 @@ def test_never_overwrites_existing_result_direction(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    # Server-side filtering is only on llm_result_direction (see the 2026-08-09
-    # audit note in backfill_canonical_assertions.py: filtering server-side on
-    # result_direction IS NULL too caused the real scanned=0 incident, since
-    # legacy rows hold "" there, not NULL). So row 1 IS downloaded, but the
-    # client-side _blank() guard still correctly routes it to
-    # skipped_has_direction instead of spending an LLM call on it.
+    # Server-side filtering is on canonical_backfill_checked_at (see the
+    # 2026-08-10 audit note): both rows have it NULL, so both are
+    # downloaded. Row 1's real result_direction routes it to
+    # skipped_has_direction client-side -- no LLM call, and (per the same
+    # note) it gets canonical_backfill_checked_at marked so it will never
+    # be re-scanned, without llm_result_direction ever being touched.
     assert stats.scanned == 2
     assert stats.skipped_has_direction == 1
     assert stats.extracted == 1
     assert len(extractor.calls) == 1
     assert rows[0]["result_direction"] == "Positive"  # source assertion untouched
     assert rows[0]["llm_result_direction"] is None
+    assert rows[0]["canonical_backfill_checked_at"] is not None  # marked done, no LLM call spent
     assert rows[1]["result_direction"] is None  # never masquerade LLM output as source
     assert rows[1]["llm_result_direction"] == "Negative"  # model provenance preserved
+    assert rows[1]["canonical_backfill_checked_at"] is not None
 
 
 # ---------------------------------------------------------------------
@@ -341,13 +350,23 @@ def test_existing_llm_direction_is_never_overwritten(monkeypatch):
 
     stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
-    # Existing LLM direction is filtered out before download.
-    assert stats.scanned == 0
-    assert stats.skipped_has_direction == 0
+    # canonical_backfill_checked_at, not llm_result_direction, is the
+    # server-side filter column (2026-08-10 note), so this row (checked_at
+    # still NULL) IS downloaded -- but its pre-existing llm_result_direction
+    # routes it to skipped_has_direction, no LLM call, and it gets marked
+    # checked so it won't be re-scanned by a future run either.
+    assert stats.scanned == 1
+    assert stats.skipped_has_direction == 1
     assert not extractor.calls
-    assert not fake_client.update_calls
     assert rows[0]["result_direction"] is None
     assert rows[0]["llm_result_direction"] == "Positive"
+    assert rows[0]["canonical_backfill_checked_at"] is not None
+    assert fake_client.update_calls == [
+        {
+            "payload": {backfill_mod.CHECKED_AT_COLUMN: rows[0]["canonical_backfill_checked_at"]},
+            "filters": [("id", 1)],
+        }
+    ]
 
 
 def test_apply_writes_only_dedicated_llm_assertion_columns(monkeypatch):
@@ -361,10 +380,9 @@ def test_apply_writes_only_dedicated_llm_assertion_columns(monkeypatch):
     backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
 
     payload = fake_client.update_calls[0]["payload"]
-    assert payload == {
-        "llm_result_direction": "Positive",
-        "llm_safety_signal": "Moderate",
-    }
+    assert payload["llm_result_direction"] == "Positive"
+    assert payload["llm_safety_signal"] == "Moderate"
+    assert payload[backfill_mod.CHECKED_AT_COLUMN]  # marked done so it's never re-scanned
     assert "result_direction" not in payload
     assert "safety_signal" not in payload
 
@@ -614,3 +632,64 @@ def test_multi_batch_dry_run_never_writes_across_batches(monkeypatch):
     # instead runs until max_batches, which is expected dry-run behavior.
     assert result.stopped_reason == "max_batches_reached"
     assert all(r.get("llm_result_direction") is None for r in rows)
+
+
+# ---------------------------------------------------------------------
+# Regression for the 2026-08-10 production incident: rows skipped for
+# already having a direction must be marked checked_at so they don't
+# refill every subsequent batch's query results forever.
+# ---------------------------------------------------------------------
+def test_skipped_has_direction_rows_do_not_block_convergence(monkeypatch):
+    # Mirrors the real batch-5 log: mostly already-directed rows (skipped)
+    # with a handful of genuinely new ones mixed in. Before the checked_at
+    # fix, skipped rows never left the server-side query, so batches kept
+    # re-scanning the same ~90 skipped rows and "exhausted" was never
+    # reached even though only 10 rows actually needed extraction.
+    rows = []
+    for i in range(1, 101):
+        if i % 10 == 0:
+            rows.append(_make_row(i, notes=f"note {i}"))  # 10 genuinely new
+        else:
+            rows.append(_make_row(i, notes="x", result_direction="Positive"))  # 90 already-directed
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor()
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    result, failures = backfill_mod.run_multiple_batches(
+        apply=True, limit=30, max_batches=10, sleep_fn=lambda s: None
+    )
+
+    assert not failures
+    # 100 rows / 30 per batch = 4 batches to see every row once; the 4th
+    # batch scans the remaining 10 and is short (scanned < limit), so the
+    # run reaches "exhausted" -- proving skipped rows did NOT keep
+    # reappearing and blocking progress.
+    assert result.stopped_reason == "exhausted"
+    assert result.batches_run == 4
+    assert result.total("scanned") == 100
+    assert result.total("skipped_has_direction") == 90
+    assert result.total("extracted") == 10
+    # Every row -- extracted AND skipped -- is now marked, so a follow-up
+    # run would scan zero rows.
+    assert all(r.get("canonical_backfill_checked_at") is not None for r in rows)
+    assert len(extractor.calls) == 10  # no wasted LLM calls on the 90 skipped rows
+
+
+def test_failed_rows_are_not_marked_checked_and_get_retried(monkeypatch):
+    # A row that raises must stay eligible for the next run instead of
+    # being silently treated as decided. fail_times is a shared counter
+    # across every extractor call, so with fail_times=99 both rows'
+    # retries are exhausted and both fail.
+    rows = [_make_row(1, notes="x"), _make_row(2, notes="y")]
+    fake_client = _FakeSupabaseClient(rows)
+    monkeypatch.setattr(backfill_mod, "get_supabase_client", lambda: fake_client)
+    extractor = _FakeExtractor(fail_times=99)
+    monkeypatch.setattr(backfill_mod, "extract_evidence_with_llm", extractor)
+
+    stats, failures = backfill_mod.backfill(apply=True, sleep_fn=lambda s: None)
+
+    assert stats.failed == 2
+    assert {f["id"] for f in failures} == {1, 2}
+    assert rows[0].get("canonical_backfill_checked_at") is None  # eligible for retry next run
+    assert rows[1].get("canonical_backfill_checked_at") is None

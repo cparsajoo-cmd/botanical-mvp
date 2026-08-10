@@ -5185,7 +5185,9 @@ class BotanicalRDCandidateEngine:
         regulatory_barrier_types is None when no evidence text was
         ever collected for this row (never checked) — that is a data
         gap, not a prohibition, and must never be treated as a
-        hard-stop; only an explicit "Prohibited / banned" entry is.
+        hard-stop; only an explicit "Prohibited / banned" or "Novel
+        food / pre-market approval required" entry is (see the
+        2026-08-10 note below on why the latter was added).
 
         Returns (GateStatus, banned_types: set).
         """
@@ -5193,8 +5195,20 @@ class BotanicalRDCandidateEngine:
             return GateStatus.NOT_EVALUABLE, set()
         if regulatory_barrier_types is None:
             return GateStatus.NOT_EVALUABLE, set()
-        if "Prohibited / banned" in regulatory_barrier_types:
-            return GateStatus.FAILED, {"Prohibited / banned"}
+        # Root-cause fix (2026-08-10, RGV v2 regression against
+        # rgv2_022_cbd_eu_food and rgv2_023_acmella_eu_food): the
+        # classifier already correctly recognized both cases as "Novel
+        # food / pre-market approval required" (verified directly against
+        # regulatory_barrier_classifier.classify_regulatory_barriers), but
+        # this gate only ever checked for "Prohibited / banned" -- a
+        # novel-food requirement with no granted authorization is exactly
+        # as hard a market-access block (the product legally cannot be
+        # sold) as an explicit ban, so it belongs in the same hard-stop
+        # set, not left as rationale-only text.
+        _HARD_BARRIER_TYPES = {"Prohibited / banned", "Novel food / pre-market approval required"}
+        hit = _HARD_BARRIER_TYPES & set(regulatory_barrier_types)
+        if hit:
+            return GateStatus.FAILED, hit
         return GateStatus.PASSED, set()
 
     @staticmethod
@@ -5382,10 +5396,14 @@ class BotanicalRDCandidateEngine:
                 "evidence": evidence_level,
             }
 
-        # --- Regulatory-prohibition gate: only an EXPLICIT prohibition
-        # (regulatory_barrier_classifier's "Prohibited / banned" category)
-        # fails this gate — "not available"/"unknown" market status is a
-        # data gap, not a prohibition, and must never be conflated with one.
+        # --- Regulatory-prohibition gate: fails this gate only for the
+        # hard-stop categories in _hard_regulatory_gate()'s
+        # _HARD_BARRIER_TYPES ("Prohibited / banned" and, since
+        # 2026-08-10, "Novel food / pre-market approval required" — a
+        # product with no granted authorization legally cannot be sold,
+        # the same real-world outcome as an explicit ban) — "not
+        # available"/"unknown" market status is a data gap, not a
+        # prohibition, and must never be conflated with one.
         # regulatory_barrier_types is None when no evidence text was ever
         # collected for this row (never checked), vs. an empty list when
         # evidence was reviewed and no barrier was found (checked, clear) —

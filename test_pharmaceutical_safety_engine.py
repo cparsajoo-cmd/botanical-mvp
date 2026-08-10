@@ -139,3 +139,47 @@ def test_regulatory_and_guideline_authorities_are_not_collapsed_to_same_weight()
     assert tga.label == ea.AUTHORITY_TGA_REGULATORY
     assert guideline.label == ea.AUTHORITY_CLINICAL_GUIDELINE
     assert fda.score > guideline.score > case_report.score
+
+
+# ---------------------------------------------------------------------
+# Root-cause regressions (2026-08-10, RGV v1 rerun): both real evidence
+# texts below produced ZERO safety assertions before this fix --
+# verified directly against classify_safety_assertions, not assumed --
+# because of two separate vocabulary gaps in the same _ORGAN_TOXICITY
+# regex family already fixed once for RGV v1's original remediation.
+# rgv1_017_chaparral_oral/rgv1_018_germander_oral/etc. (the earlier fix's
+# own cases) still pass -- these are two further gaps in the same
+# family, not a re-break of the earlier fix.
+# ---------------------------------------------------------------------
+def test_organ_toxicity_recognizes_produce_as_a_causal_verb():
+    # rgv2_020_belladonna_oral: the causal verb was "produce", which was
+    # absent from the verb alternation even though the noun that follows
+    # it ("neurotoxicity") was already recognized.
+    text = "Belladonna poisoning can produce severe neurotoxicity including seizures, coma and anticholinergic toxicity."
+    assertions = classify_safety_assertions(text)
+    assert assertions
+    assert assertions[0].assertion_type == SafetyAssertionType.ORGAN_TOXICITY
+    assert assertions[0].severity == SeverityLevel.SERIOUS
+
+
+def test_organ_toxicity_recognizes_anticholinergic_toxicity_as_a_serious_noun():
+    # rgv2_018_datura_oral: the causal verb "result in" was already
+    # recognized, but "anticholinergic toxicity" was not in the noun
+    # list (only organ-specific hepato-/nephro-/cardio-/neuro- terms
+    # were).
+    text = "Ingestion of Datura species can result in severe anticholinergic toxicity with hallucinations, tachycardia, confusion and dangerous poisoning."
+    assertions = classify_safety_assertions(text)
+    assert assertions
+    assert assertions[0].assertion_type == SafetyAssertionType.ORGAN_TOXICITY
+    assert assertions[0].severity == SeverityLevel.SERIOUS
+
+
+def test_organ_toxicity_still_recognizes_the_original_2026_08_08_fix_cases():
+    # Non-regression: the standalone severe-outcome terms added for RGV
+    # v1's original remediation (multiorgan failure, cardiovascular
+    # collapse, etc.) must still match after this edit widened the same
+    # tuple.
+    for term in ("multiorgan failure", "cardiovascular collapse", "acute hepatic necrosis"):
+        assertions = classify_safety_assertions(f"The case series reported {term} following high-dose use.")
+        assert assertions, f"expected a SERIOUS assertion for {term!r}"
+        assert assertions[0].severity == SeverityLevel.SERIOUS

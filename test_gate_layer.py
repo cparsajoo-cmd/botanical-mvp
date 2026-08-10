@@ -816,6 +816,40 @@ def test_hard_regulatory_gate_non_ban_restriction_does_not_fail():
     assert banned == set()
 
 
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-10, RGV v2 rerun): "Novel food /
+# pre-market approval required" was recognized by
+# regulatory_barrier_classifier but never treated as a hard stop here,
+# even though "no granted market authorization" is functionally the
+# same real-world outcome as an explicit ban -- rgv2_022_cbd_eu_food
+# and rgv2_023_acmella_eu_food both should have been NO GO REGULATORY
+# and were not.
+# ---------------------------------------------------------------------
+def test_hard_regulatory_gate_fails_on_novel_food_requirement():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Novel food / pre-market approval required"], same_plant=False,
+    )
+    assert status == GateStatus.FAILED
+    assert banned == {"Novel food / pre-market approval required"}
+
+
+def test_hard_regulatory_gate_novel_food_same_plant_still_exempt():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Novel food / pre-market approval required"], same_plant=True,
+    )
+    assert status == GateStatus.NOT_EVALUABLE
+    assert banned == set()
+
+
+def test_hard_regulatory_gate_reports_which_hard_type_matched_when_both_present():
+    status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
+        ["Restricted access (prescription/controlled)", "Novel food / pre-market approval required"],
+        same_plant=False,
+    )
+    assert status == GateStatus.FAILED
+    assert banned == {"Novel food / pre-market approval required"}
+
+
 def test_hard_regulatory_gate_same_plant_skips_exclusion_even_when_banned():
     status, banned = eng.BotanicalRDCandidateEngine._hard_regulatory_gate(
         ["Prohibited / banned"], same_plant=True,

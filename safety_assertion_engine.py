@@ -200,9 +200,28 @@ _RISK_PATTERNS = {
 # case: "...can cause seizures, coma, ..., acute hepatic necrosis,
 # multiorgan failure and death" puts the causal verb far from several of
 # its listed consequences).
+# Root-cause fix (2026-08-10, RGV v2 regression against rgv2_018_datura_oral
+# and rgv2_020_belladonna_oral): two further gaps in the same family as the
+# fix above, found by testing the real failing evidence text directly
+# against this regex, not by guessing.
+#   1. Missing verb: "Belladonna poisoning can PRODUCE severe
+#      neurotoxicity..." -- "produce(s|d)" was absent from the causal-verb
+#      alternation, so a real, direct causal claim using that verb never
+#      reached the (already-present) "neurotoxicity" noun.
+#   2. Missing noun: "...can result in severe ANTICHOLINERGIC TOXICITY
+#      with hallucinations, tachycardia, confusion..." -- the noun list
+#      only covered organ-specific toxicity terms (hepato-/nephro-/cardio-/
+#      neuro-), not toxicity syndromes named after their mechanism instead
+#      of an organ (anticholinergic toxicity/syndrome is a well-established
+#      serious poisoning syndrome, not a novel category).
+#   Also added "seizures" and "coma" to the standalone (no-verb-required)
+#   tuple below, since both are commonly listed as bare outcome nouns in an
+#   enumeration ("...toxicity including seizures, coma and...") with no
+#   single nearby causal verb governing them, the same structural pattern
+#   already documented for "multiorgan failure"/"death" above.
 _ORGAN_TOXICITY = (
-    r"\b(?:caus(?:e|es|ed)|induc(?:e|es|ed)|associated with|risk of|result(?:s|ed)? in|linked to)\b.{0,80}\b(?:hepatotoxicity|liver injur(?:y|ies)|nephrotoxicity|renal injur(?:y|ies)|cardiotoxicity|neurotoxicity)\b",
-    r"\b(?:hepatotoxic|nephrotoxic|cardiotoxic|neurotoxic|hepatocellular liver injur(?:y|ies)|acute hepatic necrosis|hepatic necrosis|multiorgan failure|multi-organ failure|cardiovascular collapse|hepatic failure|renal failure|respiratory failure|status epilepticus)\b",
+    r"\b(?:caus(?:e|es|ed)|induc(?:e|es|ed)|produc(?:e|es|ed)|associated with|risk of|result(?:s|ed)? in|linked to)\b.{0,80}\b(?:hepatotoxicity|liver injur(?:y|ies)|nephrotoxicity|renal injur(?:y|ies)|cardiotoxicity|neurotoxicity|anticholinergic toxicity|anticholinergic syndrome)\b",
+    r"\b(?:hepatotoxic|nephrotoxic|cardiotoxic|neurotoxic|hepatocellular liver injur(?:y|ies)|acute hepatic necrosis|hepatic necrosis|multiorgan failure|multi-organ failure|cardiovascular collapse|hepatic failure|renal failure|respiratory failure|status epilepticus|seizures|coma|anticholinergic toxicity|anticholinergic syndrome)\b",
 )
 _PROTECTIVE_CONTEXT = (
     r"\bprotect(?:s|ed|ive|ion)? against\b", r"\bprevent(?:s|ed|ion)?\b.{0,30}\b(?:toxicity|injury)\b",

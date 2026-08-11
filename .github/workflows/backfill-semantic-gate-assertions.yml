@@ -1,0 +1,97 @@
+name: Backfill Semantic Gate Assertions
+
+# Manual-only, quota-conscious rollout.
+# Dry-run: exactly one bounded Supabase SELECT and ZERO database writes.
+# Apply: one bounded SELECT plus at most LIMIT single-column row updates.
+"on":
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run first; apply writes llm_gate_assertions only"
+        required: true
+        type: choice
+        options:
+          - dry-run
+          - apply
+        default: dry-run
+      limit:
+        description: "Rows to inspect/process (1-100). Start with 20."
+        required: true
+        type: string
+        default: "20"
+      confirm_apply:
+        description: "Apply only: type exactly APPLY SEMANTIC GATES"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-gate-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MODE: ${{ inputs.mode }}
+      LIMIT: ${{ inputs.limit }}
+      CONFIRM_APPLY: ${{ inputs.confirm_apply }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_GATE_MODEL: ${{ secrets.OPENAI_GATE_MODEL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate bounded inputs and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::limit must be an integer from 1 to 100."
+            exit 1
+          fi
+          if [ "$LIMIT" -gt 100 ]; then
+            echo "::error::limit is capped at 100 to protect Supabase/OpenAI usage."
+            exit 1
+          fi
+          if [ -z "$OPENAI_API_KEY" ] || [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::OPENAI_API_KEY, SUPABASE_URL, and SUPABASE_KEY secrets are required."
+            exit 1
+          fi
+          if [ "$MODE" = "apply" ] && [ "$CONFIRM_APPLY" != "APPLY SEMANTIC GATES" ]; then
+            echo "::error::Apply requires confirm_apply = APPLY SEMANTIC GATES"
+            exit 1
+          fi
+
+      - name: Run 20-row shadow dry-run
+        if: ${{ inputs.mode == 'dry-run' }}
+        run: |
+          set -euo pipefail
+          python backfill_semantic_gate_assertions.py --limit "$LIMIT" | tee semantic_gate_output.log
+
+      - name: Apply bounded batch
+        if: ${{ inputs.mode == 'apply' && inputs.confirm_apply == 'APPLY SEMANTIC GATES' }}
+        run: |
+          set -euo pipefail
+          python backfill_semantic_gate_assertions.py --apply --limit "$LIMIT" | tee semantic_gate_output.log
+
+      - name: Add compact summary
+        if: always()
+        run: |
+          if [ -f semantic_gate_output.log ]; then
+            grep '^SUMMARY ' semantic_gate_output.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No semantic-gate output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi

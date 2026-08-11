@@ -82,6 +82,9 @@ from safety_assertion_engine import (
     safety_assertion_from_dict as _safety_assertion_from_dict,
 )
 from assertion_vocabulary import SeverityLevel as _SeverityLevel
+from semantic_gate_assertions import (
+    parse_semantic_gate_payload as _parse_semantic_gate_payload,
+)
 from canonical_scientific_assertion import (
     normalize_safety_signal as _normalize_canonical_safety_signal,
     CANONICAL_SAFETY_SERIOUS as _CANONICAL_SAFETY_SERIOUS,
@@ -1766,6 +1769,37 @@ class BotanicalRDCandidateEngine:
                     # records are both retained so conflict cannot be erased by
                     # pooled-text winner-takes-all logic.
                     _structured_safety_assertions = []
+                    _semantic_regulatory_assertions = []
+                    _semantic_gate_warnings = []
+                    for _rec in evidence_contributing_records:
+                        # New semantic gate layer: parse already-persisted,
+                        # record-level LLM assertions.  The engine never calls
+                        # the LLM from inside scoring/eligibility, preserving
+                        # deterministic replay and auditability.
+                        _payload_raw = _rec.get("llm_gate_assertions")
+                        if _payload_raw:
+                            try:
+                                _payload = (
+                                    json.loads(_payload_raw)
+                                    if isinstance(_payload_raw, str) else _payload_raw
+                                )
+                                _sem_safety, _sem_reg, _sem_warnings = _parse_semantic_gate_payload(
+                                    _payload,
+                                    source_text=str(_rec.get("assertion_text") or _rec.get("text") or ""),
+                                    evidence_record_id=str(_rec.get("evidence_record_id") or ""),
+                                    authority=str(_rec.get("authority_label") or "Unknown Source"),
+                                    authority_score=float(_rec.get("authority_factor") or 0.5),
+                                    source_url=str(_rec.get("source_url") or ""),
+                                )
+                                _structured_safety_assertions.extend(_sem_safety)
+                                _semantic_regulatory_assertions.extend(_sem_reg)
+                                _semantic_gate_warnings.extend(_sem_warnings)
+                            except (TypeError, ValueError, json.JSONDecodeError):
+                                # Invalid semantic payload cannot clear legacy
+                                # signals.  Treat it as audit/review information
+                                # while deterministic paths continue to run.
+                                _semantic_gate_warnings.append("invalid_semantic_gate_payload")
+
                     for _rec in evidence_contributing_records:
                         _safety_assertion_input = " ".join(
                             str(x).strip() for x in (
@@ -1805,6 +1839,14 @@ class BotanicalRDCandidateEngine:
                             _is_reassuring = (
                                 _canonical_safety == _CANONICAL_SAFETY_REASSURING
                             )
+                            _signal_is_source_structured = bool(str(_rec.get("source_safety_signal") or "").strip())
+                            _authority_factor = float(_rec.get("authority_factor") or 0.0)
+                            _legacy_strength = (
+                                _SafetyConfidence.HIGH if _authority_factor >= 0.85
+                                else _SafetyConfidence.MODERATE if _authority_factor >= 0.65
+                                else _SafetyConfidence.LOW if _authority_factor > 0
+                                else _SafetyConfidence.INSUFFICIENT
+                            )
                             _structured_safety_assertions.append(_SafetyAssertion(
                                 assertion_type=(
                                     _SafetyAssertionType.REASSURANCE
@@ -1822,7 +1864,7 @@ class BotanicalRDCandidateEngine:
                                     if _is_reassuring
                                     else _SafetyAssertionPolarity.RISK_PRESENT
                                 ),
-                                evidence_strength=_SafetyConfidence.HIGH,
+                                evidence_strength=_legacy_strength,
                                 authority=str(_rec.get("authority_label") or "Structured evidence"),
                                 authority_score=float(_rec.get("authority_factor") or 0.5),
                                 evidence_record_id=str(_rec.get("evidence_record_id") or ""),
@@ -1833,7 +1875,14 @@ class BotanicalRDCandidateEngine:
                                     or ""
                                 ),
                                 matched_language=str(_canonical_safety),
-                                reason="Canonical structured Safety_Signal mapped directly to safety severity.",
+                                reason=(
+                                    "Canonical structured Safety_Signal mapped directly to safety severity; "
+                                    "evidence strength derived from source authority, not model certainty."
+                                ),
+                                provenance=(
+                                    "source_structured" if _signal_is_source_structured
+                                    else "legacy_llm_safety_signal"
+                                ),
                             ))
                     if not _structured_safety_assertions:
                         _structured_safety_assertions = list(pooled_safety_assertions)
@@ -1869,6 +1918,7 @@ class BotanicalRDCandidateEngine:
                         ),
                         evidence_ids=_regulatory_gate_evidence_ids,
                         authorization_statuses=_authorization_states,
+                        semantic_assertions=tuple(_semantic_regulatory_assertions),
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
                     scientific_evidence_resolution = resolve_scientific_evidence(
@@ -3629,6 +3679,11 @@ class BotanicalRDCandidateEngine:
                 "reported_direction": self._pick(row, ["Evidence_Direction", "evidence_direction"]) or "",
                 "source_safety_signal": self._pick(row, ["Safety_Signal", "safety_signal"]) or "",
                 "llm_safety_signal": self._pick(row, ["LLM_Safety_Signal", "llm_safety_signal"]) or "",
+                # Optional JSON payload produced by extract_gate_assertions_with_llm().
+                # It is additive/backward-compatible: old rows simply leave it blank.
+                "llm_gate_assertions": self._pick(
+                    row, ["LLM_Gate_Assertions", "llm_gate_assertions", "Semantic_Gate_Assertions"]
+                ) or "",
                 "regulatory_status": self._pick(row, ["Regulatory_Status", "regulatory_status"]) or "",
                 "novel_food_status": self._pick(row, ["Novel_Food_Status", "novel_food_status"]) or "",
                 "regulatory_evidence": self._pick(row, ["Regulatory_Evidence", "regulatory_evidence"]) or "",

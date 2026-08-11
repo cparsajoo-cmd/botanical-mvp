@@ -103,6 +103,9 @@ class SafetyAssertion:
     severity_rule: str = SAFETY_SEVERITY_RULE_VERSION
     classifier_version: str = SAFETY_ASSERTION_ENGINE_VERSION
     reason: str = ""
+    # Model certainty is deliberately separate from source/evidence strength.
+    semantic_extraction_confidence: float | None = None
+    provenance: str = "deterministic"
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -530,4 +533,9 @@ def safety_assertion_from_dict(data: dict[str, Any]) -> SafetyAssertion:
         severity_rule=str(data.get("severity_rule") or SAFETY_SEVERITY_RULE_VERSION),
         classifier_version=str(data.get("classifier_version") or SAFETY_ASSERTION_ENGINE_VERSION),
         reason=str(data.get("reason") or ""),
+        semantic_extraction_confidence=(
+            float(data["semantic_extraction_confidence"])
+            if data.get("semantic_extraction_confidence") is not None else None
+        ),
+        provenance=str(data.get("provenance") or "deterministic"),
     )

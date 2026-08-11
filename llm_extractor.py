@@ -135,3 +135,184 @@ Otherwise No.
     )
 
     return json.loads(response.output_text)
+
+# ---------------------------------------------------------------------------
+# High-stakes semantic gate extraction
+# ---------------------------------------------------------------------------
+# Kept separate from EVIDENCE_SCHEMA so existing ingestion/backfill contracts
+# remain backward compatible.  The output is assertion-level evidence only;
+# it never emits GO/NO-GO decisions.
+
+GATE_ASSERTION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "safety_assertions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "hazard_present": {"type": "boolean"},
+                    "hazard_type": {
+                        "type": "string",
+                        "enum": [
+                            "fatal_adverse_event", "serious_adverse_event", "organ_toxicity",
+                            "contraindication", "serious_drug_interaction", "pregnancy",
+                            "lactation", "pediatric_restriction", "qt_prolongation",
+                            "bleeding_risk", "allergic_risk", "carcinogenicity",
+                            "genotoxicity", "reproductive_toxicity",
+                            "major_regulatory_safety_warning", "warning", "precaution",
+                            "reassurance", "other"
+                        ],
+                    },
+                    "reported_outcome": {"type": "string"},
+                    "seriousness": {
+                        "type": "string",
+                        "enum": ["serious", "moderate", "minor", "none", "unknown"],
+                    },
+                    "polarity": {
+                        "type": "string",
+                        "enum": ["risk_present", "risk_absent", "conditional", "mechanistic_only"],
+                    },
+                    "causal_relationship": {
+                        "type": "string",
+                        "enum": ["causal", "associated", "suspected", "hypothetical", "unclear"],
+                    },
+                    "preparation": {"type": "string"},
+                    "route": {"type": "string"},
+                    "dose_dependency": {"type": "string"},
+                    "affected_population": {"type": "array", "items": {"type": "string"}},
+                    "context_applicability": {
+                        "type": "string",
+                        "enum": ["relevant", "irrelevant", "unknown"],
+                    },
+                    "supporting_text": {"type": "string"},
+                    "extraction_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "hazard_present", "hazard_type", "reported_outcome", "seriousness",
+                    "polarity", "causal_relationship", "preparation", "route",
+                    "dose_dependency", "affected_population", "context_applicability",
+                    "supporting_text", "extraction_confidence"
+                ],
+            },
+        },
+        "regulatory_assertions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "prohibited", "authorization_required", "authorized",
+                            "authorized_with_conditions", "refused", "withdrawn",
+                            "suspended", "pending", "restricted", "not_authorized",
+                            "terminated", "unclear"
+                        ],
+                    },
+                    "market_access_effect": {
+                        "type": "string",
+                        "enum": ["blocks_market_access", "conditional_access", "no_block", "unclear"],
+                    },
+                    "jurisdiction": {"type": "string"},
+                    "authority": {"type": "string"},
+                    "ingredient": {"type": "string"},
+                    "plant_part": {"type": "string"},
+                    "preparation": {"type": "string"},
+                    "route": {"type": "string"},
+                    "product_category": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "effective_date": {"type": "string"},
+                    "context_applicability": {
+                        "type": "string",
+                        "enum": ["relevant", "irrelevant", "unknown"],
+                    },
+                    "supporting_text": {"type": "string"},
+                    "extraction_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "action", "market_access_effect", "jurisdiction", "authority",
+                    "ingredient", "plant_part", "preparation", "route",
+                    "product_category", "conditions", "effective_date",
+                    "context_applicability", "supporting_text", "extraction_confidence"
+                ],
+            },
+        },
+    },
+    "required": ["safety_assertions", "regulatory_assertions"],
+}
+
+
+def extract_gate_assertions_with_llm(record, candidate_context=""):
+    """Extract auditable safety/regulatory assertions from ONE evidence record.
+
+    The function intentionally does not produce a recommendation.  Callers must
+    validate supporting spans and pass assertions through deterministic gate
+    policy.  This separation prevents prompt/model changes from directly
+    redefining NO-GO policy.
+    """
+    client = get_openai_client()
+    title = str(record.get("Source_Title") or record.get("title") or "")
+    body = str(record.get("Notes") or record.get("text") or record.get("assertion_text") or "")
+    source_text = body
+
+    system_prompt = f"""
+You extract safety and regulatory ASSERTIONS from botanical scientific or
+regulatory evidence. You do not make GO/NO-GO decisions.
+
+Evidence title (metadata only; supporting_text must come from the evidence text, not the title):
+{title}
+
+Candidate context, when available:
+{candidate_context}
+
+Critical rules:
+1. Use only facts stated in the supplied record. Never infer a ban, toxicity,
+   authorization, jurisdiction, route, preparation, dose, population, or causal
+   relationship that is not supported by the text.
+2. Every assertion MUST include supporting_text copied VERBATIM from the input.
+   If no exact supporting span exists, emit no assertion for that claim.
+3. Distinguish model/extraction certainty from seriousness. A clearly extracted
+   minor event is not serious; a serious event in a weak source is still
+   semantically serious.
+4. Negation matters. "No hepatotoxicity was observed" is reassurance, not risk.
+5. Animal/in-vitro or hypothetical/mechanistic findings must not be rewritten as
+   documented human clinical harm. Preserve uncertainty in causal_relationship.
+6. A regulatory requirement is not automatically a prohibition. Distinguish:
+   authorization_required, pending, authorized, authorized_with_conditions,
+   refused, withdrawn, suspended, not_authorized, terminated, restricted,
+   prohibited, and unclear.
+7. market_access_effect=blocks_market_access only when the text itself establishes
+   that the matched product/context cannot legally be marketed/accessed now.
+   A generic statement that something is a "novel food" is insufficient by
+   itself unless the record also establishes the applicable authorization state.
+8. If context applicability cannot be established from both the source and the
+   supplied candidate context, use unknown rather than guessing.
+9. Serious safety means death/life-threatening harm, hospitalization or comparable
+   medically serious harm, irreversible/major organ injury, explicit serious
+   contraindication, major regulator safety warning, or a comparably severe
+   documented clinical risk. Do not mark ordinary tolerability findings serious.
+10. Do not let reassuring text erase a separate risk assertion; emit both when
+    the record genuinely contains both.
+"""
+
+    response = client.responses.create(
+        model=os.getenv("OPENAI_GATE_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
+        input=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": source_text},
+        ],
+        temperature=0,
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "botanical_gate_assertions",
+                "schema": GATE_ASSERTION_SCHEMA,
+                "strict": True,
+            }
+        },
+    )
+    return json.loads(response.output_text)

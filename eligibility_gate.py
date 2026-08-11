@@ -84,6 +84,9 @@ from typing import Any, FrozenSet, Optional, Tuple
 from assertion_vocabulary import SeverityLevel
 from safety_assertion_engine import SafetyAssertion, SafetyConfidence, AssertionPolarity
 from regulatory_scope_assessment import assess_regulatory_scope, detect_dose_threshold_violation
+from semantic_gate_assertions import (
+    SemanticRegulatoryAssertion, RegulatoryAction, MarketAccessEffect,
+)
 from regulatory_authorization import (
     AuthorizationStatus,
     normalize_authorization_status,
@@ -262,6 +265,9 @@ class RegulatoryFinding:
     barrier_types: FrozenSet[str] = field(default_factory=frozenset)
     reason: str = ""
     evidence_ids: Tuple[str, ...] = ()
+    semantic_assertions: Tuple[SemanticRegulatoryAssertion, ...] = ()
+    evidence_conflict: bool = False
+    requires_expert_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -387,14 +393,18 @@ def classify_safety_finding(
         DataCompleteness.COMPLETE if has_evidence_text else DataCompleteness.INCOMPLETE
     )
 
+    semantic_only_serious = bool(serious_assertions) and not hit_terms and all(
+        str(getattr(a, "provenance", "")) in {"llm_semantic_gate", "legacy_llm_safety_signal"}
+        for a in serious_assertions
+    )
+
     if confirmed_scope is not None:
         scope = confirmed_scope
     elif serious_assertions:
-        # Root-cause remediation: a serious structured assertion that carries
-        # no candidate-limiting preparation/dose/route/population qualifier is
-        # broad for the botanical record rather than unknowable by default.
-        # If a qualifier exists, retain the narrowest honest structured scope
-        # and require context matching before a hard no-go.
+        # Two-key safety policy: an LLM-only serious assertion must make the
+        # system MORE conservative (EXPERT REVIEW), but cannot create an
+        # automatic species-wide hard stop by itself.  Deterministic/source
+        # corroboration or explicit confirmed scope can still produce NO-GO.
         _a = serious_assertions[0]
         if _a.affected_population:
             scope = FindingScope.POPULATION_SPECIFIC
@@ -405,6 +415,8 @@ def classify_safety_finding(
             scope = FindingScope.DOSE_SPECIFIC
         elif _a.preparation or _a.route:
             scope = FindingScope.PREPARATION_SPECIFIC
+        elif semantic_only_serious:
+            scope = FindingScope.UNKNOWN
         else:
             scope = FindingScope.SPECIES_WIDE
     else:
@@ -412,7 +424,7 @@ def classify_safety_finding(
 
     if confirmed_context_relevance is not None:
         relevance = confirmed_context_relevance
-    elif serious_assertions and scope == FindingScope.SPECIES_WIDE:
+    elif serious_assertions and scope == FindingScope.SPECIES_WIDE and not semantic_only_serious:
         relevance = ContextRelevance.RELEVANT
     else:
         relevance = ContextRelevance.UNKNOWN
@@ -474,6 +486,7 @@ def classify_regulatory_finding(
     candidate_context_text: str = "",
     evidence_ids: Tuple[str, ...] = (),
     authorization_statuses: Tuple[str, ...] = (),
+    semantic_assertions: Tuple[SemanticRegulatoryAssertion, ...] = (),
 ) -> RegulatoryFinding:
     """Builds a RegulatoryFinding from ``regulatory_barrier_classifier
     .classify_regulatory_barriers()``'s output plus ``has_evidence_text``/
@@ -522,6 +535,34 @@ def classify_regulatory_finding(
     classify_safety_finding()'s docstring for the same pattern.
     """
     barrier_types = frozenset(barrier_types or frozenset())
+    semantic_assertions = tuple(semantic_assertions or ())
+
+    # Semantic extraction is additive/asymmetric: it can surface a barrier or
+    # force review, but an LLM statement of "authorized/no block" never erases
+    # an independently detected deterministic barrier.  This prevents a model
+    # miss or prompt drift from making the gate less conservative.
+    semantic_blocking = tuple(
+        a for a in semantic_assertions
+        if a.market_access_effect == MarketAccessEffect.BLOCKS_MARKET_ACCESS
+        and a.action in {
+            RegulatoryAction.PROHIBITED, RegulatoryAction.REFUSED,
+            RegulatoryAction.WITHDRAWN, RegulatoryAction.SUSPENDED,
+            RegulatoryAction.NOT_AUTHORIZED, RegulatoryAction.TERMINATED,
+        }
+    )
+    semantic_conditional = tuple(
+        a for a in semantic_assertions
+        if a.market_access_effect in {MarketAccessEffect.CONDITIONAL_ACCESS, MarketAccessEffect.UNCLEAR}
+        or a.action in {
+            RegulatoryAction.AUTHORIZATION_REQUIRED, RegulatoryAction.PENDING,
+            RegulatoryAction.RESTRICTED, RegulatoryAction.UNCLEAR,
+            RegulatoryAction.AUTHORIZED_WITH_CONDITIONS,
+        }
+    )
+    if semantic_blocking:
+        barrier_types = barrier_types | {"Semantic market-access block"}
+    elif semantic_conditional:
+        barrier_types = barrier_types | {"Semantic regulatory review signal"}
 
     normalized_authorizations = tuple(
         normalize_authorization_status(x) for x in authorization_statuses
@@ -565,6 +606,7 @@ def classify_regulatory_finding(
         "Prohibited / banned" in barrier_types
         or "Novel food / pre-market approval required" in barrier_types
         or "Authorization absent / denied" in barrier_types
+        or "Semantic market-access block" in barrier_types
         or (dose_finding is not None and dose_finding.violates is True)
     )
     is_restricted = bool(barrier_types) and not is_prohibited
@@ -607,6 +649,27 @@ def classify_regulatory_finding(
         # to text scope heuristics.
         scope = FindingScope.PREPARATION_SPECIFIC
         relevance = ContextRelevance.RELEVANT
+    elif status == RegulatoryDataStatus.PROHIBITED and semantic_blocking and confirmed_scope is None:
+        # LLM-only blocking evidence deliberately cannot create an automatic
+        # hard NO-GO by itself.  It stays UNKNOWN-scope -> EXPERT REVIEW unless
+        # a deterministic detector/structured authorization independently
+        # corroborates it.  If rules also found a real prohibited barrier,
+        # ordinary scope resolution below can confirm applicability.
+        deterministic_prohibited = bool(
+            {"Prohibited / banned", "Novel food / pre-market approval required",
+             "Authorization absent / denied"} & (barrier_types - {"Semantic market-access block"})
+        ) or (dose_finding is not None and dose_finding.violates is True)
+        if deterministic_prohibited and _ft:
+            _assessment = assess_regulatory_scope(finding_text, candidate_context_text)
+            if _assessment.scope == "species_wide":
+                scope = FindingScope.SPECIES_WIDE
+                relevance = ContextRelevance.RELEVANT
+            elif _assessment.relevant is True:
+                scope = _scope_kind_to_finding_scope.get(_assessment.scope, FindingScope.UNKNOWN)
+                relevance = ContextRelevance.RELEVANT
+        else:
+            scope = FindingScope.UNKNOWN
+            relevance = ContextRelevance.UNKNOWN
     elif status == RegulatoryDataStatus.PROHIBITED and confirmed_scope is None and _ft:
         if ("external use" in _ft or "topical" in _ft) and any(
             token in _cdf for token in ("oral", "internal", "capsule", "tablet", "extract")
@@ -641,6 +704,16 @@ def classify_regulatory_finding(
         )
     elif pending_authorization:
         reason = "Structured regulatory authorization state is pending; automatic marketability cannot be confirmed."
+    elif semantic_blocking:
+        actions = ", ".join(sorted({a.action.value for a in semantic_blocking}))
+        reason = (
+            "Semantic record-level evidence describes a market-access block "
+            f"({actions}). LLM-only blocking evidence is never used to clear or "
+            "silently hard-stop without deterministic/context corroboration."
+        )
+    elif semantic_conditional and not is_prohibited:
+        actions = ", ".join(sorted({a.action.value for a in semantic_conditional}))
+        reason = f"Semantic regulatory evidence requires caution/review: {actions}."
     elif dose_finding is not None and "Dose-dependent regulatory restriction" in barrier_types:
         if dose_finding.violates:
             reason = (
@@ -668,6 +741,25 @@ def classify_regulatory_finding(
             "is not resolvable from current data."
         )
 
+    semantic_evidence_ids = tuple(dict.fromkeys(
+        a.evidence_record_id for a in semantic_assertions if a.evidence_record_id
+    ))
+    evidence_ids = tuple(dict.fromkeys(tuple(evidence_ids) + semantic_evidence_ids))
+    semantic_no_block = any(
+        a.market_access_effect == MarketAccessEffect.NO_BLOCK for a in semantic_assertions
+    )
+    evidence_conflict = bool(semantic_no_block and (is_prohibited or is_restricted))
+    semantic_review_required = bool(evidence_conflict or any(
+        a.action in {
+            RegulatoryAction.AUTHORIZATION_REQUIRED, RegulatoryAction.PENDING,
+            RegulatoryAction.UNCLEAR,
+        }
+        or a.market_access_effect == MarketAccessEffect.UNCLEAR
+        or a.context_applicability == "unknown"
+        for a in semantic_assertions
+        if a.market_access_effect != MarketAccessEffect.NO_BLOCK
+    ))
+
     return RegulatoryFinding(
         status=status,
         scope=scope,
@@ -676,6 +768,9 @@ def classify_regulatory_finding(
         barrier_types=barrier_types,
         reason=reason,
         evidence_ids=evidence_ids,
+        semantic_assertions=semantic_assertions,
+        evidence_conflict=evidence_conflict,
+        requires_expert_review=semantic_review_required,
     )
 
 
@@ -735,6 +830,7 @@ def evaluate_eligibility(
         regulatory.status == RegulatoryDataStatus.PROHIBITED
         and not reg_prohibited_species_wide
     )
+    reg_semantic_review = bool(getattr(regulatory, "requires_expert_review", False))
     safety_no_go = (
         safety.severity == SafetySeverity.SEVERE
         and (
@@ -796,16 +892,16 @@ def evaluate_eligibility(
         )
 
     # 3) EXPERT_REVIEW_REQUIRED
-    if reg_prohibited_unknown_scope or safety_unknown_scope_concern:
+    if reg_prohibited_unknown_scope or reg_semantic_review or safety_unknown_scope_concern:
         reasons = []
-        if reg_prohibited_unknown_scope:
+        if reg_prohibited_unknown_scope or reg_semantic_review:
             reasons.append(regulatory.reason)
         if safety_unknown_scope_concern:
             reasons.append(safety.reason)
         return EligibilityDecision(
             status=EligibilityStatus.EXPERT_REVIEW_REQUIRED,
             hard_no_go=False,
-            gate_type="both" if len(reasons) > 1 else ("regulatory" if reg_prohibited_unknown_scope else "safety"),
+            gate_type="both" if len(reasons) > 1 else ("regulatory" if (reg_prohibited_unknown_scope or reg_semantic_review) else "safety"),
             gate_reason=" | ".join(reasons),
             gate_evidence_ids=evidence_ids,
             safety_finding=safety,

@@ -109,6 +109,8 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     "source_authority", "source_authority_score", "source_authority_reason",
     # Phase — canonical regulatory authorization state.
     "regulatory_authorization_status",
+    # Semantic hard-gate extraction payload (JSONB), rollout-controlled.
+    "llm_gate_assertions",
 }
 
 
@@ -800,6 +802,7 @@ def save_evidence_record(record):
         "source_authority_score": record.get("Source_Authority_Score")
         if record.get("Source_Authority_Score") not in (None, "") else None,
         "source_authority_reason": record.get("Source_Authority_Reason") or None,
+        "llm_gate_assertions": record.get("LLM_Gate_Assertions") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -890,6 +893,7 @@ def load_evidence_records():
             "Primary_Outcome": item.get("primary_outcome", ""),
             "Result_Direction": item.get("result_direction", ""),
             "Safety_Signal": item.get("safety_signal", ""),
+            "LLM_Gate_Assertions": item.get("llm_gate_assertions") or {},
             "Direct_For_Selected_Product": item.get("direct_for_selected_product", ""),
             "Directness_Reason": item.get("directness_reason", ""),
 

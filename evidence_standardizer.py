@@ -1,12 +1,15 @@
+import os
+import json
 from source_ingestion_engine import normalize_source_record
 from standard_evidence_builder import build_standard_evidence
 from standard_evidence_schema import canonicalize_evidence_record
 from evidence_authority import classify_source_authority_from_row
 
 try:
-    from llm_extractor import extract_evidence_with_llm
+    from llm_extractor import extract_evidence_with_llm, extract_gate_assertions_with_llm
 except Exception:
     extract_evidence_with_llm = None
+    extract_gate_assertions_with_llm = None
 
 
 def standardize_extracted_record(extracted, source_metadata):
@@ -154,6 +157,33 @@ def standardize_extracted_record(extracted, source_metadata):
             normalized["LLM_Reason"] = "LLM extraction failed: " + str(e)
             if not normalized.get("Result_Direction"):
                 normalized["Result_Direction"] = "Unknown"
+
+    # High-stakes semantic gate extraction is rollout-controlled.  It is kept
+    # separate from the existing evidence-direction extraction so production
+    # can run shadow/parallel evaluation before the new signal is trusted.
+    # The raw source fields above are never overwritten; only a dedicated JSON
+    # payload is added.
+    _semantic_gate_enabled = str(os.getenv("ENABLE_SEMANTIC_GATE_EXTRACTION", "false")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if _semantic_gate_enabled and extract_gate_assertions_with_llm is not None:
+        try:
+            _gate_payload = extract_gate_assertions_with_llm(
+                normalized,
+                candidate_context=" | ".join(
+                    str(x).strip() for x in (
+                        normalized.get("Target_Indication", ""),
+                        normalized.get("Dosage_Form", ""),
+                        normalized.get("Target_Market", ""),
+                    ) if str(x or "").strip()
+                ),
+            )
+            normalized["LLM_Gate_Assertions"] = _gate_payload
+        except Exception as e:
+            # Failure is explicit and non-destructive.  Existing deterministic
+            # gates still run; audit tooling can identify rows where semantic
+            # extraction did not complete.
+            normalized["LLM_Gate_Assertions_Error"] = str(e)
 
     # A newly standardized record must never leave this boundary with an
     # absent scientific direction. If no source/connector direction exists and

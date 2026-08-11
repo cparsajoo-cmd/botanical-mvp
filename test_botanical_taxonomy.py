@@ -174,3 +174,24 @@ def test_synonym_collapse_is_deterministic_regardless_of_input_order():
         sorted(first[0].score_components["contributing_original_names"])
         == sorted(second[0].score_components["contributing_original_names"])
     )
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11, RGV v3 blind holdout): rgv3_001
+# (Rhamnus frangula) and rgv3_002 (Rhamnus purshianus) both resolved to
+# zero candidate rows in the live engine run. Direct query of the live
+# `plants` table confirmed both species exist only under their modern
+# reclassified genus (Frangula), not the older Rhamnus names used in the
+# EMA monograph titles the case text was built from -- a real botanical
+# synonym gap, not a fabricated fix.
+# ---------------------------------------------------------------------
+def test_rhamnus_frangula_resolves_to_frangula_alnus():
+    assert tax.accepted_name("Rhamnus frangula") == "Frangula alnus"
+    assert tax.is_synonym("Rhamnus frangula")
+    assert tax.taxon_match_key("Rhamnus frangula") == tax.taxon_match_key("Frangula alnus")
+
+
+def test_rhamnus_purshianus_resolves_to_frangula_purshiana():
+    assert tax.accepted_name("Rhamnus purshianus") == "Frangula purshiana"
+    assert tax.accepted_name("Rhamnus purshiana") == "Frangula purshiana"
+    assert tax.taxon_match_key("Rhamnus purshianus") == tax.taxon_match_key("Frangula purshiana")

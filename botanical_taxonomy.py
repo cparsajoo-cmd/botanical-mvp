@@ -68,6 +68,22 @@ _CURATED_TAXA: Tuple[TaxonRecord, ...] = (
         synonyms=("Panax schinseng",),
         source="internal_curated_mapping",
     ),
+    # 2026-08-11: added after RGV v3's first blind run showed Rhamnus
+    # frangula and Rhamnus purshianus resolving to zero candidate rows.
+    # Direct query of the live `plants` table confirmed the records exist
+    # only under their modern reclassified names (Frangula alnus,
+    # Frangula purshiana), not the older Rhamnus names used in the EMA
+    # monograph titles our v3 case text was built from.
+    TaxonRecord(
+        accepted_name="Frangula alnus",
+        synonyms=("Rhamnus frangula",),
+        source="internal_curated_mapping",
+    ),
+    TaxonRecord(
+        accepted_name="Frangula purshiana",
+        synonyms=("Rhamnus purshianus", "Rhamnus purshiana"),
+        source="internal_curated_mapping",
+    ),
 )
 
 

@@ -294,6 +294,17 @@ Critical rules:
    authorization_required, pending, authorized, authorized_with_conditions,
    refused, withdrawn, suspended, not_authorized, terminated, restricted,
    prohibited, and unclear.
+6b. A regulatory action can only come from a government/statutory authority
+    with legal power over market access (e.g. EMA, FDA, EFSA, a national
+    medicines/food agency, or an official government decision). A
+    professional medical society, clinical association, specialty college,
+    advisory body, or expert panel changing or withdrawing its OWN clinical
+    recommendation/guideline is NOT a regulatory action and must never be
+    extracted as one, however strongly worded ("withdrew its
+    recommendation", "no longer recommends", "advises against use") -- that
+    is a clinical-practice opinion, not a market-access determination. If
+    the text does not name a body with actual legal/statutory market-access
+    authority, do not emit a regulatory_assertion for it at all.
 7. market_access_effect=blocks_market_access only when the text itself establishes
    that the matched product/context cannot legally be marketed/accessed now.
    A generic statement that something is a "novel food" is insufficient by

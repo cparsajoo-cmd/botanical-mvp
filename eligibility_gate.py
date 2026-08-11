@@ -396,22 +396,50 @@ def classify_safety_finding(
     if confirmed_scope is not None:
         scope = confirmed_scope
     elif serious_assertions:
-        # Two-key safety policy: an LLM-only serious assertion must make the
-        # system MORE conservative (EXPERT REVIEW), but cannot create an
-        # automatic species-wide hard stop by itself.  Deterministic/source
-        # corroboration or explicit confirmed scope can still produce NO-GO.
-        _a = serious_assertions[0]
-        if _a.affected_population:
-            scope = FindingScope.POPULATION_SPECIFIC
-        elif (
-            (_a.dose_dependency and _a.dose_dependency != "unknown")
-            or any(token in str(_a.source_sentence or "").lower() for token in ("dose", "doses", "dosage", "threshold"))
+        # Root-cause fix (2026-08-11, RGV v3 regression: rgv3_014/015/016
+        # kratom/atractylis/impila all regressed from correct NO_GO_SAFETY
+        # to EXPERT_REVIEW_REQUIRED the moment the semantic (LLM) gate
+        # started adding its own assertions alongside the deterministic
+        # ones). The bug: this branch used only serious_assertions[0] --
+        # an arbitrary, order-dependent pick -- to decide scope. Once the
+        # semantic gate started prepending its own assertion(s) ahead of
+        # the deterministic regex-derived one, any incidental population/
+        # dose/preparation detail the LLM happened to mention (even
+        # non-narrowing context, not a genuine restriction) silently
+        # shrank scope away from SPECIES_WIDE and defeated a previously
+        # correct hard stop.
+        #
+        # Two-key safety policy is preserved (an LLM-only assertion still
+        # cannot manufacture a species-wide hard stop by itself), but scope
+        # is now the WIDEST (most conservative -- i.e. most likely to
+        # still trigger a hard stop) reading supported by ANY serious
+        # assertion, not just the first one in list order. A real
+        # species-wide risk documented by one assertion is not erased by
+        # another assertion's unrelated population/dose detail.
+        if any(
+            not a.affected_population
+            and not (a.dose_dependency and a.dose_dependency != "unknown")
+            and not any(
+                token in str(a.source_sentence or "").lower()
+                for token in ("dose", "doses", "dosage", "threshold")
+            )
+            and not (a.preparation or a.route)
+            for a in serious_assertions
+        ):
+            scope = FindingScope.SPECIES_WIDE
+        elif any(
+            (a.dose_dependency and a.dose_dependency != "unknown")
+            or any(
+                token in str(a.source_sentence or "").lower()
+                for token in ("dose", "doses", "dosage", "threshold")
+            )
+            for a in serious_assertions
         ):
             scope = FindingScope.DOSE_SPECIFIC
-        elif _a.preparation or _a.route:
+        elif any(a.preparation or a.route for a in serious_assertions):
             scope = FindingScope.PREPARATION_SPECIFIC
         else:
-            scope = FindingScope.SPECIES_WIDE
+            scope = FindingScope.POPULATION_SPECIFIC
     else:
         scope = FindingScope.UNKNOWN
 

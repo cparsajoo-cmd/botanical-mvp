@@ -229,3 +229,99 @@ def test_same_plant_hard_term_also_defaults_to_unknown_scope():
     )
     assert safety.scope == FindingScope.UNKNOWN
     assert safety.context_relevance == ContextRelevance.UNKNOWN
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11): RGV v3's blind run showed
+# rgv3_014_kratom_pain / rgv3_015_atractylis_traditional /
+# rgv3_016_impila_traditional all regress from correct NO_GO_SAFETY to
+# EXPERT_REVIEW_REQUIRED the moment the semantic (LLM) gate started
+# contributing its own assertions alongside the deterministic ones.
+#
+# Root cause found by direct code trace: the two-key scope logic used
+# only serious_assertions[0] -- an arbitrary, list-order-dependent
+# pick -- to decide scope. Once the semantic gate's assertion(s) could
+# appear before the deterministic one in the list, any incidental
+# population/dose/preparation detail the LLM happened to mention (even
+# non-narrowing context) silently shrank scope away from SPECIES_WIDE,
+# defeating a previously-correct hard stop. Fixed to consider ALL
+# serious assertions and take the widest (most conservative) scope any
+# of them supports, so one assertion's incidental detail cannot erase
+# another assertion's unqualified species-wide finding.
+# ---------------------------------------------------------------------
+from safety_assertion_engine import SafetyAssertion, SafetyAssertionType, AssertionPolarity, SafetyConfidence
+from assertion_vocabulary import SeverityLevel
+
+
+def _serious_assertion(**overrides):
+    base = dict(
+        assertion_type=SafetyAssertionType.ORGAN_TOXICITY,
+        severity=SeverityLevel.SERIOUS,
+        polarity=AssertionPolarity.RISK_PRESENT,
+        evidence_strength=SafetyConfidence.HIGH,
+        affected_population=(),
+        dose_dependency="unknown",
+        preparation="",
+        route="",
+        source_sentence="can cause seizures, coma, and death",
+        provenance="deterministic",
+    )
+    base.update(overrides)
+    return SafetyAssertion(**base)
+
+
+def test_unqualified_deterministic_assertion_still_wins_species_wide_even_when_llm_assertion_is_listed_first():
+    """Regression test: this exact ordering (LLM assertion first, then
+    the unqualified deterministic one) is what broke kratom/atractylis/
+    impila in the real v3 run."""
+    llm_assertion = _serious_assertion(
+        affected_population=("people using it for pain relief",),
+        provenance="semantic_llm",
+        evidence_strength=SafetyConfidence.MODERATE,
+    )
+    deterministic_assertion = _serious_assertion()  # unqualified -> species-wide
+    safety = classify_safety_finding(
+        hit_terms=frozenset(),
+        has_evidence_text=True,
+        same_plant=True,
+        assertions=(llm_assertion, deterministic_assertion),
+    )
+    assert safety.scope == FindingScope.SPECIES_WIDE
+    assert safety.context_relevance == ContextRelevance.RELEVANT
+
+    reg = classify_regulatory_finding(barrier_types=frozenset(), has_evidence_text=False, same_plant=True)
+    decision = evaluate_eligibility(safety, reg)
+    assert decision.status == EligibilityStatus.NO_GO_SAFETY
+
+
+def test_unqualified_assertion_wins_regardless_of_list_position():
+    """Same as above but with the order reversed, proving the fix is not
+    itself order-dependent in the other direction."""
+    llm_assertion = _serious_assertion(
+        affected_population=("people using it for pain relief",),
+        provenance="semantic_llm",
+    )
+    deterministic_assertion = _serious_assertion()
+    safety = classify_safety_finding(
+        hit_terms=frozenset(),
+        has_evidence_text=True,
+        same_plant=True,
+        assertions=(deterministic_assertion, llm_assertion),
+    )
+    assert safety.scope == FindingScope.SPECIES_WIDE
+
+
+def test_all_assertions_population_qualified_stays_population_specific():
+    """When EVERY serious assertion is genuinely population-qualified (no
+    unqualified species-wide assertion exists anywhere in the list), the
+    two-key policy must still withhold an automatic hard stop -- this is
+    the case the original code was designed to protect."""
+    a1 = _serious_assertion(affected_population=("pregnant women",), provenance="semantic_llm")
+    a2 = _serious_assertion(affected_population=("pediatric patients",), provenance="semantic_llm")
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), has_evidence_text=True, same_plant=True, assertions=(a1, a2),
+    )
+    assert safety.scope == FindingScope.POPULATION_SPECIFIC
+    reg = classify_regulatory_finding(barrier_types=frozenset(), has_evidence_text=False, same_plant=True)
+    decision = evaluate_eligibility(safety, reg)
+    assert decision.status != EligibilityStatus.NO_GO_SAFETY

@@ -1,0 +1,169 @@
+{
+  "version": "reference-grounded-holdout-v3/1.0.0-draft",
+  "frozen_on": null,
+  "engine_version": null,
+  "reference_labels_frozen_before_engine_run": true,
+  "reference_defining_evidence_excluded_from_engine_input": true,
+  "cases": [
+    {
+      "case_id": "rgv3_001_frangula_constipation",
+      "botanical": "Rhamnus frangula",
+      "indication": "short-term treatment of occasional constipation",
+      "expected": "GO",
+      "reference": "EMA/HMPC well-established-use monograph EMEA/HMPC/76307/2006",
+      "basis": "EMA/HMPC classifies frangula bark under well-established use for occasional constipation, standardised to glucofrangulins."
+    },
+    {
+      "case_id": "rgv3_002_cascara_constipation",
+      "botanical": "Rhamnus purshianus",
+      "indication": "short-term use in occasional constipation",
+      "expected": "GO",
+      "reference": "EMA/HMPC well-established-use monograph on Rhamnus purshianus D.C., cortex",
+      "basis": "EMA/HMPC grants well-established-use status to cascara bark as a stimulant laxative for occasional constipation."
+    },
+    {
+      "case_id": "rgv3_003_psyllium_constipation",
+      "botanical": "Plantago afra",
+      "indication": "treatment of habitual constipation and conditions where easy defaecation with soft stools is desirable",
+      "expected": "GO",
+      "reference": "EMA/HMPC well-established-use monograph on psyllium seed (Plantago afra et Plantago indica, semen)",
+      "basis": "EMA/HMPC grants well-established-use status to psyllium seed as a bulk-forming laxative for habitual constipation."
+    },
+    {
+      "case_id": "rgv3_004_icelandmoss_throat",
+      "botanical": "Cetraria islandica",
+      "indication": "demulcent for irritation of the mouth and throat mucosa with associated dry cough, and temporary loss of appetite",
+      "expected": "GO WITH CAUTION",
+      "reference": "EMA/HMPC traditional-use monograph EMA/HMPC/678891/2013",
+      "basis": "EMA/HMPC grants only traditional-use status based on long-standing use; clinical trial evidence is described as insufficient."
+    },
+    {
+      "case_id": "rgv3_005_bilberry_venous",
+      "botanical": "Vaccinium myrtillus",
+      "indication": "relief of discomfort and heaviness in the legs related to minor venous circulatory disturbances",
+      "expected": "GO WITH CAUTION",
+      "reference": "EMA/HMPC traditional-use monograph EMA/HMPC/375808/2014",
+      "basis": "EMA/HMPC grants only traditional-use status for fresh bilberry fruit based on long-standing use, not demonstrated efficacy."
+    },
+    {
+      "case_id": "rgv3_006_andrographis_urti",
+      "botanical": "Andrographis paniculata",
+      "indication": "symptomatic relief of uncomplicated acute upper respiratory tract infection (cough, sore throat)",
+      "expected": "GO WITH CAUTION",
+      "reference": "Hu et al. 2017, PLoS One, PMID 28783743",
+      "basis": "Meta-analysis of 33 RCTs (7,175 patients) found significant improvement in cough and sore throat versus placebo, but reviewers flagged poor trial quality and heterogeneity."
+    },
+    {
+      "case_id": "rgv3_007_redvineleaf_cvi",
+      "botanical": "Vitis vinifera",
+      "indication": "symptomatic relief of non-complicated chronic venous insufficiency (mild oedema, heaviness, tingling in the legs)",
+      "expected": "GO WITH CAUTION",
+      "reference": "Azhdari et al. 2020, Phytother Res, PMID 32314844; EMA/HMPC monograph EMA/HMPC/16635/2009",
+      "basis": "Systematic review concludes red vine leaf extract is beneficial for CVI symptoms but explicitly calls for further high-quality trials."
+    },
+    {
+      "case_id": "rgv3_008_butterbur_migraine",
+      "botanical": "Petasites hybridus",
+      "indication": "migraine prophylaxis",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference": "Lipton et al. 2004, Neurology, PMID 15623680; Agosti et al. 2006, Phytomedicine, PMID 16987643",
+      "basis": "A positive RCT on migraine prevention conflicts with hepatotoxicity concerns from unprocessed pyrrolizidine alkaloids and a systematic review calling the evidence base only moderate/unreliable."
+    },
+    {
+      "case_id": "rgv3_009_berberine_t2dm",
+      "botanical": "Berberis vulgaris",
+      "indication": "glycemic control in type 2 diabetes mellitus",
+      "expected": "EXPERT REVIEW REQUIRED",
+      "reference": "Umbrella meta-analysis PMID 38016844; Berberis vulgaris/integerrima meta-analysis PMC11525128",
+      "basis": "Multiple meta-analyses reach favourable but inconsistent conclusions on glycemic endpoints, with very high heterogeneity between pooled trials."
+    },
+    {
+      "case_id": "rgv3_010_gymnema_t2dm",
+      "botanical": "Gymnema sylvestre",
+      "indication": "type 2 diabetes / glycemic control",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference": "Leach 2007, J Altern Complement Med, PMID 18047444",
+      "basis": "Systematic review found no controlled clinical trials meeting inclusion criteria; a therapeutic effect could not be substantiated."
+    },
+    {
+      "case_id": "rgv3_011_arjuna_angina",
+      "botanical": "Terminalia arjuna",
+      "indication": "chronic stable angina / cardiovascular disease",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference": "Kaur et al. 2014, Cardiol Res Pract, PMID 24600529",
+      "basis": "Systematic review found poorly designed, small trials with no significant pooled effect; evidence explicitly deemed insufficient by the authors."
+    },
+    {
+      "case_id": "rgv3_012_caralluma_weight",
+      "botanical": "Caralluma fimbriata",
+      "indication": "appetite suppression / weight loss in obesity",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference": "Jayawardena et al. 2021, BMC Complement Med Ther, PMID 34758791",
+      "basis": "Meta-analysis of 7 trials found no significant effect on body weight, BMI, or appetite; authors conclude it is unlikely recommendable."
+    },
+    {
+      "case_id": "rgv3_013_cordyceps_copd",
+      "botanical": "Cordyceps sinensis",
+      "indication": "stable COPD (GOLD stages 2-3) / exercise endurance",
+      "expected": "INSUFFICIENT EVIDENCE",
+      "reference": "Yu et al. 2019, Evid Based Complement Alternat Med, PMID 31073318",
+      "basis": "Meta-analysis of 15 trials suggested possible benefit, but the authors state no studies were placebo-controlled or high quality, limiting conclusions."
+    },
+    {
+      "case_id": "rgv3_014_kratom_pain",
+      "botanical": "Mitragyna speciosa",
+      "indication": "self-treatment of pain / opioid withdrawal symptoms",
+      "expected": "NO GO SAFETY",
+      "reference": "NIH LiverTox NBK548231 (PMID 31643556)",
+      "basis": "LiverTox documents clinically apparent hepatotoxicity and states overdose can cause seizures, coma, and death."
+    },
+    {
+      "case_id": "rgv3_015_atractylis_traditional",
+      "botanical": "Atractylis gummifera",
+      "indication": "traditional remedy (root decoction/poultice use)",
+      "expected": "NO GO SAFETY",
+      "reference": "Moroccan Poison Control Centre retrospective, PMID 24673087",
+      "basis": "A 467-case poison-centre retrospective found a 39.2% mortality rate, disproportionately affecting children under 15."
+    },
+    {
+      "case_id": "rgv3_016_impila_traditional",
+      "botanical": "Callilepis laureola",
+      "indication": "traditional Zulu remedy (tuber decoction)",
+      "expected": "NO GO SAFETY",
+      "reference": "Watson et al. 1979, S Afr Med J, PMID 441880; Steenkamp et al. 1999, PMID 10557008",
+      "basis": "Documented fatal hepatorenal toxicity syndrome across dozens of pediatric cases and fatal adult cases."
+    },
+    {
+      "case_id": "rgv3_017_cistanche_eu_food",
+      "botanical": "Cistanche tubulosa",
+      "indication": "use as a food supplement / food for special medical purposes in the EU",
+      "expected": "NO GO REGULATORY",
+      "reference": "Commission Implementing Decision C(2021) 3935 final, 4 June 2021",
+      "basis": "EU Commission decision terminated the novel-food authorisation procedure without adding the extract to the Union list; EFSA had found safety not established."
+    },
+    {
+      "case_id": "rgv3_018_terminaliacatappa_eu_food",
+      "botanical": "Terminalia catappa",
+      "indication": "use as a novel food in the EU",
+      "expected": "NO GO REGULATORY",
+      "reference": "Commission Implementing Decision C(2022) 1843 final, 30 March 2022",
+      "basis": "EU Commission decision terminated the novel-food authorisation procedure without adding the plant to the Union list."
+    },
+    {
+      "case_id": "rgv3_019_nuxia_eu_food",
+      "botanical": "Nuxia verticillata",
+      "indication": "use as a novel food (dried leaves) in the EU",
+      "expected": "NO GO REGULATORY",
+      "reference": "Commission Implementing Decision C(2021) 8703 final, 6 December 2021",
+      "basis": "EU Commission decision terminated the novel-food authorisation procedure without adding the plant to the Union list."
+    },
+    {
+      "case_id": "rgv3_020_miracleberry_eu_food",
+      "botanical": "Synsepalum dulcificum",
+      "indication": "use as a novel food (berries) in the EU",
+      "expected": "NO GO REGULATORY",
+      "reference": "Commission Implementing Decision C(2022) 8103 final, 17 November 2022",
+      "basis": "EU Commission decision terminated the novel-food authorisation procedure without adding the berries to the Union list."
+    }
+  ]
+}

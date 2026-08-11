@@ -1,0 +1,25 @@
+{
+  "question": "Should Vitis vinifera be recommended for: symptomatic relief of non-complicated chronic venous insufficiency (mild oedema, heaviness, tingling in the legs)?",
+  "candidate_pool": [
+    "Vitis vinifera"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_007_REDVINELEAF_CVI_32314844",
+      "scientific_name": "Vitis vinifera",
+      "notes": "Systematic review of red vine leaf extract (AS 195) for chronic venous insufficiency concludes a beneficial therapeutic role in reducing leg symptoms, but the authors state further high-quality trials are still required to provide strong evidence, and the EMA/HMPC monograph reflects this qualified evidence base.",
+      "source_type": "Systematic review",
+      "source_title": "Red vine leaf extract (AS 195) can improve some signs and symptoms of chronic venous insufficiency, a systematic review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/32314844/",
+      "pmid": "32314844",
+      "study_design": "Systematic review of RCTs",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2020,
+      "target_indication": "symptomatic relief of non-complicated chronic venous insufficiency (mild oedema, heaviness, tingling in the legs)",
+      "primary_outcome": "symptomatic relief of non-complicated chronic venous insufficiency (mild oedema, heaviness, tingling in the legs)",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "question": "Should Terminalia arjuna be recommended for: chronic stable angina / cardiovascular disease?",
+  "candidate_pool": [
+    "Terminalia arjuna"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_011_ARJUNA_ANGINA_24600529",
+      "scientific_name": "Terminalia arjuna",
+      "notes": "A systematic review of Terminalia arjuna for cardiovascular disease found that included trials were poorly designed with inadequate randomization and blinding and a maximum sample size of 58, showing no significant pooled differences, and the authors conclude the evidence is insufficient to draw any definite conclusions either for or against its use.",
+      "source_type": "Systematic review",
+      "source_title": "Terminalia arjuna in chronic stable angina: systematic review and meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24600529/",
+      "pmid": "24600529",
+      "study_design": "Systematic review and meta-analysis",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "low",
+      "publication_year": 2014,
+      "target_indication": "chronic stable angina / cardiovascular disease",
+      "primary_outcome": "chronic stable angina / cardiovascular disease",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

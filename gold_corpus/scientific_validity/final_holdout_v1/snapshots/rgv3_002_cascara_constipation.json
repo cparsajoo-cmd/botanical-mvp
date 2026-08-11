@@ -1,0 +1,25 @@
+{
+  "question": "Should Rhamnus purshianus be recommended for: short-term use in occasional constipation?",
+  "candidate_pool": [
+    "Rhamnus purshianus"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_002_CASCARA_CONSTIPATION_REG",
+      "scientific_name": "Rhamnus purshianus",
+      "notes": "EU herbal monograph on cascara (Rhamnus purshianus) bark grants well-established-use status for short-term use in occasional constipation, standardised to hydroxyanthracene derivatives per Ph. Eur. Cascara 01/2005:0105.",
+      "source_type": "EMA/HMPC well-established-use monograph",
+      "source_title": "Community/Union herbal monograph on Rhamnus purshianus D.C., cortex",
+      "source_url": "https://www.ema.europa.eu/en/documents/herbal-monograph/draft-community-herbal-monograph-rhamnus-purshianus-dc-cortex_en.pdf",
+      "pmid": "",
+      "study_design": "Regulatory monograph (well-established use)",
+      "source_authority": "EMA/HMPC",
+      "evidence_quality": "high",
+      "publication_year": 2015,
+      "target_indication": "short-term use in occasional constipation",
+      "primary_outcome": "short-term use in occasional constipation",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

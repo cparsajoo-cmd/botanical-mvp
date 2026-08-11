@@ -1,0 +1,25 @@
+{
+  "question": "Should Berberis vulgaris be recommended for: glycemic control in type 2 diabetes mellitus?",
+  "candidate_pool": [
+    "Berberis vulgaris"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_009_BERBERINE_T2DM_38016844",
+      "scientific_name": "Berberis vulgaris",
+      "notes": "An umbrella review of berberine meta-analyses in metabolic disorders explicitly states that findings across the pooled analyses remain inconsistent, and a meta-analysis specific to Berberis vulgaris/integerrima found a significant fasting-glucose reduction but no significant effect on postprandial glucose, insulin, or weight, with very high statistical heterogeneity across included trials.",
+      "source_type": "Umbrella meta-analysis + species-specific meta-analysis (conflicting)",
+      "source_title": "The Effect of Berberine Supplementation on Glycemic Control and Inflammatory Biomarkers in Metabolic Disorders: An Umbrella Meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/38016844/",
+      "pmid": "38016844",
+      "study_design": "Umbrella meta-analysis of RCT meta-analyses",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2023,
+      "target_indication": "glycemic control in type 2 diabetes mellitus",
+      "primary_outcome": "glycemic control in type 2 diabetes mellitus",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

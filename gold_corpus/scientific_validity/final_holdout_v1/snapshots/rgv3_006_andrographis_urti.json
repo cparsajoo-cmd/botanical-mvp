@@ -1,0 +1,25 @@
+{
+  "question": "Should Andrographis paniculata be recommended for: symptomatic relief of uncomplicated acute upper respiratory tract infection (cough, sore throat)?",
+  "candidate_pool": [
+    "Andrographis paniculata"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_006_ANDROGRAPHIS_URTI_28783743",
+      "scientific_name": "Andrographis paniculata",
+      "notes": "Meta-analysis pooling 33 randomized trials (7,175 patients) found Andrographis paniculata significantly reduced cough and sore throat severity compared with placebo, but the authors and prior reviews (Coon & Ernst 2004; Poolsup et al. 2004) note persistent concerns about trial quality, missing manufacturing detail, and high heterogeneity across studies.",
+      "source_type": "Systematic review and meta-analysis",
+      "source_title": "Andrographis paniculata for symptomatic relief of acute respiratory tract infections in adults and children: a systematic review and meta-analysis",
+      "source_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5544222/",
+      "pmid": "28783743",
+      "study_design": "Systematic review and meta-analysis of RCTs",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2017,
+      "target_indication": "symptomatic relief of uncomplicated acute upper respiratory tract infection (cough, sore throat)",
+      "primary_outcome": "symptomatic relief of uncomplicated acute upper respiratory tract infection (cough, sore throat)",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

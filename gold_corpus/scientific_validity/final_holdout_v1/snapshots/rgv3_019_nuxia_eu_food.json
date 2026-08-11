@@ -1,0 +1,25 @@
+{
+  "question": "Should Nuxia verticillata be recommended for: use as a novel food (dried leaves) in the EU?",
+  "candidate_pool": [
+    "Nuxia verticillata"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_019_NUXIA_EU_FOOD_REG",
+      "scientific_name": "Nuxia verticillata",
+      "notes": "The European Commission terminated the authorisation procedure for dried leaves of Nuxia verticillata as a novel food without updating the Union list of authorised novel foods.",
+      "source_type": "EU Commission Implementing Decision",
+      "source_title": "Commission Implementing Decision terminating the authorisation procedure for Nuxia verticillata dried leaves as a novel food",
+      "source_url": "https://food.ec.europa.eu/safety/novel-food/decisions-terminating-procedure_en",
+      "pmid": "",
+      "study_design": "Regulatory decision",
+      "source_authority": "European Commission",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "target_indication": "use as a novel food (dried leaves) in the EU",
+      "primary_outcome": "use as a novel food (dried leaves) in the EU",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

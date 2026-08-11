@@ -1,0 +1,25 @@
+{
+  "question": "Should Mitragyna speciosa be recommended for: self-treatment of pain / opioid withdrawal symptoms?",
+  "candidate_pool": [
+    "Mitragyna speciosa"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_014_KRATOM_PAIN_31643556",
+      "scientific_name": "Mitragyna speciosa",
+      "notes": "NIH LiverTox documents that kratom (Mitragyna speciosa) causes clinically apparent acute liver injury, typically with a 2-6 week latency to onset, and states that overdose of kratom can result in seizures, coma, and death; a prospective case series confirmed kratom as the causal agent using standardized causality assessment.",
+      "source_type": "NIH LiverTox chapter",
+      "source_title": "Kratom - LiverTox: Clinical and Research Information on Drug-Induced Liver Injury",
+      "source_url": "https://www.ncbi.nlm.nih.gov/books/NBK548231/",
+      "pmid": "31643556",
+      "study_design": "Clinical reference compendium / case series review",
+      "source_authority": "NIH LiverTox",
+      "evidence_quality": "high",
+      "publication_year": 2019,
+      "target_indication": "self-treatment of pain / opioid withdrawal symptoms",
+      "primary_outcome": "self-treatment of pain / opioid withdrawal symptoms",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

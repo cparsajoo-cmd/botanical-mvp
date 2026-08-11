@@ -1,0 +1,25 @@
+{
+  "question": "Should Gymnema sylvestre be recommended for: type 2 diabetes / glycemic control?",
+  "candidate_pool": [
+    "Gymnema sylvestre"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_010_GYMNEMA_T2DM_18047444",
+      "scientific_name": "Gymnema sylvestre",
+      "notes": "A systematic review searching for controlled clinical trials of Gymnema sylvestre in diabetes found no studies that met the inclusion criteria, concluding that a therapeutic effect could not be substantiated from the available literature and that rigorous trials are needed.",
+      "source_type": "Systematic review",
+      "source_title": "Gymnema sylvestre for diabetes mellitus: a systematic review",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/18047444/",
+      "pmid": "18047444",
+      "study_design": "Systematic review (no qualifying trials found)",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "low",
+      "publication_year": 2007,
+      "target_indication": "type 2 diabetes / glycemic control",
+      "primary_outcome": "type 2 diabetes / glycemic control",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

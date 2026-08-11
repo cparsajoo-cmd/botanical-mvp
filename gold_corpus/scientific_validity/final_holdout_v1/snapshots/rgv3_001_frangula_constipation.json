@@ -1,0 +1,25 @@
+{
+  "question": "Should Rhamnus frangula be recommended for: short-term treatment of occasional constipation?",
+  "candidate_pool": [
+    "Rhamnus frangula"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_001_FRANGULA_CONSTIPATION_REG",
+      "scientific_name": "Rhamnus frangula",
+      "notes": "EU herbal monograph on Rhamnus frangula bark grants well-established-use status as a stimulant laxative for short-term treatment of occasional constipation, standardised to hydroxyanthracene glycosides (as glucofrangulin A), max 30 mg/day.",
+      "source_type": "EMA/HMPC well-established-use monograph",
+      "source_title": "Community herbal monograph on Rhamnus frangula L., cortex",
+      "source_url": "https://www.ema.europa.eu/en/documents/herbal-monograph/final-community-herbal-monograph-rhamnus-frangula-l-cortex_en.pdf",
+      "pmid": "",
+      "study_design": "Regulatory monograph (well-established use)",
+      "source_authority": "EMA/HMPC",
+      "evidence_quality": "high",
+      "publication_year": 2006,
+      "target_indication": "short-term treatment of occasional constipation",
+      "primary_outcome": "short-term treatment of occasional constipation",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

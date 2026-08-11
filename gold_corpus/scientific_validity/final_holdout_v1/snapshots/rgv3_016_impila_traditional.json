@@ -1,0 +1,25 @@
+{
+  "question": "Should Callilepis laureola be recommended for: traditional Zulu remedy (tuber decoction)?",
+  "candidate_pool": [
+    "Callilepis laureola"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_016_IMPILA_TRADITIONAL_10557008",
+      "scientific_name": "Callilepis laureola",
+      "notes": "Clinical case series document that Callilepis laureola (impila) tuber preparations cause a severe toxic syndrome of hypoglycaemia, centrilobular hepatic necrosis, and acute renal tubular necrosis; an early series described the syndrome across 50 children and later toxicology-confirmed case reports document fatalities in both children and adults from this traditional remedy.",
+      "source_type": "Case series + toxicology-confirmed case reports",
+      "source_title": "Detection of poisoning by Impila (Callilepis laureola) in a mother and child",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/10557008/",
+      "pmid": "10557008",
+      "study_design": "Case series and case reports",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 1999,
+      "target_indication": "traditional Zulu remedy (tuber decoction)",
+      "primary_outcome": "traditional Zulu remedy (tuber decoction)",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

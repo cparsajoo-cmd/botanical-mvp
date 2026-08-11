@@ -1,0 +1,25 @@
+{
+  "question": "Should Petasites hybridus be recommended for: migraine prophylaxis?",
+  "candidate_pool": [
+    "Petasites hybridus"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_008_BUTTERBUR_MIGRAINE_15623680",
+      "scientific_name": "Petasites hybridus",
+      "notes": "A randomized trial found Petasites hybridus root extract 75 mg twice daily significantly reduced migraine attack frequency versus placebo over 4 months, but a later systematic review found only two qualifying trials with high heterogeneity and rated the evidence as moderate at best, and unprocessed butterbur contains hepatotoxic pyrrolizidine alkaloids that led some professional bodies to withdraw their recommendation.",
+      "source_type": "RCT + systematic review (conflicting)",
+      "source_title": "Petasites hybridus root (butterbur) is an effective preventive treatment for migraine",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/15623680/",
+      "pmid": "15623680",
+      "study_design": "RCT; conflicting systematic review",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "moderate",
+      "publication_year": 2004,
+      "target_indication": "migraine prophylaxis",
+      "primary_outcome": "migraine prophylaxis",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

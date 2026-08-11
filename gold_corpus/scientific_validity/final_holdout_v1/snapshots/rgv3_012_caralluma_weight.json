@@ -1,0 +1,25 @@
+{
+  "question": "Should Caralluma fimbriata be recommended for: appetite suppression / weight loss in obesity?",
+  "candidate_pool": [
+    "Caralluma fimbriata"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_012_CARALLUMA_WEIGHT_34758791",
+      "scientific_name": "Caralluma fimbriata",
+      "notes": "A meta-analysis pooling 7 clinical trials of Caralluma fimbriata for weight management found no significant effect on body weight, BMI, or appetite parameters (only minor waist-circumference changes), and the authors conclude it is unlikely to be recommendable as a weight-loss or appetite-suppression supplement.",
+      "source_type": "Systematic review and meta-analysis",
+      "source_title": "Effects of Caralluma fimbriata extract on appetite, obesity and metabolic parameters: a systematic review and meta-analysis",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/34758791/",
+      "pmid": "34758791",
+      "study_design": "Systematic review and meta-analysis of RCTs",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "low",
+      "publication_year": 2021,
+      "target_indication": "appetite suppression / weight loss in obesity",
+      "primary_outcome": "appetite suppression / weight loss in obesity",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

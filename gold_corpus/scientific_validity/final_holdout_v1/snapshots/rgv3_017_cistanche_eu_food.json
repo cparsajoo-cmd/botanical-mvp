@@ -1,0 +1,25 @@
+{
+  "question": "Should Cistanche tubulosa be recommended for: use as a food supplement / food for special medical purposes in the EU?",
+  "candidate_pool": [
+    "Cistanche tubulosa"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_017_CISTANCHE_EU_FOOD_REG",
+      "scientific_name": "Cistanche tubulosa",
+      "notes": "The European Commission terminated the novel-food authorisation procedure for water extract of Cistanche tubulosa stems without updating the Union list of authorised novel foods, following an EFSA opinion that concluded the safety of the extract had not been established.",
+      "source_type": "EU Commission Implementing Decision",
+      "source_title": "Commission Implementing Decision terminating the authorisation procedure for water extract of Cistanche tubulosa stems as a novel food",
+      "source_url": "https://food.ec.europa.eu/safety/novel-food/decisions-terminating-procedure_en",
+      "pmid": "",
+      "study_design": "Regulatory decision",
+      "source_authority": "European Commission",
+      "evidence_quality": "high",
+      "publication_year": 2021,
+      "target_indication": "use as a food supplement / food for special medical purposes in the EU",
+      "primary_outcome": "use as a food supplement / food for special medical purposes in the EU",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

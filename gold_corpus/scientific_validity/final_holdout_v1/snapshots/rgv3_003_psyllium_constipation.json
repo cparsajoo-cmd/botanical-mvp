@@ -1,0 +1,25 @@
+{
+  "question": "Should Plantago afra be recommended for: treatment of habitual constipation and conditions where easy defaecation with soft stools is desirable?",
+  "candidate_pool": [
+    "Plantago afra"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_003_PSYLLIUM_CONSTIPATION_REG",
+      "scientific_name": "Plantago afra",
+      "notes": "EU herbal monograph on psyllium seed (Plantago afra/indica) grants well-established-use status as a bulk-forming laxative for habitual constipation and conditions such as anal fissures and haemorrhoids where soft stools are desirable, per Ph. Eur. 01/2005:0858.",
+      "source_type": "EMA/HMPC well-established-use monograph",
+      "source_title": "Community herbal monograph on psyllium seed, Plantago afra et Plantago indica, semen",
+      "source_url": "https://www.ema.europa.eu/documents/herbal-monograph/draft-community-herbal-monograph-psyllium-seed-plantago-afra-et-plantago-indica-semen_en.pdf",
+      "pmid": "",
+      "study_design": "Regulatory monograph (well-established use)",
+      "source_authority": "EMA/HMPC",
+      "evidence_quality": "high",
+      "publication_year": 2015,
+      "target_indication": "treatment of habitual constipation and conditions where easy defaecation with soft stools is desirable",
+      "primary_outcome": "treatment of habitual constipation and conditions where easy defaecation with soft stools is desirable",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

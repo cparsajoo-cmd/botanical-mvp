@@ -1,0 +1,25 @@
+{
+  "question": "Should Atractylis gummifera be recommended for: traditional remedy (root decoction/poultice use)?",
+  "candidate_pool": [
+    "Atractylis gummifera"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_015_ATRACTYLIS_TRADITIONAL_24673087",
+      "scientific_name": "Atractylis gummifera",
+      "notes": "A retrospective review of 467 cases of Atractylis gummifera poisoning reported to a national poison control centre over nearly 30 years found an overall mortality rate of 39.2%, with children making up the majority of cases and the large majority of deaths occurring in children under 15 following accidental exposure; the plant's atractyloside compounds cause severe hepatic and renal failure.",
+      "source_type": "Poison control centre retrospective case series",
+      "source_title": "Prognostic factors of Atractylis gummifera L. poisoning, Morocco",
+      "source_url": "https://pubmed.ncbi.nlm.nih.gov/24673087/",
+      "pmid": "24673087",
+      "study_design": "Retrospective case series",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "high",
+      "publication_year": 2014,
+      "target_indication": "traditional remedy (root decoction/poultice use)",
+      "primary_outcome": "traditional remedy (root decoction/poultice use)",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

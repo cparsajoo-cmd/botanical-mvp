@@ -1,0 +1,25 @@
+{
+  "question": "Should Terminalia catappa be recommended for: use as a novel food in the EU?",
+  "candidate_pool": [
+    "Terminalia catappa"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_018_TERMINALIACATAPPA_EU_FOOD_REG",
+      "scientific_name": "Terminalia catappa",
+      "notes": "The European Commission terminated the procedure for authorising Terminalia catappa as a novel food without updating the Union list of authorised novel foods, meaning it lacks the required EU market authorisation.",
+      "source_type": "EU Commission Implementing Decision",
+      "source_title": "Commission Implementing Decision terminating the authorisation procedure for Terminalia catappa as a novel food",
+      "source_url": "https://food.ec.europa.eu/safety/novel-food/decisions-terminating-procedure_en",
+      "pmid": "",
+      "study_design": "Regulatory decision",
+      "source_authority": "European Commission",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "target_indication": "use as a novel food in the EU",
+      "primary_outcome": "use as a novel food in the EU",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

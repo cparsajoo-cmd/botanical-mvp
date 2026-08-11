@@ -1,0 +1,25 @@
+{
+  "question": "Should Cordyceps sinensis be recommended for: stable COPD (GOLD stages 2-3) / exercise endurance?",
+  "candidate_pool": [
+    "Cordyceps sinensis"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_013_CORDYCEPS_COPD_31073318",
+      "scientific_name": "Cordyceps sinensis",
+      "notes": "A meta-analysis of 15 trials (1,238 participants) of oral Cordyceps sinensis for stable COPD suggested possible benefit on lung function and exercise endurance, but the authors explicitly state that no included studies were placebo-controlled or of high methodological quality, which limits the reliability of the findings.",
+      "source_type": "Systematic review and meta-analysis",
+      "source_title": "Effectiveness and Safety of Oral Cordyceps sinensis on Stable COPD of GOLD Stages 2-3: Systematic Review and Meta-Analysis",
+      "source_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6470429/",
+      "pmid": "31073318",
+      "study_design": "Systematic review and meta-analysis of RCTs",
+      "source_authority": "peer_reviewed",
+      "evidence_quality": "low",
+      "publication_year": 2019,
+      "target_indication": "stable COPD (GOLD stages 2-3) / exercise endurance",
+      "primary_outcome": "stable COPD (GOLD stages 2-3) / exercise endurance",
+      "comparator": "placebo/usual care",
+      "risk_of_bias": ""
+    }
+  ]
+}

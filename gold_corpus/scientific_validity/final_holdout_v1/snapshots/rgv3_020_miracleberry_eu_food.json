@@ -1,0 +1,25 @@
+{
+  "question": "Should Synsepalum dulcificum be recommended for: use as a novel food (berries) in the EU?",
+  "candidate_pool": [
+    "Synsepalum dulcificum"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_020_MIRACLEBERRY_EU_FOOD_REG",
+      "scientific_name": "Synsepalum dulcificum",
+      "notes": "The European Commission terminated the procedure for authorising the berries of Synsepalum dulcificum (miracle berry, Richadella dulcifica) as a novel food without updating the Union list of authorised novel foods.",
+      "source_type": "EU Commission Implementing Decision",
+      "source_title": "Commission Implementing Decision terminating the authorisation procedure for Synsepalum dulcificum berries as a novel food",
+      "source_url": "https://food.ec.europa.eu/safety/novel-food/decisions-terminating-procedure_en",
+      "pmid": "",
+      "study_design": "Regulatory decision",
+      "source_authority": "European Commission",
+      "evidence_quality": "high",
+      "publication_year": 2022,
+      "target_indication": "use as a novel food (berries) in the EU",
+      "primary_outcome": "use as a novel food (berries) in the EU",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

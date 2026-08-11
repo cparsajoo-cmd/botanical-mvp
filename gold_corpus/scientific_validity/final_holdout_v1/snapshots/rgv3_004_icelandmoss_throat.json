@@ -1,0 +1,25 @@
+{
+  "question": "Should Cetraria islandica be recommended for: demulcent for irritation of the mouth and throat mucosa with associated dry cough, and temporary loss of appetite?",
+  "candidate_pool": [
+    "Cetraria islandica"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_004_ICELANDMOSS_THROAT_REG",
+      "scientific_name": "Cetraria islandica",
+      "notes": "EU herbal monograph on Iceland moss (Cetraria islandica) thallus grants traditional-use registration only, based on at least 30 years of use including 15 in the EU; the HMPC states plausibility rests on long-standing use, not demonstrated clinical efficacy.",
+      "source_type": "EMA/HMPC traditional-use monograph",
+      "source_title": "European Union herbal monograph on Cetraria islandica (L.) Acharius s.l., thallus",
+      "source_url": "https://www.ema.europa.eu/en/medicines/herbal/lichen-islandicus",
+      "pmid": "",
+      "study_design": "Regulatory monograph (traditional use)",
+      "source_authority": "EMA/HMPC",
+      "evidence_quality": "moderate",
+      "publication_year": 2014,
+      "target_indication": "demulcent for irritation of the mouth and throat mucosa with associated dry cough, and temporary loss of appetite",
+      "primary_outcome": "demulcent for irritation of the mouth and throat mucosa with associated dry cough, and temporary loss of appetite",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "question": "Should Vaccinium myrtillus be recommended for: relief of discomfort and heaviness in the legs related to minor venous circulatory disturbances?",
+  "candidate_pool": [
+    "Vaccinium myrtillus"
+  ],
+  "records": [
+    {
+      "reference_id": "RGV3_005_BILBERRY_VENOUS_REG",
+      "scientific_name": "Vaccinium myrtillus",
+      "notes": "EU herbal monograph on fresh bilberry (Vaccinium myrtillus) fruit grants traditional-use status only for relief of leg heaviness and minor venous circulatory discomfort and skin capillary fragility, based on long-standing use rather than clinical trial evidence.",
+      "source_type": "EMA/HMPC traditional-use monograph",
+      "source_title": "Community herbal monograph on Vaccinium myrtillus L., fructus recens",
+      "source_url": "https://www.ema.europa.eu/en/documents/herbal-summary/fresh-billberry-fruit-summary-public_en.pdf",
+      "pmid": "",
+      "study_design": "Regulatory monograph (traditional use)",
+      "source_authority": "EMA/HMPC",
+      "evidence_quality": "moderate",
+      "publication_year": 2015,
+      "target_indication": "relief of discomfort and heaviness in the legs related to minor venous circulatory disturbances",
+      "primary_outcome": "relief of discomfort and heaviness in the legs related to minor venous circulatory disturbances",
+      "comparator": "",
+      "risk_of_bias": ""
+    }
+  ]
+}

@@ -1413,10 +1413,26 @@ class BotanicalRDCandidateEngine:
                         )
                     )
 
-                    has_real_evidence = bool(raw_evidence.strip())
-                    evidence_level = self._evidence_level(raw_evidence)
-                    evidence_hierarchy_detail = classify_evidence_hierarchy(raw_evidence)
-                    negative_evidence = classify_negative_evidence(raw_evidence)
+                    # Scientific-decision contract: therapeutic efficacy is
+                    # indication-scoped, while safety/regulatory evidence remains
+                    # cross-indication.  Keep the full raw_evidence pool for the
+                    # latter, but build a separate governing efficacy body for the
+                    # requested problem.  Records with a known different indication
+                    # or an explicit NOT_APPLICABLE classification cannot vote on
+                    # efficacy for this decision.
+                    _efficacy_contributing_records = self._scope_efficacy_records(
+                        evidence_contributing_records, problem
+                    )
+                    efficacy_raw_evidence = " ".join(
+                        str(_rec.get("assertion_text") or _rec.get("text") or "").strip()
+                        for _rec in _efficacy_contributing_records
+                        if str(_rec.get("assertion_text") or _rec.get("text") or "").strip()
+                    ).strip()[:6000]
+
+                    has_real_evidence = bool(efficacy_raw_evidence)
+                    evidence_level = self._evidence_level(efficacy_raw_evidence)
+                    evidence_hierarchy_detail = classify_evidence_hierarchy(efficacy_raw_evidence)
+                    negative_evidence = classify_negative_evidence(efficacy_raw_evidence)
 
                     # Phase 1 (audit: Study_Design vs Evidence_Direction
                     # must be independent) — see evidence_interpretation.py
@@ -1446,9 +1462,12 @@ class BotanicalRDCandidateEngine:
                     # see evidence_interpretation.interpret_evidence()'s
                     # `contributing_records` parameter and
                     # _resolve_pooled_direction() for the precedence and
-                    # aggregation rule. study_design/quality/
-                    # applicability are unchanged, still derived from
-                    # the pooled blob — out of scope for this pass.
+                    # aggregation rule. study_design/quality/applicability
+                    # are also now derived from the record(s) that actually
+                    # support the resolved efficacy direction (see
+                    # evidence_interpretation.interpret_evidence()), so a
+                    # non-supporting strong source cannot lend its design/
+                    # quality label to a weak positive source.
                     # Root-cause fix (2026-08-11, external audit +
                     # independently confirmed by tracing _resolve_pooled_
                     # direction()): contributing_records here was every
@@ -1467,37 +1486,18 @@ class BotanicalRDCandidateEngine:
                     # Only the EFFICACY direction vote is scoped here, via
                     # a separate filtered list, to records whose own
                     # target_indication matches the indication actually
-                    # being evaluated (or that have no recorded
-                    # target_indication at all -- legacy/unstructured
-                    # records are tolerated rather than silently dropped).
-                    _problem_key_for_direction = self._norm(problem)
-                    _direction_contributing_records = [
-                        _rec
-                        for _rec in evidence_contributing_records
-                        if not _problem_key_for_direction
-                        or not str(_rec.get("target_indication") or "").strip()
-                        or self._norm(_rec.get("target_indication")) == _problem_key_for_direction
-                    ]
-                    if not _direction_contributing_records and evidence_contributing_records:
-                        # Every contributing record exists but is about a
-                        # different indication -- interpret_evidence()
-                        # treats an EMPTY contributing_records list as "no
-                        # structured records at all" and falls back to
-                        # classifying the raw pooled (cross-indication)
-                        # text blob directly, which would silently undo
-                        # this fix in exactly this case. A single neutral
-                        # placeholder record (no direction fields, empty
-                        # text) forces _resolve_pooled_direction() down
-                        # its normal "no informative direction -> unclear"
-                        # path instead, without touching the blob-based
-                        # study_design/quality/applicability computation
-                        # this pass is not meant to change.
-                        _direction_contributing_records = [{
-                            "target_indication": "", "text": "", "assertion_text": "",
-                        }]
+                    # being evaluated. A missing target indication is treated
+                    # as unknown and cannot establish indication-specific
+                    # efficacy; it remains available to safety/regulatory.
+                    # The same indication-scoped record set is used for
+                    # BOTH scoring interpretation and the final body-of-evidence
+                    # resolver below.  This prevents a fix that only changes the
+                    # displayed Evidence_Direction while leaving Final Decision
+                    # contaminated by off-indication records.
+                    _direction_contributing_records = _efficacy_contributing_records
 
                     evidence_interpretation_result = interpret_evidence(
-                        raw_evidence,
+                        efficacy_raw_evidence,
                         clinical_weight=self.scoring_config.evidence_clinical,
                         source_authority_factor=evidence_authority_factor,
                         contributing_records=_direction_contributing_records,
@@ -1819,30 +1819,30 @@ class BotanicalRDCandidateEngine:
                     _structured_safety_assertions = []
                     _semantic_regulatory_assertions = []
                     _semantic_gate_warnings = []
-                    # Root-cause fix (2026-08-11, external audit point 3):
-                    # previously an invalid/malformed llm_gate_assertions
-                    # payload only appended a warning string and otherwise
-                    # let the row proceed completely normally -- silently
-                    # fail-open. A record that never had the field at all
-                    # (semantic gate simply hasn't run on it yet -- true
-                    # for most of production today, since the backfill is
-                    # additive/gradual) is a DIFFERENT, much more common
-                    # and currently-accepted state, deliberately NOT
-                    # escalated here -- doing so today would force nearly
-                    # every existing candidate into EXPERT_REVIEW_REQUIRED
-                    # before the backfill has finished, which is a platform
-                    # behavior change far outside this fix's scope. Only a
-                    # genuine parse FAILURE (the payload existed but was
-                    # malformed) is escalated below, since that is an
-                    # actual anomaly worth a human's attention, not
-                    # "not processed yet".
+                    # Scientific-reliability fix (2026-08-11): both a
+                    # malformed semantic payload and a record that has never
+                    # completed semantic safety/regulatory assessment are
+                    # tracked explicitly.  Neither state is allowed to mean
+                    # "no risk found".  Deterministic safety/regulatory
+                    # classifiers still run and retain authority for hard
+                    # stops; otherwise incomplete semantic coverage is routed
+                    # to expert review below.
                     _semantic_gate_had_invalid_payload = False
+                    _semantic_gate_missing_payload = False
                     for _rec in evidence_contributing_records:
                         # New semantic gate layer: parse already-persisted,
                         # record-level LLM assertions.  The engine never calls
                         # the LLM from inside scoring/eligibility, preserving
                         # deterministic replay and auditability.
                         _payload_raw = _rec.get("llm_gate_assertions")
+                        if not _payload_raw:
+                            # No semantic safety/regulatory assessment exists for
+                            # this record.  Deterministic rules still run and can
+                            # hard-stop known hazards, but an otherwise clean row
+                            # cannot be called autonomously eligible because novel
+                            # wording may sit outside the finite vocabulary.
+                            _semantic_gate_missing_payload = True
+                            continue
                         if _payload_raw:
                             try:
                                 _payload = (
@@ -1989,36 +1989,24 @@ class BotanicalRDCandidateEngine:
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
 
-                    # Root-cause fix (2026-08-11, external audit point 3):
-                    # a genuinely malformed llm_gate_assertions payload
-                    # (the field existed but failed to parse -- a real
-                    # processing anomaly, not simply "not run yet") must
-                    # never be allowed to pass through as a plain ELIGIBLE
-                    # or ELIGIBLE_WITH_RESTRICTIONS result. The deterministic
-                    # classifiers are useful but their vocabulary is finite
-                    # (see the RGV v1/v2 root-cause fixes this same week for
-                    # concrete examples of terms they missed); when the
-                    # semantic layer -- our broader-coverage backstop --
-                    # visibly broke on this record, we cannot silently treat
-                    # "no semantic finding" as "no risk found". Escalate to
-                    # EXPERT_REVIEW_REQUIRED so a person looks at it, without
-                    # touching hard NO_GO statuses (a confirmed hard stop is
-                    # not weakened by also having had a parsing hiccup
-                    # elsewhere) or the INCOMPLETE/data-completeness states
-                    # (already conservative for a different reason).
+                    # Scientific-reliability invariant (2026-08-11):
+                    # semantic safety/regulatory coverage is a high-stakes
+                    # assessment step, not an optional decoration.  The
+                    # deterministic classifiers remain useful hard-stop
+                    # detectors, but their vocabulary is finite; therefore an
+                    # absent OR malformed semantic payload cannot be interpreted
+                    # as "no risk found".  If the row would otherwise be
+                    # ELIGIBLE/ELIGIBLE_WITH_RESTRICTIONS, fail closed to
+                    # EXPERT_REVIEW_REQUIRED.  Existing confirmed hard NO_GO
+                    # states remain authoritative and are never weakened.
                     #
-                    # Deliberately NOT triggered merely because
-                    # llm_gate_assertions was absent/never populated --
-                    # that is the normal, currently-expected state for most
-                    # of production today (the backfill is additive and
-                    # gradual; see backfill_semantic_gate_assertions.py's
-                    # own "old rows simply leave it blank" design). Escalating
-                    # on absence too would force nearly every existing
-                    # candidate into EXPERT_REVIEW_REQUIRED before that
-                    # backfill finishes covering the live table -- a much
-                    # larger platform behavior change than this fix is
-                    # scoped for.
-                    if _semantic_gate_had_invalid_payload and eligibility_decision.status in (
+                    # Consequence for pre-backfill rows is intentional: until
+                    # semantic assessment has actually completed, the platform
+                    # may rank them only in the expert-review partition rather
+                    # than pretending their safety/regulatory review is complete.
+                    if (
+                        _semantic_gate_had_invalid_payload or _semantic_gate_missing_payload
+                    ) and eligibility_decision.status in (
                         _EligibilityStatus.ELIGIBLE,
                         _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS,
                     ):
@@ -2026,27 +2014,38 @@ class BotanicalRDCandidateEngine:
                             eligibility_decision,
                             status=_EligibilityStatus.EXPERT_REVIEW_REQUIRED,
                             hard_no_go=False,
-                            gate_type="semantic_gate_failure",
+                            gate_type=(
+                                "semantic_gate_failure"
+                                if _semantic_gate_had_invalid_payload
+                                else "semantic_gate_not_assessed"
+                            ),
                             requires_expert_review=True,
                             eligible_for_normal_ranking=False,
                             score_validity=_ScoreValidity.PRELIMINARY,
                             gate_reason=(
                                 (eligibility_decision.gate_reason + " " if eligibility_decision.gate_reason else "")
-                                + "Semantic safety/regulatory assessment failed to parse for at least one "
-                                "contributing evidence record; deterministic-only coverage cannot be "
-                                "treated as sufficient for a high-stakes decision."
+                                + (
+                                    "Semantic safety/regulatory assessment failed to parse for at least one "
+                                    "contributing evidence record; deterministic-only coverage cannot be "
+                                    "treated as sufficient for a high-stakes decision."
+                                    if _semantic_gate_had_invalid_payload
+                                    else
+                                    "Semantic safety/regulatory assessment has not been completed for at least one "
+                                    "contributing evidence record; deterministic-only coverage cannot be treated "
+                                    "as proof that no serious safety/regulatory signal is present."
+                                )
                             ),
                         )
 
                     scientific_evidence_resolution = resolve_scientific_evidence(
-                        evidence_contributing_records,
+                        _efficacy_contributing_records,
                         allow_legacy_text_fallback=self.allow_legacy_text_fallback,
                     )
                     final_decision = decide_final(
                         eligibility_decision,
                         scientific_evidence_resolution,
                         assessment_domain=assessment_domain_from_indication(indication),
-                        records=evidence_contributing_records,
+                        records=_efficacy_contributing_records,
                     )
 
                     # The structured EligibilityDecision is authoritative.
@@ -4103,6 +4102,38 @@ class BotanicalRDCandidateEngine:
             index[str(record_id)] = build_scientific_evidence(row.to_dict())
 
         return index
+
+    def _scope_efficacy_records(self, records, problem):
+        """Return only records allowed to govern therapeutic efficacy.
+
+        Safety and regulatory consumers intentionally keep the unfiltered record
+        list.  Efficacy is stricter: a record must carry an indication that
+        matches the question, and an explicit NOT_APPLICABLE record is excluded.
+        Missing indication is treated as unknown rather than silently assumed to
+        match.  This is a general context rule; it contains no botanical, PMID or
+        benchmark-specific exception.
+        """
+        problem_text = str(problem or "").strip()
+        if not problem_text:
+            return list(records or [])
+
+        scoped = []
+        for rec in records or []:
+            applicability = self._norm(rec.get("applicability_classification") or "")
+            if applicability.replace("_", " ") == "not applicable":
+                continue
+
+            target = str(rec.get("target_indication") or "").strip()
+            if not target:
+                # Unknown indication cannot establish indication-specific efficacy.
+                continue
+
+            if (
+                self._indication_match_score(problem_text, target) > 0
+                or self._semantic_indication_match_score(self._norm(problem_text), target) >= 0.70
+            ):
+                scoped.append(rec)
+        return scoped
 
     def _collect_raw_evidence(
         self,

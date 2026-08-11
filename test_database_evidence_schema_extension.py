@@ -266,3 +266,59 @@ def test_postgresql_42703_for_required_column_is_not_silently_swallowed():
             assert "plant_id" in str(exc)
         else:
             raise AssertionError("required-column 42703 must be re-raised")
+
+
+def test_llm_assertion_provenance_fields_are_persisted_separately_from_source_fields():
+    fake = FakeSupabase()
+    with mock.patch("database.get_supabase_client", return_value=fake):
+        database.save_evidence_record(_base_record(
+            Result_Direction="",
+            Safety_Signal="",
+            LLM_Result_Direction="Positive",
+            LLM_Safety_Signal="Serious",
+        ))
+    payload = fake.inserted_evidence_payloads[0]
+    assert payload["result_direction"] == ""
+    assert payload["safety_signal"] == ""
+    assert payload["llm_result_direction"] == "Positive"
+    assert payload["llm_safety_signal"] == "Serious"
+
+
+def test_llm_assertion_provenance_fields_are_registered_as_optional_migration_columns():
+    assert {"llm_result_direction", "llm_safety_signal", "llm_gate_assertions"} <= database._OPTIONAL_EVIDENCE_COLUMNS
+
+
+def test_load_evidence_records_round_trips_llm_assertion_provenance():
+    fake_response_item = {
+        "id": 7,
+        "plant_id": 1,
+        "plants": {"scientific_name": "Valeriana officinalis", "common_name": ""},
+        "sources": {},
+        "result_direction": "",
+        "safety_signal": "",
+        "llm_result_direction": "Positive",
+        "llm_safety_signal": "Moderate",
+        "llm_gate_assertions": {"safety_assertions": [], "regulatory_assertions": []},
+    }
+
+    class _FakeResponse:
+        data = [fake_response_item]
+
+    class _FakeSelectChain:
+        def select(self, *a, **kw):
+            return self
+        def execute(self):
+            return _FakeResponse()
+
+    class _FakeSupabaseRead:
+        def table(self, name):
+            return _FakeSelectChain()
+
+    with mock.patch("database.get_supabase_client", return_value=_FakeSupabaseRead()):
+        rows = database.load_evidence_records()
+    row = rows.iloc[0]
+    assert row["Result_Direction"] == ""
+    assert row["Safety_Signal"] == ""
+    assert row["LLM_Result_Direction"] == "Positive"
+    assert row["LLM_Safety_Signal"] == "Moderate"
+    assert row["LLM_Gate_Assertions"] == {"safety_assertions": [], "regulatory_assertions": []}

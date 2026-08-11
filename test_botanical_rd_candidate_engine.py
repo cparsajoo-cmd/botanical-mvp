@@ -598,15 +598,10 @@ def test_safety_signal_still_crosses_indications_after_the_direction_fix():
 
 
 # ---------------------------------------------------------------------
-# Root-cause regression (2026-08-11, external audit point 3): a
-# malformed semantic-gate payload used to only append a warning string
-# and otherwise let the row proceed completely normally (fail-open). A
-# record where the field is simply absent (semantic gate hasn't run on
-# it yet -- true for most of production today, since the backfill is
-# additive/gradual) is deliberately NOT escalated: doing so would force
-# nearly every existing candidate into EXPERT_REVIEW_REQUIRED before the
-# backfill finishes, which is a platform-wide behavior change outside
-# this fix's scope.
+# Root-cause regression (2026-08-11, external audit point 3): malformed
+# or missing semantic-gate coverage must fail closed for normal ranking.
+# A completed, valid empty semantic payload is tested separately and may
+# remain eligible when the deterministic gates are also clear.
 # ---------------------------------------------------------------------
 def test_invalid_semantic_gate_payload_escalates_to_expert_review():
     eng.SIMILAR_COMPOUND_GROUPS = {}
@@ -632,9 +627,10 @@ def test_invalid_semantic_gate_payload_escalates_to_expert_review():
     assert self_row.iloc[0]["Eligibility_Status"] == "expert_review_required"
 
 
-def test_missing_semantic_gate_payload_is_not_escalated():
-    """The common, currently-normal case (field never populated at all)
-    must NOT be escalated -- only a genuine parse failure is."""
+def test_missing_semantic_gate_payload_fails_closed_to_expert_review():
+    """Scientific-reliability invariant: an unassessed high-stakes record
+    is not equivalent to a clean record.  Missing semantic gate coverage must
+    fail closed to expert review when deterministic gates found no hard stop."""
     eng.SIMILAR_COMPOUND_GROUPS = {}
     eng.COMPOUND_TARGETS = {}
     rows = [
@@ -652,6 +648,36 @@ def test_missing_semantic_gate_payload_is_not_escalated():
     result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
     self_row = result[
         (result["Reference_Plant"] == "NoGatePlant") & (result["Alternative_Plant"] == "NoGatePlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Eligibility_Status"] == "expert_review_required"
+
+
+def test_valid_empty_semantic_gate_payload_can_remain_eligible():
+    """A completed semantic assessment with no extracted hazard is distinct
+    from an assessment that never ran.  This keeps fail-closed behavior from
+    turning every assessed clean record into permanent expert review."""
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="AssessedCleanPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Antioxidant",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "AssessedCleanPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A randomized controlled trial found significantly improved symptoms.",
+        "Result_Direction": "Positive",
+        "Study_Type": "Randomized Controlled Trial",
+        "LLM_Gate_Assertions": {"safety_assertions": [], "regulatory_assertions": []},
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "AssessedCleanPlant")
+        & (result["Alternative_Plant"] == "AssessedCleanPlant")
     ]
     assert not self_row.empty
     assert self_row.iloc[0]["Eligibility_Status"] == "eligible"

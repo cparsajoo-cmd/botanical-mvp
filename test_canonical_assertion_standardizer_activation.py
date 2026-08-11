@@ -41,12 +41,11 @@ def test_reliable_evidence_level_does_not_suppress_structured_assertion_extracti
     # field as EXPECTED behavior. No source ever reported a direction
     # here (the input record has no Result_Direction at all); "Positive"
     # is purely the fake_llm mock's inference. The genuinely-source-only
-    # Result_Direction must stay empty/absent (falling to the function's
-    # own "Unknown" abstention default), and the model's output belongs
-    # ONLY in LLM_Result_Direction/LLM_Safety_Signal.
-    assert out["Result_Direction"] == "Unknown", (
+    # Result_Direction must therefore stay empty/absent, while the model's
+    # output belongs ONLY in LLM_Result_Direction/LLM_Safety_Signal.
+    assert out.get("Result_Direction") in (None, ""), (
         "no source ever reported a direction here -- Result_Direction must not "
-        "silently absorb the LLM's inference"
+        "contain either the LLM inference or a synthetic source placeholder"
     )
     assert out["LLM_Result_Direction"] == "Positive"
     assert out.get("Safety_Signal") in (None, ""), (
@@ -74,7 +73,7 @@ def test_source_result_direction_prevents_unnecessary_llm_call(monkeypatch):
     assert out["Result_Direction"] == "Positive"
 
 
-def test_new_standardized_record_without_extractor_persists_unknown_direction(monkeypatch):
+def test_new_standardized_record_without_extractor_does_not_fabricate_source_direction(monkeypatch):
     monkeypatch.setattr(es,"extract_evidence_with_llm",None)
     out=es.standardize_extracted_record(
         {
@@ -86,4 +85,29 @@ def test_new_standardized_record_without_extractor_persists_unknown_direction(mo
         },
         {"source_type":"PubMed","source_title":"x","source_url":"u","source_year":"2025"},
     )
-    assert out["Result_Direction"] == "Unknown"
+    assert out.get("Result_Direction") in (None, "")
+
+
+def test_semantic_gate_extraction_is_enabled_by_default_for_new_records(monkeypatch):
+    monkeypatch.delenv("ENABLE_SEMANTIC_GATE_EXTRACTION", raising=False)
+    monkeypatch.setattr(es, "extract_evidence_with_llm", None)
+    calls = []
+
+    def fake_gate(record, candidate_context=""):
+        calls.append((record, candidate_context))
+        return {"safety_assertions": [], "regulatory_assertions": []}
+
+    monkeypatch.setattr(es, "extract_gate_assertions_with_llm", fake_gate)
+    out = es.standardize_extracted_record(
+        {
+            "Scientific_Name": "Example plant",
+            "Evidence_Level": "High",
+            "Result_Direction": "Positive",
+            "Notes": "A controlled study reported improvement.",
+            "Target_Indication": "pain",
+            "Dosage_Form": "oral",
+        },
+        {"source_type": "PubMed", "source_title": "x", "source_url": "u", "source_year": "2025"},
+    )
+    assert calls, "semantic safety/regulatory assessment should run by default for new evidence"
+    assert out["LLM_Gate_Assertions"] == {"safety_assertions": [], "regulatory_assertions": []}

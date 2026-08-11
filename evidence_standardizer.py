@@ -180,12 +180,13 @@ def standardize_extracted_record(extracted, source_metadata):
             # resolver's normal precedence (source > llm_result_direction
             # > reported_direction/text-fallback) apply correctly instead.
 
-    # High-stakes semantic gate extraction is rollout-controlled.  It is kept
-    # separate from the existing evidence-direction extraction so production
-    # can run shadow/parallel evaluation before the new signal is trusted.
-    # The raw source fields above are never overwritten; only a dedicated JSON
-    # payload is added.
-    _semantic_gate_enabled = str(os.getenv("ENABLE_SEMANTIC_GATE_EXTRACTION", "false")).strip().lower() in {
+    # High-stakes semantic gate extraction is enabled by default for new
+    # evidence.  It remains independently switchable for operational reasons,
+    # but disabling/failing it does NOT make a record "clean": the decision
+    # engine treats missing semantic coverage as EXPERT_REVIEW_REQUIRED when a
+    # row would otherwise be eligible.  Raw source fields are never overwritten;
+    # only the dedicated JSON assertion payload is added.
+    _semantic_gate_enabled = str(os.getenv("ENABLE_SEMANTIC_GATE_EXTRACTION", "true")).strip().lower() in {
         "1", "true", "yes", "on"
     }
     if _semantic_gate_enabled and extract_gate_assertions_with_llm is not None:
@@ -207,13 +208,14 @@ def standardize_extracted_record(extracted, source_metadata):
             # extraction did not complete.
             normalized["LLM_Gate_Assertions_Error"] = str(e)
 
-    # A newly standardized record must never leave this boundary with an
-    # absent scientific direction. If no source/connector direction exists and
-    # no structured extractor was available/successful, persist Unknown. This
-    # deliberately yields an abstaining downstream decision rather than a
-    # heuristic GO from raw prose.
-    if not normalized.get("Result_Direction"):
-        normalized["Result_Direction"] = "Unknown"
+    # Scientific provenance invariant: Result_Direction is SOURCE-ONLY.
+    # If the source did not explicitly provide a direction, leave it missing.
+    # LLM inference belongs exclusively in LLM_Result_Direction.  Writing a
+    # synthetic "Unknown" here would still make downstream provenance say
+    # "source_result_direction", which is scientifically false even though the
+    # value is conservative.  Missing source direction is represented by an
+    # actually missing/empty source field and downstream resolution can then
+    # distinguish source, LLM and legacy/text fallback correctly.
 
     standardized = build_standard_evidence(normalized)
 

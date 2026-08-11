@@ -109,8 +109,11 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     "source_authority", "source_authority_score", "source_authority_reason",
     # Phase — canonical regulatory authorization state.
     "regulatory_authorization_status",
-    # Semantic hard-gate extraction payload (JSONB), rollout-controlled.
-    "llm_gate_assertions",
+    # Structured model-derived assertion provenance (migrations 0009/0010).
+    # These are optional for backward compatibility with deployments that have
+    # not run the migrations yet, but when present they must round-trip; losing
+    # them would force downstream code back to text heuristics.
+    "llm_result_direction", "llm_safety_signal", "llm_gate_assertions",
 }
 
 
@@ -723,6 +726,10 @@ def save_evidence_record(record):
         "primary_outcome": record.get("Primary_Outcome", ""),
         "result_direction": record.get("Result_Direction", ""),
         "safety_signal": record.get("Safety_Signal", ""),
+        # Model-derived assertions are deliberately persisted in their own
+        # columns.  They must never be copied into the source-only fields above.
+        "llm_result_direction": record.get("LLM_Result_Direction") or None,
+        "llm_safety_signal": record.get("LLM_Safety_Signal") or None,
         "direct_for_selected_product": record.get("Direct_For_Selected_Product", ""),
         "directness_reason": record.get("Directness_Reason", ""),
 
@@ -893,6 +900,8 @@ def load_evidence_records():
             "Primary_Outcome": item.get("primary_outcome", ""),
             "Result_Direction": item.get("result_direction", ""),
             "Safety_Signal": item.get("safety_signal", ""),
+            "LLM_Result_Direction": item.get("llm_result_direction") or "",
+            "LLM_Safety_Signal": item.get("llm_safety_signal") or "",
             "LLM_Gate_Assertions": item.get("llm_gate_assertions") or {},
             "Direct_For_Selected_Product": item.get("direct_for_selected_product", ""),
             "Directness_Reason": item.get("directness_reason", ""),

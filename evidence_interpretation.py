@@ -832,13 +832,27 @@ def interpret_evidence(
     per-source metadata is available there, with zero behavior change for
     every existing caller today.
     """
-    study_design = classify_study_design(text)
     direction, pos_hits, null_hits, neg_hits = classify_evidence_direction(text)
     direction_provenance: List[str] = []
+    _direction_supporting_records = []
+    interpretation_text = text
     if contributing_records:
         direction, direction_provenance, _direction_supporting_records = _resolve_pooled_direction(
             contributing_records
         )
+        # Reliability invariant: methodological strength must come from the
+        # record(s) that actually support the resolved efficacy direction, not
+        # from an unrelated/unclear record merely present in the same pooled
+        # bucket.  This prevents a weak positive study from borrowing the
+        # study-design/quality language of a strong neutral systematic review.
+        # For MIXED, _resolve_pooled_direction intentionally returns every
+        # informative record because the mixture itself is the resolved signal.
+        if _direction_supporting_records:
+            interpretation_text = " ".join(
+                str(rec.get("assertion_text") or rec.get("text") or "").strip()
+                for rec in _direction_supporting_records
+                if str(rec.get("assertion_text") or rec.get("text") or "").strip()
+            ) or text
         # Root-cause fix (2026-08-11, external audit point 5, confirmed by
         # direct trace: botanical_rd_candidate_engine.py's real call site
         # computes source_authority_factor as max(authority) across EVERY
@@ -862,8 +876,9 @@ def interpret_evidence(
         ]
         if _supporting_factors:
             source_authority_factor = min(source_authority_factor, max(_supporting_factors))
-    applicability = classify_evidence_applicability(text, study_design)
-    quality = classify_evidence_quality(text, study_design)
+    study_design = classify_study_design(interpretation_text)
+    applicability = classify_evidence_applicability(interpretation_text, study_design)
+    quality = classify_evidence_quality(interpretation_text, study_design)
     is_completed = applicability == APPLICABILITY_DIRECT
 
     ratio = DIRECTION_CONTRIBUTION_RATIO.get(direction, 0.0)

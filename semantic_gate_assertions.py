@@ -26,8 +26,20 @@ from safety_assertion_engine import (
     SafetyConfidence,
 )
 
-SEMANTIC_GATE_ASSERTION_VERSION = "1.0.0"
+SEMANTIC_GATE_ASSERTION_VERSION = "1.1.0"
 
+
+
+_SERIOUSNESS_CRITERIA = frozenset({
+    "death",
+    "life_threatening",
+    "hospitalization",
+    "persistent_or_significant_disability",
+    "congenital_anomaly",
+    "medically_important_event",
+    "major_organ_injury",
+    "explicit_serious_warning",
+})
 
 class SemanticCertainty(str, Enum):
     HIGH = "high"
@@ -159,16 +171,27 @@ def safety_assertion_from_semantic(
         return None
 
     severity_raw = str(data.get("seriousness") or "unknown").strip().lower()
+    seriousness_criterion = str(
+        data.get("seriousness_criterion") or "unknown"
+    ).strip().lower()
     polarity_raw = str(data.get("polarity") or "risk_present").strip().lower()
     hazard_type = str(data.get("hazard_type") or "warning").strip().lower()
 
-    severity = {
-        "serious": SeverityLevel.SERIOUS,
-        "moderate": SeverityLevel.MODERATE,
-        "minor": SeverityLevel.MINOR,
-        "none": SeverityLevel.NONE,
-        "reassuring": SeverityLevel.NONE,
-    }.get(severity_raw, SeverityLevel.NONE)
+    # High-stakes guardrail: a model label of "serious" is not sufficient by
+    # itself. It must also identify a recognized clinical seriousness basis.
+    # This prevents ordinary side-effect lists from escalating into hard-gate
+    # semantics while keeping the model free to recognize novel hazard wording.
+    serious_supported = seriousness_criterion in _SERIOUSNESS_CRITERIA
+    if severity_raw == "serious" and not serious_supported:
+        severity = SeverityLevel.MODERATE
+    else:
+        severity = {
+            "serious": SeverityLevel.SERIOUS,
+            "moderate": SeverityLevel.MODERATE,
+            "minor": SeverityLevel.MINOR,
+            "none": SeverityLevel.NONE,
+            "reassuring": SeverityLevel.NONE,
+        }.get(severity_raw, SeverityLevel.NONE)
 
     polarity = {
         "risk_present": AssertionPolarity.RISK_PRESENT,
@@ -214,8 +237,10 @@ def safety_assertion_from_semantic(
         classifier_version=f"semantic-gate/{SEMANTIC_GATE_ASSERTION_VERSION}",
         reason=(
             "Semantic record-level safety assertion; extraction confidence="
-            f"{extraction_confidence:.2f}. Severity is source semantics; "
-            "evidence_strength is derived independently from source authority."
+            f"{extraction_confidence:.2f}; seriousness criterion="
+            f"{seriousness_criterion}. Severity is source semantics constrained "
+            "by the seriousness-basis guardrail; evidence_strength is derived "
+            "independently from source authority."
         ),
         semantic_extraction_confidence=extraction_confidence,
         provenance="llm_semantic_gate",

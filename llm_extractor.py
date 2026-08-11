@@ -171,6 +171,15 @@ GATE_ASSERTION_SCHEMA = {
                         "type": "string",
                         "enum": ["serious", "moderate", "minor", "none", "unknown"],
                     },
+                    "seriousness_criterion": {
+                        "type": "string",
+                        "enum": [
+                            "death", "life_threatening", "hospitalization",
+                            "persistent_or_significant_disability", "congenital_anomaly",
+                            "medically_important_event", "major_organ_injury",
+                            "explicit_serious_warning", "none", "unknown"
+                        ],
+                    },
                     "polarity": {
                         "type": "string",
                         "enum": ["risk_present", "risk_absent", "conditional", "mechanistic_only"],
@@ -192,7 +201,7 @@ GATE_ASSERTION_SCHEMA = {
                 },
                 "required": [
                     "hazard_present", "hazard_type", "reported_outcome", "seriousness",
-                    "polarity", "causal_relationship", "preparation", "route",
+                    "seriousness_criterion", "polarity", "causal_relationship", "preparation", "route",
                     "dose_dependency", "affected_population", "context_applicability",
                     "supporting_text", "extraction_confidence"
                 ],
@@ -291,11 +300,32 @@ Critical rules:
    itself unless the record also establishes the applicable authorization state.
 8. If context applicability cannot be established from both the source and the
    supplied candidate context, use unknown rather than guessing.
-9. Serious safety means death/life-threatening harm, hospitalization or comparable
-   medically serious harm, irreversible/major organ injury, explicit serious
-   contraindication, major regulator safety warning, or a comparably severe
-   documented clinical risk. Do not mark ordinary tolerability findings serious.
-10. Do not let reassuring text erase a separate risk assertion; emit both when
+9. "serious" is a high-threshold clinical category, not a synonym for
+   "adverse", "clinically relevant", "toxicity", or "side effect". Set
+   seriousness=serious ONLY when the supplied supporting span explicitly supports
+   at least one seriousness_criterion other than none/unknown: death;
+   life-threatening harm; hospitalization; persistent/significant disability;
+   congenital anomaly; a medically important event requiring intervention to
+   prevent one of those outcomes; major/irreversible organ injury; or an explicit
+   serious regulator/contraindication warning.
+10. Common tolerability findings such as local burning/irritation, itching,
+    headache, dizziness, nausea, mild GI symptoms, transient discomfort, or a
+    generic list of side effects are NOT serious unless the same record explicitly
+    states one of the serious criteria above. Classify them minor/moderate as the
+    text warrants.
+11. Statements such as "more toxicity tests are needed", "further safety studies
+    are required", "safety remains uncertain", or "data are insufficient" describe
+    evidence uncertainty, not an observed hazard. Do not convert them into a
+    risk-present safety assertion unless the text separately reports an actual
+    adverse outcome or precaution.
+12. medically_important_event is not a catch-all for uncomfortable symptoms. Use
+    it only when the text indicates an event requiring medical intervention to
+    prevent death, life-threatening harm, hospitalization, disability, congenital
+    anomaly, or comparable serious deterioration.
+13. If seriousness=serious, seriousness_criterion MUST be a specific criterion
+    other than none/unknown. If no such criterion is explicitly supported, choose
+    moderate/minor/unknown instead.
+14. Do not let reassuring text erase a separate risk assertion; emit both when
     the record genuinely contains both.
 """
 

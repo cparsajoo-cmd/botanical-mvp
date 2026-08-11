@@ -14,12 +14,16 @@ from eligibility_gate import (
 )
 
 
-def _safety_payload(span, seriousness="serious", hazard="other", confidence=0.99):
+def _safety_payload(
+    span, seriousness="serious", hazard="other", confidence=0.99,
+    seriousness_criterion="hospitalization",
+):
     return {
         "hazard_present": True,
         "hazard_type": hazard,
         "reported_outcome": "anticholinergic toxicity",
         "seriousness": seriousness,
+        "seriousness_criterion": seriousness_criterion,
         "polarity": "risk_present",
         "causal_relationship": "causal",
         "preparation": "",
@@ -158,3 +162,54 @@ def test_semantic_parser_keeps_record_provenance_and_warns_on_bad_span():
     assert safety[0].evidence_record_id == "E9"
     assert not regulatory
     assert "invalid_or_nonverbatim_regulatory_supporting_span" in warnings
+
+
+def test_serious_label_without_seriousness_basis_is_downgraded():
+    text = "Burning, itching, headache and dizziness were reported after topical use."
+    a = safety_assertion_from_semantic(
+        _safety_payload(
+            text,
+            seriousness="serious",
+            hazard="serious_adverse_event",
+            seriousness_criterion="none",
+        ),
+        source_text=text,
+    )
+    assert a is not None
+    assert a.severity.value == "MODERATE"
+
+
+def test_real_world_id59_tolerability_list_cannot_become_serious_without_basis():
+    text = (
+        "Topical agents and synthetic drugs used for dandruff treatment have "
+        "specific side effects including burning at the application site, "
+        "depression, dizziness, headache, itching or skin irritation."
+    )
+    a = safety_assertion_from_semantic(
+        _safety_payload(
+            text,
+            seriousness="serious",
+            hazard="serious_adverse_event",
+            seriousness_criterion="none",
+        ),
+        source_text=text,
+        evidence_record_id="59",
+    )
+    assert a is not None
+    assert a.severity.value != "SERIOUS"
+
+
+def test_uncertainty_statement_is_not_a_supported_serious_hazard():
+    text = "However, more toxicity tests should be carried out to confirm its safety."
+    a = safety_assertion_from_semantic(
+        _safety_payload(
+            text,
+            seriousness="serious",
+            hazard="warning",
+            seriousness_criterion="unknown",
+        ),
+        source_text=text,
+        evidence_record_id="60",
+    )
+    assert a is not None
+    assert a.severity.value != "SERIOUS"

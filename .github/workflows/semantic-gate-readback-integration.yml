@@ -1,0 +1,56 @@
+name: Semantic Gate Readback Integration
+
+# Manual-only, quota-bounded integration probe.
+# Exactly ONE Supabase SELECT for the 20 IDs from the first apply batch.
+# ZERO writes and ZERO OpenAI calls.
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-gate-readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate Supabase secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::SUPABASE_URL and SUPABASE_KEY secrets are required."
+            exit 1
+          fi
+
+      - name: Read back exact 20-row batch and run deterministic gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python semantic_gate_readback_integration.py | tee semantic_gate_readback.log
+
+      - name: Add compact summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f semantic_gate_readback.log ]; then
+            grep '^SUMMARY ' semantic_gate_readback.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No readback output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi

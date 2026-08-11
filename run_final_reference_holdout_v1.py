@@ -56,6 +56,29 @@ exercise the real production decision path, not a silently-narrower one.
 A failed/empty extraction leaves the field unset for that record (same
 "stay retryable, don't fabricate" rule as the backfill script) rather
 than blocking the whole run.
+
+EVIDENCE-DIRECTION WIRING (2026-08-11): identical root-cause pattern found
+a second time. resolve_record_direction() (canonical_scientific_assertion.py)
+prefers source_result_direction, then llm_result_direction, and only falls
+back to the OLD, narrow regex-based evidence_interpretation.classify_
+evidence_direction() (reported_direction) when neither is set. In
+production, backfill_canonical_assertions.py already populates
+llm_result_direction for every real evidence_records row. This script's
+injected evidence never had it, so every v1/v2/v3 case was silently
+scored against the OLD regex classifier this project explicitly moved
+away from -- confirmed directly: classify_evidence_direction() returns
+"unclear" for real GO-WITH-CAUTION case text like the bilberry/EMA
+monograph wording ("grants traditional-use status... based on
+long-standing use"), which reads as a monograph-style regulatory
+description, not the trial-result phrasing the regex was written to
+catch. That single "unclear" is what drove Decision_Class to "Insufficient
+evidence" for cases that should have reached GO/GO WITH CAUTION -- a
+plausible major contributor to the GO/GO WITH CAUTION under-performance
+seen across v1/v2/v3. Fixed by also calling extract_evidence_with_llm()
+(the same function backfill_canonical_assertions.py already uses) per
+evidence record and populating LLM_Result_Direction/LLM_Safety_Signal,
+so injected validation evidence gets the same modern extraction real
+Supabase rows get.
 """
 import argparse
 import sys
@@ -69,13 +92,48 @@ from final_decision_policy import FinalDecisionStatus, final_status_from_engine_
 from scientific_decision_validation import DecisionComparison
 from decision_benchmark_v1 import compute_metrics
 from scientific_validity_release_gate import ReferenceValidationProtocol, evaluate_reference_grounded_release
-from llm_extractor import extract_gate_assertions_with_llm
+from llm_extractor import extract_gate_assertions_with_llm, extract_evidence_with_llm
 from semantic_gate_assertions import SEMANTIC_GATE_ASSERTION_VERSION
 
 ROOT=Path(__file__).resolve().parent
 BASE=ROOT/"gold_corpus/scientific_validity/final_holdout_v1"
 
 GATE_EXTRACTION_MAX_RETRIES = 2
+DIRECTION_EXTRACTION_MAX_RETRIES = 2
+
+
+def _direction_signal_for(notes, *, source_title, dosage_form, indication):
+    """Mirrors backfill_canonical_assertions.py's own call to
+    extract_evidence_with_llm(), so injected validation evidence gets the
+    same modern LLM-derived result_direction/safety_signal real Supabase
+    rows get instead of silently falling back to the old regex classifier.
+    Returns (llm_result_direction, llm_safety_signal) or (None, None) if
+    extraction failed after retries -- left unset rather than fabricated,
+    same policy as the gate-assertion extractor above."""
+    if not str(notes or "").strip():
+        return None, None
+
+    record = {"Source_Title": source_title or "", "Notes": notes}
+    last_error = None
+    for attempt in range(DIRECTION_EXTRACTION_MAX_RETRIES + 1):
+        try:
+            out = extract_evidence_with_llm(
+                record, selected_dosage_form=dosage_form or "", selected_indication=indication or "",
+            )
+            direction = str(out.get("result_direction") or "Unknown").strip() or "Unknown"
+            safety = str(out.get("safety_signal") or "").strip() or None
+            return direction, safety
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < DIRECTION_EXTRACTION_MAX_RETRIES:
+                time.sleep(0.75 * (attempt + 1))
+    print(
+        f"WARNING: direction extraction failed after "
+        f"{DIRECTION_EXTRACTION_MAX_RETRIES + 1} attempts, leaving "
+        f"llm_result_direction unset for this record: {last_error}",
+        file=sys.stderr,
+    )
+    return None, None
 
 
 def _utc_now():
@@ -152,6 +210,17 @@ def to_row(r, indication, target_market="EU"):
     )
     if gate_payload is not None:
         row["LLM_Gate_Assertions"] = gate_payload
+
+    llm_direction, llm_safety = _direction_signal_for(
+        r["notes"],
+        source_title=row["Source_Title"],
+        dosage_form=dosage_form,
+        indication=row["Target_Indication"],
+    )
+    if llm_direction is not None:
+        row["LLM_Result_Direction"] = llm_direction
+    if llm_safety is not None:
+        row["LLM_Safety_Signal"] = llm_safety
     return row
 
 

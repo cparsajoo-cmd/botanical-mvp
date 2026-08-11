@@ -1,5 +1,7 @@
-"""Runs one Reference-Grounded Validation case set (v1 or v2) as a
-REGRESSION check against the current engine code.
+"""Runs one Reference-Grounded Validation case set (v1, v2, or v3) against
+the current engine code. v1/v2 are REGRESSION checks (see below); v3 is
+the genuine BLIND holdout, added 2026-08-11 -- see the freeze note further
+down before running it.
 
 BUG FOUND (2026-08-10): the original version of this script always read
 gold_corpus/scientific_validity/final_holdout_v1/frozen_reference_labels.json
@@ -20,9 +22,21 @@ results. There is no default tag -- an explicit choice is required every
 time this script runs.
 
 Per the holdout integrity rule (see FINAL_REFERENCE_GROUNDED_VALIDATION_
-V2_REPORT.md): both case sets are EXPOSED. This script's output is a
-regression check on already-seen cases, never an independent/blind
-validity estimate.
+V2_REPORT.md): v1 and v2 are EXPOSED. Their output is a regression check
+on already-seen cases, never an independent/blind validity estimate.
+
+v3 (2026-08-11): a genuinely independent 20-case holdout -- zero overlap
+with v1/v2, gold_cases/, or decision_holdout_v2 through v5 (80 species
+checked programmatically; see FREEZE_MANIFEST_v3.json). Frozen before
+this script was ever run against it. --tag v3 is the one case where this
+script's output is a real blind validation, not a regression check --
+but ONLY if the freeze integrity check (verify_rgv3_freeze.py) passes
+first; the GitHub Actions workflow runs that check as a required prior
+step and refuses to proceed on any mismatch. Per the project's holdout
+integrity rule: if v3's result is weak, report it as weak -- do not add
+vocabulary, change a label, drop a case, tune a threshold, or add a
+special-case rule in response to seeing this output. Any such change
+would require freezing an entirely new holdout first.
 """
 import argparse
 from pathlib import Path
@@ -56,7 +70,7 @@ def main():
     ap.add_argument(
         "--tag",
         required=True,
-        choices=["v1", "v2"],
+        choices=["v1", "v2", "v3"],
         help="Which exposed case set to run as a regression check. Required "
         "(no default) so v1 and v2 can never again silently overwrite each "
         "other's frozen labels or results -- see the 2026-08-10 note above.",

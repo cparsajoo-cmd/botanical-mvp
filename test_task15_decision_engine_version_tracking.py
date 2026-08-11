@@ -160,12 +160,12 @@ def test_candidate_order_unchanged_with_or_without_considering_version_column():
             "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
             "Notes": "randomized controlled trial RefCompoundA outcome improved",
             "Primary_Outcome": "randomized controlled trial RefCompoundA outcome improved",
-            "Source_Type": "PubMed", "Evidence_Record_ID": "ev-1", "Evidence_Level": "High",
+            "Source_Type": "PubMed", "Target_Indication": "TestIndication", "Evidence_Record_ID": "ev-1", "Evidence_Level": "High",
         },
         {
             "Scientific_Name": "PlantAlt2", "Plant": "PlantAlt2",
             "Notes": "weak observational report RefCompoundA no clear effect",
-            "Source_Type": "PubMed", "Evidence_Record_ID": "ev-2", "Evidence_Level": "Low",
+            "Source_Type": "PubMed", "Target_Indication": "TestIndication", "Evidence_Record_ID": "ev-2", "Evidence_Level": "Low",
         },
     ])
     result = _run(evidence_df)
@@ -334,12 +334,12 @@ def test_scoring_gates_ranking_confidence_decision_class_unchanged():
             "Scientific_Name": "PlantAlt", "Plant": "PlantAlt",
             "Notes": "randomized controlled trial RefCompoundA outcome improved",
             "Primary_Outcome": "randomized controlled trial RefCompoundA outcome improved",
-            "Source_Type": "PubMed", "Evidence_Record_ID": "ev-1", "Evidence_Level": "High",
+            "Source_Type": "PubMed", "Target_Indication": "TestIndication", "Evidence_Record_ID": "ev-1", "Evidence_Level": "High",
         },
         {
             "Scientific_Name": "PlantAlt2", "Plant": "PlantAlt2",
             "Notes": "weak observational report RefCompoundA no clear effect",
-            "Source_Type": "PubMed", "Evidence_Record_ID": "ev-2", "Evidence_Level": "Low",
+            "Source_Type": "PubMed", "Target_Indication": "TestIndication", "Evidence_Record_ID": "ev-2", "Evidence_Level": "Low",
         },
     ])
 

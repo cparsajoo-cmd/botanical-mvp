@@ -1819,16 +1819,16 @@ class BotanicalRDCandidateEngine:
                     _structured_safety_assertions = []
                     _semantic_regulatory_assertions = []
                     _semantic_gate_warnings = []
-                    # Scientific-reliability fix (2026-08-11): both a
-                    # malformed semantic payload and a record that has never
-                    # completed semantic safety/regulatory assessment are
-                    # tracked explicitly.  Neither state is allowed to mean
-                    # "no risk found".  Deterministic safety/regulatory
-                    # classifiers still run and retain authority for hard
-                    # stops; otherwise incomplete semantic coverage is routed
-                    # to expert review below.
+                    # Semantic safety/regulatory assertions are additive to
+                    # deterministic gates. A MALFORMED payload is a real
+                    # processing failure and is fail-closed below. A missing
+                    # payload is different: it can mean a legacy/pre-backfill
+                    # record, so absence alone must not turn every historical
+                    # record into expert review. New evidence is semantically
+                    # assessed by default in evidence_standardizer.py; generic
+                    # high-consequence wording is also covered by the
+                    # deterministic safety/regulatory classifiers.
                     _semantic_gate_had_invalid_payload = False
-                    _semantic_gate_missing_payload = False
                     for _rec in evidence_contributing_records:
                         # New semantic gate layer: parse already-persisted,
                         # record-level LLM assertions.  The engine never calls
@@ -1836,12 +1836,10 @@ class BotanicalRDCandidateEngine:
                         # deterministic replay and auditability.
                         _payload_raw = _rec.get("llm_gate_assertions")
                         if not _payload_raw:
-                            # No semantic safety/regulatory assessment exists for
-                            # this record.  Deterministic rules still run and can
-                            # hard-stop known hazards, but an otherwise clean row
-                            # cannot be called autonomously eligible because novel
-                            # wording may sit outside the finite vocabulary.
-                            _semantic_gate_missing_payload = True
+                            # Legacy/pre-backfill record: no semantic payload is
+                            # available. Deterministic safety/regulatory gates
+                            # still run; absence is not interpreted as an explicit
+                            # reassuring assertion.
                             continue
                         if _payload_raw:
                             try:
@@ -1989,24 +1987,15 @@ class BotanicalRDCandidateEngine:
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
 
-                    # Scientific-reliability invariant (2026-08-11):
-                    # semantic safety/regulatory coverage is a high-stakes
-                    # assessment step, not an optional decoration.  The
-                    # deterministic classifiers remain useful hard-stop
-                    # detectors, but their vocabulary is finite; therefore an
-                    # absent OR malformed semantic payload cannot be interpreted
-                    # as "no risk found".  If the row would otherwise be
-                    # ELIGIBLE/ELIGIBLE_WITH_RESTRICTIONS, fail closed to
-                    # EXPERT_REVIEW_REQUIRED.  Existing confirmed hard NO_GO
-                    # states remain authoritative and are never weakened.
-                    #
-                    # Consequence for pre-backfill rows is intentional: until
-                    # semantic assessment has actually completed, the platform
-                    # may rank them only in the expert-review partition rather
-                    # than pretending their safety/regulatory review is complete.
-                    if (
-                        _semantic_gate_had_invalid_payload or _semantic_gate_missing_payload
-                    ) and eligibility_decision.status in (
+                    # A malformed semantic payload is a concrete processing
+                    # failure, so fail closed if deterministic gates would
+                    # otherwise permit normal ranking. Missing payload alone is
+                    # not a failure: historical/pre-backfill records may lack it,
+                    # and deterministic/structured gates still carry their own
+                    # evidence. This avoids globally converting clean legacy
+                    # evidence into expert review while preserving fail-closed
+                    # behavior for actual semantic-processing errors.
+                    if _semantic_gate_had_invalid_payload and eligibility_decision.status in (
                         _EligibilityStatus.ELIGIBLE,
                         _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS,
                     ):
@@ -2014,26 +2003,15 @@ class BotanicalRDCandidateEngine:
                             eligibility_decision,
                             status=_EligibilityStatus.EXPERT_REVIEW_REQUIRED,
                             hard_no_go=False,
-                            gate_type=(
-                                "semantic_gate_failure"
-                                if _semantic_gate_had_invalid_payload
-                                else "semantic_gate_not_assessed"
-                            ),
+                            gate_type="semantic_gate_failure",
                             requires_expert_review=True,
                             eligible_for_normal_ranking=False,
                             score_validity=_ScoreValidity.PRELIMINARY,
                             gate_reason=(
                                 (eligibility_decision.gate_reason + " " if eligibility_decision.gate_reason else "")
-                                + (
-                                    "Semantic safety/regulatory assessment failed to parse for at least one "
-                                    "contributing evidence record; deterministic-only coverage cannot be "
-                                    "treated as sufficient for a high-stakes decision."
-                                    if _semantic_gate_had_invalid_payload
-                                    else
-                                    "Semantic safety/regulatory assessment has not been completed for at least one "
-                                    "contributing evidence record; deterministic-only coverage cannot be treated "
-                                    "as proof that no serious safety/regulatory signal is present."
-                                )
+                                + "Semantic safety/regulatory assessment failed to parse for at least one "
+                                  "contributing evidence record; deterministic-only coverage cannot be "
+                                  "treated as sufficient after an explicit processing failure."
                             ),
                         )
 

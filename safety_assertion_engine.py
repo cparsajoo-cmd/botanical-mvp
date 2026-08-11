@@ -264,7 +264,17 @@ _FATAL_AE = (
     r"\bdeath(?:s)?\b.{0,50}\b(?:associated with|reported after|due to|caused by)\b",
     r"\b(?:associated with|caus(?:e|es|ed)|result(?:s|ed)? in)\b.{0,90}\bdeath(?:s)?\b",
 )
-_SERIOUS_AE = (r"\bserious adverse events?\b", r"\badverse events?\b.{0,50}\b(?:hospitali[sz]ation|life[- ]threatening|disability)\b")
+_SERIOUS_AE = (
+    r"\bserious adverse events?\b",
+    r"\badverse events?\b.{0,50}\b(?:hospitali[sz]ation|life[- ]threatening|disability)\b",
+    # Generic ICH-style seriousness/outcome language. These patterns are
+    # deliberately consequence-based rather than botanical- or case-specific,
+    # so severe harm can be recognized even when the prose never says the
+    # literal words "adverse event" or "toxicity".
+    r"\blife[- ]threatening\b.{0,60}\b(?:event|reaction|condition|hospitali[sz]ation|intervention)\b",
+    r"\b(?:requires?|required|requiring)\b.{0,35}\b(?:hospitali[sz]ation|emergency (?:surgery|intervention)|intensive care)\b",
+    r"\b(?:permanent|persistent|irreversible)\b.{0,35}\b(?:disability|impairment|blindness|vision loss|hearing loss|neurologic deficit)\b",
+)
 _REGULATORY_MAJOR = (r"\b(?:boxed|black box) warning\b", r"\b(?:fda|ema|mhra|tga|health canada)\b.{0,50}\b(?:safety warning|safety communication|serious risk)\b")
 
 

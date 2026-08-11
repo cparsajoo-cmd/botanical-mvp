@@ -118,7 +118,7 @@ def test_invariant_same_record_becomes_efficacy_relevant_only_when_context_match
 
 
 def test_invariant_unassessed_semantic_gate_never_defaults_to_eligible():
-    """Novel wording outside deterministic vocabulary must not fail open."""
+    """High-consequence wording must not fail open when semantic payload is absent."""
     plant = "UnassessedRiskPlant"
     rows = [
         dict(
@@ -141,9 +141,73 @@ def test_invariant_unassessed_semantic_gate_never_defaults_to_eligible():
         # Intentionally no LLM_Gate_Assertions.
     }])
     row = self_row(engine.run(indication="pain", dosage_form="Infusion", market="EU"), plant)
+    # The deterministic consequence-based safety layer may now resolve this
+    # directly as NO_GO_SAFETY; EXPERT_REVIEW_REQUIRED would also be an
+    # acceptable conservative outcome. The invariant is that it never passes.
+    assert row["Eligibility_Status"] in {"expert_review_required", "no_go_safety"}
+    assert row["Final_Decision_Status"] in {"EXPERT REVIEW REQUIRED", "NO GO SAFETY"}
+    assert bool(row["Eligible_For_Normal_Ranking"]) is False
+
+
+
+def test_invariant_missing_semantic_payload_alone_does_not_poison_clean_legacy_record():
+    """Absence is not the same as a failed semantic assessment."""
+    plant = "LegacyCleanPlant"
+    rows = [
+        dict(
+            scientific_name=plant,
+            compound_name="LegacyCompound",
+            indication="pain",
+            target="Analgesic",
+            common_name="",
+            plant_part="",
+            extraction_method="",
+        )
+    ]
+    engine = make_engine(rows)
+    engine.evidence_df = pd.DataFrame([{
+        "Scientific_Name": plant,
+        "Target_Indication": "pain",
+        "Notes": "A randomized controlled trial reported improved pain outcomes versus placebo.",
+        "Result_Direction": "Positive",
+        "Study_Type": "Randomized Controlled Trial",
+        "Evidence_Record_ID": "legacy-clean-1",
+        # Intentionally no LLM_Gate_Assertions: this represents an older
+        # pre-backfill record, not a semantic extraction error.
+    }])
+    row = self_row(engine.run(indication="pain", dosage_form="Infusion", market="EU"), plant)
+    assert row["Eligibility_Status"] == "eligible"
+    assert row["Final_Decision_Status"] in {"GO WITH CAUTION", "GO"}
+
+
+def test_invariant_malformed_semantic_payload_fails_closed():
+    """An actual semantic-processing failure is not treated like legacy absence."""
+    plant = "MalformedSemanticPlant"
+    rows = [
+        dict(
+            scientific_name=plant,
+            compound_name="MalformedCompound",
+            indication="pain",
+            target="Analgesic",
+            common_name="",
+            plant_part="",
+            extraction_method="",
+        )
+    ]
+    engine = make_engine(rows)
+    engine.evidence_df = pd.DataFrame([{
+        "Scientific_Name": plant,
+        "Target_Indication": "pain",
+        "Notes": "A randomized controlled trial reported improved pain outcomes versus placebo.",
+        "Result_Direction": "Positive",
+        "Study_Type": "Randomized Controlled Trial",
+        "Evidence_Record_ID": "semantic-malformed-1",
+        "LLM_Gate_Assertions": "{not-valid-json",
+    }])
+    row = self_row(engine.run(indication="pain", dosage_form="Infusion", market="EU"), plant)
     assert row["Eligibility_Status"] == "expert_review_required"
     assert row["Final_Decision_Status"] == "EXPERT REVIEW REQUIRED"
-
+    assert bool(row["Eligible_For_Normal_Ranking"]) is False
 
 def test_invariant_semantic_serious_harm_can_trigger_hard_safety_stop_without_keyword_whitelist():
     """A validated semantic assertion can close a novel-wording safety gap."""

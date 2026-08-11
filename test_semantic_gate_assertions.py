@@ -61,9 +61,29 @@ def test_nonverbatim_supporting_span_is_rejected():
     assert a is None
 
 
-def test_llm_only_serious_safety_routes_to_expert_review_not_hard_no_go():
-    text = "The preparation caused severe anticholinergic toxicity requiring hospitalization."
-    a = safety_assertion_from_semantic(_safety_payload(text), source_text=text)
+def test_semantic_serious_species_wide_can_hard_stop_without_regex_synonym():
+    text = "Exposure caused severe anticholinergic toxicity requiring hospitalization."
+    payload = _safety_payload(text)
+    payload["context_applicability"] = "relevant"
+    a = safety_assertion_from_semantic(payload, source_text=text)
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), flagged_terms=frozenset(),
+        has_evidence_text=True, same_plant=True, assertions=(a,),
+    )
+    regulatory = classify_regulatory_finding(
+        barrier_types=frozenset(), has_evidence_text=True, same_plant=True,
+    )
+    decision = evaluate_eligibility(safety, regulatory)
+    assert decision.status == EligibilityStatus.NO_GO_SAFETY
+    assert decision.hard_no_go
+
+
+def test_semantic_serious_preparation_specific_routes_to_expert_review():
+    text = "Unprocessed root preparations caused severe liver injury requiring hospitalization."
+    payload = _safety_payload(text)
+    payload["preparation"] = "unprocessed root preparation"
+    payload["context_applicability"] = "unknown"
+    a = safety_assertion_from_semantic(payload, source_text=text)
     safety = classify_safety_finding(
         hit_terms=frozenset(), flagged_terms=frozenset(),
         has_evidence_text=True, same_plant=True, assertions=(a,),
@@ -74,7 +94,6 @@ def test_llm_only_serious_safety_routes_to_expert_review_not_hard_no_go():
     decision = evaluate_eligibility(safety, regulatory)
     assert decision.status == EligibilityStatus.EXPERT_REVIEW_REQUIRED
     assert not decision.hard_no_go
-
 
 def test_deterministic_plus_semantic_serious_can_hard_stop():
     text = "Fatal liver failure was reported."
@@ -91,7 +110,7 @@ def test_deterministic_plus_semantic_serious_can_hard_stop():
     assert decision.hard_no_go
 
 
-def test_llm_only_regulatory_block_routes_to_review_not_hard_no_go():
+def test_semantic_relevant_regulatory_block_can_hard_stop_without_regex_phrase():
     a = SemanticRegulatoryAssertion(
         action=RegulatoryAction.TERMINATED,
         market_access_effect=MarketAccessEffect.BLOCKS_MARKET_ACCESS,
@@ -109,9 +128,30 @@ def test_llm_only_regulatory_block_routes_to_review_not_hard_no_go():
         has_evidence_text=True, same_plant=True,
     )
     decision = evaluate_eligibility(safety, reg)
+    assert decision.status == EligibilityStatus.NO_GO_REGULATORY
+    assert decision.hard_no_go
+
+
+def test_semantic_unknown_applicability_regulatory_block_still_routes_to_review():
+    a = SemanticRegulatoryAssertion(
+        action=RegulatoryAction.TERMINATED,
+        market_access_effect=MarketAccessEffect.BLOCKS_MARKET_ACCESS,
+        supporting_text="The procedure was terminated without authorization.",
+        evidence_record_id="R1u",
+        extraction_confidence=0.95,
+        context_applicability="unknown",
+    )
+    reg = classify_regulatory_finding(
+        barrier_types=frozenset(), has_evidence_text=True, same_plant=True,
+        finding_text=a.supporting_text, semantic_assertions=(a,),
+    )
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), flagged_terms=frozenset(),
+        has_evidence_text=True, same_plant=True,
+    )
+    decision = evaluate_eligibility(safety, reg)
     assert decision.status == EligibilityStatus.EXPERT_REVIEW_REQUIRED
     assert not decision.hard_no_go
-
 
 def test_authorization_required_is_review_not_prohibition():
     a = SemanticRegulatoryAssertion(

@@ -393,11 +393,6 @@ def classify_safety_finding(
         DataCompleteness.COMPLETE if has_evidence_text else DataCompleteness.INCOMPLETE
     )
 
-    semantic_only_serious = bool(serious_assertions) and not hit_terms and all(
-        str(getattr(a, "provenance", "")) in {"llm_semantic_gate", "legacy_llm_safety_signal"}
-        for a in serious_assertions
-    )
-
     if confirmed_scope is not None:
         scope = confirmed_scope
     elif serious_assertions:
@@ -415,8 +410,6 @@ def classify_safety_finding(
             scope = FindingScope.DOSE_SPECIFIC
         elif _a.preparation or _a.route:
             scope = FindingScope.PREPARATION_SPECIFIC
-        elif semantic_only_serious:
-            scope = FindingScope.UNKNOWN
         else:
             scope = FindingScope.SPECIES_WIDE
     else:
@@ -424,7 +417,7 @@ def classify_safety_finding(
 
     if confirmed_context_relevance is not None:
         relevance = confirmed_context_relevance
-    elif serious_assertions and scope == FindingScope.SPECIES_WIDE and not semantic_only_serious:
+    elif serious_assertions and scope == FindingScope.SPECIES_WIDE:
         relevance = ContextRelevance.RELEVANT
     else:
         relevance = ContextRelevance.UNKNOWN
@@ -650,16 +643,41 @@ def classify_regulatory_finding(
         scope = FindingScope.PREPARATION_SPECIFIC
         relevance = ContextRelevance.RELEVANT
     elif status == RegulatoryDataStatus.PROHIBITED and semantic_blocking and confirmed_scope is None:
-        # LLM-only blocking evidence deliberately cannot create an automatic
-        # hard NO-GO by itself.  It stays UNKNOWN-scope -> EXPERT REVIEW unless
-        # a deterministic detector/structured authorization independently
-        # corroborates it.  If rules also found a real prohibited barrier,
-        # ordinary scope resolution below can confirm applicability.
+        # Semantic market-access blocks are already constrained upstream by a
+        # verbatim supporting-span check and a closed legal-action schema.
+        # Do not re-introduce the old finite-vocabulary dependency here.
+        # Applicability remains asymmetric: an explicit semantic IRRELEVANT
+        # signal can never hard-stop; RELEVANT can establish candidate scope;
+        # UNKNOWN still requires deterministic/context corroboration and falls
+        # back to expert review when that corroboration is absent.
+        _sem = next(
+            (a for a in semantic_blocking if str(getattr(a, "context_applicability", "")).lower() == "relevant"),
+            semantic_blocking[0],
+        )
+        _sem_app = str(getattr(_sem, "context_applicability", "unknown") or "unknown").lower()
+
         deterministic_prohibited = bool(
             {"Prohibited / banned", "Novel food / pre-market approval required",
              "Authorization absent / denied"} & (barrier_types - {"Semantic market-access block"})
         ) or (dose_finding is not None and dose_finding.violates is True)
-        if deterministic_prohibited and _ft:
+
+        if _sem_app == "relevant":
+            if str(getattr(_sem, "plant_part", "") or "").strip():
+                scope = FindingScope.PLANT_PART_SPECIFIC
+            elif any(
+                str(getattr(_sem, name, "") or "").strip()
+                for name in ("preparation", "route", "product_category")
+            ):
+                scope = FindingScope.PREPARATION_SPECIFIC
+            else:
+                scope = FindingScope.SPECIES_WIDE
+            relevance = ContextRelevance.RELEVANT
+        elif _sem_app == "irrelevant":
+            # Preserve the legal finding for audit, but explicitly prevent it
+            # from becoming a hard stop for this candidate.
+            scope = FindingScope.PREPARATION_SPECIFIC
+            relevance = ContextRelevance.IRRELEVANT
+        elif deterministic_prohibited and _ft:
             _assessment = assess_regulatory_scope(finding_text, candidate_context_text)
             if _assessment.scope == "species_wide":
                 scope = FindingScope.SPECIES_WIDE
@@ -708,8 +726,9 @@ def classify_regulatory_finding(
         actions = ", ".join(sorted({a.action.value for a in semantic_blocking}))
         reason = (
             "Semantic record-level evidence describes a market-access block "
-            f"({actions}). LLM-only blocking evidence is never used to clear or "
-            "silently hard-stop without deterministic/context corroboration."
+            f"({actions}). A verbatim, schema-constrained block can hard-stop "
+            "only when candidate applicability is explicitly relevant or when "
+            "deterministic/context evidence independently corroborates it."
         )
     elif semantic_conditional and not is_prohibited:
         actions = ", ".join(sorted({a.action.value for a in semantic_conditional}))

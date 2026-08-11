@@ -1,0 +1,55 @@
+name: Semantic Gate Held-Back Validation
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-gate-held-back:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate OpenAI secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY is required."
+            exit 1
+          fi
+
+      - name: Run held-back semantic gate validation
+        run: |
+          set -o pipefail
+          python semantic_gate_blind_validation.py | tee semantic_gate_blind_validation.log
+
+      - name: Add validation summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f semantic_gate_blind_validation.log ]; then
+            echo "## Semantic gate held-back validation" >> "$GITHUB_STEP_SUMMARY"
+            grep '^SUMMARY ' semantic_gate_blind_validation.log >> "$GITHUB_STEP_SUMMARY" || true
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Supabase is not accessed by this validation workflow." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No validation output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi

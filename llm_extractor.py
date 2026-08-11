@@ -299,14 +299,20 @@ Critical rules:
     the record genuinely contains both.
 """
 
-    response = client.responses.create(
-        model=os.getenv("OPENAI_GATE_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
-        input=[
+    # Use the project's already-working evidence model as the safe default.
+    # OPENAI_GATE_MODEL is optional; if it is stale/invalid, retry exactly once
+    # with OPENAI_MODEL (or the legacy project default). This keeps a bad gate
+    # model secret from breaking a bounded shadow/backfill run.
+    project_model = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+    gate_model = (os.getenv("OPENAI_GATE_MODEL") or "").strip() or project_model
+
+    request_kwargs = {
+        "input": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": source_text},
         ],
-        temperature=0,
-        text={
+        "temperature": 0,
+        "text": {
             "format": {
                 "type": "json_schema",
                 "name": "botanical_gate_assertions",
@@ -314,5 +320,17 @@ Critical rules:
                 "strict": True,
             }
         },
-    )
+    }
+
+    try:
+        response = client.responses.create(model=gate_model, **request_kwargs)
+    except Exception as exc:
+        # Only fall back for a model-name/access failure. Schema/prompt/auth/rate
+        # errors must remain visible rather than being disguised by a retry.
+        message = str(exc).lower()
+        model_error = "model_not_found" in message or "does not exist" in message
+        if not model_error or gate_model == project_model:
+            raise
+        response = client.responses.create(model=project_model, **request_kwargs)
+
     return json.loads(response.output_text)

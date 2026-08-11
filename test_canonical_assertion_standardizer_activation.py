@@ -35,8 +35,25 @@ def test_reliable_evidence_level_does_not_suppress_structured_assertion_extracti
     )
     assert calls, "LLM assertion extraction must run even when Evidence_Level is already reliable"
     assert out["Evidence_Level"] == "High", "source Evidence_Level must not be overwritten"
-    assert out["Result_Direction"] == "Positive"
-    assert out["Safety_Signal"] == "No serious adverse events"
+    # Root-cause fix (2026-08-11, external audit point 4): this test used
+    # to assert out["Result_Direction"] == "Positive" -- i.e. it had
+    # encoded the LLM's inferred direction leaking into the source-only
+    # field as EXPECTED behavior. No source ever reported a direction
+    # here (the input record has no Result_Direction at all); "Positive"
+    # is purely the fake_llm mock's inference. The genuinely-source-only
+    # Result_Direction must stay empty/absent (falling to the function's
+    # own "Unknown" abstention default), and the model's output belongs
+    # ONLY in LLM_Result_Direction/LLM_Safety_Signal.
+    assert out["Result_Direction"] == "Unknown", (
+        "no source ever reported a direction here -- Result_Direction must not "
+        "silently absorb the LLM's inference"
+    )
+    assert out["LLM_Result_Direction"] == "Positive"
+    assert out.get("Safety_Signal") in (None, ""), (
+        "no source ever reported a safety signal here -- Safety_Signal must not "
+        "silently absorb the LLM's inference"
+    )
+    assert out["LLM_Safety_Signal"] == "No serious adverse events"
 
 
 def test_source_result_direction_prevents_unnecessary_llm_call(monkeypatch):

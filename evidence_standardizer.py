@@ -125,9 +125,28 @@ def standardize_extracted_record(extracted, source_metadata):
             normalized["LLM_Sample_Size"] = llm.get("sample_size", "")
             normalized["LLM_Comparator"] = llm.get("comparator", "")
             normalized["LLM_Main_Outcome"] = llm.get("main_outcome", "")
+            # Root-cause fix (2026-08-11, external audit point 4,
+            # independently confirmed: test_canonical_assertion_
+            # standardizer_activation.py explicitly asserted
+            # out["Result_Direction"] == "Positive" from a fake_llm mock
+            # with NO source-provided direction at all -- i.e. the test
+            # had encoded this bug as expected behavior). LLM output must
+            # ONLY ever land in the dedicated LLM_* columns -- the whole
+            # point of adding those columns (see the canonical resolver's
+            # source > llm_result_direction > reported_direction
+            # precedence in canonical_scientific_assertion.py, and the
+            # 2026-08-10 backfill_canonical_assertions.py incident where
+            # the LLM's own output had been getting written into
+            # result_direction) is that Result_Direction/Safety_Signal
+            # must stay genuinely source-only so that precedence is
+            # trustworthy. A model's inference must never be able to
+            # masquerade as something the source directly reported, no
+            # matter how confident the extraction. Previously this
+            # function copied the LLM's result_direction/safety_signal
+            # into Result_Direction/Safety_Signal whenever those were
+            # still empty -- exactly the failure mode the dedicated
+            # LLM_* columns exist to prevent.
             normalized["LLM_Result_Direction"] = llm.get("result_direction", "")
-            if not normalized.get("Result_Direction") and llm.get("result_direction"):
-                normalized["Result_Direction"] = llm.get("result_direction", "")
             normalized["LLM_Safety_Signal"] = llm.get("safety_signal", "")
             normalized["LLM_Reason"] = llm.get("reason", "")
 
@@ -150,13 +169,16 @@ def standardize_extracted_record(extracted, source_metadata):
             if llm.get("escop_relevance", "").lower() == "yes":
                 normalized["ESCOP_Status"] = "Yes"
 
-            if llm.get("safety_signal") and not normalized.get("Safety_Signal"):
-                normalized["Safety_Signal"] = llm.get("safety_signal", "")
-
         except Exception as e:
             normalized["LLM_Reason"] = "LLM extraction failed: " + str(e)
-            if not normalized.get("Result_Direction"):
-                normalized["Result_Direction"] = "Unknown"
+            # Root-cause fix (2026-08-11, same audit point as above): on
+            # extraction failure this used to write the synthetic string
+            # "Unknown" into the source-only Result_Direction field --
+            # fabricating a value no source ever reported, in a field
+            # whose entire purpose is to hold ONLY what the source
+            # genuinely said. Leaving it unset lets the canonical
+            # resolver's normal precedence (source > llm_result_direction
+            # > reported_direction/text-fallback) apply correctly instead.
 
     # High-stakes semantic gate extraction is rollout-controlled.  It is kept
     # separate from the existing evidence-direction extraction so production

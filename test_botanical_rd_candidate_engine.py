@@ -423,6 +423,270 @@ def test_a_common_compound_sub_row_cant_single_handedly_cap_a_strong_multi_match
 
 
 # ---------------------------------------------------------------------
+# 13b) Root-cause regression (2026-08-11, external audit; independently
+#      reproduced with this exact function before any code change): a
+#      genuine hard-stop (safety or regulatory) sub-row must NEVER be
+#      erased by merging with a higher-scoring GO sub-row -- even when
+#      the hard-stop row's own compound match happens to be flagged
+#      "Common/non-specific". Novelty/commonality is a SCIENTIFIC
+#      confidence signal; a safety concern or regulatory prohibition on
+#      a row is not less real just because the compound is common.
+# ---------------------------------------------------------------------
+def test_hard_stop_regulatory_survives_merge_even_when_flagged_common():
+    engine = make_engine([], similar_groups={})
+
+    go_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundA", Shared_or_Similar_Compound="CompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate",
+        Novelty_Status="Distinctive match", Rationale="... Decision: Strong R&D candidate.",
+        Regulatory_Barriers="None identified",
+    )
+    go_row["R&D_Opportunity_Score"] = 85
+
+    no_go_regulatory_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundB", Shared_or_Similar_Compound="CompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Regulatory prohibition — not suitable without regulatory review",
+        # Deliberately flagged "Common" -- this is exactly the condition that
+        # made the hard-stop vanish before the fix.
+        Novelty_Status="Common/non-specific compound — found in 50+ plants database-wide",
+        Rationale="... Decision: Regulatory prohibition.",
+        Regulatory_Barriers="Prohibited / banned",
+    )
+    no_go_regulatory_row["R&D_Opportunity_Score"] = 20
+
+    output = pd.DataFrame([go_row, no_go_regulatory_row])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert merged.iloc[0]["Decision_Class"] == "Regulatory prohibition — not suitable without regulatory review"
+
+
+def test_hard_stop_safety_survives_merge_even_when_flagged_common():
+    engine = make_engine([], similar_groups={})
+
+    go_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundA", Shared_or_Similar_Compound="CompoundA",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Strong R&D candidate",
+        Novelty_Status="Distinctive match", Rationale="... Decision: Strong R&D candidate.",
+    )
+    go_row["R&D_Opportunity_Score"] = 90
+
+    no_go_safety_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundB", Shared_or_Similar_Compound="CompoundB",
+        Safety_Flags="Serious safety concern", Interaction_Flags="No explicit flag found",
+        Decision_Class="Safety concern — not suitable without expert review",
+        Novelty_Status="Common/non-specific compound — found in 50+ plants database-wide",
+        Rationale="... Decision: Safety concern.",
+    )
+    no_go_safety_row["R&D_Opportunity_Score"] = 15
+
+    output = pd.DataFrame([go_row, no_go_safety_row])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert merged.iloc[0]["Decision_Class"] == "Safety concern — not suitable without expert review"
+
+
+def test_two_hard_stops_of_different_kinds_merge_deterministically():
+    """Non-regression on the min()/_rank() tie-break: with two hard-stop
+    rows present, the merge must still pick one hard-stop deterministically
+    rather than erroring or falling through to a non-hard-stop decision."""
+    engine = make_engine([], similar_groups={})
+
+    safety_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundA", Shared_or_Similar_Compound="CompoundA",
+        Safety_Flags="Serious safety concern", Interaction_Flags="No explicit flag found",
+        Decision_Class="Safety concern — not suitable without expert review",
+        Novelty_Status="Distinctive match", Rationale="... Decision: Safety concern.",
+    )
+    safety_row["R&D_Opportunity_Score"] = 10
+
+    regulatory_row = dict(
+        Reference_Plant="RefPlant", Alternative_Plant="AltPlant",
+        Reference_Compound="CompoundB", Shared_or_Similar_Compound="CompoundB",
+        Safety_Flags="No explicit flag found", Interaction_Flags="No explicit flag found",
+        Decision_Class="Regulatory prohibition — not suitable without regulatory review",
+        Novelty_Status="Distinctive match", Rationale="... Decision: Regulatory prohibition.",
+        Regulatory_Barriers="Prohibited / banned",
+    )
+    regulatory_row["R&D_Opportunity_Score"] = 12
+
+    output = pd.DataFrame([safety_row, regulatory_row])
+    merged = engine._merge_multi_compound_matches(output)
+
+    assert len(merged) == 1
+    assert merged.iloc[0]["Decision_Class"] in (
+        "Safety concern — not suitable without expert review",
+        "Regulatory prohibition — not suitable without regulatory review",
+    )
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11, external audit + independently
+# confirmed by tracing _resolve_pooled_direction()): evidence about a
+# compound for ONE indication (e.g. insomnia) was voting on
+# Evidence_Direction when that SAME compound was being evaluated for a
+# completely different indication (e.g. pain) with zero real evidence of
+# its own. Safety signals are deliberately NOT scoped this way (a
+# documented risk is a risk regardless of which indication is being
+# scored) -- this test proves both halves: efficacy direction is now
+# indication-scoped, safety detection is not.
+# ---------------------------------------------------------------------
+def test_efficacy_direction_does_not_bleed_across_indications():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="CrossIndicationPlant", compound_name="SharedCompound",
+             indication="pain", target="Analgesic",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "CrossIndicationPlant",
+        "Target_Indication": "insomnia",  # a DIFFERENT indication than what's being evaluated
+        "Notes": "A large randomized controlled trial found significantly improved sleep onset.",
+        "Evidence_Record_ID": "cross-1",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="pain", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "CrossIndicationPlant")
+        & (result["Alternative_Plant"] == "CrossIndicationPlant")
+    ]
+    assert not self_row.empty
+    # No pain-specific evidence exists at all -- the insomnia RCT must
+    # not be allowed to vote "positive" for a completely different
+    # indication.
+    assert self_row.iloc[0]["Evidence_Direction"] != "positive"
+
+
+def test_safety_signal_still_crosses_indications_after_the_direction_fix():
+    """Non-regression: the fix above must be scoped to EFFICACY direction
+    only. A serious safety signal recorded under one indication must
+    still be visible when the same plant/compound is evaluated for a
+    different indication."""
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="CrossIndicationSafetyPlant", compound_name="RiskyCompound",
+             indication="pain", target="Analgesic",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "CrossIndicationSafetyPlant",
+        "Target_Indication": "insomnia",  # different indication than being evaluated
+        "Notes": "Case reports document this ingredient can cause seizures, coma, and death.",
+        "Evidence_Record_ID": "cross-safety-1",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="pain", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "CrossIndicationSafetyPlant")
+        & (result["Alternative_Plant"] == "CrossIndicationSafetyPlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Safety_Flags"] not in ("", "No explicit flag found")
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11, external audit point 3): a
+# malformed semantic-gate payload used to only append a warning string
+# and otherwise let the row proceed completely normally (fail-open). A
+# record where the field is simply absent (semantic gate hasn't run on
+# it yet -- true for most of production today, since the backfill is
+# additive/gradual) is deliberately NOT escalated: doing so would force
+# nearly every existing candidate into EXPERT_REVIEW_REQUIRED before the
+# backfill finishes, which is a platform-wide behavior change outside
+# this fix's scope.
+# ---------------------------------------------------------------------
+def test_invalid_semantic_gate_payload_escalates_to_expert_review():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="InvalidGatePlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Antioxidant",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "InvalidGatePlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A large randomized controlled trial found significantly improved symptoms with no safety concerns.",
+        "LLM_Gate_Assertions": "THIS IS NOT VALID JSON {{{",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "InvalidGatePlant") & (result["Alternative_Plant"] == "InvalidGatePlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Eligibility_Status"] == "expert_review_required"
+
+
+def test_missing_semantic_gate_payload_is_not_escalated():
+    """The common, currently-normal case (field never populated at all)
+    must NOT be escalated -- only a genuine parse failure is."""
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="NoGatePlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Antioxidant",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "NoGatePlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "A large randomized controlled trial found significantly improved symptoms with no safety concerns.",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "NoGatePlant") & (result["Alternative_Plant"] == "NoGatePlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Eligibility_Status"] == "eligible"
+
+
+def test_invalid_semantic_gate_payload_never_downgrades_an_existing_hard_no_go():
+    """A confirmed hard NO_GO (e.g. deterministic-regex safety hit) must
+    stay a hard NO_GO even if a DIFFERENT contributing record also had a
+    malformed semantic payload -- the escalation only applies when the
+    row would otherwise have been plain ELIGIBLE/ELIGIBLE_WITH_RESTRICTIONS."""
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="HardStopPlusInvalidGatePlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Antioxidant",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "HardStopPlusInvalidGatePlant",
+        "Target_Indication": "TestIndication",
+        "Notes": "Case reports document this ingredient can cause seizures, coma, and death.",
+        "LLM_Gate_Assertions": "THIS IS NOT VALID JSON {{{",
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "HardStopPlusInvalidGatePlant")
+        & (result["Alternative_Plant"] == "HardStopPlusInvalidGatePlant")
+    ]
+    assert not self_row.empty
+    assert self_row.iloc[0]["Eligibility_Status"] == "no_go_safety"
+
+
+# ---------------------------------------------------------------------
 # 15) _extract_concentration (Phase 4, audit 4.10) must return "" — not
 #     a placeholder string — when nothing is found, since the score
 #     bonus and two display fallbacks elsewhere in the engine rely on

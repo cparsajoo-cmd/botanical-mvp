@@ -730,8 +730,16 @@ def _resolve_pooled_direction(contributing_records: Sequence[Mapping]):
       - exactly one distinct informative direction -> that direction
       - more than one distinct informative direction -> "mixed"
 
-    Returns (direction, provenance_list) where provenance_list is in the
-    same order as `contributing_records`.
+    Returns (direction, provenance_list, supporting_records) where
+    provenance_list is in the same order as `contributing_records`, and
+    supporting_records (2026-08-11, external audit point 5) is the
+    subset of `contributing_records` whose OWN per-record direction
+    equals the returned aggregate `direction` -- i.e. the records that
+    actually earned this conclusion, as opposed to every record that
+    merely happened to be pooled into the same compound/indication
+    bucket. See interpret_evidence()'s use of this for why: a strong
+    but off-topic/unclear source's authority must not be allowed to
+    represent a weaker source's positive finding.
     """
     resolved = [
         resolve_record_direction(
@@ -745,10 +753,24 @@ def _resolve_pooled_direction(contributing_records: Sequence[Mapping]):
     informative = {r.direction for r in resolved if r.direction != DIRECTION_UNCLEAR}
 
     if not informative:
-        return DIRECTION_UNCLEAR, provenance
+        return DIRECTION_UNCLEAR, provenance, []
     if len(informative) == 1:
-        return next(iter(informative)), provenance
-    return DIRECTION_MIXED, provenance
+        direction = next(iter(informative))
+    else:
+        direction = DIRECTION_MIXED
+
+    if direction == DIRECTION_MIXED:
+        # No single direction to attribute authority to -- every record
+        # that contributed an informative (non-unclear) direction is
+        # equally "supporting" the fact that this is mixed.
+        supporting_records = [
+            rec for rec, r in zip(contributing_records, resolved) if r.direction != DIRECTION_UNCLEAR
+        ]
+    else:
+        supporting_records = [
+            rec for rec, r in zip(contributing_records, resolved) if r.direction == direction
+        ]
+    return direction, provenance, supporting_records
 
 
 def interpret_evidence(
@@ -814,7 +836,32 @@ def interpret_evidence(
     direction, pos_hits, null_hits, neg_hits = classify_evidence_direction(text)
     direction_provenance: List[str] = []
     if contributing_records:
-        direction, direction_provenance = _resolve_pooled_direction(contributing_records)
+        direction, direction_provenance, _direction_supporting_records = _resolve_pooled_direction(
+            contributing_records
+        )
+        # Root-cause fix (2026-08-11, external audit point 5, confirmed by
+        # direct trace: botanical_rd_candidate_engine.py's real call site
+        # computes source_authority_factor as max(authority) across EVERY
+        # contributing record regardless of whether that record's own
+        # direction has anything to do with the resolved aggregate
+        # direction -- documented as a known limitation in
+        # PHASE3_SOURCE_AUTHORITY_IMPLEMENTATION.md). A weak-authority
+        # record's positive finding must not borrow a strong-authority
+        # but off-topic/unclear record's authority just because both were
+        # pooled into the same compound/indication bucket. When at least
+        # one supporting record carries its own authority_factor, use the
+        # strongest factor among ONLY those records instead of whatever
+        # blanket factor the caller passed in -- still never higher than
+        # what the caller supplied (a caller-level cap, e.g. from
+        # evidence_authority.source_authority_factor(), is still
+        # respected), only ever equal or more conservative.
+        _supporting_factors = [
+            float(_rec.get("authority_factor"))
+            for _rec in _direction_supporting_records
+            if _rec.get("authority_factor") not in (None, "")
+        ]
+        if _supporting_factors:
+            source_authority_factor = min(source_authority_factor, max(_supporting_factors))
     applicability = classify_evidence_applicability(text, study_design)
     quality = classify_evidence_quality(text, study_design)
     is_completed = applicability == APPLICABILITY_DIRECT

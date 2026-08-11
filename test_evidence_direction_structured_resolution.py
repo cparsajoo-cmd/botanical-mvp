@@ -225,13 +225,39 @@ def test_one_structured_one_uninformative_record_is_not_forced_to_mixed():
 # in isolation, independent of interpret_evidence()'s other fields).
 # ---------------------------------------------------------------------
 def test_resolve_pooled_direction_empty_list_is_unclear():
-    direction, provenance = _resolve_pooled_direction([])
+    direction, provenance, supporting = _resolve_pooled_direction([])
     assert direction == DIRECTION_UNCLEAR
     assert provenance == []
+    assert supporting == []
 
 
 def test_resolve_pooled_direction_null_and_negative_still_aggregate_to_mixed():
     records = [_record(text=NULL_TEXT), _record(text=NEGATIVE_TEXT)]
-    direction, provenance = _resolve_pooled_direction(records)
+    direction, provenance, supporting = _resolve_pooled_direction(records)
     assert direction == DIRECTION_MIXED
     assert provenance == ["text_fallback", "text_fallback"]
+    # Both "null" (no significant difference) and "negative" are
+    # informative (non-"unclear") directions, so both records support
+    # the "mixed" outcome.
+    assert supporting == records
+
+
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11, external audit point 5): the
+# strongest source authority among ALL pooled records used to represent
+# the whole bucket, even records with nothing to do with the resolved
+# direction. supporting_records must be exactly the records whose own
+# direction equals the aggregate, so a weak-authority positive finding
+# cannot borrow a strong-authority but off-topic/unclear record's clout.
+# ---------------------------------------------------------------------
+def test_resolve_pooled_direction_supporting_records_excludes_unclear_and_off_direction():
+    positive_rec = _record(text=POSITIVE_TEXT)
+    unclear_rec = _record(text="")
+    negative_rec = _record(text=NEGATIVE_TEXT)
+    direction, _, supporting = _resolve_pooled_direction([positive_rec, unclear_rec])
+    assert direction == DIRECTION_POSITIVE
+    assert supporting == [positive_rec]
+
+    direction2, _, supporting2 = _resolve_pooled_direction([positive_rec, negative_rec])
+    assert direction2 == DIRECTION_MIXED
+    assert supporting2 == [positive_rec, negative_rec]

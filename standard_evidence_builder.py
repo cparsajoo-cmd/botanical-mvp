@@ -299,8 +299,37 @@ def build_standard_evidence(record):
         # Literal connector/source fields take precedence.  LLM-derived
         # values are fallbacks only, matching the Sample_Size policy above.
         "Primary_Outcome": record.get("Primary_Outcome") or record.get("LLM_Main_Outcome", ""),
-        "Result_Direction": record.get("Result_Direction") or record.get("LLM_Result_Direction", ""),
-        "Safety_Signal": record.get("Safety_Signal") or record.get("LLM_Safety_Signal", ""),
+        # Root-cause fix (2026-08-11, external audit point 4, confirmed
+        # by direct trace: this line was the actual cause even after
+        # evidence_standardizer.py's own copy-through was removed, since
+        # this function runs LAST and re-introduced the exact same
+        # mixing). Result_Direction/Safety_Signal are NOT included in the
+        # Sample_Size/Primary_Outcome "LLM as fallback" policy above --
+        # those two feed canonical_scientific_assertion.py's
+        # resolve_record_direction() precedence (source_result_direction
+        # > llm_result_direction > legacy), which only works if
+        # Result_Direction genuinely means "what the source said" and
+        # never silently absorbs the LLM's own inference. Blending them
+        # here would make resolve_record_direction() see LLM output and
+        # treat it as if the source had reported it directly -- the same
+        # failure mode already found and fixed once in
+        # backfill_canonical_assertions.py (2026-08-10) and in
+        # evidence_standardizer.py above; this was the third and, per the
+        # external audit, final place it survived.
+        "Result_Direction": record.get("Result_Direction") or "",
+        "Safety_Signal": record.get("Safety_Signal") or "",
+        # Preserved as their own genuinely-separate output keys (previously
+        # this function only ever read them as a fallback for the two
+        # lines above and never passed them through standalone -- meaning
+        # the LLM's real output was silently dropped entirely once it
+        # could no longer masquerade as source data). Downstream
+        # persistence (database.py) picking these up is a separate,
+        # later step -- out of scope here; today llm_result_direction/
+        # llm_safety_signal are populated for existing rows by
+        # backfill_canonical_assertions.py, which will do the same for
+        # any row where these arrive empty at initial ingest.
+        "LLM_Result_Direction": record.get("LLM_Result_Direction") or "",
+        "LLM_Safety_Signal": record.get("LLM_Safety_Signal") or "",
         "Adverse_Events": record.get("Adverse_Events"),
         "Interactions_Structured": record.get("Interactions_Structured"),
         "Effect_Size": record.get("Effect_Size"),

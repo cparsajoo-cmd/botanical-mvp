@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import requests
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 
 import pandas as pd
 import botanical_taxonomy as _botanical_taxonomy
@@ -1449,11 +1449,58 @@ class BotanicalRDCandidateEngine:
                     # aggregation rule. study_design/quality/
                     # applicability are unchanged, still derived from
                     # the pooled blob — out of scope for this pass.
+                    # Root-cause fix (2026-08-11, external audit +
+                    # independently confirmed by tracing _resolve_pooled_
+                    # direction()): contributing_records here was every
+                    # record tagged to this compound REGARDLESS of which
+                    # indication it was actually about -- so a positive
+                    # systematic review for, say, insomnia could vote
+                    # this compound's evidence_direction toward positive
+                    # even while evaluating it for an unrelated indication
+                    # like pain, with zero pain-specific evidence. Safety/
+                    # regulatory signals are deliberately kept
+                    # cross-indication (a documented risk is a risk
+                    # regardless of which indication is being scored --
+                    # see _safety_gate_evidence_ids/_regulatory_gate_
+                    # evidence_ids below, which still use the full,
+                    # unfiltered evidence_contributing_records on purpose).
+                    # Only the EFFICACY direction vote is scoped here, via
+                    # a separate filtered list, to records whose own
+                    # target_indication matches the indication actually
+                    # being evaluated (or that have no recorded
+                    # target_indication at all -- legacy/unstructured
+                    # records are tolerated rather than silently dropped).
+                    _problem_key_for_direction = self._norm(problem)
+                    _direction_contributing_records = [
+                        _rec
+                        for _rec in evidence_contributing_records
+                        if not _problem_key_for_direction
+                        or not str(_rec.get("target_indication") or "").strip()
+                        or self._norm(_rec.get("target_indication")) == _problem_key_for_direction
+                    ]
+                    if not _direction_contributing_records and evidence_contributing_records:
+                        # Every contributing record exists but is about a
+                        # different indication -- interpret_evidence()
+                        # treats an EMPTY contributing_records list as "no
+                        # structured records at all" and falls back to
+                        # classifying the raw pooled (cross-indication)
+                        # text blob directly, which would silently undo
+                        # this fix in exactly this case. A single neutral
+                        # placeholder record (no direction fields, empty
+                        # text) forces _resolve_pooled_direction() down
+                        # its normal "no informative direction -> unclear"
+                        # path instead, without touching the blob-based
+                        # study_design/quality/applicability computation
+                        # this pass is not meant to change.
+                        _direction_contributing_records = [{
+                            "target_indication": "", "text": "", "assertion_text": "",
+                        }]
+
                     evidence_interpretation_result = interpret_evidence(
                         raw_evidence,
                         clinical_weight=self.scoring_config.evidence_clinical,
                         source_authority_factor=evidence_authority_factor,
-                        contributing_records=evidence_contributing_records,
+                        contributing_records=_direction_contributing_records,
                     )
                     study_design = evidence_interpretation_result.study_design
                     evidence_direction = evidence_interpretation_result.evidence_direction
@@ -1772,6 +1819,24 @@ class BotanicalRDCandidateEngine:
                     _structured_safety_assertions = []
                     _semantic_regulatory_assertions = []
                     _semantic_gate_warnings = []
+                    # Root-cause fix (2026-08-11, external audit point 3):
+                    # previously an invalid/malformed llm_gate_assertions
+                    # payload only appended a warning string and otherwise
+                    # let the row proceed completely normally -- silently
+                    # fail-open. A record that never had the field at all
+                    # (semantic gate simply hasn't run on it yet -- true
+                    # for most of production today, since the backfill is
+                    # additive/gradual) is a DIFFERENT, much more common
+                    # and currently-accepted state, deliberately NOT
+                    # escalated here -- doing so today would force nearly
+                    # every existing candidate into EXPERT_REVIEW_REQUIRED
+                    # before the backfill has finished, which is a platform
+                    # behavior change far outside this fix's scope. Only a
+                    # genuine parse FAILURE (the payload existed but was
+                    # malformed) is escalated below, since that is an
+                    # actual anomaly worth a human's attention, not
+                    # "not processed yet".
+                    _semantic_gate_had_invalid_payload = False
                     for _rec in evidence_contributing_records:
                         # New semantic gate layer: parse already-persisted,
                         # record-level LLM assertions.  The engine never calls
@@ -1800,6 +1865,7 @@ class BotanicalRDCandidateEngine:
                                 # signals.  Treat it as audit/review information
                                 # while deterministic paths continue to run.
                                 _semantic_gate_warnings.append("invalid_semantic_gate_payload")
+                                _semantic_gate_had_invalid_payload = True
 
                     for _rec in evidence_contributing_records:
                         _safety_assertion_input = " ".join(
@@ -1922,6 +1988,56 @@ class BotanicalRDCandidateEngine:
                         semantic_assertions=tuple(_semantic_regulatory_assertions),
                     )
                     eligibility_decision = _evaluate_eligibility(_safety_finding, _regulatory_finding)
+
+                    # Root-cause fix (2026-08-11, external audit point 3):
+                    # a genuinely malformed llm_gate_assertions payload
+                    # (the field existed but failed to parse -- a real
+                    # processing anomaly, not simply "not run yet") must
+                    # never be allowed to pass through as a plain ELIGIBLE
+                    # or ELIGIBLE_WITH_RESTRICTIONS result. The deterministic
+                    # classifiers are useful but their vocabulary is finite
+                    # (see the RGV v1/v2 root-cause fixes this same week for
+                    # concrete examples of terms they missed); when the
+                    # semantic layer -- our broader-coverage backstop --
+                    # visibly broke on this record, we cannot silently treat
+                    # "no semantic finding" as "no risk found". Escalate to
+                    # EXPERT_REVIEW_REQUIRED so a person looks at it, without
+                    # touching hard NO_GO statuses (a confirmed hard stop is
+                    # not weakened by also having had a parsing hiccup
+                    # elsewhere) or the INCOMPLETE/data-completeness states
+                    # (already conservative for a different reason).
+                    #
+                    # Deliberately NOT triggered merely because
+                    # llm_gate_assertions was absent/never populated --
+                    # that is the normal, currently-expected state for most
+                    # of production today (the backfill is additive and
+                    # gradual; see backfill_semantic_gate_assertions.py's
+                    # own "old rows simply leave it blank" design). Escalating
+                    # on absence too would force nearly every existing
+                    # candidate into EXPERT_REVIEW_REQUIRED before that
+                    # backfill finishes covering the live table -- a much
+                    # larger platform behavior change than this fix is
+                    # scoped for.
+                    if _semantic_gate_had_invalid_payload and eligibility_decision.status in (
+                        _EligibilityStatus.ELIGIBLE,
+                        _EligibilityStatus.ELIGIBLE_WITH_RESTRICTIONS,
+                    ):
+                        eligibility_decision = _dataclass_replace(
+                            eligibility_decision,
+                            status=_EligibilityStatus.EXPERT_REVIEW_REQUIRED,
+                            hard_no_go=False,
+                            gate_type="semantic_gate_failure",
+                            requires_expert_review=True,
+                            eligible_for_normal_ranking=False,
+                            score_validity=_ScoreValidity.PRELIMINARY,
+                            gate_reason=(
+                                (eligibility_decision.gate_reason + " " if eligibility_decision.gate_reason else "")
+                                + "Semantic safety/regulatory assessment failed to parse for at least one "
+                                "contributing evidence record; deterministic-only coverage cannot be "
+                                "treated as sufficient for a high-stakes decision."
+                            ),
+                        )
+
                     scientific_evidence_resolution = resolve_scientific_evidence(
                         evidence_contributing_records,
                         allow_legacy_text_fallback=self.allow_legacy_text_fallback,
@@ -2485,15 +2601,38 @@ class BotanicalRDCandidateEngine:
                 text = str(novelty_status)
                 return "Common" in text or "non-specific" in text
 
-            informative = group[~group["Novelty_Status"].map(_is_common_match)]
-            tightest_pool = informative if not informative.empty else group
+            # Root-cause fix (2026-08-11, external audit + independently
+            # reproduced with the real function: a GO row (score 85) +
+            # a NO_GO_REGULATORY row (score 20, Novelty_Status flagged
+            # "Common") merged into "Strong R&D candidate" at score 95 --
+            # the regulatory hard-stop vanished entirely).
+            #
+            # The "common/non-specific" filter below exists to stop a
+            # WEAK SCIENTIFIC signal (a trace/ubiquitous compound match)
+            # from vetoing a strong candidate's confidence tier -- that
+            # reasoning has nothing to do with hard-stop safety/regulatory
+            # rows. A compound being common or trace-level never makes a
+            # genuine safety concern or regulatory prohibition on THAT
+            # row any less real; those are absolute gates, not confidence
+            # signals. So a hard-stop row must always win regardless of
+            # novelty, checked here UNCONDITIONALLY against the full,
+            # unfiltered group -- before informative-only filtering ever
+            # gets a chance to exclude it.
+            hard_stop_rows = [
+                str(d) for d in group["Decision_Class"] if str(d) in HARD_STOP_DECISION_CLASSES
+            ]
+            if hard_stop_rows:
+                new_decision = min(hard_stop_rows, key=_rank)
+            else:
+                informative = group[~group["Novelty_Status"].map(_is_common_match)]
+                tightest_pool = informative if not informative.empty else group
 
-            tightest = min(
-                (str(d) for d in tightest_pool["Decision_Class"]),
-                key=_rank,
-            )
-            if _rank(new_decision) > _rank(tightest):
-                new_decision = tightest
+                tightest = min(
+                    (str(d) for d in tightest_pool["Decision_Class"]),
+                    key=_rank,
+                )
+                if _rank(new_decision) > _rank(tightest):
+                    new_decision = tightest
 
             # Preserve scientific abstention states across compound merging.
             # These states were derived from record-level evidence and must not

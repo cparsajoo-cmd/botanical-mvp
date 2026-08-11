@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import re
 from typing import Callable, Iterable, Mapping
 
 from canonical_scientific_assertion import resolve_record_direction
@@ -88,6 +89,63 @@ def _norm_source_type(rec: Mapping) -> str:
     if "observational" in signal or "cohort" in signal:
         return "OBSERVATIONAL"
     return source
+
+
+def _ema_use_basis(rec: Mapping, source_type: str) -> str:
+    """Return EMA herbal-evidence basis: traditional, well_established, unknown.
+
+    Traditional-use recognition supports plausible efficacy from long-standing
+    use but is not equivalent to the evidence standard behind well-established
+    use.  Prefer explicit structured/status wording when present; fall back to
+    narrow status phrases in the source text.  Generic pages that merely list
+    both headings stay unknown rather than being guessed.
+    """
+    if source_type != "EMA_HMPC":
+        return "unknown"
+
+    fields = " ".join(
+        str(rec.get(k) or "")
+        for k in (
+            "ema_hmpc_status", "ema_status", "market_status",
+            "regulatory_basis", "evidence_quality", "study_design",
+            "assertion_text", "text",
+        )
+    )
+    n = " ".join(fields.lower().replace("–", "-").split())
+
+    # Strong status statements.  These intentionally require contextual words
+    # such as classify/status/registration rather than matching a page header.
+    traditional_patterns = (
+        r"\bclassif(?:y|ies|ied)\b.{0,80}\btraditional[- ]use\b",
+        r"\btraditional[- ]use\s+(?:status|registration|indication|monograph)\b",
+        r"\btraditional use:\s*",
+        # Formal EMA/HMPC wording often uses the legal category name rather
+        # than the hyphenated phrase "traditional-use".  Treat that wording
+        # as an explicit status statement, not as a generic page-header hit.
+        r"\btraditional herbal medicinal products?\b",
+        r"\bunder\s+(?:the\s+)?traditional[- ]use\b",
+        r"\baccepted\b.{0,120}\blong[- ]standing use\b",
+        r"\bplausible efficacy\b.{0,120}\blong[- ]standing use\b",
+    )
+    well_established_patterns = (
+        r"\bclassif(?:y|ies|ied)\b.{0,80}\bwell[- ]established use\b",
+        r"\bwell[- ]established[- ]use\s+(?:status|indication|monograph)\b",
+        r"\bwell[- ]established use:\s*",
+    )
+
+    has_tu = any(re.search(p, n) for p in traditional_patterns)
+    has_weu = any(re.search(p, n) for p in well_established_patterns)
+    if has_tu and not has_weu:
+        return "traditional"
+    if has_weu and not has_tu:
+        return "well_established"
+    if has_tu and has_weu:
+        # Explicit contrast such as "traditional use ... rather than the
+        # well-established-use evidence standard" is still traditional use.
+        if re.search(r"\btraditional[- ]use\b.{0,180}\brather than\b.{0,100}\bwell[- ]established", n):
+            return "traditional"
+        return "unknown"
+    return "unknown"
 
 
 def _year(rec: Mapping) -> int | None:
@@ -196,6 +254,7 @@ def assess_evidence_body(
             "domains": assessed,
             "methodological": meth,
             "directness": directness,
+            "ema_use_basis": _ema_use_basis(rec, stype),
         })
 
     recognized = [r for r in rows if r["rank"] is not None]
@@ -300,6 +359,16 @@ def assess_evidence_body(
     if coverage < 0.50 and certainty in {BodyCertainty.HIGH, BodyCertainty.MODERATE}:
         certainty = BodyCertainty.LOW
 
+    # EMA traditional-use recognition is scientifically useful but should not
+    # be promoted to the same autonomous-GO certainty as well-established use.
+    # When the governing EMA evidence is exclusively traditional-use based,
+    # cap body certainty at MODERATE.  Independent higher-ranked synthesis can
+    # still govern normally because only the best-ranked tier is considered.
+    governing_ema_bases = {r["ema_use_basis"] for r in top if r["source_type"] == "EMA_HMPC"}
+    traditional_use_cap = bool(governing_ema_bases) and governing_ema_bases <= {"traditional"}
+    if traditional_use_cap and certainty == BodyCertainty.HIGH:
+        certainty = BodyCertainty.MODERATE
+
     reason = (
         f"Governing tier={best_rank}; governing sources={len(top)}; "
         f"directions={sorted(dirs)}; material limitations={limitation_count}; "
@@ -307,7 +376,8 @@ def assess_evidence_body(
         f"methodological concerns={list(methodological)}; directness concerns={list(directness)}; "
         f"explicit top-tier conflict={explicit_top_conflict}; "
         f"structured mixed direction={structured_mixed_direction}; "
-        f"newer contradiction={newer_contradiction}; body certainty={certainty.value}."
+        f"newer contradiction={newer_contradiction}; "
+        f"EMA traditional-use certainty cap={traditional_use_cap}; body certainty={certainty.value}."
     )
     return EvidenceBodyAssessment(
         direction=direction,

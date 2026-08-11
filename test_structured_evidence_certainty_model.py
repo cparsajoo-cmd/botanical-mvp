@@ -1,3 +1,4 @@
+import pytest
 
 from final_decision_policy import (
     EvidenceLimitationTier,
@@ -119,3 +120,61 @@ def test_eligibility_restriction_remains_caution_even_without_efficacy_resolutio
     elig=evaluate_eligibility(safety, regulatory)
     sci=ScientificEvidenceResolution(ScientificEvidenceSignal.UNRESOLVED,"No efficacy synthesis.")
     assert decide_final(elig,sci).status == FinalDecisionStatus.GO_WITH_CAUTION
+
+
+def test_ema_traditional_use_positive_support_is_caution_not_unconditional_go():
+    records=[{
+        "source_type":"EMA_HMPC",
+        "study_design":"regulatory monograph",
+        "assertion_text":(
+            "EMA HMPC classifies this indication as traditional use: accepted "
+            "on the basis of sufficient safety data and plausible efficacy from "
+            "long-standing use rather than the well-established-use evidence standard."
+        ),
+        "source_result_direction":"Positive",
+        "primary_outcome":"target symptom",
+        "comparator":"not applicable",
+        "risk_of_bias":"not applicable",
+        "applicability_classification":"applicable",
+        "source_year":2020,
+    }]
+    r=resolve_scientific_evidence(records)
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
+    assert decide_final(_eligible(), r).status == FinalDecisionStatus.GO_WITH_CAUTION
+
+
+def test_ema_well_established_use_is_not_downgraded_as_traditional_use():
+    records=[{
+        "source_type":"EMA_HMPC",
+        "study_design":"regulatory monograph",
+        "assertion_text":"EMA HMPC classifies this indication as well-established use based on sufficient efficacy and safety data.",
+        "source_result_direction":"Positive",
+        "primary_outcome":"target symptom",
+        "comparator":"not applicable",
+        "risk_of_bias":"not applicable",
+        "applicability_classification":"applicable",
+        "source_year":2020,
+    }]
+    r=resolve_scientific_evidence(records)
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE
+
+@pytest.mark.parametrize("wording", [
+    "EMA HMPC describes this indication as a traditional herbal medicinal product based on long-standing use.",
+    "EMA HMPC supports this indication under traditional use based on long-standing medicinal use.",
+    "These oral preparations are traditional herbal medicinal products for relief of the target symptom.",
+])
+def test_ema_formal_traditional_use_wording_is_capped_at_caution(wording):
+    records=[{
+        "source_type":"EMA_HMPC",
+        "study_design":"regulatory monograph",
+        "assertion_text":wording,
+        "source_result_direction":"Positive",
+        "primary_outcome":"target symptom",
+        "comparator":"not applicable",
+        "risk_of_bias":"not applicable",
+        "applicability_classification":"applicable",
+        "source_year":2025,
+    }]
+    r=resolve_scientific_evidence(records)
+    assert r.signal == ScientificEvidenceSignal.SUPPORTIVE_WITH_CAUTION
+    assert decide_final(_eligible(), r).status == FinalDecisionStatus.GO_WITH_CAUTION

@@ -42,3 +42,15 @@ def test_possible_benefit_but_evidence_uncertain_is_insufficient():
 def test_uncertainty_language_does_not_turn_negative_into_caution():
     r = resolve_scientific_evidence([_rec("No clinically meaningful benefit was demonstrated; further studies are needed.")])
     assert r.signal is ScientificEvidenceSignal.INSUFFICIENT
+
+
+def test_inconclusive_review_is_insufficient_not_conflict():
+    r = resolve_scientific_evidence([{
+        "source_type":"SYSTEMATIC_REVIEW",
+        "study_design":"systematic review",
+        "assertion_text":"Clinical efficacy remains inconclusive because of methodological shortcomings in the available trials.",
+        "source_result_direction":"Unclear",
+        "source_year":2018,
+    }])
+    assert r.signal in {ScientificEvidenceSignal.UNRESOLVED, ScientificEvidenceSignal.INSUFFICIENT}
+    assert r.signal != ScientificEvidenceSignal.CONFLICT

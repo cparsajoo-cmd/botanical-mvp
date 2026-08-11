@@ -460,10 +460,30 @@ def classify_safety_finding(
 
     if confirmed_context_relevance is not None:
         relevance = confirmed_context_relevance
-    elif serious_assertions and scope == FindingScope.SPECIES_WIDE:
-        relevance = ContextRelevance.RELEVANT
     else:
-        relevance = ContextRelevance.UNKNOWN
+        # Semantic safety extraction already carries an explicit
+        # context_applicability field.  Preserve that structured judgment
+        # instead of discarding it when a serious finding is route-, dose-,
+        # preparation-, or population-specific.  A single explicitly relevant
+        # serious assertion is enough to establish candidate relevance; an
+        # explicitly irrelevant result clears the candidate only when there is
+        # no competing relevant/unknown serious assertion.  Unknown remains
+        # fail-closed to expert review.
+        _serious_applicability = tuple(
+            str(getattr(a, "applicability", "") or "").strip().lower()
+            for a in serious_assertions
+        )
+        if "relevant" in _serious_applicability:
+            relevance = ContextRelevance.RELEVANT
+        elif (
+            _serious_applicability
+            and all(x == "irrelevant" for x in _serious_applicability)
+        ):
+            relevance = ContextRelevance.IRRELEVANT
+        elif serious_assertions and scope == FindingScope.SPECIES_WIDE:
+            relevance = ContextRelevance.RELEVANT
+        else:
+            relevance = ContextRelevance.UNKNOWN
 
     same_plant_note = "Reference plant matched to itself; " if same_plant else ""
     if serious_assertions:

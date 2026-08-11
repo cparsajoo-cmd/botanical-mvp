@@ -1,0 +1,259 @@
+{
+  "benchmark_id": "independent_raw_extraction_holdout_v1_20260812",
+  "cases": [
+    {
+      "id": "blind2_001_allium_bp",
+      "botanical": "Allium cepa",
+      "indication": "Reduction of elevated blood pressure in adults",
+      "title": "Onion supplementation and health metabolic parameters: systematic review and meta-analysis of randomized controlled trials",
+      "text": "Systematic review and meta-analysis of randomized controlled trials found onion supplementation improved blood-pressure outcomes in adults.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_002_apium_bp",
+      "botanical": "Apium graveolens",
+      "indication": "Reduction of systolic and diastolic blood pressure in adults",
+      "title": "Effects of celery (Apium graveolens) on blood pressure, glycemic and lipid profile in adults",
+      "text": "Systematic review and meta-analysis of 10 randomized trials in 511 participants reported significant improvement in systolic and diastolic blood pressure.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_003_anethum_ldl",
+      "botanical": "Anethum graveolens",
+      "indication": "Reduction of LDL cholesterol and insulin resistance in adults",
+      "title": "Effects of Anethum graveolens supplementation on lipid profile and glycemic control",
+      "text": "Meta-analysis of seven randomized trials found significant decreases in LDL cholesterol, serum insulin and HOMA-IR; other lipid and glucose outcomes were not uniformly changed.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive",
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_004_achillea_traditional",
+      "botanical": "Achillea millefolium",
+      "indication": "Temporary loss of appetite and mild digestive complaints",
+      "title": "Assessment report on Achillea millefolium L., herba – revision 1",
+      "text": "EMA HMPC describes this as a traditional herbal medicinal product for temporary loss of appetite and mild digestive complaints, supported by long-standing use.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_005_commiphora_traditional",
+      "botanical": "Commiphora molmol",
+      "indication": "Minor mouth ulcers and inflammation of the mouth",
+      "title": "Community herbal monograph on Commiphora molmol, gummi-resina",
+      "text": "EMA HMPC describes myrrh for minor mouth ulcers and oral inflammation as a traditional herbal medicinal product based on long-standing use.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_006_centaurium_traditional",
+      "botanical": "Centaurium erythraea",
+      "indication": "Mild indigestion and temporary loss of appetite",
+      "title": "Centaurii herba – European herbal monograph/assessment",
+      "text": "EMA HMPC supports centaury for mild indigestion and temporary loss of appetite under traditional use based on long-standing medicinal use.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_007_plantago_traditional",
+      "botanical": "Plantago lanceolata",
+      "indication": "Relief of cough associated with a cold",
+      "title": "Assessment report on Plantago lanceolata L., folium – revision 1",
+      "text": "EMA HMPC describes oral Plantago lanceolata leaf preparations for relief of cough associated with a cold as traditional herbal medicinal products.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_008_bergamot_lipids",
+      "botanical": "Citrus bergamia",
+      "indication": "Reduction of elevated cholesterol and LDL cholesterol",
+      "title": "Effect of bergamot on lipid profile in humans: a systematic review",
+      "text": "Systematic review found that most included clinical studies reported reductions in total cholesterol and LDL cholesterol, but preparations and study designs varied.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive"
+      ]
+    },
+    {
+      "id": "blind2_009_rosa_anxiety",
+      "botanical": "Rosa damascena",
+      "indication": "Reduction of anxiety symptoms in adults",
+      "title": "Rosa damascena Mill for treating adults anxiety, depression and stress: systematic review and meta-analysis",
+      "text": "Systematic review and meta-analysis found a beneficial pooled effect on state anxiety, while certainty across outcomes ranged from very low to moderate and stronger trials were recommended.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Positive",
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_010_carica_dengue",
+      "botanical": "Carica papaya",
+      "indication": "Clinical treatment of dengue infection",
+      "title": "Carica papaya extract in dengue: a systematic review and meta-analysis",
+      "text": "Systematic review concluded that current evidence is insufficient to determine the clinical role of Carica papaya extract in dengue and called for better-designed trials.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Unknown",
+        "Neutral"
+      ]
+    },
+    {
+      "id": "blind2_011_irvingia_weight",
+      "botanical": "Irvingia gabonensis",
+      "indication": "Clinically reliable weight loss in overweight adults",
+      "title": "Effects of Irvingia gabonensis seed extract supplementation on anthropometric and cardiovascular outcomes",
+      "text": "Five-trial systematic review found pooled weight-loss signals, but four trials had high risk of bias and the only low-risk trial did not show significant outcomes; overall efficacy was limited by poor methodological quality.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Mixed",
+        "Unknown",
+        "Neutral"
+      ]
+    },
+    {
+      "id": "blind2_012_myristica_neuropathy",
+      "botanical": "Myristica fragrans",
+      "indication": "Relief of painful diabetic neuropathy with topical nutmeg extract",
+      "title": "Nutmeg Extracts for Painful Diabetic Neuropathy: a randomized double-blind controlled study",
+      "text": "Randomized double-blind controlled trial found improvements within both groups but no statistically significant between-group difference for pain outcomes after four weeks; further component-specific research was recommended.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Neutral",
+        "Negative"
+      ]
+    },
+    {
+      "id": "blind2_013_tanacetum_migraine",
+      "botanical": "Tanacetum parthenium",
+      "indication": "Prevention of migraine attacks",
+      "title": "Feverfew for preventing migraine",
+      "text": "Systematic review of feverfew trials reported mixed findings and did not convincingly establish efficacy for migraine prevention across the evidence body.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_014_eletta_lipids",
+      "botanical": "Elettaria cardamomum",
+      "indication": "Improvement of lipid profile in adults",
+      "title": "Effects of cardamom supplementation on lipid profile: systematic review and meta-analysis",
+      "text": "Clinical studies of cardamom and lipid outcomes reported contradictory results, leaving the body of evidence mixed rather than uniformly supportive.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_015_sesamum_glycemic",
+      "botanical": "Sesamum indicum",
+      "indication": "Improvement of glycemic control in type 2 diabetes",
+      "title": "Effect of sesame consumption on glycemic control in patients with type 2 diabetes",
+      "text": "The systematic review identifies conflicting evidence on the effects of sesame consumption on glucose metabolism in patients with type 2 diabetes.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_016_rhus_cardiometabolic",
+      "botanical": "Rhus coriaria",
+      "indication": "Improvement of cardiovascular risk factors in adults",
+      "title": "Effect of sumac (Rhus coriaria) on cardiovascular risk factors in adults",
+      "text": "Systematic review/meta-analysis notes that clinical findings on sumac and cardiovascular risk factors are controversial across trials.",
+      "gate_expect": "none",
+      "direction_accept": [
+        "Mixed"
+      ]
+    },
+    {
+      "id": "blind2_017_nerium_safety",
+      "botanical": "Nerium oleander",
+      "indication": "Oral use of Nerium oleander preparations",
+      "title": "Human deaths related to oleander poisoning: a review",
+      "text": "Human oleander poisoning can cause severe cardiac arrhythmias and sudden cardiac death.",
+      "gate_expect": "serious_safety",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_018_taxus_safety",
+      "botanical": "Taxus baccata",
+      "indication": "Oral ingestion of Taxus baccata material",
+      "title": "Serious plant poisonings in Switzerland: case analysis from the Swiss Toxicological Information Center",
+      "text": "Severe human Taxus baccata poisoning included tachyarrhythmia and fatal asystole.",
+      "gate_expect": "serious_safety",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_019_oenanthe_safety",
+      "botanical": "Oenanthe crocata",
+      "indication": "Oral ingestion of Oenanthe crocata material",
+      "title": "Serious plant poisonings in Switzerland: case analysis from the Swiss Toxicological Information Center",
+      "text": "Severe human Oenanthe crocata poisoning included convulsions and a lethal coma.",
+      "gate_expect": "serious_safety",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_020_veratrum_safety",
+      "botanical": "Veratrum album",
+      "indication": "Oral ingestion of Veratrum album material",
+      "title": "Serious plant poisonings in Switzerland: case analysis from the Swiss Toxicological Information Center",
+      "text": "Severe human Veratrum album poisoning included marked bradycardia and shock requiring medical care.",
+      "gate_expect": "serious_safety",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_021_inonotus_reg",
+      "botanical": "Inonotus obliquus",
+      "indication": "EU novel-food market access for chaga mushroom",
+      "title": "Commission Implementing Decision of 25 March 2022",
+      "text": "The European Commission terminated the procedure for authorising the placing on the market of chaga mushroom (Inonotus obliquus) without updating the Union list of novel foods.",
+      "gate_expect": "regulatory_block",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_022_coriolus_reg",
+      "botanical": "Coriolus versicolor",
+      "indication": "EU novel-food market access for Coriolus versicolor",
+      "title": "Commission Implementing Decision of 6 December 2021",
+      "text": "The European Commission terminated the procedure for authorising the placing on the market of Coriolus versicolor without updating the Union list of novel foods.",
+      "gate_expect": "regulatory_block",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_023_laminaria_reg",
+      "botanical": "Laminaria digitata",
+      "indication": "EU novel-food market access for Laminaria digitata ash",
+      "title": "Commission Implementing Decision of 20 February 2026",
+      "text": "The European Commission terminated the procedure for authorising the placing on the market of Laminaria digitata ash without updating the Union list of novel foods.",
+      "gate_expect": "regulatory_block",
+      "direction_accept": null
+    },
+    {
+      "id": "blind2_024_lycium_reg",
+      "botanical": "Lycium chinense",
+      "indication": "EU market access for Lycium chinense leaves as traditional food from a third country",
+      "title": "Commission Implementing Decision of 30 June 2026",
+      "text": "The European Commission terminated the procedure for authorising the placing on the market of Lycium chinense Mill. (Goji) leaves as a traditional food from a third country without updating the Union list of novel foods.",
+      "gate_expect": "regulatory_block",
+      "direction_accept": null
+    }
+  ]
+}

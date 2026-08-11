@@ -242,10 +242,9 @@ def _explicit_conflict_language(text: str) -> bool:
         "conflicting results",
         "results are conflicting",
         "findings are conflicting",
-        "not definitive",
-        "not conclusive",
-        "remains inconclusive",
-        "evidence remains inconclusive",
+        # Inconclusive / non-definitive language expresses insufficient
+        # certainty, not necessarily opposing evidence.  It is handled by the
+        # direction/limitation path and must not manufacture a conflict.
         "controversial evidence",
     )
     return any(phrase in n for phrase in phrases)

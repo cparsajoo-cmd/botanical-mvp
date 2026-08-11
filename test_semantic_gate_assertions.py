@@ -253,3 +253,39 @@ def test_uncertainty_statement_is_not_a_supported_serious_hazard():
     )
     assert a is not None
     assert a.severity.value != "SERIOUS"
+
+
+def test_semantic_relevant_serious_route_specific_hazard_hard_stops():
+    text = "Oral exposure caused life-threatening poisoning requiring hospitalization."
+    payload = _safety_payload(text, seriousness_criterion="life_threatening")
+    payload["route"] = "oral"
+    payload["affected_population"] = ["general"]
+    payload["context_applicability"] = "relevant"
+    a = safety_assertion_from_semantic(payload, source_text=text)
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), flagged_terms=frozenset(),
+        has_evidence_text=True, same_plant=True, assertions=(a,),
+    )
+    regulatory = classify_regulatory_finding(
+        barrier_types=frozenset(), has_evidence_text=True, same_plant=True,
+    )
+    decision = evaluate_eligibility(safety, regulatory)
+    assert safety.context_relevance.value == "relevant"
+    assert decision.status == EligibilityStatus.NO_GO_SAFETY
+
+
+def test_semantic_unknown_serious_route_specific_hazard_still_requires_review():
+    text = "Oral exposure caused life-threatening poisoning requiring hospitalization."
+    payload = _safety_payload(text, seriousness_criterion="life_threatening")
+    payload["route"] = "oral"
+    payload["context_applicability"] = "unknown"
+    a = safety_assertion_from_semantic(payload, source_text=text)
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), flagged_terms=frozenset(),
+        has_evidence_text=True, same_plant=True, assertions=(a,),
+    )
+    regulatory = classify_regulatory_finding(
+        barrier_types=frozenset(), has_evidence_text=True, same_plant=True,
+    )
+    decision = evaluate_eligibility(safety, regulatory)
+    assert decision.status == EligibilityStatus.EXPERT_REVIEW_REQUIRED

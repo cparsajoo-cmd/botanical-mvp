@@ -77,6 +77,8 @@ module's core ``evaluate_eligibility()`` decision table.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, FrozenSet, Optional, Tuple
@@ -300,6 +302,15 @@ class EligibilityDecision:
 # scope/relevance policy defaults live — see the module docstring.
 # ======================================================================
 
+# Word-boundary dose-keyword matcher (2026-08-11 fix): plain substring
+# matching on "dose" incorrectly matched inside "overdose"/"underdosed"/
+# etc, spuriously narrowing scope for evidence text like "overdose can
+# result in seizures, coma, and death" that documents a species-wide risk
+# with no actual dose threshold specified. \b ensures only the standalone
+# words match.
+_DOSE_TOKEN_RE = re.compile(r"\b(dose|doses|dosage|threshold)\b", re.IGNORECASE)
+
+
 def classify_safety_finding(
     *,
     hit_terms: FrozenSet[str],
@@ -416,23 +427,27 @@ def classify_safety_finding(
         # assertion, not just the first one in list order. A real
         # species-wide risk documented by one assertion is not erased by
         # another assertion's unrelated population/dose detail.
+        #
+        # Second bug found the same way (2026-08-11, same v3 rerun):
+        # rgv3_014_kratom_pain alone still failed after the fix above,
+        # because its evidence text says "overdose of kratom can result
+        # in seizures, coma, and death" -- and the dose-keyword check
+        # below used plain substring matching, so "dose" matched inside
+        # "overdose" and spuriously narrowed scope to DOSE_SPECIFIC even
+        # though nothing in the text specifies an actual dose threshold.
+        # Fixed with a word-boundary regex so "overdose"/"underdosed"/etc.
+        # can never match a standalone "dose"/"doses"/"dosage"/"threshold".
         if any(
             not a.affected_population
             and not (a.dose_dependency and a.dose_dependency != "unknown")
-            and not any(
-                token in str(a.source_sentence or "").lower()
-                for token in ("dose", "doses", "dosage", "threshold")
-            )
+            and not _DOSE_TOKEN_RE.search(str(a.source_sentence or ""))
             and not (a.preparation or a.route)
             for a in serious_assertions
         ):
             scope = FindingScope.SPECIES_WIDE
         elif any(
             (a.dose_dependency and a.dose_dependency != "unknown")
-            or any(
-                token in str(a.source_sentence or "").lower()
-                for token in ("dose", "doses", "dosage", "threshold")
-            )
+            or _DOSE_TOKEN_RE.search(str(a.source_sentence or ""))
             for a in serious_assertions
         ):
             scope = FindingScope.DOSE_SPECIFIC

@@ -325,3 +325,37 @@ def test_all_assertions_population_qualified_stays_population_specific():
     reg = classify_regulatory_finding(barrier_types=frozenset(), has_evidence_text=False, same_plant=True)
     decision = evaluate_eligibility(safety, reg)
     assert decision.status != EligibilityStatus.NO_GO_SAFETY
+
+
+# ---------------------------------------------------------------------
+# Second root-cause regression, found in the SAME v3 rerun after the fix
+# above (2026-08-11): rgv3_014_kratom_pain alone still failed. Its real
+# evidence text says "...states that overdose of kratom can result in
+# seizures, coma, and death" -- the dose-keyword check used plain
+# substring matching, so "dose" matched inside "overdose" and spuriously
+# narrowed scope to DOSE_SPECIFIC even though no actual dose threshold is
+# specified anywhere in the text. Fixed with a word-boundary regex.
+# ---------------------------------------------------------------------
+def test_overdose_in_source_sentence_does_not_spuriously_match_the_dose_keyword():
+    assertion = _serious_assertion(
+        source_sentence="states that overdose of kratom can result in seizures, coma, and death",
+    )
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), has_evidence_text=True, same_plant=True, assertions=(assertion,),
+    )
+    assert safety.scope == FindingScope.SPECIES_WIDE
+    reg = classify_regulatory_finding(barrier_types=frozenset(), has_evidence_text=False, same_plant=True)
+    decision = evaluate_eligibility(safety, reg)
+    assert decision.status == EligibilityStatus.NO_GO_SAFETY
+
+
+def test_a_genuine_standalone_dose_word_still_narrows_scope():
+    """Non-regression: an actual dose-threshold mention must still narrow
+    scope -- only the "overdose"-style false match was the bug."""
+    assertion = _serious_assertion(
+        source_sentence="serious toxicity was observed only above a dose of 500 mg per day",
+    )
+    safety = classify_safety_finding(
+        hit_terms=frozenset(), has_evidence_text=True, same_plant=True, assertions=(assertion,),
+    )
+    assert safety.scope == FindingScope.DOSE_SPECIFIC

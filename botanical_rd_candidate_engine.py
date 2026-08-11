@@ -84,6 +84,7 @@ from safety_assertion_engine import (
 from assertion_vocabulary import SeverityLevel as _SeverityLevel
 from semantic_gate_assertions import (
     parse_semantic_gate_payload as _parse_semantic_gate_payload,
+    MarketAccessEffect,
 )
 from canonical_scientific_assertion import (
     normalize_safety_signal as _normalize_canonical_safety_signal,
@@ -2153,7 +2154,38 @@ class BotanicalRDCandidateEngine:
                             "Negative_Evidence_Types": "; ".join(negative_evidence.finding_types),
                             "Market_Status": market_status,
                             "Regulatory_Recognition_Status": regulatory_recognition_status,
-                            "Regulatory_Barriers": "; ".join(regulatory_barrier_result.barrier_types) if regulatory_barrier_result.has_barrier else "None identified",
+                            "Regulatory_Barriers": (
+                                # Root-cause fix (2026-08-11): this used to read
+                                # ONLY regulatory_barrier_result.barrier_types --
+                                # the deterministic-only classifier's raw output --
+                                # so a semantic (LLM) assertion could correctly
+                                # drive Decision_Class to a regulatory prohibition
+                                # while this audit/display column still misleadingly
+                                # showed "None identified", since
+                                # classify_regulatory_finding()'s own
+                                # barrier_types|{"Semantic market-access block"}
+                                # union was never read back out. Now includes it
+                                # whenever a semantic assertion contributed to
+                                # _regulatory_finding, so the displayed rationale
+                                # matches what the decision was actually based on.
+                                "; ".join(sorted(
+                                    set(regulatory_barrier_result.barrier_types)
+                                    | (
+                                        {"Semantic market-access block"}
+                                        if any(
+                                            getattr(a, "market_access_effect", None)
+                                            == MarketAccessEffect.BLOCKS_MARKET_ACCESS
+                                            for a in getattr(_regulatory_finding, "semantic_assertions", ())
+                                        )
+                                        else set()
+                                    )
+                                ))
+                                if (
+                                    regulatory_barrier_result.has_barrier
+                                    or getattr(_regulatory_finding, "semantic_assertions", ())
+                                )
+                                else "None identified"
+                            ),
                             "Novelty_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
                             "Score_Breakdown": self._format_score_breakdown(score_components),
@@ -3681,9 +3713,13 @@ class BotanicalRDCandidateEngine:
                 "llm_safety_signal": self._pick(row, ["LLM_Safety_Signal", "llm_safety_signal"]) or "",
                 # Optional JSON payload produced by extract_gate_assertions_with_llm().
                 # It is additive/backward-compatible: old rows simply leave it blank.
-                "llm_gate_assertions": self._pick(
+                # Uses _pick_raw (not _pick) -- see the 2026-08-11 fix note on
+                # _pick_raw for why: this field is a JSON object, and _pick's
+                # str(value) stringification silently corrupted every real
+                # payload into invalid JSON before this fix.
+                "llm_gate_assertions": self._pick_raw(
                     row, ["LLM_Gate_Assertions", "llm_gate_assertions", "Semantic_Gate_Assertions"]
-                ) or "",
+                ),
                 "regulatory_status": self._pick(row, ["Regulatory_Status", "regulatory_status"]) or "",
                 "novel_food_status": self._pick(row, ["Novel_Food_Status", "novel_food_status"]) or "",
                 "regulatory_evidence": self._pick(row, ["Regulatory_Evidence", "regulatory_evidence"]) or "",
@@ -6272,6 +6308,38 @@ class BotanicalRDCandidateEngine:
                 return str(value).strip()
 
         return ""
+
+    @staticmethod
+    def _pick_raw(row, names):
+        """Root-cause fix (2026-08-11): like _pick(), but returns the value
+        UNCHANGED instead of str(value).strip(). _pick() is correct for the
+        dozens of plain-string fields it was designed for, but
+        llm_gate_assertions is a JSON object (dict from a live Supabase
+        JSONB column, or a dict/JSON-string from injected validation
+        evidence) -- running it through str(value) on a dict produces
+        Python's repr ("{'key': 'val'}", single-quoted), which is not
+        valid JSON. The semantic-gate parser downstream
+        (json.loads(_payload_raw) if isinstance(_payload_raw, str) else
+        _payload_raw) then fails on every real payload and silently
+        records "invalid_semantic_gate_payload" -- meaning the entire
+        semantic gate layer never actually fired, for backfilled
+        production data or injected validation evidence alike, until this
+        fix. Confirmed directly: str({"a": 1}) is not valid JSON,
+        json.loads() raises on it every time.
+        """
+        for name in names:
+            try:
+                value = row.get(name, None)
+            except AttributeError:
+                value = None
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, str) and value.strip().lower() in {"nan", "none", "null"}:
+                continue
+            return value
+        return None
 
     # ------------------------------------------------------------------ #
     # Known inventory: what is already known for this problem, before any

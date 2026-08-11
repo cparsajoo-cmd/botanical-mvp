@@ -1285,6 +1285,99 @@ def test_regulatory_barriers_populated_from_live_evidence_text():
     assert "Regulatory barrier(s) identified" in self_row.iloc[0]["Commercial_Regulatory_Rationale"]
 
 
+# ---------------------------------------------------------------------
+# Root-cause regression (2026-08-11): the semantic gate layer
+# (semantic_gate_assertions.py) never actually fired for ANY row, real
+# Supabase-backfilled or test-injected, because _pick() ran the
+# llm_gate_assertions dict through str(value) before the downstream
+# parser saw it -- producing a Python repr string ("{'a': 1}") instead
+# of valid JSON, which json.loads() always rejects. Found by direct
+# code trace and confirmed with str({"a": 1}) before touching any code.
+# Fixed with a new _pick_raw() that preserves the original dict/string
+# type. This test proves the fix by driving a genuine end-to-end
+# engine.run() with an LLM_Gate_Assertions payload shaped exactly like
+# what extract_gate_assertions_with_llm()/backfill_semantic_gate_
+# assertions.py produce and store, and checking it actually reaches the
+# regulatory decision -- not just that the parser function works in
+# isolation (semantic_gate_assertions.py's own tests already covered
+# that, which is exactly why this gap went unnoticed).
+# ---------------------------------------------------------------------
+def test_semantic_gate_llm_regulatory_assertion_reaches_the_decision():
+    eng.SIMILAR_COMPOUND_GROUPS = {}
+    eng.COMPOUND_TARGETS = {}
+    rows = [
+        dict(scientific_name="SemanticTestPlant", compound_name="ActiveCompound",
+             indication="TestIndication", target="Hepatoprotective",
+             common_name="", plant_part="", extraction_method=""),
+    ]
+    notes = (
+        "A 2025 national authority decision means this ingredient can no "
+        "longer legally reach consumers through retail channels."
+    )
+    # Shaped exactly like _persisted_gate_payload()/backfill_semantic_gate_
+    # assertions.py's _persisted_payload(): a real dict, not a JSON string --
+    # this is what a live Supabase JSONB read-back or a fresh LLM call both
+    # actually hand the engine. Deliberately worded to avoid every phrase in
+    # regulatory_barrier_classifier.py's deterministic lists ("prohibit",
+    # "ban", "novel food", "restricted", "not permitted", etc.) so a
+    # positive result here can ONLY come from the semantic assertion, not a
+    # coincidental deterministic match.
+    llm_gate_assertions = {
+        "schema_version": "gate-assertions/1.0.0",
+        "processed_at": "2026-08-11T00:00:00+00:00",
+        "safety_assertions": [],
+        "regulatory_assertions": [{
+            "action": "prohibited",
+            "market_access_effect": "blocks_market_access",
+            "jurisdiction": "national",
+            "product_category": "food supplement",
+            "context_applicability": "relevant",
+            "supporting_text": (
+                "A 2025 national authority decision means this ingredient "
+                "can no longer legally reach consumers through retail channels."
+            ),
+            "extraction_confidence": 0.95,
+        }],
+    }
+    evidence_df = pd.DataFrame([{
+        "Scientific_Name": "SemanticTestPlant",
+        "Target_Indication": "TestIndication",
+        "Notes": notes,
+        "LLM_Gate_Assertions": llm_gate_assertions,
+    }])
+    engine = make_engine(rows)
+    engine.evidence_df = evidence_df
+    result = engine.run(indication="TestIndication", dosage_form="Infusion", market="EU")
+    self_row = result[
+        (result["Reference_Plant"] == "SemanticTestPlant")
+        & (result["Alternative_Plant"] == "SemanticTestPlant")
+    ]
+    assert not self_row.empty
+    assert "Semantic market-access block" in self_row.iloc[0]["Regulatory_Barriers"]
+
+
+def test_pick_raw_preserves_dict_type_pick_would_have_corrupted():
+    payload = {"schema_version": "v1", "safety_assertions": [], "regulatory_assertions": []}
+    row = {"LLM_Gate_Assertions": payload}
+    picked = eng.BotanicalRDCandidateEngine._pick_raw(row, ["LLM_Gate_Assertions"])
+    assert picked is payload  # unchanged object, not str(payload)
+    import json
+    assert json.dumps(picked)  # still valid JSON-serializable, unlike str(payload)
+
+
+def test_pick_raw_passes_through_json_string_unchanged():
+    row = {"LLM_Gate_Assertions": '{"safety_assertions": [], "regulatory_assertions": []}'}
+    picked = eng.BotanicalRDCandidateEngine._pick_raw(row, ["LLM_Gate_Assertions"])
+    import json
+    assert json.loads(picked) == {"safety_assertions": [], "regulatory_assertions": []}
+
+
+def test_pick_raw_treats_blank_and_null_like_markers_as_absent():
+    for blank in ("", "  ", "nan", "None", "null", None):
+        row = {"LLM_Gate_Assertions": blank}
+        assert eng.BotanicalRDCandidateEngine._pick_raw(row, ["LLM_Gate_Assertions"]) is None
+
+
 def test_regulatory_barriers_survive_the_merge():
     engine = make_engine([], similar_groups={})
 

@@ -37,8 +37,29 @@ integrity rule: if v3's result is weak, report it as weak -- do not add
 vocabulary, change a label, drop a case, tune a threshold, or add a
 special-case rule in response to seeing this output. Any such change
 would require freezing an entirely new holdout first.
+
+SEMANTIC GATE WIRING (2026-08-11): the semantic-gate layer (LLM-based
+safety/regulatory assertions, semantic_gate_assertions.py) is additive
+and reads ONLY the ``llm_gate_assertions`` field already present on a
+contributing evidence record (see the "New semantic gate layer" comment
+in botanical_rd_candidate_engine.py) -- it never calls the LLM itself
+from inside scoring/eligibility. In production that field is populated by
+backfill_semantic_gate_assertions.py against the live evidence_records
+table. This script's injected snapshot evidence never went through that
+backfill (it isn't in evidence_records at all), so every RGV run before
+this fix silently exercised the deterministic-only path -- the semantic
+gate never fired for a single validation case, regression or blind. Fixed
+here by calling extract_gate_assertions_with_llm() once per evidence
+record (mirroring backfill_semantic_gate_assertions.py's own call and
+payload shape exactly) before building the row, so v1/v2/v3 all now
+exercise the real production decision path, not a silently-narrower one.
+A failed/empty extraction leaves the field unset for that record (same
+"stay retryable, don't fabricate" rule as the backfill script) rather
+than blocking the whole run.
 """
 import argparse
+import sys
+import time
 from pathlib import Path
 import json, pandas as pd
 from dataclasses import asdict
@@ -48,21 +69,90 @@ from final_decision_policy import FinalDecisionStatus, final_status_from_engine_
 from scientific_decision_validation import DecisionComparison
 from decision_benchmark_v1 import compute_metrics
 from scientific_validity_release_gate import ReferenceValidationProtocol, evaluate_reference_grounded_release
+from llm_extractor import extract_gate_assertions_with_llm
+from semantic_gate_assertions import SEMANTIC_GATE_ASSERTION_VERSION
 
 ROOT=Path(__file__).resolve().parent
 BASE=ROOT/"gold_corpus/scientific_validity/final_holdout_v1"
 
+GATE_EXTRACTION_MAX_RETRIES = 2
 
-def to_row(r, indication):
+
+def _utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _persisted_gate_payload(raw):
+    """Same shape backfill_semantic_gate_assertions.py writes to the
+    llm_gate_assertions column, so injected validation evidence looks
+    identical to real backfilled Supabase rows from the engine's point
+    of view."""
     return {
+        "schema_version": SEMANTIC_GATE_ASSERTION_VERSION,
+        "processed_at": _utc_now(),
+        "safety_assertions": list(raw.get("safety_assertions") or []),
+        "regulatory_assertions": list(raw.get("regulatory_assertions") or []),
+    }
+
+
+def _gate_assertions_for(notes, *, target_indication, dosage_form, target_market):
+    """Calls the same LLM extraction the production backfill uses, with
+    the same bounded-retry pattern (MAX_RETRIES=2, 0.75s*(attempt+1)
+    backoff). Returns the persisted-payload dict, or None if extraction
+    failed after retries (the caller leaves llm_gate_assertions unset for
+    that record rather than fabricating a payload)."""
+    if not str(notes or "").strip():
+        return _persisted_gate_payload({"safety_assertions": [], "regulatory_assertions": []})
+
+    record = {
+        "Notes": notes,
+        "Target_Indication": target_indication or "",
+        "Dosage_Form": dosage_form or "",
+        "Target_Market": target_market or "",
+    }
+    candidate_context = " | ".join(
+        v for v in (target_indication, dosage_form, target_market) if str(v or "").strip()
+    )
+
+    last_error = None
+    for attempt in range(GATE_EXTRACTION_MAX_RETRIES + 1):
+        try:
+            raw = extract_gate_assertions_with_llm(record, candidate_context=candidate_context)
+            return _persisted_gate_payload(raw)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt < GATE_EXTRACTION_MAX_RETRIES:
+                time.sleep(0.75 * (attempt + 1))
+    print(
+        f"WARNING: semantic gate extraction failed after "
+        f"{GATE_EXTRACTION_MAX_RETRIES + 1} attempts, leaving "
+        f"llm_gate_assertions unset for this record: {last_error}",
+        file=sys.stderr,
+    )
+    return None
+
+
+def to_row(r, indication, target_market="EU"):
+    dosage_form = "oral"
+    row = {
         "Evidence_Record_ID":r["reference_id"],"Scientific_Name":r["scientific_name"],
-        "Target_Indication":r.get("target_indication") or indication,"Dosage_Form":"oral","Target_Market":"EU",
+        "Target_Indication":r.get("target_indication") or indication,"Dosage_Form":dosage_form,"Target_Market":target_market,
         "Notes":r["notes"],"Source_Type":r.get("source_type",""),"Source_Title":r.get("source_title",""),
         "Source_URL":r.get("source_url",""),"PMID":r.get("pmid",""),"Study_Type":r.get("study_design",""),
         "Evidence_Level":r.get("evidence_quality",""),"Source_Authority":r.get("source_authority",""),
         "Source_Year":r.get("publication_year",""),"Primary_Outcome":r.get("primary_outcome",""),
         "Comparator":r.get("comparator",""),"Risk_of_Bias":r.get("risk_of_bias",""),
     }
+    gate_payload = _gate_assertions_for(
+        r["notes"],
+        target_indication=row["Target_Indication"],
+        dosage_form=dosage_form,
+        target_market=target_market,
+    )
+    if gate_payload is not None:
+        row["LLM_Gate_Assertions"] = gate_payload
+    return row
 
 
 def main():

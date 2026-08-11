@@ -37,7 +37,6 @@ jobs:
       LIMIT: ${{ inputs.limit }}
       CONFIRM_APPLY: ${{ inputs.confirm_apply }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_GATE_MODEL: ${{ secrets.OPENAI_GATE_MODEL }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 

@@ -407,9 +407,18 @@ def run_end_to_end_case(
     if candidates:
         evidence_df = pd.DataFrame([r.to_engine_row(question.indication, question.dosage_form, question.market) for r in unique])
         try:
+            # Isolation fix (2026-08-11): evidence_records_df was never
+            # pinned here, so the engine silently fetched the real, live
+            # production `evidence_records` table instead of an empty
+            # frame regardless of use_live_search's value (that flag gates
+            # live web/API discovery, not this Supabase table load) --
+            # breaking this case's seal even when called with the default
+            # use_live_search=False. See run_final_reference_holdout_v1.py's
+            # 2026-08-11 comment for the full mechanism.
             engine = BotanicalRDCandidateEngine(
                 plant_compounds_df=_build_plant_df(candidates, question.indication),
                 compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
+                evidence_records_df=pd.DataFrame(),
                 evidence_df=evidence_df, use_live_search=use_live_search,
             )
             output = engine.run(indication=question.indication, dosage_form=question.dosage_form, market=question.market)

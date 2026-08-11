@@ -112,9 +112,18 @@ def run_snapshot(case, snapshot: dict):
     candidates = list(snapshot['candidate_pool'])
     records = [RetrievedEvidence(**r) for r in snapshot['records']]
     evidence_df = pd.DataFrame([r.to_engine_row(q.indication, q.dosage_form, q.market) for r in records])
+    # Isolation fix (2026-08-11): evidence_records_df was never pinned here,
+    # so the engine silently fetched the real, live production
+    # `evidence_records` table instead of an empty frame -- breaking this
+    # holdout's seal (see run_final_reference_holdout_v1.py's 2026-08-11
+    # comment for the full mechanism). This is a likely root cause of the
+    # pre-existing test_independent_holdout_e2e.py failures noted in
+    # earlier audits ("expected candidate disappeared during engine
+    # execution") -- to be confirmed by re-running that suite after this fix.
     engine = BotanicalRDCandidateEngine(
         plant_compounds_df=_build_plant_df(candidates, q.indication),
         compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
+        evidence_records_df=pd.DataFrame(),
         evidence_df=evidence_df, use_live_search=False,
         # These exposed frozen snapshots were captured before canonical
         # structured directions were populated.  Preserve them as regression

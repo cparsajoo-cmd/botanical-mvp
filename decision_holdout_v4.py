@@ -15,7 +15,12 @@ def run_case(case):
     snap=json.loads((BASE/'snapshots'/f"{case['case_id']}.json").read_text())
     q=ValidationQuestion(**snap['question']); recs=[RetrievedEvidence(**r) for r in snap['records']]
     ev=pd.DataFrame([r.to_engine_row(q.indication,q.dosage_form,q.market) for r in recs])
-    engine=BotanicalRDCandidateEngine(plant_compounds_df=_build_plant_df(snap['candidate_pool'],q.indication),compound_profiles_df=pd.DataFrame(),scientific_evidence_df=pd.DataFrame(),evidence_df=ev,use_live_search=False)
+    # Isolation fix (2026-08-11): evidence_records_df was never pinned here,
+    # so the engine silently fetched the real, live production
+    # `evidence_records` table instead of an empty frame -- breaking this
+    # holdout's seal (see run_final_reference_holdout_v1.py's 2026-08-11
+    # comment for the full mechanism).
+    engine=BotanicalRDCandidateEngine(plant_compounds_df=_build_plant_df(snap['candidate_pool'],q.indication),compound_profiles_df=pd.DataFrame(),scientific_evidence_df=pd.DataFrame(),evidence_records_df=pd.DataFrame(),evidence_df=ev,use_live_search=False)
     out=engine.run(indication=q.indication,dosage_form=q.dosage_form,market=q.market)
     target=_norm_taxon(case['botanical']); row=out[out['Alternative_Plant'].map(_norm_taxon)==target].iloc[0]
     return final_status_from_engine_row(row),row

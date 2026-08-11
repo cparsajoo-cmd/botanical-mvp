@@ -161,6 +161,7 @@ def execute_gold_case_against_engine(
     compound_name: str = "primary_compound",
     compound_profiles_df: pd.DataFrame = None,
     scientific_evidence_df: pd.DataFrame = None,
+    evidence_records_df: pd.DataFrame = None,
     use_live_search: bool = False,
 ) -> pd.DataFrame:
     """Runs BotanicalRDCandidateEngine.run() for exactly the one taxon
@@ -228,10 +229,21 @@ def execute_gold_case_against_engine(
 
     evidence_df = _evidence_inputs_to_dataframe(evidence or [])
 
+    # Isolation fix (2026-08-11): evidence_records_df was never pinned here
+    # (no parameter existed for it at all), so the engine silently fetched
+    # the real, live production `evidence_records` table instead of an
+    # empty frame -- breaking this gold-case execution's seal even for
+    # callers relying on the use_live_search=False default. See
+    # run_final_reference_holdout_v1.py's 2026-08-11 comment for the full
+    # mechanism. A new evidence_records_df parameter (same None-default,
+    # same override style as compound_profiles_df/scientific_evidence_df)
+    # is added rather than hardcoding empty, so a caller that genuinely
+    # wants real data can still opt in explicitly.
     engine = BotanicalRDCandidateEngine(
         plant_compounds_df=plant_compounds_df,
         compound_profiles_df=compound_profiles_df if compound_profiles_df is not None else pd.DataFrame(),
         scientific_evidence_df=scientific_evidence_df if scientific_evidence_df is not None else pd.DataFrame(),
+        evidence_records_df=evidence_records_df if evidence_records_df is not None else pd.DataFrame(),
         evidence_df=evidence_df,
         use_live_search=use_live_search,
     )
@@ -328,6 +340,7 @@ def execute_gold_case_with_readiness_gate(
     compound_name: str = "primary_compound",
     compound_profiles_df: pd.DataFrame = None,
     scientific_evidence_df: pd.DataFrame = None,
+    evidence_records_df: pd.DataFrame = None,
     use_live_search: bool = False,
 ):
     """Phase 3C — the single orchestration point: assess_execution_
@@ -380,6 +393,7 @@ def execute_gold_case_with_readiness_gate(
         compound_name=compound_name,
         compound_profiles_df=compound_profiles_df,
         scientific_evidence_df=scientific_evidence_df,
+        evidence_records_df=evidence_records_df,
         use_live_search=use_live_search,
     )
     return readiness, result_df

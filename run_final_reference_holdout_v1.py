@@ -250,9 +250,29 @@ def main():
     for c in refs:
         snap=json.loads((BASE/"snapshots"/f"{c['case_id']}.json").read_text())
         ev=pd.DataFrame([to_row(r,c["indication"]) for r in snap["records"]])
+        # Isolation fix (2026-08-11): evidence_records_df was never passed
+        # here, so BotanicalRDCandidateEngine.__init__'s _load_supabase_df()
+        # treated it as "not explicitly provided" and fetched the REAL,
+        # live production `evidence_records` table (~22,570 rows) over the
+        # network instead of using an empty frame. That silently broke the
+        # sealed/self-contained nature of this holdout: _get_reference_plants()
+        # -> _reference_plants_from_supabase() searched that live table for
+        # the case's indication text, and for common indications (e.g.
+        # "constipation", "angina", "weight loss") frequently found real
+        # unrelated plants there, returned them immediately as the
+        # reference set, and never reached the synthetic single-candidate
+        # self-match path. The synthetic candidate's placeholder compound
+        # ("validation_shared_compound") never matches any real reference
+        # plant's compounds, so it silently received zero output rows,
+        # surfacing as actual=None for that case (not a scoring miss -- the
+        # candidate never appeared in the engine's output at all). All four
+        # Supabase-backed frames must be pinned to explicit (here, empty)
+        # DataFrames for this holdout to be genuinely sealed; only
+        # evidence_records_df was missing.
         engine=BotanicalRDCandidateEngine(
             plant_compounds_df=_build_plant_df(snap["candidate_pool"],c["indication"]),
             compound_profiles_df=pd.DataFrame(),scientific_evidence_df=pd.DataFrame(),
+            evidence_records_df=pd.DataFrame(),
             evidence_df=ev,use_live_search=False)
         out=engine.run(indication=c["indication"],dosage_form="oral",market="EU")
         target=_norm_taxon(c["botanical"])

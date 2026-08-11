@@ -24,9 +24,15 @@ def run_case(case):
     # coverage.  It is now regression-only (the labels have been exposed), so
     # opt in explicitly to the legacy per-record text fallback rather than
     # weakening the production engine's fail-safe default.
+    # Isolation fix (2026-08-11): evidence_records_df was never pinned here,
+    # so the engine silently fetched the real, live production
+    # `evidence_records` table instead of an empty frame -- breaking this
+    # holdout's seal (see run_final_reference_holdout_v1.py's 2026-08-11
+    # comment for the full mechanism).
     engine=BotanicalRDCandidateEngine(
         plant_compounds_df=_build_plant_df(snap['candidate_pool'],q.indication),
         compound_profiles_df=pd.DataFrame(), scientific_evidence_df=pd.DataFrame(),
+        evidence_records_df=pd.DataFrame(),
         evidence_df=ev, use_live_search=False, allow_legacy_text_fallback=True,
     )
     out=engine.run(indication=q.indication,dosage_form=q.dosage_form,market=q.market)

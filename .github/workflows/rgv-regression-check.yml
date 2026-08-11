@@ -1,17 +1,27 @@
-name: RGV Regression Check
+name: RGV Validation Run
 
-# Manual only. Reruns one of the two exposed Reference-Grounded Validation
-# case sets (v1 or v2 -- select via the "tag" input) against whatever
-# engine code is on the selected branch. See the 2026-08-10 note in
-# run_final_reference_holdout_v1.py for why v1 and v2 now use separate,
-# versioned label/result filenames (they used to share one filename and
-# v2's run silently destroyed v1's frozen labels).
+# Manual only. Runs one Reference-Grounded Validation case set: v1, v2, or
+# v3 (select via the "tag" input) against whatever engine code is on the
+# selected branch.
 #
-# This is explicitly a REGRESSION check, not a fresh/independent validity
-# estimate -- these 24 cases are exposed (the engine has effectively "seen"
-# them across prior remediation rounds) and must never be reported as an
-# unbiased accuracy number. See run_final_reference_holdout_v1.py and the
-# integrity rule in FINAL_REFERENCE_GROUNDED_VALIDATION_V2_REPORT.md.
+# v1 and v2 are REGRESSION checks, not a fresh/independent validity
+# estimate -- those 24 cases each are exposed (the engine has effectively
+# "seen" them across prior remediation rounds) and must never be reported
+# as an unbiased accuracy number. See run_final_reference_holdout_v1.py
+# and the integrity rule in FINAL_REFERENCE_GROUNDED_VALIDATION_V2_REPORT.md.
+#
+# v3 (added 2026-08-11) is a genuinely independent 20-case BLIND holdout,
+# frozen before this workflow was ever run against it -- see
+# FREEZE_MANIFEST_v3.json. For tag=v3 only, this workflow runs
+# verify_rgv3_freeze.py FIRST and refuses to proceed to the engine run if
+# any frozen file's hash no longer matches the manifest, so a v3 result
+# can never be reported without first proving the holdout wasn't touched
+# after freeze.
+#
+# See the 2026-08-10 note in run_final_reference_holdout_v1.py for why
+# v1/v2/v3 each use separate, versioned label/result filenames (v1 and v2
+# used to share one filename and v2's run silently destroyed v1's frozen
+# labels).
 #
 # Needs real network access to Supabase (the engine loads
 # evidence_records_df / plant_compounds_df / etc. from the live database
@@ -23,12 +33,13 @@ name: RGV Regression Check
   workflow_dispatch:
     inputs:
       tag:
-        description: "Which exposed case set to run as a regression check"
+        description: "Which case set to run: v1/v2 = regression check on exposed cases, v3 = genuine blind holdout"
         required: true
         type: choice
         options:
           - v1
           - v2
+          - v3
         default: v2
 
 permissions:
@@ -74,7 +85,16 @@ jobs:
             exit 1
           fi
 
-      - name: Run RGV regression (selected case set)
+      - name: Verify v3 freeze integrity (tag=v3 only)
+        if: ${{ inputs.tag == 'v3' }}
+        run: |
+          set -euo pipefail
+          python verify_rgv3_freeze.py || {
+            echo "::error::v3 freeze integrity check FAILED -- refusing to run the blind validation. See the log above for which file(s) no longer match FREEZE_MANIFEST_v3.json."
+            exit 1
+          }
+
+      - name: Run RGV validation (selected case set)
         run: |
           set -euo pipefail
           python run_final_reference_holdout_v1.py --tag "$TAG" > rgv_run_full.log 2>&1 || {

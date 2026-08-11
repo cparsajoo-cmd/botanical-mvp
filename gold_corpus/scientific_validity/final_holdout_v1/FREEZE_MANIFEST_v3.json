@@ -1,0 +1,40 @@
+{
+  "freeze_id": "rgv3-2026-08-11T05-42",
+  "frozen_on_utc": "2026-08-11T05:42:46.348331+00:00",
+  "engine_version_at_freeze": "1.8.0",
+  "n_cases": 20,
+  "class_distribution": {
+    "GO": 3,
+    "GO WITH CAUTION": 4,
+    "EXPERT REVIEW REQUIRED": 2,
+    "INSUFFICIENT EVIDENCE": 4,
+    "NO GO SAFETY": 3,
+    "NO GO REGULATORY": 4
+  },
+  "rule": "Everything listed under file_hashes is frozen as of frozen_on_utc: case definitions, source references, expected decisions, and the evidence snapshots. After this point, per the project's holdout integrity rule: no phrase/vocabulary addition, no gold-label change, no case removal, no threshold tuning, and no special-case rule may be made in response to seeing this holdout's engine output. Any file whose sha256 no longer matches file_hashes below has been altered after freeze and the holdout must be considered compromised for blind-validation purposes.",
+  "scoring_rubric": "decision_benchmark_v1.py::compute_metrics, unchanged from the v1/v2 regression runs (same accuracy/macro-F1/per-class-recall/confusion-matrix/false-negative definitions). No rubric changes were made for v3.",
+  "leakage_check": "All 20 botanicals verified programmatically to have zero overlap with the 80-species pool already used in rgv1 (24 cases), rgv2 (24 cases), gold_cases/ (23 cases), and decision_holdout_v2 through v5 (25 species) -- see /people-facing chat log 2026-08-10/11 for the exclusion list and the automated check output.",
+  "file_hashes": {
+    "frozen_reference_labels_v3.json": "89a9d70d4ed65ea0346652f3ffcdc967487324c8a4b989e050c4e0829403c0e1",
+    "snapshots/rgv3_001_frangula_constipation.json": "eb2cde058ad3a9c5d8a02998a52b954295c54454076a57d11bd0614039d75179",
+    "snapshots/rgv3_002_cascara_constipation.json": "4ef742886dd8a5c0cc012e4021a448892289534f3bac084093e21c09948f07ed",
+    "snapshots/rgv3_003_psyllium_constipation.json": "d927d788e3e1ff49cd897ac4d900f737c2b1d29e82c5ca39ae79d228537f4a73",
+    "snapshots/rgv3_004_icelandmoss_throat.json": "f5da04946fb555737c7e2cfe55147c60bb1f8714186db5690bd55463cf0cfc7d",
+    "snapshots/rgv3_005_bilberry_venous.json": "a4001c4c16a569addeb27a00df4bf237530c3e71b4bede497f5138888b535508",
+    "snapshots/rgv3_006_andrographis_urti.json": "195690ebafeae2b92fcc6228f90d9668b919973a4f4e8fb600bdb232c61e2af8",
+    "snapshots/rgv3_007_redvineleaf_cvi.json": "275c652671b69e94dfbe9f56714d0b2e1f8dc942357e51aa2e65bd5cbdbc7d85",
+    "snapshots/rgv3_008_butterbur_migraine.json": "df49d048a785ed4f7f315cf1781ae71f6ba7e80bf09f98ba3a16a11b519aef94",
+    "snapshots/rgv3_009_berberine_t2dm.json": "48ae4a451fdb75ba2d7d9c6c09cadbf724af0932f2ef86012f7695f43af9bbef",
+    "snapshots/rgv3_010_gymnema_t2dm.json": "67005655b79f20725ed716c8e46b772dafba4441da9df7a2e932ddb473dd6be0",
+    "snapshots/rgv3_011_arjuna_angina.json": "aa2f2105d09220f8fbe27b66bf2bca65010039189ed7ebef1415f0d6b0fe773e",
+    "snapshots/rgv3_012_caralluma_weight.json": "eaee7a11e00955fac3677e4df30b2612f4782c36f06b3113421dd4a11fce5604",
+    "snapshots/rgv3_013_cordyceps_copd.json": "0bfaa91bd55af2d2a719596a4e503316c8d5d8ff1314bb262ce3b74133951c3a",
+    "snapshots/rgv3_014_kratom_pain.json": "ba5cf498cb1403602f799a4582e04b36db978fdfdd8dc08d782d8502c40d695d",
+    "snapshots/rgv3_015_atractylis_traditional.json": "e7118ef22889ac1ac855a5bb1a400e9b385ee91bce0e95d60c0366e4a05cf834",
+    "snapshots/rgv3_016_impila_traditional.json": "a060add043d924930870b1441f634fb79b0091b3f2792a5eeb19a2ae9fe7fe4a",
+    "snapshots/rgv3_017_cistanche_eu_food.json": "b4dab542fcbb4dbe70e2139bc8df1dcab487a72d927b03452e58450d76077d3d",
+    "snapshots/rgv3_018_terminaliacatappa_eu_food.json": "bd3111ebb63d6b6f6626f875099f8765c6b0c0749cea9150d245915ee012c9ea",
+    "snapshots/rgv3_019_nuxia_eu_food.json": "c24bbc7b3d3f624a3dbf10fa51a62cc48f0eba89eb2d7d1fc51fe59afb420500",
+    "snapshots/rgv3_020_miracleberry_eu_food.json": "2f80d8ada1f5f1ad06f0ea62455e2a7fe2c2064889112dde7a792cde0b06ed38"
+  }
+}

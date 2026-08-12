@@ -495,7 +495,9 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 # mixed all five concepts, allowing a selected/legacy dosage
                 # form to masquerade as the preparation actually studied.
                 "plant_part": _structured_text(_pick_from_row(engine, row, ["Plant_Part", "plant_part"])),
-                "preparation": _structured_text(_pick_from_row(engine, row, ["Preparation", "preparation"])),
+                "preparation": _structured_text(_pick_from_row(engine, row, [
+                    "Preparation", "preparation", "Extraction_Method", "extraction_method",
+                ])),
                 "preparation_category": _structured_text(_pick_from_row(engine, row, [
                     "Preparation_Category", "preparation_category", "LLM_Preparation_Category",
                 ])),

@@ -31,7 +31,9 @@ from evidence_authority import (
     DIRECTION_UNCLEAR,
 )
 from scientific_phrase_matcher import phrase_present
-from standard_evidence_builder import evaluate_applicability, preparation_from_product_form
+from standard_evidence_builder import (
+    evaluate_applicability, preparation_from_product_form, canonical_preparation_identity,
+)
 from evidence_consistency import classify_evidence_consistency
 from phase5_scoring_config import (
     SCORING_MODEL_VERSION,
@@ -427,6 +429,11 @@ def _preparation_applicability_row(row: pd.Series, dosage_form: str) -> str:
         return PREP_NOT_REPORTED
     target_norm = _norm(target_preparation)
     if target_norm == evidence_preparation:
+        return PREP_DIRECT_MATCH
+
+    target_identity = canonical_preparation_identity(target_preparation)
+    evidence_identity = canonical_preparation_identity(evidence_preparation)
+    if target_identity and evidence_identity and target_identity == evidence_identity:
         return PREP_DIRECT_MATCH
 
     target_family = _preparation_family(target_norm)

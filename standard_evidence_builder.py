@@ -1197,6 +1197,41 @@ def preparation_category_from_text(value: Any) -> str:
     return ""
 
 
+def canonical_preparation_identity(value: Any) -> str:
+    """Return the explicit, specific botanical preparation named by *value*.
+
+    This is stricter than the parent-category normalizer.  It lets descriptive
+    strings such as ``"infusion / hot water extract"`` match an ``Infusion``
+    target without treating every aqueous extract or decoction as the same
+    preparation.  Generic ``extract`` and dosage-form-only terms remain
+    unresolved.
+    """
+    if _appl_is_blank(value):
+        return ""
+    text = _appl_norm(value)
+    specific_patterns = (
+        ("standardized_dry_extract", ("standardized dry extract", "standardised dry extract")),
+        ("hydroalcoholic_extract", ("hydroalcoholic extract", "hydroethanolic extract")),
+        ("ethanolic_extract", ("ethanolic extract", "ethanol extract")),
+        ("aqueous_extract", ("aqueous extract", "water extract", "hot water extract")),
+        ("essential_oil", ("essential oil", "volatile oil")),
+        ("tincture", ("tincture",)),
+        ("decoction", ("decoction",)),
+        ("infusion", ("infusion", "herbal tea", "tisane")),
+        ("dry_extract", ("dry extract",)),
+        ("powder", ("powdered herb", "powdered herbal", "herbal powder")),
+        ("juice", ("fresh juice", "expressed juice")),
+    )
+    # When a source explicitly says infusion plus a descriptive hot-water
+    # extraction phrase, the named preparation is still an infusion.
+    if "infusion" in text or "herbal tea" in text or "tisane" in text:
+        return "infusion"
+    for identity, terms in specific_patterns:
+        if any(term in text for term in terms):
+            return identity
+    return ""
+
+
 def preparation_from_product_form(value: Any) -> str:
     """Use a product-form string as Target_Preparation only when it itself
     names a botanical preparation (infusion/tincture/extract/oil/powder/etc.).
@@ -1445,8 +1480,13 @@ def _appl_dimension_preparation(evidence_row: Mapping[str, Any], target_context:
     evidence_category = evidence_row.get("Evidence_Preparation_Category")
 
     value_pair_present = not _appl_is_blank(target_value) and not _appl_is_blank(evidence_value)
-    if value_pair_present and _appl_norm(target_value) == _appl_norm(evidence_value):
-        return _APPL_MATCH
+    if value_pair_present:
+        if _appl_norm(target_value) == _appl_norm(evidence_value):
+            return _APPL_MATCH
+        target_identity = canonical_preparation_identity(target_value)
+        evidence_identity = canonical_preparation_identity(evidence_value)
+        if target_identity and evidence_identity and target_identity == evidence_identity:
+            return _APPL_MATCH
 
     if not _appl_is_blank(target_category):
         if _appl_is_blank(evidence_category):

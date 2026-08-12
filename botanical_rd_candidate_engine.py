@@ -1159,12 +1159,20 @@ class BotanicalRDCandidateEngine:
     ):
         if discovery_mode == "indication":
             from indication_candidate_discovery import discover_indication_candidates
-            return discover_indication_candidates(
-                self, indication=indication, dosage_form=dosage_form, market=market,
-                product_type=product_type or (dosage_form or "botanical product"),
-                progress_callback=progress_callback,
-                target_context=target_context,
-            )
+            discovery_kwargs = {
+                "indication": indication,
+                "dosage_form": dosage_form,
+                "market": market,
+                "product_type": product_type or (dosage_form or "botanical product"),
+                "progress_callback": progress_callback,
+            }
+            # ``target_context`` is a new optional extension.  Do not pass an
+            # explicit None to legacy/custom discovery callables that implement
+            # the pre-extension signature; real production discovery receives
+            # the structured context whenever one is actually supplied.
+            if target_context is not None:
+                discovery_kwargs["target_context"] = target_context
+            return discover_indication_candidates(self, **discovery_kwargs)
         if discovery_mode not in {"compound_substitution", "legacy"}:
             raise ValueError("discovery_mode must be indication or compound_substitution")
 

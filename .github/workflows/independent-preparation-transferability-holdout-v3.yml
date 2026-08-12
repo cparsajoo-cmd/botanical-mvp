@@ -1,0 +1,70 @@
+name: Independent Preparation Transferability Holdout V3
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-preparation-transferability-holdout-v3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate OpenAI secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OPENAI_API_KEY" || { echo "::error::OPENAI_API_KEY is missing"; exit 1; }
+
+      - name: Configure optional model override
+        shell: bash
+        env:
+          OPTIONAL_OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OPTIONAL_OPENAI_MODEL:-}" ]; then
+            echo "OPENAI_MODEL=$OPTIONAL_OPENAI_MODEL" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run frozen preparation transferability holdout V3 once
+        shell: bash
+        run: |
+          set -o pipefail
+          python independent_preparation_transferability_holdout_v3.py | tee independent_preparation_transferability_holdout_v3.log
+
+      - name: Add summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Independent preparation transferability holdout V3" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f independent_preparation_transferability_holdout_v3.log ]; then
+            grep '^SUMMARY ' independent_preparation_transferability_holdout_v3.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No validation output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-preparation-transferability-holdout-v3
+          path: |
+            independent_preparation_transferability_holdout_v3.log
+            independent_preparation_transferability_holdout_v3_result.json
+          if-no-files-found: warn

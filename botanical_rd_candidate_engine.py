@@ -48,6 +48,7 @@ from final_decision_policy import (
     final_status_from_engine_row, assessment_domain_from_indication,
 )
 from data_contracts import GateStatus, EvidenceApplicability, APPLICABILITY_STRENGTH_ORDER
+from retrieval_coverage import RetrievalCoverageStatus, coverage_for_plant
 # Phase 4 — Eligibility Gate. See eligibility_gate.py's module docstring
 # for why this is a separate, self-contained module rather than more
 # entries in data_contracts.py. _decision_class() is now DERIVED from
@@ -332,6 +333,16 @@ OUTPUT_COLUMNS = [
     "Regulatory_Context_Relevance",
     "Data_Completeness",
     "Requires_Expert_Review",
+    # Retrieval-completeness gate. These fields describe whether the current
+    # Step 2 run actually covered the required source domains for THIS plant.
+    # They are run-scoped and must never be inferred from historical Supabase
+    # record counts. Incomplete/not-assessable retrieval can conservatively
+    # cap a GO decision to expert review; it never converts a safety/regulatory
+    # no-go into a less conservative state.
+    "Retrieval_Coverage_Status",
+    "Retrieval_Coverage_Reason",
+    "Retrieval_Coverage_Missing_Required_Sources",
+    "Retrieval_Coverage_Limitations",
     # Task 15 — reproducibility metadata only, appended last (not
     # inserted between existing analytical columns) so no historical
     # column ORDER assumption breaks. See DECISION_ENGINE_VERSION below
@@ -520,7 +531,7 @@ OUTPUT_COLUMNS = [
 # mismatches cannot support efficacy, while safety/regulatory remain cross-
 # preparation protective. Missing required product context stays unresolved
 # rather than being reported as a complete match.
-DECISION_ENGINE_VERSION = "1.9.0"
+DECISION_ENGINE_VERSION = "1.10.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -904,6 +915,78 @@ DEFAULT_SCORING_CONFIG = ScoringConfig()
 _OCCURRENCE_LOOKUP = build_occurrence_lookup()
 
 
+
+def apply_retrieval_coverage_guard(output, retrieval_coverage_by_plant):
+    """Attach run-scoped retrieval coverage and prevent unsupported GO calls.
+
+    ``None`` preserves backward compatibility for direct/offline engine callers
+    that do not participate in Step 2.  An explicit mapping (including an empty
+    mapping) means coverage was requested for this decision run; missing plants
+    are therefore NOT_ASSESSABLE rather than silently treated as complete.
+    """
+    if output is None or output.empty:
+        return output
+
+    guarded = output.copy()
+    if retrieval_coverage_by_plant is None:
+        # Backward-compatible direct/offline callers did not run Step 2. Keep
+        # their historical decision behavior unchanged, while satisfying the
+        # additive output schema with explicitly unassessed metadata.
+        guarded["Retrieval_Coverage_Status"] = ""
+        guarded["Retrieval_Coverage_Reason"] = ""
+        guarded["Retrieval_Coverage_Missing_Required_Sources"] = ""
+        guarded["Retrieval_Coverage_Limitations"] = ""
+        return guarded
+
+    plant_col = "Alternative_Plant" if "Alternative_Plant" in guarded.columns else (
+        "Plant" if "Plant" in guarded.columns else None
+    )
+    if plant_col is None:
+        return guarded
+
+    coverage_rows = [
+        coverage_for_plant(retrieval_coverage_by_plant, plant)
+        for plant in guarded[plant_col].tolist()
+    ]
+    guarded["Retrieval_Coverage_Status"] = [c.get("status", RetrievalCoverageStatus.NOT_ASSESSABLE.value) for c in coverage_rows]
+    guarded["Retrieval_Coverage_Reason"] = [c.get("reason", "") for c in coverage_rows]
+    guarded["Retrieval_Coverage_Missing_Required_Sources"] = [
+        "; ".join(c.get("missing_required_sources") or []) for c in coverage_rows
+    ]
+    guarded["Retrieval_Coverage_Limitations"] = [
+        "; ".join(c.get("limitations") or []) for c in coverage_rows
+    ]
+
+    blocking = guarded["Retrieval_Coverage_Status"].isin({
+        RetrievalCoverageStatus.INCOMPLETE.value,
+        RetrievalCoverageStatus.NOT_ASSESSABLE.value,
+    })
+    if not blocking.any():
+        return guarded
+
+    # Retrieval incompleteness is an abstention, not evidence of inefficacy and
+    # never a reason to weaken an existing hard safety/regulatory no-go.
+    normal_decision = guarded.get("Final_Decision_Status", pd.Series(index=guarded.index, dtype=object)).isin({
+        FinalDecisionStatus.GO.value, FinalDecisionStatus.GO_WITH_CAUTION.value
+    })
+    cap = blocking & normal_decision
+    if cap.any():
+        guarded.loc[cap, "Final_Decision_Status"] = FinalDecisionStatus.EXPERT_REVIEW_REQUIRED.value
+        guarded.loc[cap, "Decision_Class"] = "Expert review required — retrieval coverage incomplete"
+        guarded.loc[cap, "Eligible_For_Normal_Ranking"] = False
+        guarded.loc[cap, "Ranking_Partition"] = _RankingPartition.PRELIMINARY_OR_EXPERT_REVIEW.value
+        guarded.loc[cap, "Score_Validity"] = _ScoreValidity.PRELIMINARY.value
+        guarded.loc[cap, "Requires_Expert_Review"] = True
+        if "Go_Investigate_Hold_NoGo" in guarded.columns:
+            guarded.loc[cap, "Go_Investigate_Hold_NoGo"] = "Investigate — retrieval coverage incomplete"
+        if "Confidence_Note" in guarded.columns:
+            guarded.loc[cap, "Confidence_Note"] = guarded.loc[cap].apply(
+                lambda row: (str(row.get("Confidence_Note") or "").strip() + " " +
+                    "GO capped because required retrieval coverage was incomplete for this run.").strip(),
+                axis=1,
+            )
+    return guarded
+
 class BotanicalRDCandidateEngine:
     """
     Central engine for botanical R&D candidate discovery.
@@ -1156,6 +1239,7 @@ class BotanicalRDCandidateEngine:
         discovery_mode="compound_substitution",
         progress_callback=None,
         target_context=None,
+        retrieval_coverage_by_plant=None,
     ):
         if discovery_mode == "indication":
             from indication_candidate_discovery import discover_indication_candidates
@@ -1172,7 +1256,11 @@ class BotanicalRDCandidateEngine:
             # the structured context whenever one is actually supplied.
             if target_context is not None:
                 discovery_kwargs["target_context"] = target_context
-            return discover_indication_candidates(self, **discovery_kwargs)
+            indication_output = discover_indication_candidates(self, **discovery_kwargs)
+            indication_output = apply_retrieval_coverage_guard(
+                indication_output, retrieval_coverage_by_plant
+            )
+            return sort_by_ranking_partition_then_score(indication_output)
         if discovery_mode not in {"compound_substitution", "legacy"}:
             raise ValueError("discovery_mode must be indication or compound_substitution")
 
@@ -2491,6 +2579,7 @@ class BotanicalRDCandidateEngine:
         output = output[~dedup_key.duplicated(keep="first")]
 
         output = self._merge_multi_compound_matches(output)
+        output = apply_retrieval_coverage_guard(output, retrieval_coverage_by_plant)
 
         # Correction round (2nd pass) — final sort is now
         # Ranking_Partition FIRST, R&D_Opportunity_Score second: a

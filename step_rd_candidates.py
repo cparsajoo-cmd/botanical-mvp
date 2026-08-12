@@ -108,6 +108,28 @@ def _get_evidence_df():
 
 
 
+def _norm_run_context(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _get_step2_retrieval_coverage(*, indication, market):
+    """Return the run-scoped per-plant coverage map for these exact inputs.
+
+    An explicit empty mapping means coverage is NOT ASSESSABLE for the current
+    decision run.  Historical Supabase rows are never used to manufacture a
+    completeness claim.
+    """
+    research_output = st.session_state.get("research_output")
+    if not isinstance(research_output, dict):
+        return {}
+    if _norm_run_context(research_output.get("retrieval_coverage_market")) != _norm_run_context(market):
+        return {}
+    if _norm_run_context(research_output.get("retrieval_coverage_indication")) != _norm_run_context(indication):
+        return {}
+    coverage = research_output.get("retrieval_coverage_by_plant")
+    return coverage if isinstance(coverage, dict) else {}
+
+
 def _get_step2_candidate_shortlist():
     """Return the final candidate shortlist produced by Step 2.
 
@@ -1103,6 +1125,9 @@ def render_rd_candidates_step(inputs):
                         discovery_mode=discovery_mode,
                         progress_callback=_step5_progress,
                         target_context=transferability_target_context,
+                        retrieval_coverage_by_plant=_get_step2_retrieval_coverage(
+                            indication=indication, market=market
+                        ),
                     )
                     _perf(
                         f"engine.run() done rows={0 if result_df is None else len(result_df)} "

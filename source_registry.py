@@ -53,7 +53,12 @@ SOURCE_REGISTRY = [
 
     # Tier 1 — Regulatory
     {
+        # Legacy internal connector key retained for compatibility with stored
+        # telemetry/tests.  Production implementation queries EMA/HMPC only;
+        # WHO and ESCOP are NOT independently queried by this connector.
         "name": "EMA/WHO/ESCOP Regulatory",
+        "display_name": "EMA/HMPC Regulatory",
+        "verified_scope": "EMA/HMPC inventory only; WHO/ESCOP not independently queried",
         "category": "Regulatory",
         "priority": 1,
         "enabled": True,
@@ -161,3 +166,15 @@ def get_source_config(name):
 # pilot's rate-limit behavior at this volume needs adjusting, that is
 # a deliberately separate, later change — not invented here.
 PILOT_MAX_RESULTS = 15
+
+
+def get_source_display_name(name):
+    config = get_source_config(name)
+    if config:
+        return config.get("display_name") or config.get("name") or str(name)
+    return str(name)
+
+
+def get_source_verified_scope(name):
+    config = get_source_config(name)
+    return (config or {}).get("verified_scope", "")

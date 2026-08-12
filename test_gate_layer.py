@@ -546,7 +546,7 @@ def test_deterministic_output_contract_locked_engineering_regression():
     #
     # Bumped 82 -> 83 by Scientific Decision Validation: Final_Decision_Status
     # is the explicit six-class source-of-truth for final scientific decisions.
-    assert len(result.columns) == 83
+    assert len(result.columns) == 87
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns

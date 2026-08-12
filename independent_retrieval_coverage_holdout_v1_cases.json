@@ -1,0 +1,554 @@
+{
+  "benchmark_id": "independent_retrieval_coverage_holdout_v1_20260812",
+  "cases": [
+    {
+      "id": "retrievalblind_001_eu_clean_zero_hits",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": "Zero records is a completed search, not evidence absence."
+    },
+    {
+      "id": "retrievalblind_002_eu_clean_pubmed_record",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [
+        "PubMed"
+      ],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_003_eu_pubmed_timeout_redundant",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "PubMed",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_004_eu_epmc_timeout_redundant",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "Europe PMC",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_005_eu_both_literature_fail",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "PubMed",
+          "error": "Timed out"
+        },
+        {
+          "source": "Europe PMC",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_006_eu_all_dedicated_safety_fail",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "LiverTox",
+          "error": "Timed out"
+        },
+        {
+          "source": "DailyMed",
+          "error": "Timed out"
+        },
+        {
+          "source": "OpenFDA FAERS",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_007_eu_ema_fail",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "EMA/WHO/ESCOP Regulatory",
+          "error": "EMA/HMPC regulatory lookup failed"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_008_unfinished_plant",
+      "market": "European Union",
+      "collection_finished": false,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_009_no_current_run",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": false,
+      "sources_checked": [],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "NOT_ASSESSABLE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_010_canada_missing_authority",
+      "market": "Canada",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_011_australia_missing_authority",
+      "market": "Australia",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_012_uk_missing_authority",
+      "market": "United Kingdom",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_013_germany_missing_national",
+      "market": "Germany",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_014_france_missing_national",
+      "market": "France",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_015_us_fda_lane_completed",
+      "market": "United States",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "FDA Labels"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_016_us_fda_lane_failed",
+      "market": "United States",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "FDA Labels"
+      ],
+      "errors": [
+        {
+          "source": "FDA Labels",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_017_global_market",
+      "market": "Global / Multi-market",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [],
+      "expected_status": "NOT_ASSESSABLE",
+      "input_final_decision": "GO",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_018_secondary_connector_failure_only",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory",
+        "OpenAlex"
+      ],
+      "errors": [
+        {
+          "source": "OpenAlex",
+          "error": "429 rate limit"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_019_incomplete_preserves_no_go_safety",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "EMA/WHO/ESCOP Regulatory",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "NO GO SAFETY",
+      "expected_final_decision": "NO GO SAFETY",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_020_incomplete_preserves_no_go_regulatory",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "PubMed",
+          "error": "Timed out"
+        },
+        {
+          "source": "Europe PMC",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "NO GO REGULATORY",
+      "expected_final_decision": "NO GO REGULATORY",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_021_incomplete_preserves_expert_review",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "EMA/WHO/ESCOP Regulatory",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "EXPERT REVIEW REQUIRED",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_022_incomplete_preserves_insufficient",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "EMA/WHO/ESCOP Regulatory",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "INSUFFICIENT EVIDENCE",
+      "expected_final_decision": "INSUFFICIENT EVIDENCE",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_023_go_with_caution_is_not_normal_when_incomplete",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [
+        {
+          "source": "EMA/WHO/ESCOP Regulatory",
+          "error": "Timed out"
+        }
+      ],
+      "saved_sources": [],
+      "expected_status": "INCOMPLETE",
+      "input_final_decision": "GO WITH CAUTION",
+      "expected_final_decision": "EXPERT REVIEW REQUIRED",
+      "note": ""
+    },
+    {
+      "id": "retrievalblind_024_pubmed_observability_source_identity",
+      "market": "European Union",
+      "collection_finished": true,
+      "collection_attempted": true,
+      "sources_checked": [
+        "PubMed",
+        "Europe PMC",
+        "LiverTox",
+        "DailyMed",
+        "OpenFDA FAERS",
+        "EMA/WHO/ESCOP Regulatory"
+      ],
+      "errors": [],
+      "saved_sources": [
+        "PubMed"
+      ],
+      "expected_status": "COMPLETE_WITH_LIMITATIONS",
+      "input_final_decision": "GO",
+      "expected_final_decision": "GO",
+      "note": "PubMed saved-record source identity must remain explicit for observability."
+    }
+  ]
+}

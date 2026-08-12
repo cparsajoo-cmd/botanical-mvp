@@ -3,6 +3,7 @@ import pandas as pd
 from research_engine import run_research_engine
 from connector_session_observability import build_connector_session_observability
 from telemetry_persistence import persist_connector_telemetry
+from source_registry import get_source_display_name
 
 
 def render_evidence_step(inputs):
@@ -66,7 +67,7 @@ def render_evidence_step(inputs):
 
         if sources_checked:
             st.write("**Sources checked:**")
-            st.write(", ".join(sorted(set(sources_checked))))
+            st.write(", ".join(sorted({get_source_display_name(s) for s in sources_checked})))
 
         if candidate_plants:
             st.write("**Candidate plants searched:**")
@@ -113,6 +114,31 @@ def render_evidence_step(inputs):
             st.caption("Literature-supported/discovered: " + ", ".join(evidence_backed))
         if discovered:
             st.caption("Newly discovered from literature: " + ", ".join(discovered))
+
+
+        coverage_status = research_output.get("retrieval_coverage_status", "NOT_ASSESSABLE")
+        coverage_by_plant = research_output.get("retrieval_coverage_by_plant") or {}
+        st.markdown("### Retrieval coverage for downstream decisions")
+        if coverage_status == "COMPLETE":
+            st.success("Retrieval coverage: COMPLETE for the current run.")
+        elif coverage_status == "COMPLETE_WITH_LIMITATIONS":
+            st.warning("Retrieval coverage: COMPLETE WITH LIMITATIONS. Required domains completed, but limitations are recorded below.")
+        elif coverage_status == "INCOMPLETE":
+            st.error("Retrieval coverage: INCOMPLETE. Downstream GO decisions will be held for review for affected plants.")
+        else:
+            st.warning("Retrieval coverage: NOT ASSESSABLE. Downstream GO decisions cannot be treated as validated for this run.")
+
+        if coverage_by_plant:
+            coverage_rows = []
+            for plant, cov in coverage_by_plant.items():
+                coverage_rows.append({
+                    "Plant": plant,
+                    "Coverage": cov.get("status", "NOT_ASSESSABLE"),
+                    "Reason": cov.get("reason", ""),
+                    "Missing required sources": "; ".join(cov.get("missing_required_sources") or []),
+                    "Limitations": "; ".join(cov.get("limitations") or []),
+                })
+            st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
 
         diagnostics = research_output.get("candidate_discovery_diagnostics", {}) or {}
         selection_diagnostics = (
@@ -283,12 +309,13 @@ def render_evidence_step(inputs):
 
             connector_rows = [
                 {
-                    "Connector": c["connector_name"],
+                    "Connector": c.get("connector_display_name") or c["connector_name"],
                     "Type": c["connector_type"],
                     "Status": c["execution_status"],
                     "Configuration": c["configuration_status"],
                     "Records saved": c["records_saved"],
                     "Cache": c["cache_observability"].split(".")[0] + ".",
+                    "Verified scope": c.get("verified_scope", ""),
                     "Errors": f"{c['error_count']} — " + "; ".join(c["error_messages"]) if c["error_count"] else "",
                 }
                 for c in observability["connectors"]

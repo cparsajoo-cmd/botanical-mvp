@@ -11,6 +11,7 @@ from global_candidate_ranking_engine import rank_global_candidates
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pubmed_connector import search_and_fetch_pubmed
 from source_registry import PILOT_MAX_RESULTS
+from retrieval_coverage import assess_retrieval_coverage, aggregate_coverage_status
 from supabase_data import load_plants_df
 import therapeutic_area_registry
 import candidate_selection
@@ -814,21 +815,29 @@ def run_research_engine(
         for plant in candidate_plants
     }
     completed_plants = []
+    plant_collection_results = {}
     try:
         for future in as_completed(future_map, timeout=quick_step_budget_seconds):
             plant = future_map[future]
             try:
                 completed_plant, result = future.result(timeout=1)
                 completed_plants.append(completed_plant)
+                plant_collection_results[completed_plant] = dict(result or {})
                 all_saved_records.extend(result.get("saved_records", []))
                 all_errors.extend(result.get("errors", []))
                 all_sources_checked.extend(result.get("sources_checked", []))
             except Exception as exc:
-                all_errors.append({
+                failure = {
                     "source": "Step 2 plant collection",
                     "plant": plant,
                     "error": f"{type(exc).__name__}: {exc}",
-                })
+                }
+                all_errors.append(failure)
+                plant_collection_results[plant] = {
+                    "saved_records": [],
+                    "errors": [failure],
+                    "sources_checked": [],
+                }
     except FuturesTimeoutError:
         pass
     finally:
@@ -848,6 +857,36 @@ def run_research_engine(
             })
         executor.shutdown(wait=False, cancel_futures=True)
 
+    # Coverage is assessed per plant from THIS exact collection attempt.  It
+    # is deliberately not reconstructed later from whatever happens to be in
+    # Supabase, because stored evidence cannot tell us which sources failed or
+    # timed out in this run.
+    retrieval_coverage_by_plant = {}
+    completed_set = set(completed_plants)
+    unfinished_set = set(unfinished)
+    for plant in candidate_plants:
+        result = plant_collection_results.get(plant)
+        if plant in unfinished_set:
+            retrieval_coverage_by_plant[plant] = assess_retrieval_coverage(
+                result or {"saved_records": [], "errors": [], "sources_checked": []},
+                market=target_market,
+                collection_finished=False,
+                collection_attempted=True,
+            )
+        elif plant in completed_set or result is not None:
+            retrieval_coverage_by_plant[plant] = assess_retrieval_coverage(
+                result or {},
+                market=target_market,
+                collection_finished=True,
+                collection_attempted=True,
+            )
+        else:
+            retrieval_coverage_by_plant[plant] = assess_retrieval_coverage(
+                None, market=target_market, collection_attempted=False,
+            )
+
+    retrieval_coverage_status = aggregate_coverage_status(retrieval_coverage_by_plant)
+
     discovery_diagnostics.update({
         "collection_time_budget_seconds": quick_step_budget_seconds,
         "collection_elapsed_seconds": round(time.monotonic() - started_at, 2),
@@ -855,6 +894,7 @@ def run_research_engine(
         "collection_completed_plant_count": len(completed_plants),
         "collection_unfinished_plants": unfinished,
         "collection_unfinished_plant_count": len(unfinished),
+        "retrieval_coverage_status": retrieval_coverage_status,
     })
 
     return {
@@ -866,6 +906,13 @@ def run_research_engine(
         "saved_records": all_saved_records,
         "errors": all_errors,
         "sources_checked": sorted(set(all_sources_checked)),
+        # Retrieval-coverage metadata is run-scoped and per-plant.  Downstream
+        # decision code consumes this object directly; it never infers
+        # completeness from record counts in Supabase.
+        "retrieval_coverage_status": retrieval_coverage_status,
+        "retrieval_coverage_by_plant": retrieval_coverage_by_plant,
+        "retrieval_coverage_market": target_market,
+        "retrieval_coverage_indication": indication,
         # --- New, additive keys ---------------------------------------------
         "candidate_records": [
             {

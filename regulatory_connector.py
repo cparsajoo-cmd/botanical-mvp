@@ -136,22 +136,8 @@ def search_regulatory_sources(
             scientific_name, indication, dosage_form, market
         )
     except Exception as exc:
-        return [{
-            "Scientific_Name": scientific_name,
-            "Common_Name": "",
-            "Product_Type": "Herbal product",
-            "Dosage_Form": dosage_form,
-            "Target_Indication": indication,
-            "Target_Market": market,
-            "Source_Type": "Regulatory",
-            "Source_Organization": "EMA HMPC (lookup unavailable)",
-            "Source_Title": "EMA HMPC inventory of herbal substances",
-            "Source_URL": "",
-            "Source_Year": "",
-            "Notes": f"Real EMA lookup failed: {exc}",
-            "Evidence_Level": "Not available",
-            "EMA_Status": "Not yet verified",
-            "WHO_Status": "Not independently verified",
-            "ESCOP_Status": "Not independently verified",
-            "Regulatory_Status": "Lookup failed — see Notes.",
-        }]
+        # Retrieval failures must reach multi_source_collector as ERRORS.
+        # Returning a placeholder "evidence" row made observability report the
+        # EMA lane as completed and allowed downstream coverage to look healthy
+        # even though the primary regulatory lookup had failed.
+        raise RuntimeError(f"EMA/HMPC regulatory lookup failed: {exc}") from exc

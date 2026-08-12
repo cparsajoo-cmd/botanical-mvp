@@ -48,7 +48,7 @@ malformed record is ever produced.
 
 from __future__ import annotations
 
-from source_registry import SOURCE_REGISTRY, get_source_config
+from source_registry import SOURCE_REGISTRY, get_source_config, get_source_display_name, get_source_verified_scope
 
 # ---------------------------------------------------------------------
 # Error classification — only categories reliably detectable from the
@@ -273,6 +273,8 @@ def _connector_entry(source_name: str, record_count: int, errors_for_source: lis
 
     return {
         "connector_name": source_name,
+        "connector_display_name": get_source_display_name(source_name),
+        "verified_scope": get_source_verified_scope(source_name),
         "connector_type": _connector_type(source_name),
         "execution_status": execution_status,
         "configuration_status": _configuration_status(source_name, "configuration_missing" if has_config_missing else None),
@@ -306,7 +308,14 @@ def build_connector_session_observability(collection_result: dict) -> dict:
 
     records_by_source = {}
     for rec in saved_records:
-        source = rec.get("source", "Unknown")
+        # New collector summaries carry ``source`` explicitly.  The nested
+        # standardized-record fallback keeps observability honest for older
+        # in-memory/session shapes created before that field was added.
+        source = (
+            rec.get("source")
+            or (rec.get("record") or {}).get("Source_Type")
+            or "Unknown"
+        )
         records_by_source[source] = records_by_source.get(source, 0) + 1
 
     # Sprint 6A.1 correction: ALL errors per source are now kept (a
@@ -359,6 +368,8 @@ def build_connector_session_observability(collection_result: dict) -> dict:
             continue
         connectors.append({
             "connector_name": source_name,
+            "connector_display_name": get_source_display_name(source_name),
+            "verified_scope": get_source_verified_scope(source_name),
             "connector_type": _connector_type(source_name),
             "execution_status": "Not attempted",
             "configuration_status": _configuration_status(source_name, None),

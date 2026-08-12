@@ -77,7 +77,7 @@ def _run(evidence_df=None):
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_constant_exists_and_equals_1_0_1():
-    assert eng.DECISION_ENGINE_VERSION == "1.9.0"
+    assert eng.DECISION_ENGINE_VERSION == "1.10.0"
 
 
 # ---------------------------------------------------------------------

@@ -207,6 +207,11 @@ def collect_pubmed_evidence(
             "row_id": row_id,
             "pmid": article["PMID"],
             "title": article["Title"],
+            # Keep the collector summary source-explicit, matching every
+            # non-PubMed connector's saved-record shape.  Session observability
+            # and retrieval-coverage logic must never have to infer PubMed from
+            # the nested standardized row.
+            "source": "PubMed",
             "record": standardized,
         })
 

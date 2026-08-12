@@ -62,13 +62,18 @@ def test_real_connector_is_used_for_uncovered_plants_too():
 
 
 def test_connector_failure_degrades_honestly_not_silently():
+    # A failed primary regulatory lookup must be an explicit connector error,
+    # not a fabricated placeholder evidence row that looks like completion.
     with mock.patch(
         "ema_regulatory_connector.search_regulatory_sources_real",
         side_effect=ConnectionError("simulated network failure"),
     ):
-        result = rc.search_regulatory_sources("Valeriana officinalis", "sleep")
-        assert result[0]["EMA_Status"] == "Not yet verified"
-        assert "Lookup failed" in result[0]["Regulatory_Status"] or "lookup" in result[0]["Notes"].lower()
+        try:
+            rc.search_regulatory_sources("Valeriana officinalis", "sleep")
+        except RuntimeError as exc:
+            assert "EMA/HMPC regulatory lookup failed" in str(exc)
+        else:
+            raise AssertionError("connector failure was silently converted into an evidence row")
 
 
 if __name__ == "__main__":

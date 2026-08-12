@@ -1,0 +1,52 @@
+name: Independent Retrieval Coverage Holdout V1
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-retrieval-coverage-holdout-v1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run frozen retrieval coverage holdout once
+        shell: bash
+        run: |
+          set -o pipefail
+          python independent_retrieval_coverage_holdout_v1.py | tee independent_retrieval_coverage_holdout_v1.log
+
+      - name: Add summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Independent retrieval coverage holdout V1" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f independent_retrieval_coverage_holdout_v1.log ]; then
+            grep '^SUMMARY ' independent_retrieval_coverage_holdout_v1.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No validation output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-retrieval-coverage-holdout-v1
+          path: |
+            independent_retrieval_coverage_holdout_v1.log
+            independent_retrieval_coverage_holdout_v1_result.json
+          if-no-files-found: warn

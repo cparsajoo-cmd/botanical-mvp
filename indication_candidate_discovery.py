@@ -18,6 +18,12 @@ from safety_interaction_attribution import (
     extract_structured_safety_interactions,
 )
 from indication_semantics import indication_terms as _resolve_indication_terms
+from standard_evidence_builder import (
+    evaluate_applicability,
+    evidence_transferability_fields,
+    preparation_from_product_form,
+    preparation_category_from_text,
+)
 from general_indication_relevance import (
     ENGINE_VERSION as RELEVANCE_ENGINE_VERSION,
     HYBRID_CONFIG_VERSION,
@@ -78,6 +84,10 @@ _PHASE5_DIAGNOSTIC_COLUMNS = (
     "Normalization_Summary", "Validation_Status", "Validation_Summary",
     "Result_Direction", "Preparation_Applicability",
     "Safety_Reassurance", "Safety_Data_Status",
+    "Evidence_Species", "Evidence_Plant_Part", "Evidence_Preparation",
+    "Evidence_Preparation_Category", "Evidence_Route", "Evidence_Dose",
+    "Evidence_Dose_Unit", "Applicability_Classification",
+    "Applicability_Data_Completeness", "Dimension_Status",
 )
 
 # Record-level output of the authoritative general_indication_relevance.py
@@ -480,9 +490,20 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 "effect_size": _structured_text(_pick_from_row(engine, row, ["Effect_Size", "effect_size"])),
                 "p_value": _structured_text(_pick_from_row(engine, row, ["P_Value", "p_value"])),
                 "notes": _structured_text(_pick_from_row(engine, row, ["Notes", "notes"])),
-                "preparation": _structured_text(_pick_from_row(engine, row, [
-                    "Preparation", "preparation", "Extraction_Method", "extraction_method",
-                    "Dosage_Form", "dosage_form", "Administration_Route", "administration_route",
+                # Keep study preparation, dosage form, route, plant part and
+                # dose as separate facts.  The old pooled "preparation" field
+                # mixed all five concepts, allowing a selected/legacy dosage
+                # form to masquerade as the preparation actually studied.
+                "plant_part": _structured_text(_pick_from_row(engine, row, ["Plant_Part", "plant_part"])),
+                "preparation": _structured_text(_pick_from_row(engine, row, ["Preparation", "preparation"])),
+                "preparation_category": _structured_text(_pick_from_row(engine, row, [
+                    "Preparation_Category", "preparation_category", "LLM_Preparation_Category",
+                ])),
+                "dosage_form": _structured_text(_pick_from_row(engine, row, [
+                    "Dosage_Form_Detected", "Detected_Dosage_Forms", "Dosage_Form", "dosage_form",
+                ])),
+                "route": _structured_text(_pick_from_row(engine, row, [
+                    "Administration_Route", "administration_route", "Route", "route",
                 ])),
                 "dose": _structured_text(_pick_from_row(engine, row, ["Dosage", "dosage", "Dose", "dose"])),
                 "safety_findings": _structured_text(_pick_from_row(engine, row, [
@@ -663,7 +684,7 @@ def _preparation_applicability(record: dict | None, selected_dosage_form: str) -
 
 def discover_indication_candidates(
     engine, indication: str, dosage_form: str = "", market: str = "",
-    product_type: str = "", progress_callback=None,
+    product_type: str = "", progress_callback=None, target_context=None,
 ) -> pd.DataFrame:
     """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence.
 
@@ -685,6 +706,21 @@ def discover_indication_candidates(
 
     _t0 = time.perf_counter()
     _perf(f"discover_indication_candidates start indication={indication!r} dosage_form={dosage_form!r} market={market!r}")
+    resolved_target_context = dict(target_context or {})
+    if not resolved_target_context:
+        # Backward-compatible direct callers still get the scientifically safe
+        # subset of target context that can be established from the legacy
+        # arguments. A true preparation-like form (e.g. infusion) is usable;
+        # dosage-form-only values such as capsule/tablet are not invented as
+        # botanical preparations.
+        if indication:
+            resolved_target_context["Target_Indication"] = indication
+        legacy_preparation = preparation_from_product_form(dosage_form)
+        if legacy_preparation:
+            resolved_target_context["Target_Preparation"] = legacy_preparation
+            category = preparation_category_from_text(legacy_preparation)
+            if category:
+                resolved_target_context["Target_Preparation_Category"] = category
 
     candidates = engine._candidate_frame()
     _perf(f"engine._candidate_frame() done candidate_plants={len(candidates)} elapsed={time.perf_counter() - _t0:.3f}")
@@ -957,8 +993,42 @@ def discover_indication_candidates(
             sources = [source] if source else []
             record_ids = [record_id] if record_id else []
             result_direction = characteristics.get("resolved_result_direction", "") if record else ""
-            preparation_status, preparation_mismatches = _preparation_applicability(record, dosage_form)
             record_preparation = str(record.get("preparation") or "").strip() if record else ""
+
+            # Authoritative preparation transferability is now computed from
+            # separate record facts vs. the explicit target product context.
+            # The legacy _preparation_applicability() signal remains available
+            # for old callers/tests but no longer drives this production row.
+            _transfer_fields = evidence_transferability_fields(
+                species=plant,
+                plant_part=(record.get("plant_part") if record else ""),
+                preparation=record_preparation,
+                route=(record.get("route") if record else ""),
+                dose=(record.get("dose") if record else ""),
+                indication_match_type=(record_relevance.match_type if record else ""),
+            )
+            if record and record.get("preparation_category"):
+                _transfer_fields["Evidence_Preparation_Category"] = str(
+                    record.get("preparation_category") or ""
+                ).strip()
+            _transfer_result = evaluate_applicability(
+                _transfer_fields, resolved_target_context
+            ) if resolved_target_context else {
+                "Applicability_Classification": "UNKNOWN",
+                "Applicability_Data_Completeness": "incomplete",
+                "Dimension_Status": {},
+            }
+            _transfer_class = _transfer_result.get("Applicability_Classification", "UNKNOWN")
+            if _transfer_class == "MISMATCH":
+                preparation_status = "Mismatch"
+                preparation_mismatches = ["Confirmed evidence-vs-target transferability mismatch"]
+            elif _transfer_class in {"MATCH", "PARTIAL"}:
+                preparation_status = "Compatible"
+                preparation_mismatches = []
+            else:
+                preparation_status = "Unknown"
+                preparation_mismatches = ["Transferability incomplete or unknown"]
+
             safety_findings = str(record.get("safety_findings") or "").strip() if record else ""
             interactions = str(record.get("interactions") or "").strip() if record else ""
             safety_reassurance = ""
@@ -1169,6 +1239,16 @@ def discover_indication_candidates(
                 "Negative_Evidence_Types": "Negative/null reported result" if negative else "",
                 "Result_Direction": result_direction,
                 "Preparation_Applicability": preparation_status,
+                "Evidence_Species": _transfer_fields.get("Evidence_Species", ""),
+                "Evidence_Plant_Part": _transfer_fields.get("Evidence_Plant_Part", ""),
+                "Evidence_Preparation": _transfer_fields.get("Evidence_Preparation", ""),
+                "Evidence_Preparation_Category": _transfer_fields.get("Evidence_Preparation_Category", ""),
+                "Evidence_Route": _transfer_fields.get("Evidence_Route", ""),
+                "Evidence_Dose": _transfer_fields.get("Evidence_Dose", ""),
+                "Evidence_Dose_Unit": _transfer_fields.get("Evidence_Dose_Unit", ""),
+                "Applicability_Classification": _transfer_result.get("Applicability_Classification", "UNKNOWN"),
+                "Applicability_Data_Completeness": _transfer_result.get("Applicability_Data_Completeness", "incomplete"),
+                "Dimension_Status": _transfer_result.get("Dimension_Status", {}),
                 "Market_Status": "Search not performed",
                 "Regulatory_Barriers": "Not assessed",
                 "Novelty_Status": "Indication-derived candidate",

@@ -236,8 +236,16 @@ def classify_evidence_applicability(record, selected_form, selected_indication,
 
 
 def build_standard_evidence(record):
-    selected_form = str(record.get("Dosage_Form", "")).strip().lower()
-    selected_indication = str(record.get("Target_Indication", "")).strip().lower()
+    # Selected/requested product context is metadata about WHY a source was
+    # retrieved, not a fact about WHAT the study used.  Prefer the dedicated
+    # request keys when present; legacy callers that still only provide
+    # Dosage_Form/Target_Indication keep working via the fallback.
+    selected_form = str(
+        record.get("Requested_Dosage_Form") or record.get("Dosage_Form", "")
+    ).strip().lower()
+    selected_indication = str(
+        record.get("Requested_Target_Indication") or record.get("Target_Indication", "")
+    ).strip().lower()
 
     detected_form = (
         str(record.get("Detected_Dosage_Forms", "")) or
@@ -246,7 +254,8 @@ def build_standard_evidence(record):
 
     detected_indication = (
         str(record.get("Detected_Indications", "")) or
-        str(record.get("Target_Indication_Detected", ""))
+        str(record.get("Target_Indication_Detected", "")) or
+        str(record.get("Target_Indication", ""))
     ).strip()
 
     detected_form_lower = detected_form.lower()
@@ -1151,6 +1160,230 @@ from general_indication_relevance import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Preparation-transferability helpers.  These live beside the authoritative
+# evaluate_applicability() contract so extraction, candidate discovery and the
+# final decision path all normalize the same concepts instead of maintaining
+# parallel preparation vocabularies.  The helpers only normalize facts that
+# are explicitly present; they never infer an unreported preparation, route or
+# dose from a selected product.
+# ---------------------------------------------------------------------------
+_PREPARATION_CATEGORY_PATTERNS = (
+    ("essential_oil", ("essential oil", "volatile oil")),
+    ("hydroalcoholic", ("hydroalcoholic", "hydroethanolic", "ethanol-water", "ethanol water")),
+    ("ethanolic", ("ethanolic extract", "ethanol extract")),
+    ("aqueous", ("aqueous extract", "water extract", "aqueous infusion", "infusion", "decoction", "herbal tea", "tisane", "tea")),
+    ("dry_extract", ("standardized dry extract", "standardised dry extract", "dry extract")),
+    ("tincture", ("tincture",)),
+    ("powder", ("powder", "powdered herb", "powdered herbal")),
+    ("juice", ("fresh juice", "expressed juice", "juice")),
+)
+
+
+def preparation_category_from_text(value: Any) -> str:
+    """Return a conservative canonical category for an EXPLICIT preparation.
+
+    This is vocabulary normalization, not similarity inference.  Generic words
+    such as ``extract`` or dosage-form-only words such as ``capsule`` are left
+    uncategorized because they do not establish how the botanical material was
+    prepared.
+    """
+    if _appl_is_blank(value):
+        return ""
+    text = _appl_norm(value)
+    for category, terms in _PREPARATION_CATEGORY_PATTERNS:
+        if any(term in text for term in terms):
+            return category
+    return ""
+
+
+def preparation_from_product_form(value: Any) -> str:
+    """Use a product-form string as Target_Preparation only when it itself
+    names a botanical preparation (infusion/tincture/extract/oil/powder/etc.).
+
+    A capsule/tablet/softgel is a dosage form, not a preparation; returning an
+    empty string for those prevents the platform from silently treating a
+    capsule containing an unspecified powder as equivalent to a standardized
+    extract studied in a trial.
+    """
+    if _appl_is_blank(value):
+        return ""
+    text = str(value).strip()
+    category = preparation_category_from_text(text)
+    return text if category else ""
+
+
+
+
+def canonical_plant_part(value: Any) -> str:
+    """Normalize only unambiguous botanical-part spelling/plural variants."""
+    if _appl_is_blank(value):
+        return ""
+    text = _appl_norm(value).replace("-", " ")
+    aliases = {
+        "leaf": "leaf", "leaves": "leaf",
+        "root": "root", "roots": "root",
+        "flower": "flower", "flowers": "flower",
+        "seed": "seed", "seeds": "seed",
+        "fruit": "fruit", "fruits": "fruit", "berry": "fruit", "berries": "fruit",
+        "rhizome": "rhizome", "rhizomes": "rhizome",
+        "stem": "stem", "stems": "stem",
+        "bark": "bark",
+        "aerial part": "aerial part", "aerial parts": "aerial part",
+    }
+    return aliases.get(text, text)
+
+
+def canonical_administration_route(value: Any) -> str:
+    """Normalize unambiguous route wording without inferring an unreported route."""
+    if _appl_is_blank(value):
+        return ""
+    text = _appl_norm(value).replace("-", " ")
+    aliases = {
+        "oral": "oral", "orally": "oral", "by mouth": "oral",
+        "topical": "topical", "topically": "topical", "dermal": "topical",
+        "inhalation": "inhalation", "inhaled": "inhalation",
+        "mucosal": "mucosal", "oromucosal": "mucosal", "buccal": "mucosal",
+        "injection": "injection", "intravenous": "injection",
+        "intramuscular": "injection", "subcutaneous": "injection",
+    }
+    return aliases.get(text, text)
+
+def parse_dose_value_unit(value: Any) -> tuple[Optional[float], str]:
+    """Parse one explicit human-readable dose into numeric value + unit.
+
+    Only simple absolute dose expressions are accepted (e.g. ``240 mg/day``,
+    ``300 mg daily``, ``2 g``).  Concentrations, ranges and ambiguous numbers
+    deliberately return ``(None, "")`` rather than inventing comparability.
+    """
+    if _appl_is_blank(value):
+        return None, ""
+    import re as _re
+    text = str(value).strip().lower().replace("μ", "µ")
+    # Ranges require a target-range model rather than choosing one endpoint.
+    if _re.search(r"\d\s*(?:-|–|—|to)\s*\d", text):
+        return None, ""
+    m = _re.search(
+        r"(?<![\w.])(\d+(?:\.\d+)?)\s*(µg|ug|mcg|mg|g|ml|mL)"
+        r"(?:\s*(?:/|per\s+)(day|d|24\s*h|kg(?:/day|/d)?))?\b",
+        text, flags=_re.IGNORECASE,
+    )
+    if not m:
+        return None, ""
+    try:
+        number = float(m.group(1))
+    except (TypeError, ValueError):
+        return None, ""
+    unit = m.group(2).lower().replace("ug", "µg").replace("mcg", "µg")
+    denominator = (m.group(3) or "").lower().replace(" ", "")
+    if denominator in {"d", "24h"}:
+        denominator = "day"
+    if denominator:
+        unit = f"{unit}/{denominator}"
+    elif _re.search(r"\b(?:daily|per day|each day)\b", text):
+        unit = f"{unit}/day"
+    return number, unit
+
+
+def build_transferability_target_context(
+    indication: str = "",
+    dosage_form: str = "",
+    standardized_project: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Build the one authoritative target-product context used by Phase 5.
+
+    Missing product facts stay missing.  ``Required_Transferability_Dimensions``
+    marks the dimensions that must be known before the platform may call
+    transferability complete; evaluate_applicability() converts an omitted
+    required target fact into UNKNOWN rather than quietly ignoring it.
+    """
+    project = dict(standardized_project or {})
+    context: dict[str, Any] = {}
+
+    target_indication = (
+        project.get("target_indication") or project.get("Target_Indication") or indication
+    )
+    if not _appl_is_blank(target_indication):
+        context["Target_Indication"] = target_indication
+
+    target_route = project.get("route") or project.get("target_route") or project.get("Target_Route")
+    if not _appl_is_blank(target_route):
+        context["Target_Route"] = canonical_administration_route(target_route)
+
+    target_part = (
+        project.get("target_plant_part") or project.get("plant_part") or project.get("Target_Plant_Part")
+    )
+    if not _appl_is_blank(target_part):
+        context["Target_Plant_Part"] = canonical_plant_part(target_part)
+
+    explicit_prep = (
+        project.get("target_preparation") or project.get("preparation") or project.get("Target_Preparation")
+    )
+    target_preparation = explicit_prep or preparation_from_product_form(
+        project.get("dosage_form") or dosage_form
+    )
+    if not _appl_is_blank(target_preparation):
+        context["Target_Preparation"] = target_preparation
+        category = (
+            project.get("target_preparation_category")
+            or project.get("Target_Preparation_Category")
+            or preparation_category_from_text(target_preparation)
+        )
+        if category:
+            context["Target_Preparation_Category"] = category
+
+    # Support future structured UI fields without requiring a new UI now.
+    target_min = project.get("target_dose_min", project.get("Target_Dose_Min"))
+    target_max = project.get("target_dose_max", project.get("Target_Dose_Max"))
+    target_unit = project.get("target_dose_unit", project.get("Target_Dose_Unit"))
+    dose_text = project.get("target_dose") or project.get("dose")
+    if target_min is None and target_max is None and not _appl_is_blank(dose_text):
+        parsed_value, parsed_unit = parse_dose_value_unit(dose_text)
+        if parsed_value is not None:
+            target_min = target_max = parsed_value
+            target_unit = target_unit or parsed_unit
+    if target_min is not None:
+        context["Target_Dose_Min"] = target_min
+    if target_max is not None:
+        context["Target_Dose_Max"] = target_max
+    if not _appl_is_blank(target_unit):
+        context["Target_Dose_Unit"] = target_unit
+
+    # These are the clinically material transferability dimensions for a
+    # product decision.  If the product definition has not specified one, the
+    # result is explicitly incomplete/UNKNOWN, not a full MATCH. Species is
+    # intentionally excluded: candidate identity is already enforced upstream.
+    context["Required_Transferability_Dimensions"] = (
+        "plant_part", "preparation", "route", "dose", "indication"
+    )
+    return context
+
+
+def evidence_transferability_fields(
+    *,
+    species: Any = "",
+    plant_part: Any = "",
+    preparation: Any = "",
+    route: Any = "",
+    dose: Any = "",
+    indication_match_type: Any = "",
+) -> dict[str, Any]:
+    """Map explicit record facts to evaluate_applicability()'s Evidence_* shape."""
+    dose_value, dose_unit = parse_dose_value_unit(dose)
+    out: dict[str, Any] = {
+        "Evidence_Species": species or "",
+        "Evidence_Plant_Part": canonical_plant_part(plant_part),
+        "Evidence_Preparation": preparation or "",
+        "Evidence_Preparation_Category": preparation_category_from_text(preparation),
+        "Evidence_Route": canonical_administration_route(route),
+        "Indication_Match_Type": indication_match_type or "",
+    }
+    if dose_value is not None:
+        out["Evidence_Dose"] = dose_value
+        out["Evidence_Dose_Unit"] = dose_unit
+    return out
+
+
 def _appl_is_blank(value) -> bool:
     if value is None:
         return True
@@ -1326,6 +1559,20 @@ def evaluate_applicability(
         "dose": _appl_dimension_dose(evidence_row, target_context),
         "indication": _appl_dimension_indication(evidence_row, target_context),
     }
+
+    # Production transferability contexts explicitly identify clinically
+    # material dimensions that must be known before a record may be called a
+    # complete MATCH.  If the target product itself has not specified one of
+    # those dimensions, the older implementation returned NOT_APPLICABLE and
+    # silently ignored it, allowing indication+preparation alone to become a
+    # misleading full match.  Required-but-unspecified is uncertainty, not
+    # irrelevance, so convert only those dimensions to UNKNOWN.  Legacy callers
+    # that do not provide Required_Transferability_Dimensions retain their
+    # historical behavior unchanged.
+    required_dimensions = set(target_context.get("Required_Transferability_Dimensions") or ())
+    for dim in required_dimensions:
+        if dim in dimension_status and dimension_status[dim] == _APPL_NOT_APPLICABLE:
+            dimension_status[dim] = _APPL_UNKNOWN
 
     evaluable = {
         dim: status for dim, status in dimension_status.items() if status != _APPL_NOT_APPLICABLE

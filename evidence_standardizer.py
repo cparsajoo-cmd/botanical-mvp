@@ -60,6 +60,7 @@ def standardize_extracted_record(extracted, source_metadata):
         "Primary_Outcome", "Result_Direction", "Safety_Signal",
         "Adverse_Events", "Interactions_Structured", "Effect_Size", "P_Value",
         "Administration_Route", "Plant_Part", "Extraction_Method", "Duration",
+        "Preparation", "Dose", "Requested_Dosage_Form", "Requested_Target_Indication",
         "Regulatory_Authorization_Status",
         "Mechanism", "Target", "Data_Quality_Score",
         # PHASE 2 audit finding (PHASE2_EVIDENCE_ARCHITECTURE_AUDIT.md
@@ -89,15 +90,29 @@ def standardize_extracted_record(extracted, source_metadata):
     # a direction extraction is needed, while source-provided Safety_Signal is
     # always preserved.
     needs_structured_assertion = not normalized.get("Result_Direction")
+    # Preparation transferability is a first-class scientific context, not a
+    # presentation detail.  If any material study-context field is still
+    # absent, let the structured extractor try to recover it from the source
+    # text.  Missing values remain missing when the text does not support them.
+    needs_transferability_context = any(
+        not normalized.get(field)
+        for field in ("Preparation", "Administration_Route", "Dose", "Plant_Part")
+    )
 
     if extract_evidence_with_llm is not None and (
-        not already_has_reliable_evidence_level or needs_structured_assertion
+        not already_has_reliable_evidence_level
+        or needs_structured_assertion
+        or needs_transferability_context
     ):
         try:
             llm = extract_evidence_with_llm(
                 normalized,
-                selected_dosage_form=normalized.get("Dosage_Form", ""),
-                selected_indication=normalized.get("Target_Indication", ""),
+                selected_dosage_form=(
+                    normalized.get("Requested_Dosage_Form") or normalized.get("Dosage_Form", "")
+                ),
+                selected_indication=(
+                    normalized.get("Requested_Target_Indication") or normalized.get("Target_Indication", "")
+                ),
             )
 
             if not normalized.get("Scientific_Name"):
@@ -114,10 +129,45 @@ def standardize_extracted_record(extracted, source_metadata):
             if not normalized.get("Study_Model"):
                 normalized["Study_Model"] = llm.get("study_model", "")
 
+            # Study preparation/context fields are extracted from the SOURCE
+            # text, never from the selected product context.  Connector/source
+            # values retain precedence; the LLM only fills genuinely missing
+            # fields.  Provenance markers stay additive and are never consumed
+            # as if they were source-provided values.
+            _llm_transferability_filled = []
+            for _field, _llm_key in (
+                ("Plant_Part", "plant_part"),
+                ("Preparation", "preparation"),
+                ("Administration_Route", "administration_route"),
+                ("Dose", "dose"),
+                ("Extraction_Method", "extraction_method"),
+                ("Duration", "duration"),
+            ):
+                if not normalized.get(_field) and llm.get(_llm_key):
+                    normalized[_field] = llm.get(_llm_key, "")
+                    _llm_transferability_filled.append(_field)
+            if llm.get("preparation_category"):
+                normalized["LLM_Preparation_Category"] = llm.get("preparation_category")
+            if llm.get("dose_unit"):
+                normalized["LLM_Dose_Unit"] = llm.get("dose_unit")
+            if _llm_transferability_filled:
+                normalized["Transferability_Extraction_Provenance"] = (
+                    "llm_text_extraction:" + ",".join(_llm_transferability_filled)
+                )
+
             if not normalized.get("Detected_Dosage_Forms"):
                 normalized["Detected_Dosage_Forms"] = llm.get("dosage_form", "")
+            if not normalized.get("Dosage_Form") and llm.get("dosage_form"):
+                # Canonical STUDY dosage form. Requested_Dosage_Form is kept in
+                # its own transient field and is never used as a fallback here.
+                normalized["Dosage_Form"] = llm.get("dosage_form", "")
             if not normalized.get("Detected_Indications"):
                 normalized["Detected_Indications"] = llm.get("target_indication", "")
+            if not normalized.get("Target_Indication") and llm.get("target_indication"):
+                # Canonical STUDY indication. This replaces the old collector
+                # behavior that wrote the user's requested indication into the
+                # evidence row even when the study investigated something else.
+                normalized["Target_Indication"] = llm.get("target_indication", "")
             if not normalized.get("Dosage_Form_Relevance"):
                 normalized["Dosage_Form_Relevance"] = llm.get("dosage_form_relevance", "")
 

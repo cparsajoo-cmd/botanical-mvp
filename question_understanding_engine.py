@@ -189,6 +189,12 @@ def standardize_project_definition(form_input: Dict[str, Any]) -> Dict[str, Any]
     indication_raw = normalize_text(form_input.get("indication"))
     market_raw = normalize_text(form_input.get("market"))
     population = normalize_text(form_input.get("population")) or "Adults"
+    # Optional product-definition facts used by the authoritative preparation
+    # transferability comparator.  They remain optional because early R&D may
+    # not know them yet; missing values are carried as missing, never guessed.
+    target_preparation = normalize_text(form_input.get("target_preparation"))
+    target_plant_part = normalize_text(form_input.get("target_plant_part"))
+    target_dose = normalize_text(form_input.get("target_dose"))
     constraints = form_input.get("constraints", [])
     commercial_goal = normalize_text(form_input.get("commercial_goal")) or "New Product Development"
 
@@ -204,6 +210,9 @@ def standardize_project_definition(form_input: Dict[str, Any]) -> Dict[str, Any]
         "dosage_form": dosage_form,
         "route": route,
         "target_indication": indication,
+        "target_preparation": target_preparation or None,
+        "target_plant_part": target_plant_part or None,
+        "target_dose": target_dose or None,
         "target_population": population,
         "target_market": market,
         "commercial_goal": commercial_goal,

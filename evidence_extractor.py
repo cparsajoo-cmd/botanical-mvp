@@ -83,6 +83,12 @@ def extract_evidence_from_text(text):
         "Common_Name": "",
         "Product_Type": "Herbal product",
         "Dosage_Form": "",
+        "Preparation": "",
+        "Dose": "",
+        "Administration_Route": "",
+        "Plant_Part": "",
+        "Extraction_Method": "",
+        "Duration": "",
         "Target_Indication": "",
         "Target_Market": "European Union",
 
@@ -237,6 +243,87 @@ def extract_evidence_from_text(text):
         record["Dosage_Form"] = detected_forms[0]
         record["Dosage_Form_Evidence"] = "Direct"
         record["Infusion_Evidence"] = "Direct" if "Infusion" in detected_forms else "Indirect"
+
+    # Preparation / route / plant-part / dose context.  These are deliberately
+    # conservative literal extractors: they only populate a field when the
+    # source text itself contains an explicit phrase.  The richer structured
+    # LLM extractor may fill still-missing fields later, but selected product
+    # context is never copied into these study fields.
+    preparation_patterns = (
+        (r"\bstandardi[sz]ed\s+dry\s+extract\b", "standardized dry extract"),
+        (r"\bhydro(?:alcoholic|ethanolic)\s+extract\b", "hydroalcoholic extract"),
+        (r"\bethanolic\s+extract\b|\bethanol\s+extract\b", "ethanolic extract"),
+        (r"\baqueous\s+extract\b|\bwater\s+extract\b", "aqueous extract"),
+        (r"\bessential\s+oil\b|\bvolatile\s+oil\b", "essential oil"),
+        (r"\btincture\b", "tincture"),
+        (r"\bdecoction\b", "decoction"),
+        (r"\binfusion\b|\bherbal\s+tea\b|\btisane\b", "infusion"),
+        (r"\bdry\s+extract\b", "dry extract"),
+        (r"\bpowder(?:ed)?\s+(?:herb|plant|material)\b|\bherbal\s+powder\b", "powder"),
+    )
+    for pattern, label in preparation_patterns:
+        if re.search(pattern, lower, flags=re.IGNORECASE):
+            record["Preparation"] = label
+            break
+
+    extraction_patterns = (
+        (r"\bhydro(?:alcoholic|ethanolic)\b|\bethanol[- /]water\b", "hydroalcoholic"),
+        (r"\bethanolic\b|\bethanol\s+extract", "ethanolic"),
+        (r"\baqueous\b|\bwater\s+extract", "aqueous"),
+    )
+    for pattern, label in extraction_patterns:
+        if re.search(pattern, lower, flags=re.IGNORECASE):
+            record["Extraction_Method"] = label
+            break
+
+    plant_part_patterns = (
+        (r"\bleaf(?:ves)?\b", "leaf"), (r"\broot(?:s)?\b", "root"),
+        (r"\bflower(?:s)?\b", "flower"), (r"\bseed(?:s)?\b", "seed"),
+        (r"\bbark\b", "bark"), (r"\brhizome(?:s)?\b", "rhizome"),
+        (r"\bfruit(?:s)?\b|\bberr(?:y|ies)\b", "fruit"),
+        (r"\baerial\s+parts?\b", "aerial part"), (r"\bstem(?:s)?\b", "stem"),
+    )
+    for pattern, label in plant_part_patterns:
+        if re.search(pattern, lower, flags=re.IGNORECASE):
+            record["Plant_Part"] = label
+            break
+
+    if re.search(r"\b(?:orally|oral administration|by mouth|ingested)\b", lower):
+        record["Administration_Route"] = "oral"
+    elif re.search(r"\b(?:topically|topical application|applied to (?:the )?skin)\b", lower):
+        record["Administration_Route"] = "topical"
+    elif re.search(r"\b(?:inhaled|inhalation|aromatherapy)\b", lower):
+        record["Administration_Route"] = "inhalation"
+    elif re.search(r"\b(?:intravenous|intramuscular|subcutaneous|injection)\b", lower):
+        record["Administration_Route"] = "injection"
+    elif any(form in detected_forms for form in ("Infusion", "Capsule", "Tablet", "Syrup", "Powder")):
+        # These named forms are intrinsically oral; this is a dosage-form
+        # normalization, not an inference from the user's selected product.
+        record["Administration_Route"] = "oral"
+
+    dose_match = re.search(
+        r"\b(?:dose(?:d)?(?:\s+at|\s+of)?|received|administered|treated\s+with)\s+"
+        r"(?:a\s+daily\s+dose\s+of\s+)?(\d+(?:\.\d+)?)\s*(µg|ug|mcg|mg|g)"
+        r"(?:\s*(?:/|per\s+)(day|d|24\s*h|kg(?:/day|/d)?))?",
+        lower, flags=re.IGNORECASE,
+    )
+    if dose_match:
+        amount, unit, denom = dose_match.group(1), dose_match.group(2), dose_match.group(3)
+        unit = unit.replace("ug", "µg").replace("mcg", "µg")
+        if denom:
+            denom_norm = denom.replace(" ", "").lower()
+            if denom_norm in {"d", "24h"}:
+                denom_norm = "day"
+            record["Dose"] = f"{amount} {unit}/{denom_norm}"
+        else:
+            record["Dose"] = f"{amount} {unit}"
+
+    duration_match = re.search(
+        r"\bfor\s+(\d+(?:\.\d+)?)\s+(day|days|week|weeks|month|months|year|years)\b",
+        lower, flags=re.IGNORECASE,
+    )
+    if duration_match:
+        record["Duration"] = f"{duration_match.group(1)} {duration_match.group(2)}"
 
     # Indication
     detected_indications = []

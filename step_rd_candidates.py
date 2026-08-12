@@ -16,6 +16,7 @@ from decision_explainability import attach_decision_explanations
 from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
     get_scientific_evidence_by_ids,
+    build_transferability_target_context,
 )
 
 
@@ -625,6 +626,11 @@ def render_rd_candidates_step(inputs):
     indication = inputs.get("indication", "")
     dosage_form = inputs.get("dosage_form", "")
     market = inputs.get("market", "")
+    transferability_target_context = build_transferability_target_context(
+        indication=indication,
+        dosage_form=dosage_form,
+        standardized_project=inputs.get("standardized_project"),
+    )
 
     st.markdown("---")
     st.markdown("## Step 3 — Market & Competitive Landscape")
@@ -1096,6 +1102,7 @@ def render_rd_candidates_step(inputs):
                         reference_compound=reference_compound,
                         discovery_mode=discovery_mode,
                         progress_callback=_step5_progress,
+                        target_context=transferability_target_context,
                     )
                     _perf(
                         f"engine.run() done rows={0 if result_df is None else len(result_df)} "
@@ -1116,6 +1123,7 @@ def render_rd_candidates_step(inputs):
                         indication=indication,
                         dosage_form=dosage_form,
                         max_candidates=50,
+                        target_context=transferability_target_context,
                     )
                     _perf(
                         f"build_plant_candidate_shortlist() done "
@@ -1234,6 +1242,7 @@ def render_rd_candidates_step(inputs):
                 indication=indication,
                 dosage_form=dosage_form,
                 max_candidates=50,
+                target_context=transferability_target_context,
             )
             _perf(f"fallback-path build_plant_candidate_shortlist() done elapsed={time.perf_counter() - _perf_t0_fallback:.3f}")
             st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df

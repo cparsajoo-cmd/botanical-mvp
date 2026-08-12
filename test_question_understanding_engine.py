@@ -80,11 +80,17 @@ def test_standardize_project_definition_end_to_end():
         "indication": "Cognitive decline / Alzheimer's support",
         "market": "European Union",
         "population": "Elderly / older adults",
+        "target_preparation": "standardized dry extract",
+        "target_plant_part": "leaf",
+        "target_dose": "240 mg/day",
         "constraints": ["Low CYP interaction risk"],
     })
     assert result["route"] == "Oral"
     assert result["target_market"] == "European Union"
     assert result["target_population"] == "Elderly / older adults"
+    assert result["target_preparation"] == "standardized dry extract"
+    assert result["target_plant_part"] == "leaf"
+    assert result["target_dose"] == "240 mg/day"
     assert result["constraints"] == ["Low CYP interaction risk"]
     assert "regulatory_focus" in result
     assert "evidence_requirements" in result

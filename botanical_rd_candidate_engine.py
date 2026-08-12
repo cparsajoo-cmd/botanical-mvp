@@ -17,6 +17,10 @@ from scientific_phrase_matcher import has_phrase_match
 from negative_evidence_classifier import classify_negative_evidence
 from evidence_interpretation import interpret_evidence
 from evidence_authority import classify_source_authority_from_row
+from standard_evidence_builder import (
+    evaluate_applicability as _evaluate_transferability,
+    evidence_transferability_fields as _evidence_transferability_fields,
+)
 from evidence_confidence import compute_evidence_confidence, confidence_adjusted_framing_note
 from grade_certainty_classifier import classify_grade_certainty
 from decision_class_ah import classify_decision_ah
@@ -510,7 +514,13 @@ OUTPUT_COLUMNS = [
 # unchanged at 23/24 (0.958) — these fixes targeted generalization on
 # UNSEEN text, not the holdout itself, and none of the 24 cases happen
 # to exercise either bug pattern.
-DECISION_ENGINE_VERSION = "1.8.0"
+# 1.9.0 — preparation-transferability activation. Study preparation facts are
+# separated from requested product context; current-product applicability is
+# recomputed before efficacy can vote; confirmed preparation/part/route/dose
+# mismatches cannot support efficacy, while safety/regulatory remain cross-
+# preparation protective. Missing required product context stays unresolved
+# rather than being reported as a complete match.
+DECISION_ENGINE_VERSION = "1.9.0"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s
@@ -1145,6 +1155,7 @@ class BotanicalRDCandidateEngine:
         max_reference_plants=12,
         discovery_mode="compound_substitution",
         progress_callback=None,
+        target_context=None,
     ):
         if discovery_mode == "indication":
             from indication_candidate_discovery import discover_indication_candidates
@@ -1152,12 +1163,14 @@ class BotanicalRDCandidateEngine:
                 self, indication=indication, dosage_form=dosage_form, market=market,
                 product_type=product_type or (dosage_form or "botanical product"),
                 progress_callback=progress_callback,
+                target_context=target_context,
             )
         if discovery_mode not in {"compound_substitution", "legacy"}:
             raise ValueError("discovery_mode must be indication or compound_substitution")
 
         problem = indication
         product_type = product_type or (dosage_form or "botanical product")
+        resolved_target_context = dict(target_context or {})
 
         all_candidates = self._candidate_frame()
 
@@ -1422,6 +1435,13 @@ class BotanicalRDCandidateEngine:
                     # efficacy for this decision.
                     _efficacy_contributing_records = self._scope_efficacy_records(
                         evidence_contributing_records, problem
+                    )
+                    _efficacy_contributing_records, _transferability_assessments = (
+                        self._apply_current_transferability(
+                            _efficacy_contributing_records,
+                            candidate_plant=alt_plant,
+                            target_context=resolved_target_context,
+                        )
                     )
                     efficacy_raw_evidence = " ".join(
                         str(_rec.get("assertion_text") or _rec.get("text") or "").strip()
@@ -2026,6 +2046,34 @@ class BotanicalRDCandidateEngine:
                         records=_efficacy_contributing_records,
                     )
 
+                    # Transferability is a non-compensatory scientific-context
+                    # constraint for efficacy, not for safety/regulatory.  A
+                    # confirmed MISMATCH has already been excluded above.  If the
+                    # governing efficacy body is only PARTIAL/UNKNOWN for the
+                    # current product, a clean scientific GO is too strong: retain
+                    # the candidate but surface caution.  We never downgrade a
+                    # safety/regulatory NO-GO or an existing expert/insufficient
+                    # state here.
+                    _transferability_classes = {
+                        str(a.get("classification") or "UNKNOWN")
+                        for a in _transferability_assessments
+                    }
+                    if (
+                        resolved_target_context
+                        and final_decision.status == FinalDecisionStatus.GO
+                        and _transferability_classes
+                        and _transferability_classes != {"MATCH"}
+                    ):
+                        final_decision = _dataclass_replace(
+                            final_decision,
+                            status=FinalDecisionStatus.GO_WITH_CAUTION,
+                            reason=(
+                                final_decision.reason
+                                + " Product-preparation transferability is not fully confirmed "
+                                  "for all governing efficacy evidence."
+                            ),
+                        )
+
                     # The structured EligibilityDecision is authoritative.
                     # _decision_class() is called earlier for backward-compatible
                     # score-tier logic, but it does not have the record-level
@@ -2063,11 +2111,38 @@ class BotanicalRDCandidateEngine:
                     # once, alongside evidence_index/evidence_source_index,
                     # by _build_evidence_text_index()); never influences
                     # score, decision, or gate_results above.
-                    applicability_items = self._collect_applicability_items(
-                        applicability_index=evidence_applicability_index,
-                        plant=alt_plant,
-                        compound=matched_compound,
-                    )
+                    if resolved_target_context:
+                        _status_to_legacy_applicability = {
+                            "MATCH": EvidenceApplicability.DIRECTLY_APPLICABLE.value,
+                            "PARTIAL": EvidenceApplicability.PARTIALLY_APPLICABLE.value,
+                            "UNKNOWN": EvidenceApplicability.NOT_ASSESSABLE.value,
+                            "MISMATCH": EvidenceApplicability.NOT_APPLICABLE.value,
+                        }
+                        applicability_items = []
+                        for _assessment in _transferability_assessments:
+                            _dim = dict(_assessment.get("dimension_status") or {})
+                            applicability_items.append({
+                                "evidence_record_id": _assessment.get("evidence_record_id"),
+                                "classification": _status_to_legacy_applicability.get(
+                                    str(_assessment.get("classification") or "UNKNOWN"),
+                                    EvidenceApplicability.NOT_ASSESSABLE.value,
+                                ),
+                                "detected_mismatches": [
+                                    name for name, status in _dim.items() if status == "MISMATCH"
+                                ],
+                                "missing_dimensions": [
+                                    name for name, status in _dim.items() if status == "UNKNOWN"
+                                ],
+                            })
+                    else:
+                        # Legacy/read-only fallback for callers with no current
+                        # product context. Persisted applicability is never used
+                        # when a current target context is available.
+                        applicability_items = self._collect_applicability_items(
+                            applicability_index=evidence_applicability_index,
+                            plant=alt_plant,
+                            compound=matched_compound,
+                        )
                     applicability_summary = self._summarize_applicability(applicability_items)
 
                     evidence_confidence = compute_evidence_confidence(
@@ -3810,9 +3885,12 @@ class BotanicalRDCandidateEngine:
                 "source_url": self._pick(row, ["Source_URL", "source_url", "URL", "url"]) or "",
                 "source_type": self._pick(row, ["Source_Type", "source_type"]) or "",
                 "study_design": self._pick(row, ["Study_Type", "study_type", "Study_Design", "study_design"]) or "",
-                "preparation": self._pick(row, ["Preparation", "preparation", "Extraction_Method", "extraction_method"]) or "",
+                "plant_species": self._pick(row, ["Scientific_Name", "scientific_name", "Plant", "plant"]) or "",
+                "plant_part": self._pick(row, ["Plant_Part", "plant_part"]) or "",
+                "preparation": self._pick(row, ["Preparation", "preparation"]) or "",
                 "dose": self._pick(row, ["Dose", "dose"]) or "",
                 "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",
+                "dosage_form": self._pick(row, ["Dosage_Form_Detected", "Detected_Dosage_Forms", "Dosage_Form", "dosage_form"]) or "",
                 "population": self._pick(row, ["Population", "population"]) or "",
                 "target_indication": self._pick(row, ["Target_Indication", "target_indication", "Indication", "indication"]) or "",
                 "source_year": self._pick(row, ["Source_Year", "source_year", "Publication_Year", "publication_year", "Year", "year"]) or "",
@@ -4082,14 +4160,13 @@ class BotanicalRDCandidateEngine:
         return index
 
     def _scope_efficacy_records(self, records, problem):
-        """Return only records allowed to govern therapeutic efficacy.
+        """Return only records allowed to govern indication-specific efficacy.
 
-        Safety and regulatory consumers intentionally keep the unfiltered record
-        list.  Efficacy is stricter: a record must carry an indication that
-        matches the question, and an explicit NOT_APPLICABLE record is excluded.
-        Missing indication is treated as unknown rather than silently assumed to
-        match.  This is a general context rule; it contains no botanical, PMID or
-        benchmark-specific exception.
+        Persisted Applicability_Classification is intentionally NOT read here:
+        that value may have been computed for a different product/preparation at
+        ingestion time.  Current-product transferability is recomputed later from
+        immutable evidence facts vs. the current target context.  Safety and
+        regulatory consumers keep the full unfiltered record list.
         """
         problem_text = str(problem or "").strip()
         if not problem_text:
@@ -4097,10 +4174,6 @@ class BotanicalRDCandidateEngine:
 
         scoped = []
         for rec in records or []:
-            applicability = self._norm(rec.get("applicability_classification") or "")
-            if applicability.replace("_", " ") == "not applicable":
-                continue
-
             target = str(rec.get("target_indication") or "").strip()
             if not target:
                 # Unknown indication cannot establish indication-specific efficacy.
@@ -4112,6 +4185,52 @@ class BotanicalRDCandidateEngine:
             ):
                 scoped.append(rec)
         return scoped
+
+    def _apply_current_transferability(self, records, candidate_plant, target_context):
+        """Recompute efficacy transferability for the CURRENT product context.
+
+        Confirmed MISMATCH records cannot vote on efficacy. PARTIAL/UNKNOWN
+        records remain available (useful for exploratory R&D) but are marked so
+        a final GO can be downgraded to GO WITH CAUTION.  Safety/regulatory are
+        deliberately handled elsewhere from the unfiltered record pool.
+        """
+        if not target_context:
+            return list(records or []), []
+
+        kept = []
+        assessments = []
+        for rec in records or []:
+            fields = _evidence_transferability_fields(
+                species=rec.get("plant_species") or candidate_plant,
+                plant_part=rec.get("plant_part") or "",
+                preparation=rec.get("preparation") or "",
+                route=rec.get("route") or "",
+                dose=rec.get("dose") or "",
+                # Records reach this method only after indication scoping, so a
+                # non-empty marker truthfully means the indication dimension
+                # matched upstream; it is not a second indication classifier.
+                indication_match_type="current_indication_match",
+            )
+            result = _evaluate_transferability(fields, target_context)
+            status = str(result.get("Applicability_Classification") or "UNKNOWN")
+            assessments.append({
+                "evidence_record_id": rec.get("evidence_record_id"),
+                "classification": status,
+                "data_completeness": result.get("Applicability_Data_Completeness"),
+                "dimension_status": result.get("Dimension_Status", {}),
+            })
+            if status == "MISMATCH":
+                continue
+            rec_copy = dict(rec)
+            rec_copy["current_transferability_classification"] = status
+            rec_copy["current_transferability_data_completeness"] = result.get(
+                "Applicability_Data_Completeness"
+            )
+            rec_copy["current_transferability_dimension_status"] = result.get(
+                "Dimension_Status", {}
+            )
+            kept.append(rec_copy)
+        return kept, assessments
 
     def _collect_raw_evidence(
         self,

@@ -167,8 +167,12 @@ def collect_pubmed_evidence(
         extracted = extract_evidence_from_text(article["Raw_Text"])
 
         extracted["Scientific_Name"] = scientific_name
-        extracted["Target_Indication"] = indication
-        extracted["Dosage_Form"] = dosage_form
+        # Search/product context must never overwrite facts extracted from the
+        # study itself.  Keep the requested indication/form under dedicated
+        # transient keys; build_standard_evidence() can use them for contextual
+        # directness, while Target_Indication/Dosage_Form remain evidence facts.
+        extracted["Requested_Target_Indication"] = indication
+        extracted["Requested_Dosage_Form"] = dosage_form
         extracted["Target_Market"] = market
         extracted["Source_Type"] = "PubMed"
         extracted["Source_Title"] = article["Title"]

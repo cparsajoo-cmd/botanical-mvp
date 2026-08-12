@@ -130,6 +130,12 @@ def _apply_demo_scenario(scenario_key):
     st.session_state["rd_dosage_form"] = scenario["dosage_form"]
     st.session_state["rd_market"] = scenario["market"]
     st.session_state["rd_reference_plant"] = scenario["reference_plant"]
+    # Demo scenarios predate explicit preparation/part/dose fields. Clear any
+    # values left from a prior manual session so the demo cannot silently use
+    # stale product-definition constraints.
+    st.session_state["rd_target_preparation"] = ""
+    st.session_state["rd_target_plant_part"] = ""
+    st.session_state["rd_target_dose"] = ""
     st.session_state["rd_demo_scenario_active"] = scenario["label"]
 
 
@@ -270,6 +276,27 @@ def render_inputs():
             3,
         )
 
+        st.caption(
+            "Optional product facts below let the evidence-transferability engine "
+            "distinguish, for example, a standardized extract from an infusion. "
+            "Leave them blank when the R&D concept has not been defined yet."
+        )
+        target_preparation = st.text_input(
+            "Target botanical preparation (optional)",
+            key="rd_target_preparation",
+            placeholder="e.g. standardized dry extract, tincture, infusion",
+        )
+        target_plant_part = st.text_input(
+            "Target plant part (optional)",
+            key="rd_target_plant_part",
+            placeholder="e.g. leaf, root, aerial part",
+        )
+        target_dose = st.text_input(
+            "Target dose (optional)",
+            key="rd_target_dose",
+            placeholder="e.g. 240 mg/day",
+        )
+
     framework = get_market_framework(market)
 
     if framework:
@@ -290,6 +317,9 @@ def render_inputs():
         "dosage_form": dosage_form,
         "indication": indication,
         "market": market,
+        "target_preparation": target_preparation,
+        "target_plant_part": target_plant_part,
+        "target_dose": target_dose,
         "population": ", ".join(parsed_question.target_population) if parsed_question and parsed_question.target_population else None,
         "constraints": parsed_question.safety_constraints if parsed_question else [],
     })

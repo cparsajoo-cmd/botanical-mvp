@@ -35,6 +35,23 @@ EVIDENCE_SCHEMA = {
         "evidence_type": {"type": "string"},
         "study_model": {"type": "string"},
         "dosage_form": {"type": "string"},
+        "plant_part": {"type": "string"},
+        "preparation": {"type": "string"},
+        "preparation_category": {
+            "type": "string",
+            "enum": [
+                "aqueous", "hydroalcoholic", "ethanolic", "dry_extract",
+                "essential_oil", "tincture", "powder", "juice", "other", "unknown"
+            ],
+        },
+        "administration_route": {
+            "type": "string",
+            "enum": ["oral", "topical", "inhalation", "mucosal", "injection", "other", "unknown"],
+        },
+        "dose": {"type": "string"},
+        "dose_unit": {"type": "string"},
+        "extraction_method": {"type": "string"},
+        "duration": {"type": "string"},
         "target_indication": {"type": "string"},
         "dosage_form_relevance": {"type": "string"},
         "population": {"type": "string"},
@@ -54,6 +71,14 @@ EVIDENCE_SCHEMA = {
         "evidence_type",
         "study_model",
         "dosage_form",
+        "plant_part",
+        "preparation",
+        "preparation_category",
+        "administration_route",
+        "dose",
+        "dose_unit",
+        "extraction_method",
+        "duration",
         "target_indication",
         "dosage_form_relevance",
         "population",
@@ -87,6 +112,33 @@ Selected indication: {selected_indication}
 
 Extract only what is supported by the provided text.
 
+CRITICAL CONTEXT RULE:
+The selected product dosage form and selected indication are the USER'S target
+context only. Never copy either one into a study field unless the supplied
+source text itself states it. In particular, do not report an infusion merely
+because the selected product is an infusion, and do not report the selected
+indication as the study indication unless the source text supports it.
+
+Preparation fields:
+- dosage_form = physical dosage/administration form explicitly used in the study
+  (e.g. capsule, tablet, cream, infusion). Empty string if not stated.
+- preparation = identity of the studied botanical preparation/extract as stated
+  (e.g. "standardized dry extract EGb 761", "aqueous infusion", "tincture").
+  Do not reduce a standardized extract to "capsule" merely because it was put
+  in a capsule.
+- plant_part = explicit studied botanical part only (leaf, root, bark, etc.).
+- administration_route = oral/topical/inhalation/mucosal/injection/other/unknown.
+- dose = exact study dose text including amount/frequency when stated, e.g.
+  "240 mg/day". Empty string if not stated.
+- dose_unit = normalized unit only when unambiguous, e.g. "mg/day" or "g";
+  otherwise empty string.
+- extraction_method = solvent/method only when explicitly stated.
+- duration = study treatment/exposure duration only when explicitly stated.
+- preparation_category must be based only on explicit preparation wording:
+  aqueous, hydroalcoholic, ethanolic, dry_extract, essential_oil, tincture,
+  powder, juice, other, or unknown. A generic word "extract" is other/unknown,
+  not automatically hydroalcoholic or aqueous.
+
 Evidence type must be one of:
 Meta-analysis, Systematic Review, Randomized Controlled Trial, Clinical Study,
 Observational Study, Case Report, Animal Study, In Vitro, Traditional/Regulatory,
@@ -119,7 +171,7 @@ Otherwise No.
 """
 
     response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=(os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip(),
         input=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},

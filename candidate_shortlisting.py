@@ -31,7 +31,7 @@ from evidence_authority import (
     DIRECTION_UNCLEAR,
 )
 from scientific_phrase_matcher import phrase_present
-from standard_evidence_builder import evaluate_applicability
+from standard_evidence_builder import evaluate_applicability, preparation_from_product_form
 from evidence_consistency import classify_evidence_consistency
 from phase5_scoring_config import (
     SCORING_MODEL_VERSION,
@@ -385,16 +385,28 @@ def _preparation_family(text: str) -> str:
 
 
 def _preparation_applicability_row(row: pd.Series, dosage_form: str) -> str:
-    """Row-level preparation-applicability class for the SELECTED dosage form.
+    """Diagnostic preparation class, aligned with authoritative Phase-5 status.
 
-    Returns one of PREP_DIRECT_MATCH, PREP_COMPATIBLE_BUT_INDIRECT,
-    PREP_INCOMPATIBLE, PREP_NOT_REPORTED. Evidence generated under a
-    DIFFERENT preparation family than the one requested (e.g. a
-    standardized-extract or capsule study being considered for an infusion
-    product) is never returned as PREP_DIRECT_MATCH -- at best it is
-    PREP_COMPATIBLE_BUT_INDIRECT, i.e. held for preparation-specific
-    confirmation rather than treated as automatically applicable.
+    When the current-session ``Dimension_Status`` is present, it wins.  This
+    prevents the older vocabulary-family heuristic from reporting a direct
+    preparation match when the authoritative comparator says PARTIAL (for
+    example infusion vs decoction) or MISMATCH (infusion vs dry extract).
+    Legacy rows fall back conservatively: exact preparation text is direct;
+    same normalized parent category is only indirect; dosage-form-only words
+    such as capsule/tablet do not establish a botanical preparation.
     """
+    dimension_status = row.get("Dimension_Status")
+    if isinstance(dimension_status, Mapping):
+        prep_status = str(dimension_status.get("preparation") or "").upper()
+        if prep_status == "MATCH":
+            return PREP_DIRECT_MATCH
+        if prep_status == "PARTIAL":
+            return PREP_COMPATIBLE_BUT_INDIRECT
+        if prep_status == "MISMATCH":
+            return PREP_INCOMPATIBLE
+        if prep_status in {"UNKNOWN", "NOT_APPLICABLE"}:
+            return PREP_NOT_REPORTED
+
     selected = _norm(dosage_form)
     if not selected:
         return PREP_NOT_REPORTED
@@ -402,12 +414,25 @@ def _preparation_applicability_row(row: pd.Series, dosage_form: str) -> str:
     if _dosage_compatibility(row, dosage_form) == "Mismatch":
         return PREP_INCOMPATIBLE
 
-    extraction = _norm(row.get("Extraction_Method", ""))
-    if not extraction:
+    evidence_preparation = _norm(row.get("Evidence_Preparation", ""))
+    if not evidence_preparation:
+        evidence_preparation = _norm(row.get("Preparation", ""))
+    if not evidence_preparation:
+        evidence_preparation = _norm(row.get("Extraction_Method", ""))
+    if not evidence_preparation:
         return PREP_NOT_REPORTED
 
-    if selected in extraction or _preparation_family(selected) == _preparation_family(extraction):
+    target_preparation = preparation_from_product_form(dosage_form)
+    if not target_preparation:
+        return PREP_NOT_REPORTED
+    target_norm = _norm(target_preparation)
+    if target_norm == evidence_preparation:
         return PREP_DIRECT_MATCH
+
+    target_family = _preparation_family(target_norm)
+    evidence_family = _preparation_family(evidence_preparation)
+    if target_family and evidence_family and target_family == evidence_family:
+        return PREP_COMPATIBLE_BUT_INDIRECT
 
     return PREP_COMPATIBLE_BUT_INDIRECT
 
@@ -1961,11 +1986,21 @@ def build_plant_candidate_shortlist(
     # PHASE 5 (addendum §3.8, rules 2-4) — resolve target_context once,
     # up front: explicit values win; legacy indication/dosage_form only
     # fill in a key that's genuinely absent.
+    explicit_target_context = target_context is not None
     resolved_target_context: dict[str, Any] = dict(target_context or {})
     if "Target_Indication" not in resolved_target_context and _norm(indication):
         resolved_target_context["Target_Indication"] = indication
-    if "Target_Preparation" not in resolved_target_context and _norm(dosage_form):
-        resolved_target_context["Target_Preparation"] = dosage_form
+    # Legacy direct callers historically used dosage_form as a preparation.
+    # Keep that adapter only when no explicit transferability context was
+    # supplied.  Production Step 5 now passes a context that deliberately
+    # leaves Target_Preparation empty for dosage-form-only values such as
+    # capsule/tablet/softgel; silently re-inserting "Capsule" here would undo
+    # that distinction and recreate the source/target conflation this layer is
+    # meant to prevent.
+    if not explicit_target_context and "Target_Preparation" not in resolved_target_context and _norm(dosage_form):
+        legacy_preparation = preparation_from_product_form(dosage_form)
+        if legacy_preparation:
+            resolved_target_context["Target_Preparation"] = legacy_preparation
 
     _t0 = time.perf_counter()
     _perf(f"build_plant_candidate_shortlist start rows={len(raw_df)}")

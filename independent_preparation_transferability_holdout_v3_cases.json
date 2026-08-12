@@ -1,0 +1,710 @@
+{
+  "benchmark_id": "independent_preparation_transferability_holdout_v3_20260812",
+  "cases": [
+    {
+      "id": "prepblind3_001_dry_root_exact",
+      "source_title": "Clinical botanical intervention report 01",
+      "text": "Participants received a standardised dry extract prepared from the roots, taken by mouth at 210 mg/day for ten weeks for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "dry_extract"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 210.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "standardised dry extract",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "210 mg/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_002_flower_infusion_exact",
+      "source_title": "Clinical botanical intervention report 02",
+      "text": "The intervention was an infusion prepared from the flowers and consumed orally at 2 g/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "aqueous"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "flower",
+          "flowers"
+        ],
+        "dose_value": 2.0,
+        "dose_unit": "g/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "infusion",
+        "route": "oral",
+        "target_plant_part": "flower",
+        "target_dose": "2 g/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_003_bark_tincture_exact",
+      "source_title": "Clinical botanical intervention report 03",
+      "text": "A tincture made from bark was swallowed at 1.8 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "tincture"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "bark"
+        ],
+        "dose_value": 1.8,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "tincture",
+        "route": "oral",
+        "target_plant_part": "bark",
+        "target_dose": "1.8 ml/day"
+      },
+      "applicability_accept": [
+        "MATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_004_seed_powder_exact",
+      "source_title": "Clinical botanical intervention report 04",
+      "text": "Subjects took 5 g/day of powdered seeds by mouth for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "powder"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "seed",
+          "seeds"
+        ],
+        "dose_value": 5.0,
+        "dose_unit": "g/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "powder",
+        "route": "oral",
+        "target_plant_part": "seed",
+        "target_dose": "5 g/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_005_fruit_juice_exact",
+      "source_title": "Clinical botanical intervention report 05",
+      "text": "Freshly pressed juice from the fruit was consumed orally at 15 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "juice"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "fruit",
+          "fruits"
+        ],
+        "dose_value": 15.0,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "fresh juice",
+        "route": "oral",
+        "target_plant_part": "fruit",
+        "target_dose": "15 ml/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_006_flower_oil_inhaled",
+      "source_title": "Clinical botanical intervention report 06",
+      "text": "A volatile oil distilled from the flowers was administered by inhalation at 0.12 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "essential_oil"
+        ],
+        "route": [
+          "inhalation"
+        ],
+        "plant_part": [
+          "flower",
+          "flowers"
+        ],
+        "dose_value": 0.12,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "essential oil",
+        "route": "inhalation",
+        "target_plant_part": "flower",
+        "target_dose": "0.12 ml/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_007_aerial_hydroethanolic_exact",
+      "source_title": "Clinical botanical intervention report 07",
+      "text": "A hydroethanolic extract of the aerial parts was taken orally at 480 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "hydroalcoholic"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "aerial part",
+          "aerial parts"
+        ],
+        "dose_value": 480.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "hydroalcoholic extract",
+        "route": "oral",
+        "target_plant_part": "aerial part",
+        "target_dose": "480 mg/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_008_root_ethanol_exact",
+      "source_title": "Clinical botanical intervention report 08",
+      "text": "An ethanol extract of the roots was administered orally at 275 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "ethanolic"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 275.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "ethanolic extract",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "275 mg/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_009_infusion_vs_dry",
+      "source_title": "Clinical botanical intervention report 09",
+      "text": "A leaf infusion was consumed by mouth at 3 g/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "aqueous"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "leaf",
+          "leaves"
+        ],
+        "dose_value": 3.0,
+        "dose_unit": "g/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "dry extract",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "3 g/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_010_hydroalcoholic_vs_oil",
+      "source_title": "Clinical botanical intervention report 10",
+      "text": "A hydroalcoholic extract of the root was given orally at 360 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "hydroalcoholic"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 360.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "essential oil",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "360 mg/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_011_seed_vs_leaf",
+      "source_title": "Clinical botanical intervention report 11",
+      "text": "The study product consisted of powdered seeds taken orally at 4.5 g/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "powder"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "seed",
+          "seeds"
+        ],
+        "dose_value": 4.5,
+        "dose_unit": "g/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "powder",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "4.5 g/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_012_oral_vs_topical",
+      "source_title": "Clinical botanical intervention report 12",
+      "text": "A tincture made from the flowers was swallowed at 2.2 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "tincture"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "flower",
+          "flowers"
+        ],
+        "dose_value": 2.2,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "tincture",
+        "route": "topical",
+        "target_plant_part": "flower",
+        "target_dose": "2.2 ml/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_013_inhaled_vs_oral",
+      "source_title": "Clinical botanical intervention report 13",
+      "text": "An essential oil prepared from leaves was inhaled at 0.18 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "essential_oil"
+        ],
+        "route": [
+          "inhalation"
+        ],
+        "plant_part": [
+          "leaf",
+          "leaves"
+        ],
+        "dose_value": 0.18,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "essential oil",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "0.18 ml/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_014_dose_threefold",
+      "source_title": "Clinical botanical intervention report 14",
+      "text": "A standard dry root extract was taken orally at 750 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "dry_extract"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 750.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "dry extract",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "250 mg/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_015_tincture_vs_powder",
+      "source_title": "Clinical botanical intervention report 15",
+      "text": "A root tincture was taken by mouth at 2.5 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "tincture"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 2.5,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "powder",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "2.5 ml/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_016_juice_vs_infusion",
+      "source_title": "Clinical botanical intervention report 16",
+      "text": "Pressed juice from the aerial parts was swallowed at 14 mL/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "juice"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "aerial part",
+          "aerial parts"
+        ],
+        "dose_value": 14.0,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "infusion",
+        "route": "oral",
+        "target_plant_part": "aerial part",
+        "target_dose": "14 ml/day"
+      },
+      "applicability_accept": [
+        "MISMATCH"
+      ]
+    },
+    {
+      "id": "prepblind3_017_missing_dose",
+      "source_title": "Clinical botanical intervention report 17",
+      "text": "A standardised dry leaf extract was administered orally for the target condition; the study report did not provide the dose.",
+      "expected": {
+        "preparation_category": [
+          "dry_extract"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "leaf",
+          "leaves"
+        ],
+        "dose_value": null,
+        "dose_unit": ""
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "standardised dry extract",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "220 mg/day"
+      },
+      "applicability_accept": [
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "prepblind3_018_missing_part",
+      "source_title": "Clinical botanical intervention report 18",
+      "text": "A tincture was taken orally at 1.4 mL/day for the target condition; the botanical part was not reported.",
+      "expected": {
+        "preparation_category": [
+          "tincture"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "",
+          "unknown"
+        ],
+        "dose_value": 1.4,
+        "dose_unit": "ml/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "tincture",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "1.4 ml/day"
+      },
+      "applicability_accept": [
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "prepblind3_019_generic_extract_unknown",
+      "source_title": "Clinical botanical intervention report 19",
+      "text": "An extract prepared from the roots was administered by mouth at 340 mg/day for the target condition; neither the solvent nor the extraction type was described.",
+      "expected": {
+        "preparation_category": [
+          "other",
+          "unknown"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 340.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "ethanolic extract",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "340 mg/day"
+      },
+      "applicability_accept": [
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "prepblind3_020_tablet_target_unspecified",
+      "source_title": "Clinical botanical intervention report 20",
+      "text": "A standardised dry root extract was given orally at 260 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "dry_extract"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 260.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "dosage_form": "Tablet",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "260 mg/day"
+      },
+      "applicability_accept": [
+        "UNKNOWN"
+      ]
+    },
+    {
+      "id": "prepblind3_021_decoction_to_infusion",
+      "source_title": "Clinical botanical intervention report 21",
+      "text": "A decoction prepared from the roots was consumed orally at 5.5 g/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "aqueous"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "root",
+          "roots"
+        ],
+        "dose_value": 5.5,
+        "dose_unit": "g/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "infusion",
+        "route": "oral",
+        "target_plant_part": "root",
+        "target_dose": "5.5 g/day"
+      },
+      "applicability_accept": [
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_022_water_extract_to_infusion",
+      "source_title": "Clinical botanical intervention report 22",
+      "text": "A water extract of the leaves was administered orally at 430 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "aqueous"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "leaf",
+          "leaves"
+        ],
+        "dose_value": 430.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "infusion",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "430 mg/day"
+      },
+      "applicability_accept": [
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_023_hydroethanolic_equivalent",
+      "source_title": "Clinical botanical intervention report 23",
+      "text": "A hydroethanolic extract made from flowers was taken orally at 290 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "hydroalcoholic"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "flower",
+          "flowers"
+        ],
+        "dose_value": 290.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "hydroalcoholic extract",
+        "route": "oral",
+        "target_plant_part": "flower",
+        "target_dose": "290 mg/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    },
+    {
+      "id": "prepblind3_024_named_dry_extract",
+      "source_title": "Clinical botanical intervention report 24",
+      "text": "The intervention used a standardised dry leaf extract designated ZX-21, taken by mouth at 170 mg/day for the target condition.",
+      "expected": {
+        "preparation_category": [
+          "dry_extract"
+        ],
+        "route": [
+          "oral"
+        ],
+        "plant_part": [
+          "leaf",
+          "leaves"
+        ],
+        "dose_value": 170.0,
+        "dose_unit": "mg/day"
+      },
+      "target": {
+        "target_indication": "target condition",
+        "target_preparation": "standardised dry extract",
+        "route": "oral",
+        "target_plant_part": "leaf",
+        "target_dose": "170 mg/day"
+      },
+      "applicability_accept": [
+        "MATCH",
+        "PARTIAL"
+      ]
+    }
+  ]
+}

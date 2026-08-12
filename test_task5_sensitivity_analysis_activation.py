@@ -86,7 +86,14 @@ def test_output_columns_count_matches_pre_task_5_baseline():
     #
     # Bumped 82 -> 83 by Scientific Decision Validation: Final_Decision_Status
     # is the explicit six-class source-of-truth for final scientific decisions.
-    assert len(eng.OUTPUT_COLUMNS) == 83
+    assert len(eng.OUTPUT_COLUMNS) == 87
+    # Retrieval Coverage adds four explicit, additive decision-output columns.
+    assert eng.OUTPUT_COLUMNS[-5:-1] == [
+        "Retrieval_Coverage_Status",
+        "Retrieval_Coverage_Reason",
+        "Retrieval_Coverage_Missing_Required_Sources",
+        "Retrieval_Coverage_Limitations",
+    ]
     assert eng.OUTPUT_COLUMNS[-1] == "Decision_Engine_Version"
 
 

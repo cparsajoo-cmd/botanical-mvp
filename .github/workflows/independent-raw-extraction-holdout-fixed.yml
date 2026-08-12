@@ -1,0 +1,77 @@
+name: Independent Raw Extraction Holdout
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-raw-extraction-holdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate OpenAI secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OPENAI_API_KEY" || { echo "::error::OPENAI_API_KEY is missing"; exit 1; }
+
+      # Optional model overrides. Crucially, an undefined GitHub secret is NOT
+      # exported as OPENAI_MODEL="". When no override exists, llm_extractor.py
+      # uses its project default (gpt-4o-mini).
+      - name: Configure optional model overrides
+        shell: bash
+        env:
+          OPTIONAL_OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          OPTIONAL_OPENAI_GATE_MODEL: ${{ secrets.OPENAI_GATE_MODEL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OPTIONAL_OPENAI_MODEL:-}" ]; then
+            echo "OPENAI_MODEL=$OPTIONAL_OPENAI_MODEL" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${OPTIONAL_OPENAI_GATE_MODEL:-}" ]; then
+            echo "OPENAI_GATE_MODEL=$OPTIONAL_OPENAI_GATE_MODEL" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run frozen raw extraction holdout once
+        shell: bash
+        run: |
+          set -o pipefail
+          python independent_raw_extraction_holdout_v1.py | tee independent_raw_extraction_holdout_v1.log
+
+      - name: Add summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Independent raw extraction holdout" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f independent_raw_extraction_holdout_v1.log ]; then
+            grep '^SUMMARY ' independent_raw_extraction_holdout_v1.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "No validation output was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-raw-extraction-holdout
+          path: |
+            independent_raw_extraction_holdout_v1.log
+            independent_raw_extraction_holdout_v1_result.json
+          if-no-files-found: warn

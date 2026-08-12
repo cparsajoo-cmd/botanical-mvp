@@ -1,0 +1,35 @@
+name: Core Reliability Regression Gate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-reliability-regression-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Install development requirements
+        run: pip install -r requirements-dev.txt
+
+      - name: Run closed-pillar regression gate
+        run: |
+          python -m pytest -q \
+            test_core_reliability_regression_gate.py \
+            test_scientific_reliability_invariants.py \
+            test_preparation_transferability_invariants.py \
+            test_retrieval_coverage.py \
+            test_retrieval_coverage_production_wiring.py

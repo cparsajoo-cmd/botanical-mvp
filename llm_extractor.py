@@ -27,6 +27,107 @@ def get_openai_client():
     return OpenAI(api_key=api_key)
 
 
+
+
+def _recover_explicit_plant_part(text: str) -> str:
+    """Recover an explicitly named botanical part when the model omits it.
+
+    This is deliberately lexical and conservative: it only returns a part when
+    the source text literally names one.  It never infers a plant part from the
+    botanical species, product type, or user target context.
+    """
+    import re
+    patterns = (
+        (r"\bleaf(?:ves)?\b", "leaf"),
+        (r"\broot(?:s)?\b", "root"),
+        (r"\bflower(?:s)?\b", "flower"),
+        (r"\bseed(?:s)?\b", "seed"),
+        (r"\bbark\b", "bark"),
+        (r"\brhizome(?:s)?\b", "rhizome"),
+        (r"\bfruit(?:s)?\b|\bberr(?:y|ies)\b", "fruit"),
+        (r"\baerial\s+parts?\b", "aerial part"),
+        (r"\bstem(?:s)?\b", "stem"),
+    )
+    for pattern, label in patterns:
+        if re.search(pattern, text or "", flags=re.IGNORECASE):
+            return label
+    return ""
+
+
+def _recover_explicit_preparation_phrase(text: str, category: str) -> str:
+    """Return a source-grounded preparation phrase for a concrete category.
+
+    Structured extraction can occasionally emit a correct category while
+    leaving ``preparation`` blank.  Persisting only the blank string would lose
+    the preparation after a DB round trip.  This helper recovers *only* a phrase
+    explicitly present in the source text and only for concrete categories; it
+    never manufactures a solvent/extract type from the category alone.
+    """
+    import re
+    category = str(category or "").strip().lower()
+    patterns = {
+        "essential_oil": (
+            r"\b(?:steam[- ]distilled\s+|hydrodistilled\s+)?(?:essential|volatile)\s+oil\b",
+        ),
+        "hydroalcoholic": (
+            r"\bhydro(?:alcoholic|ethanolic)(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+        ),
+        "ethanolic": (
+            r"\bethanolic(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+            r"\bethanol(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+        ),
+        "aqueous": (
+            r"\baqueous(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+            r"\bwater(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+            r"\binfusion\b", r"\bdecoction\b", r"\bherbal\s+tea\b", r"\btisane\b",
+        ),
+        "dry_extract": (
+            r"\b(?:standardi[sz]ed\s+)?dry(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract(?:\s+[A-Za-z0-9-]+)?\b",
+        ),
+        "tincture": (r"\btincture\b",),
+        "powder": (
+            r"\bpowdered\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems|herb|plant|material)(?:\s+material)?\b",
+            r"\b(?:herbal|botanical)\s+powder\b",
+        ),
+        "juice": (
+            r"\b(?:fresh(?:ly)?\s+)?(?:expressed|pressed)\s+(?:fresh\s+)?juice\b",
+            r"\bfresh\s+juice\b",
+        ),
+    }
+    for pattern in patterns.get(category, ()):
+        match = re.search(pattern, text or "", flags=re.IGNORECASE)
+        if match:
+            return match.group(0).strip()
+    return ""
+
+
+def _normalize_transferability_extraction(payload: dict, source_text: str) -> dict:
+    """Make structured preparation fields internally consistent.
+
+    Model output remains authoritative when it supplied an explicit value. The
+    deterministic fallbacks only fill missing fields from literal source spans.
+    """
+    out = dict(payload or {})
+    if not str(out.get("plant_part") or "").strip():
+        recovered_part = _recover_explicit_plant_part(source_text)
+        if recovered_part:
+            out["plant_part"] = recovered_part
+
+    category = str(out.get("preparation_category") or "").strip().lower()
+    if category not in {
+        "aqueous", "hydroalcoholic", "ethanolic", "dry_extract",
+        "essential_oil", "tincture", "powder", "juice", "other", "unknown"
+    }:
+        category = "unknown"
+        out["preparation_category"] = category
+
+    if not str(out.get("preparation") or "").strip() and category not in {"", "other", "unknown"}:
+        recovered_preparation = _recover_explicit_preparation_phrase(source_text, category)
+        if recovered_preparation:
+            out["preparation"] = recovered_preparation
+    return out
+
+
 EVIDENCE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -186,7 +287,8 @@ Otherwise No.
         },
     )
 
-    return json.loads(response.output_text)
+    extracted = json.loads(response.output_text)
+    return _normalize_transferability_extraction(extracted, text)
 
 # ---------------------------------------------------------------------------
 # High-stakes semantic gate extraction

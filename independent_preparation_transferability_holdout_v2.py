@@ -1,4 +1,4 @@
-"""One-shot frozen validation for Preparation Intelligence / Transferability.
+"""Second one-shot frozen validation for Preparation Intelligence / Transferability.
 
 Scope:
   raw study-style text -> LLM extraction of preparation/part/route/dose
@@ -28,8 +28,8 @@ from standard_evidence_builder import (
 )
 
 ROOT = Path(__file__).resolve().parent
-CASE_FILE = ROOT / "independent_preparation_transferability_holdout_v1_cases.json"
-FROZEN_CASE_FILE_SHA256 = "7a5785fa6133920003d4cf13664c3f2ebb96eba7d3a2475a4c4a60dc4155094a"
+CASE_FILE = ROOT / "independent_preparation_transferability_holdout_v2_cases.json"
+FROZEN_CASE_FILE_SHA256 = "d8aef869d37e357b7f764d431bdefb4222e985618a9199e32f2b705bb7196c1c"
 
 
 def _sha256(path: Path) -> str:
@@ -135,10 +135,10 @@ def main() -> int:
             field_total += 4
             field_ok += sum(int(v) for v in checks.values())
 
-            # Mimic the persisted production path: the canonical Preparation
-            # text is stored; category is later re-derived deterministically.
-            # An LLM label of "other"/"unknown" is not treated as a concrete
-            # parent category.
+            # Production now carries a concrete structured preparation category
+            # directly into the comparator when available, while the source-grounded
+            # Preparation text remains the persisted fallback. ``other``/``unknown``
+            # never become a concrete parent category.
             evidence_fields = evidence_transferability_fields(
                 species="Heldout species",
                 plant_part=extracted.get("plant_part") or "",
@@ -221,7 +221,7 @@ def main() -> int:
     summary["checks"] = checks
     summary["pass"] = all(checks.values())
 
-    Path("independent_preparation_transferability_holdout_v1_result.json").write_text(
+    Path("independent_preparation_transferability_holdout_v2_result.json").write_text(
         json.dumps({"summary": summary, "rows": rows}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )

@@ -344,3 +344,72 @@ def test_serious_safety_is_not_discarded_by_preparation_mismatch():
     )
     assert row["Final_Decision_Status"] == "NO GO SAFETY"
     assert bool(row["Eligible_For_Normal_Ranking"]) is False
+
+
+def test_structured_preparation_category_is_not_lost_when_preparation_text_is_blank():
+    fields = evidence_transferability_fields(
+        species="Example species",
+        plant_part="leaf",
+        preparation="",
+        preparation_category="essential_oil",
+        route="oral",
+        dose="0.3 ml/day",
+        indication_match_type="exact_indication",
+    )
+    result = evaluate_applicability(
+        fields,
+        _context(prep="Infusion", part="leaf", route="oral", dose="0.3 ml/day"),
+    )
+    assert fields["Evidence_Preparation_Category"] == "essential_oil"
+    assert result["Dimension_Status"]["preparation"] == "MISMATCH"
+    assert result["Applicability_Classification"] == "MISMATCH"
+
+
+def test_dry_extract_category_survives_word_order_with_explicit_plant_part():
+    fields = evidence_transferability_fields(
+        species="Example species",
+        plant_part="leaf",
+        preparation="standardized dry leaf extract",
+        preparation_category="dry_extract",
+        route="oral",
+        dose="240 mg/day",
+        indication_match_type="exact_indication",
+    )
+    result = evaluate_applicability(
+        fields,
+        _context(prep="Infusion", part="leaf", route="oral", dose="240 mg/day"),
+    )
+    assert fields["Evidence_Preparation_Category"] == "dry_extract"
+    assert result["Applicability_Classification"] == "MISMATCH"
+
+
+def test_literal_extractor_recovers_plant_part_from_powdered_seeds():
+    out = extract_evidence_from_text(
+        "Participants swallowed powdered seeds orally at 5 g/day for the target condition."
+    )
+    assert out["Preparation"] == "powder"
+    assert out["Plant_Part"] == "seed"
+
+
+def test_llm_transferability_postprocess_recovers_only_explicit_missing_fields():
+    from llm_extractor import _normalize_transferability_extraction
+
+    out = _normalize_transferability_extraction(
+        {
+            "plant_part": "",
+            "preparation": "",
+            "preparation_category": "powder",
+        },
+        "Subjects consumed powdered seeds orally at 5 g/day.",
+    )
+    assert out["plant_part"] == "seed"
+    assert "powdered seeds" in out["preparation"].lower()
+    assert out["preparation_category"] == "powder"
+
+    # No source wording -> no fabricated preparation/part.
+    untouched = _normalize_transferability_extraction(
+        {"plant_part": "", "preparation": "", "preparation_category": "dry_extract"},
+        "The intervention was administered for 8 weeks.",
+    )
+    assert untouched["plant_part"] == ""
+    assert untouched["preparation"] == ""

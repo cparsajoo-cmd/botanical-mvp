@@ -3896,6 +3896,9 @@ class BotanicalRDCandidateEngine:
                 "plant_species": self._pick(row, ["Scientific_Name", "scientific_name", "Plant", "plant"]) or "",
                 "plant_part": self._pick(row, ["Plant_Part", "plant_part"]) or "",
                 "preparation": self._pick(row, ["Preparation", "preparation"]) or "",
+                "preparation_category": self._pick(row, [
+                    "Preparation_Category", "preparation_category", "LLM_Preparation_Category"
+                ]) or "",
                 "dose": self._pick(row, ["Dose", "dose"]) or "",
                 "route": self._pick(row, ["Administration_Route", "administration_route", "Route", "route"]) or "",
                 "dosage_form": self._pick(row, ["Dosage_Form_Detected", "Detected_Dosage_Forms", "Dosage_Form", "dosage_form"]) or "",
@@ -4212,6 +4215,7 @@ class BotanicalRDCandidateEngine:
                 species=rec.get("plant_species") or candidate_plant,
                 plant_part=rec.get("plant_part") or "",
                 preparation=rec.get("preparation") or "",
+                preparation_category=rec.get("preparation_category") or "",
                 route=rec.get("route") or "",
                 dose=rec.get("dose") or "",
                 # Records reach this method only after indication scoping, so a

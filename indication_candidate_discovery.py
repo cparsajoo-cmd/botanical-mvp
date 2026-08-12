@@ -1005,6 +1005,7 @@ def discover_indication_candidates(
                 species=plant,
                 plant_part=(record.get("plant_part") if record else ""),
                 preparation=record_preparation,
+                preparation_category=(record.get("preparation_category") if record else ""),
                 route=(record.get("route") if record else ""),
                 dose=(record.get("dose") if record else ""),
                 indication_match_type=(record_relevance.match_type if record else ""),

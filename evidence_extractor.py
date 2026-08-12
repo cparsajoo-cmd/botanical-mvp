@@ -250,16 +250,16 @@ def extract_evidence_from_text(text):
     # LLM extractor may fill still-missing fields later, but selected product
     # context is never copied into these study fields.
     preparation_patterns = (
-        (r"\bstandardi[sz]ed\s+dry\s+extract\b", "standardized dry extract"),
-        (r"\bhydro(?:alcoholic|ethanolic)\s+extract\b", "hydroalcoholic extract"),
-        (r"\bethanolic\s+extract\b|\bethanol\s+extract\b", "ethanolic extract"),
-        (r"\baqueous\s+extract\b|\bwater\s+extract\b", "aqueous extract"),
+        (r"\bstandardi[sz]ed\s+dry(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems))?\s+extract\b", "standardized dry extract"),
+        (r"\bhydro(?:alcoholic|ethanolic)(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems))?\s+extract\b", "hydroalcoholic extract"),
+        (r"\bethanolic(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems))?\s+extract\b|\bethanol\s+extract\b", "ethanolic extract"),
+        (r"\baqueous(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems))?\s+extract\b|\bwater\s+extract\b", "aqueous extract"),
         (r"\bessential\s+oil\b|\bvolatile\s+oil\b", "essential oil"),
         (r"\btincture\b", "tincture"),
         (r"\bdecoction\b", "decoction"),
         (r"\binfusion\b|\bherbal\s+tea\b|\btisane\b", "infusion"),
-        (r"\bdry\s+extract\b", "dry extract"),
-        (r"\bpowder(?:ed)?\s+(?:herb|plant|material)\b|\bherbal\s+powder\b", "powder"),
+        (r"\bdry(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems))?\s+extract\b", "dry extract"),
+        (r"\bpowder(?:ed)?\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems|herb|plant|material)(?:\s+material)?\b|\bherbal\s+powder\b", "powder"),
     )
     for pattern, label in preparation_patterns:
         if re.search(pattern, lower, flags=re.IGNORECASE):

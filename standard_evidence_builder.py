@@ -1169,30 +1169,43 @@ from general_indication_relevance import (
 # dose from a selected product.
 # ---------------------------------------------------------------------------
 _PREPARATION_CATEGORY_PATTERNS = (
-    ("essential_oil", ("essential oil", "volatile oil")),
-    ("hydroalcoholic", ("hydroalcoholic", "hydroethanolic", "ethanol-water", "ethanol water")),
-    ("ethanolic", ("ethanolic extract", "ethanol extract")),
-    ("aqueous", ("aqueous extract", "water extract", "aqueous infusion", "infusion", "decoction", "herbal tea", "tisane", "tea")),
-    ("dry_extract", ("standardized dry extract", "standardised dry extract", "dry extract")),
-    ("tincture", ("tincture",)),
-    ("powder", ("powder", "powdered herb", "powdered herbal")),
-    ("juice", ("fresh juice", "expressed juice", "juice")),
+    ("essential_oil", (r"\bessential\s+oil\b", r"\bvolatile\s+oil\b")),
+    ("hydroalcoholic", (r"\bhydroalcoholic\b", r"\bhydroethanolic\b", r"\bethanol[- /]water\b")),
+    ("ethanolic", (r"\bethanolic(?:\s+\w+){0,3}\s+extract\b", r"\bethanol(?:\s+\w+){0,3}\s+extract\b")),
+    ("aqueous", (
+        r"\baqueous(?:\s+\w+){0,3}\s+extract\b",
+        r"\bwater(?:\s+\w+){0,3}\s+extract\b",
+        r"\binfusion\b", r"\bdecoction\b", r"\bherbal\s+tea\b", r"\btisane\b",
+    )),
+    # Allow an explicitly named botanical part between ``dry`` and ``extract``
+    # (e.g. "standardized dry leaf extract" / "dry root extract").
+    ("dry_extract", (
+        r"\b(?:standardi[sz]ed\s+)?dry(?:\s+(?:leaf|leaves|root|roots|flower|flowers|seed|seeds|fruit|fruits|bark|rhizome|rhizomes|aerial\s+parts?|stem|stems)){0,1}\s+extract\b",
+    )),
+    ("tincture", (r"\btincture\b",)),
+    # A source may phrase the preparation as "powdered root material" or
+    # "powdered seeds" rather than literally "herbal powder".
+    ("powder", (r"\bpowder\b", r"\bpowdered\b")),
+    ("juice", (r"\bfresh\s+juice\b", r"\bexpressed\s+(?:fresh\s+)?juice\b", r"\bpressed\s+juice\b", r"\bjuice\b")),
 )
 
 
 def preparation_category_from_text(value: Any) -> str:
     """Return a conservative canonical category for an EXPLICIT preparation.
 
-    This is vocabulary normalization, not similarity inference.  Generic words
+    This is vocabulary normalization, not similarity inference. Generic words
     such as ``extract`` or dosage-form-only words such as ``capsule`` are left
     uncategorized because they do not establish how the botanical material was
-    prepared.
+    prepared. Word-order variants that still explicitly state the preparation
+    (for example ``standardized dry leaf extract``) are normalized here rather
+    than being discarded as unknown.
     """
     if _appl_is_blank(value):
         return ""
+    import re as _re
     text = _appl_norm(value)
-    for category, terms in _PREPARATION_CATEGORY_PATTERNS:
-        if any(term in text for term in terms):
+    for category, patterns in _PREPARATION_CATEGORY_PATTERNS:
+        if any(_re.search(pattern, text, flags=_re.IGNORECASE) for pattern in patterns):
             return category
     return ""
 
@@ -1399,17 +1412,27 @@ def evidence_transferability_fields(
     species: Any = "",
     plant_part: Any = "",
     preparation: Any = "",
+    preparation_category: Any = "",
     route: Any = "",
     dose: Any = "",
     indication_match_type: Any = "",
 ) -> dict[str, Any]:
-    """Map explicit record facts to evaluate_applicability()'s Evidence_* shape."""
+    """Map explicit record facts to evaluate_applicability()'s Evidence_* shape.
+
+    ``preparation_category`` is an already-structured extraction result.  When
+    present, it is carried directly to the comparator instead of being thrown
+    away and guessed again from ``preparation`` text.  ``other``/``unknown``
+    deliberately do not become concrete categories.
+    """
     dose_value, dose_unit = parse_dose_value_unit(dose)
+    explicit_category = str(preparation_category or "").strip().lower()
+    if explicit_category in {"", "other", "unknown"}:
+        explicit_category = ""
     out: dict[str, Any] = {
         "Evidence_Species": species or "",
         "Evidence_Plant_Part": canonical_plant_part(plant_part),
         "Evidence_Preparation": preparation or "",
-        "Evidence_Preparation_Category": preparation_category_from_text(preparation),
+        "Evidence_Preparation_Category": explicit_category or preparation_category_from_text(preparation),
         "Evidence_Route": canonical_administration_route(route),
         "Indication_Match_Type": indication_match_type or "",
     }

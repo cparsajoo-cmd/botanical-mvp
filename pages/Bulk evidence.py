@@ -8,6 +8,7 @@ from supabase_data import load_plant_compounds_df
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from multi_source_collector import collect_multi_source_evidence, _run_one_source
+from bulk_collection_progress import progress_status, is_complete_progress_row
 
 # Most errors during the first bulk pass came from only 2-3 sources
 # (OpenAlex, Semantic Scholar, occasionally CrossRef) hitting rate
@@ -72,7 +73,11 @@ def _fast_retry_sources(plant, indication):
         # point of view.
         executor.shutdown(wait=False, cancel_futures=True)
 
-    return {"saved_records": all_saved, "errors": all_errors}
+    return {
+        "saved_records": all_saved,
+        "errors": all_errors,
+        "sources_checked": [s["name"] for s in FAST_RETRY_SOURCES],
+    }
 
 st.set_page_config(page_title="Bulk Evidence Collection", page_icon="📚", layout="wide")
 
@@ -119,23 +124,38 @@ def _get_done_plants():
     while True:
         resp = (
             client.table("bulk_evidence_progress")
-            .select("scientific_name")
+            .select("scientific_name,status,error_count")
             .range(start, start + page_size - 1)
             .execute()
         )
         rows = resp.data or []
-        done.update(r["scientific_name"] for r in rows)
+        # Only genuinely complete plants count as done. Older versions wrote
+        # status="done" even after a failed/partial collection; those rows are
+        # intentionally retried until a clean run records "done" again.
+        done.update(
+            r["scientific_name"] for r in rows
+            if is_complete_progress_row(r)
+        )
         if len(rows) < page_size:
             break
         start += page_size
     return done
 
 
-def _mark_done(plant, n_saved, n_errors, sample_errors=""):
+def _mark_progress(plant, n_saved, n_errors, sample_errors="", *, failed_entirely=False):
+    """Persist honest bulk-collection state.
+
+    Any connector error means the plant still requires a retry. A clean search
+    returning zero records is nevertheless complete; zero hits and failed
+    retrieval are not the same thing.
+    """
+    status = progress_status(
+        error_count=n_errors, failed_entirely=failed_entirely
+    )
     client = get_supabase_client()
     client.table("bulk_evidence_progress").upsert({
         "scientific_name": plant,
-        "status": "done",
+        "status": status,
         "records_saved": n_saved,
         "error_count": n_errors,
         "sample_errors": sample_errors[:2000],
@@ -223,6 +243,7 @@ else:
                 f"{len(remaining) - processed_count} left overall)..."
             )
 
+            failed_entirely = False
             try:
                 if fast_mode:
                     result = _fast_retry_sources(plant, indication)
@@ -245,13 +266,17 @@ else:
                 )
             except Exception as exc:
                 n_saved, n_errors = 0, 1
+                failed_entirely = True
                 sample_errors = str(exc)
                 results_log.append(f"❌ {plant}: failed entirely — {exc}")
             else:
                 results_log.append(f"✅ {plant}: {n_saved} record(s), {n_errors} error(s)")
 
             try:
-                _mark_done(plant, n_saved, n_errors, sample_errors)
+                _mark_progress(
+                    plant, n_saved, n_errors, sample_errors,
+                    failed_entirely=failed_entirely,
+                )
             except Exception as exc:
                 results_log.append(f"⚠️ {plant}: processed but failed to save progress — {exc}")
 
@@ -268,12 +293,12 @@ else:
         st.rerun()
 
 st.markdown("---")
-st.markdown("## 🔄 Backfill: EMA/WHO/ESCOP Regulatory (all plants)")
+st.markdown("## 🔄 Backfill: EMA/HMPC Regulatory (all plants)")
 st.caption(
-    "The 'EMA/WHO/ESCOP Regulatory' source used to be a stub that only "
-    "ever found data for 4 hardcoded plants — every other plant silently "
-    "got nothing from it, even in runs marked '✅ done' above. It's now "
-    "wired to a real EMA HMPC lookup. This section re-runs ONLY that one "
+    "The legacy connector key 'EMA/WHO/ESCOP Regulatory' used to be a stub "
+    "that only ever found data for 4 hardcoded plants. Production now queries "
+    "EMA/HMPC only; WHO and ESCOP are not independently queried. This section "
+    "re-runs ONLY the real EMA/HMPC lookup "
     "source, for every plant, without re-touching the other 13 sources "
     "or resetting their progress above."
 )

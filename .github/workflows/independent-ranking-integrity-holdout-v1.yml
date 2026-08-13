@@ -1,0 +1,26 @@
+name: Independent Ranking Integrity Holdout V1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  independent-ranking-integrity-holdout-v1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Run frozen ranking integrity holdout once
+        run: python independent_ranking_integrity_holdout_v1.py | tee ranking_integrity_holdout_v1.log
+      - name: Upload validation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-ranking-integrity-holdout-v1
+          path: ranking_integrity_holdout_v1.log

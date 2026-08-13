@@ -1,6 +1,13 @@
 """
 Phase 6 — Evidence Confidence, separated from R&D Opportunity (audit 4.16).
 
+IMPORTANT SEMANTIC NOTE
+The persisted column name ``Evidence_Confidence`` is retained for backward
+compatibility, but the value is an Evidence Strength Index. It is NOT a
+probability, calibrated posterior probability, confidence interval, or chance
+that the recommendation is correct. User-facing surfaces should label it
+"Evidence Strength Index".
+
 WHY THIS IS A SEPARATE MODULE, NOT A CHANGE TO _score_candidate()
 _score_candidate() in botanical_rd_candidate_engine.py already computes
 one number (R&D_Opportunity_Score) that blends chemical-link strength,

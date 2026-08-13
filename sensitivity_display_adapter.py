@@ -32,7 +32,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from scoring_sensitivity_report import build_robustness_analysis, fragility_report
+from scoring_sensitivity_report import (
+    build_robustness_analysis, fragility_report, build_bounded_weight_robustness,
+)
+from phase5_scoring_config import RANKING_CALIBRATION_STATUS, RANKING_CALIBRATION_NOTICE
 
 # Required verbatim by Task 2 — the exact scientific-boundary statement
 # the UI must display.
@@ -74,6 +77,9 @@ def prepare_sensitivity_payload(result_df) -> dict:
           "boundary_explanation": str,     # always present
           "fragility": {"fragile_count": int, "total_count": int, "summary": str} | None,
           "rank_stability_counts": {level: count, ...} | None,
+          "weight_perturbation_stability_counts": {level: count, ...} | None,
+          "ranking_calibration_status": str,
+          "ranking_calibration_notice": str,
           "total_rows": int,
         }
     """
@@ -82,6 +88,9 @@ def prepare_sensitivity_payload(result_df) -> dict:
         "boundary_explanation": BOUNDARY_EXPLANATION,
         "fragility": None,
         "rank_stability_counts": None,
+        "weight_perturbation_stability_counts": None,
+        "ranking_calibration_status": RANKING_CALIBRATION_STATUS,
+        "ranking_calibration_notice": RANKING_CALIBRATION_NOTICE,
         "total_rows": 0,
     }
 
@@ -165,10 +174,27 @@ def prepare_sensitivity_payload(result_df) -> dict:
             "fragility": fragility_summary,
         }
 
+    # Phase 7: actual bounded section-weight perturbation. Deduplicate the
+    # shared group-level objects by identity exactly as above.
+    perturbation = build_bounded_weight_robustness(result_df)
+    perturb_counts: dict = {}
+    seen_perturb_ids = set()
+    for obj in perturbation:
+        if not isinstance(obj, dict):
+            continue
+        marker = id(obj)
+        if marker in seen_perturb_ids:
+            continue
+        seen_perturb_ids.add(marker)
+        level = obj.get("stability_level")
+        if level:
+            perturb_counts[level] = perturb_counts.get(level, 0) + 1
+
     return {
         **base,
         "status": "ok",
         "message": "",
         "fragility": fragility_summary,
         "rank_stability_counts": counts,
+        "weight_perturbation_stability_counts": perturb_counts or None,
     }

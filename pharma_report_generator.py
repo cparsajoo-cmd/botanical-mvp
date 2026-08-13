@@ -153,7 +153,7 @@ def _format_robustness_section(robustness) -> list:
 
     lines = [
         "**Robustness of the ranking** (model sensitivity, not scientific uncertainty — "
-        "see Evidence_Confidence/Candidate_Evidence_Strength_Tier for the latter):",
+        "see Evidence Strength Index (legacy Evidence_Confidence)/Candidate_Evidence_Strength_Tier for the latter):",
         f"- Baseline: {baseline['winner']} ({baseline['winner_score']}) vs. "
         f"{baseline['runner_up']} ({baseline['runner_up_score']}) — "
         f"score gap {baseline['score_gap']:+.1f}",
@@ -485,7 +485,7 @@ def _candidate_section(row: pd.Series, rank: int, robustness=None, market=None,
         reference_line,
         compound_line,
         f"**R&D Opportunity Score:** {row.get('R&D_Opportunity_Score', '')} | "
-        f"**Evidence Confidence:** {row.get('Evidence_Confidence', '')}  ",
+        f"**Evidence Strength Index (legacy field Evidence_Confidence; not a probability):** {row.get('Evidence_Confidence', '')}  ",
         f"**Decision class:** {row.get('Decision_Class_AH', '')}",
     ]
 

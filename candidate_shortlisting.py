@@ -48,7 +48,12 @@ from phase5_scoring_config import (
     NOT_APPLICABLE,
     SCIENTIFIC_EVIDENCE_SCORE_FLOOR,
     SCIENTIFIC_EVIDENCE_SCORE_CEILING,
+    RANKING_COMPONENT_BASE_WEIGHTS,
+    RANKING_COMPONENT_ACTIVE_WEIGHTS,
+    RANKING_STRONG_PRIORITY_THRESHOLD,
 )
+from ranking_score_model import reweight_score_breakdown, score_from_breakdown
+
 from general_indication_relevance import (
     ENGINE_VERSION as _RELEVANCE_ENGINE_VERSION,
     MATCH_EXACT_INDICATION,
@@ -1806,19 +1811,27 @@ def _format_breakdown(components: list[tuple[str, float, int]]) -> str:
 # separate fields for exactly that reason — collapsing them into one
 # number would hide which one is doing the work in any given case.
 #
-# The 78-point "Strong/Go" threshold reuses the exact cut point already
-# documented in decision_class_ah.py / scoring_sensitivity_report.py for
-# the legacy row-level score, instead of inventing a new one.
-_STRONG_SCORE_THRESHOLD = 78.0
+# The current Strong/Go threshold is centralized in phase5_scoring_config.
+# It remains an engineering prioritization cut-point until expert calibration.
+_STRONG_SCORE_THRESHOLD = RANKING_STRONG_PRIORITY_THRESHOLD
 
-# Evidence_Confidence's own ceiling: Indication Relevance + Evidence
-# Quality's combined maximum in the current weighting (kept as a constant,
-# not a hardcoded 55, so it stays correct if either weight ever changes).
-_EVIDENCE_CONFIDENCE_MAX_POINTS = 65.0  # Indication Relevance(35) + Evidence Quality(30)
+# Legacy output field ``Evidence_Confidence`` is now explicitly an Evidence
+# Strength Index. It combines indication relevance with the DIRECTION-,
+# CONSISTENCY- and APPLICABILITY-aware Scientific_Evidence_Score, not unsigned
+# Evidence_Quality_Score. This prevents a high-quality null/negative study from
+# appearing as high "confidence" merely because the study design was strong.
+_EVIDENCE_CONFIDENCE_MAX_POINTS = (
+    RANKING_COMPONENT_BASE_WEIGHTS["Indication Relevance"]
+    + RANKING_COMPONENT_BASE_WEIGHTS["Scientific Evidence"]
+)
 
 
-def _derive_evidence_confidence(indication_points: float, evq_points: float) -> float:
-    raw = indication_points + evq_points
+def _derive_evidence_confidence(indication_points: float, scientific_evidence_points: float) -> float:
+    # Negative scientific contributions are evidence AGAINST efficacy, not
+    # positive evidence strength. They therefore contribute zero to this
+    # support-strength index; contradiction is surfaced separately in the
+    # evidence-direction/consistency fields.
+    raw = float(indication_points) + max(0.0, float(scientific_evidence_points))
     return round(min(100.0, max(0.0, raw / _EVIDENCE_CONFIDENCE_MAX_POINTS * 100.0)), 1)
 
 
@@ -1903,16 +1916,25 @@ def _identity_quality(plant_name: str) -> int:
 
 
 def _prune_near_duplicate_congeners(summary: pd.DataFrame) -> pd.DataFrame:
-    """Keep one primary shortlisted representative per genus.
+    """Annotate same-genus shortlist candidates without changing science.
 
-    Raw rows remain untouched in the audit/export. Other shortlisted congeners
-    are demoted to Exploratory, which prevents a genus with many database rows
-    from crowding out taxonomically distinct R&D candidates.
+    Phase 7 correction: taxonomic diversity is a PRESENTATION concern, not a
+    scientific-evidence rule. The previous implementation demoted every
+    shortlisted congener except one to Exploratory and capped its score at 74,
+    so a species could lose scientific status solely because another species
+    shared its genus. That is no longer permitted.
+
+    Scores, triage status and Go/Investigate calls are preserved byte-for-byte.
+    ``Duplicate_Pruning_Note`` is retained as a backwards-compatible diagnostic
+    column, but now only identifies which congener would be the primary display
+    representative if a UI later chooses to diversify a top-N list.
     """
     if summary.empty or "Alternative_Plant" not in summary.columns:
         return summary
 
     summary = summary.copy()
+    if "Duplicate_Pruning_Note" not in summary.columns:
+        summary["Duplicate_Pruning_Note"] = ""
     summary["_genus"] = summary["Alternative_Plant"].map(_genus)
     summary["_identity_quality"] = summary["Alternative_Plant"].map(_identity_quality)
 
@@ -1932,29 +1954,14 @@ def _prune_near_duplicate_congeners(summary: pd.DataFrame) -> pd.DataFrame:
             ],
             ascending=[False, False, False, False, False, False, False],
         )
-        winner = str(ranked.iloc[0]["Alternative_Plant"])
+        representative = str(ranked.iloc[0]["Alternative_Plant"])
         for i, row in ranked.iloc[1:].iterrows():
-            capped_score = min(float(row["Overall_Score"]), 74.0)
-            summary.loc[i, "Scientific_Triage_Status"] = "Exploratory"
-            summary.loc[i, "Overall_Score"] = capped_score
-            # Phase 3 — Overall_Score is authoritative, so every field derived
-            # from it (the R&D_Opportunity_Score alias, and the status/score
-            # derived Go/Decision-Class outputs) must be refreshed here too,
-            # not left pointing at the pre-demotion values.
-            summary.loc[i, "R&D_Opportunity_Score"] = capped_score
-            summary.loc[i, "Go_Investigate_Hold_NoGo"] = _derive_go_call("Exploratory", capped_score)
-            summary.loc[i, "Decision_Class_AH"] = _derive_decision_class_ah("Exploratory", capped_score)
-            note = (
-                f"near-duplicate congener of the stronger representative '{winner}' "
-                f"within genus {genus.capitalize()}"
+            summary.loc[i, "Duplicate_Pruning_Note"] = (
+                f"same-genus candidate; primary diversity-display representative is "
+                f"'{representative}' within genus {genus.capitalize()}. "
+                "Scientific status and score are intentionally unchanged."
             )
-            summary.loc[i, "Why_Selected_or_Rejected"] = (
-                "Kept for further investigation because: " + note
-            )
-            summary.loc[i, "Duplicate_Pruning_Note"] = note
 
-    if "Duplicate_Pruning_Note" not in summary.columns:
-        summary["Duplicate_Pruning_Note"] = ""
     return summary.drop(columns=["_genus", "_identity_quality"])
 
 def build_plant_candidate_shortlist(
@@ -2364,10 +2371,24 @@ def build_plant_candidate_shortlist(
             + (reasons_note or "passed all scientific triage gates")
         )
 
-        overall_score = round(
-            indication_points + sci_evidence["Scientific_Evidence_Score"] + cq_points + mech_points
-            + safety_reg_points + novelty_points,
-            1,
+        raw_score_breakdown = {
+            "Indication Relevance": indication_points,
+            "Scientific Evidence": sci_evidence["Scientific_Evidence_Score"],
+            "Compound Support": cq_points,
+            "Mechanism Support": mech_points,
+            "Safety & Regulatory": safety_reg_points,
+            "Novelty & Market": novelty_points,
+        }
+        # Phase 7 — production ranking now passes through the same explicit
+        # weight model used by robustness/calibration. With today's active
+        # weights (35/30/5/10/15/5), this is mathematically identical to the
+        # historical sum, so no existing score changes merely because the
+        # architecture became calibratable.
+        score_breakdown = reweight_score_breakdown(
+            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
+        )
+        overall_score = score_from_breakdown(
+            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
         )
 
         score_components = {
@@ -2392,21 +2413,9 @@ def build_plant_candidate_shortlist(
         # contribution — addendum §8/§1.5). Evidence_Quality_Score
         # itself remains available, unchanged and unsigned, as its own
         # separate authoritative field below.
-        score_breakdown = {
-            "Indication Relevance": indication_points,
-            "Scientific Evidence": sci_evidence["Scientific_Evidence_Score"],
-            "Compound Support": cq_points,
-            "Mechanism Support": mech_points,
-            "Safety & Regulatory": safety_reg_points,
-            "Novelty & Market": novelty_points,
-        }
         score_breakdown_display = _format_breakdown([
-            ("Indication Relevance", indication_points, 35),
-            ("Scientific Evidence", sci_evidence["Scientific_Evidence_Score"], 30),
-            ("Compound Support", cq_points, 5),
-            ("Mechanism Support", mech_points, 10),
-            ("Safety & Regulatory", safety_reg_points, 15),
-            ("Novelty & Market", novelty_points, 5),
+            (name, score_breakdown[name], RANKING_COMPONENT_ACTIVE_WEIGHTS[name])
+            for name in RANKING_COMPONENT_ACTIVE_WEIGHTS
         ])
 
         if plant_status == "Excluded":
@@ -2424,7 +2433,9 @@ def build_plant_candidate_shortlist(
         # Overall_Score (same value, legacy field name every existing
         # report/UI/test already reads) — not a second, independently
         # computed number.
-        evidence_confidence = _derive_evidence_confidence(indication_points, evq_points)
+        evidence_confidence = _derive_evidence_confidence(
+            indication_points, sci_evidence["Scientific_Evidence_Score"]
+        )
         go_call = _derive_go_call(
             plant_status,
             overall_score,

@@ -102,7 +102,7 @@ def test_no_indication_supplied_preserves_legacy_behaviour():
     assert summary.iloc[0]["Indication_Relevance"].startswith("Not evaluated")
 
 
-def test_near_duplicate_congener_is_demoted_without_independent_evidence():
+def test_weak_congener_is_excluded_by_its_own_evidence_not_by_genus():
     strong = _row(
         Alternative_Plant="Scutellaria baicalensis",
         Target_or_Mechanism="GABA modulation relevant to anxiety",
@@ -121,8 +121,7 @@ def test_near_duplicate_congener_is_demoted_without_independent_evidence():
     )
     statuses = dict(zip(summary["Alternative_Plant"], summary["Scientific_Triage_Status"]))
     # The weak congener has zero indication-specific text, so it is excluded
-    # by the indication gate before duplicate-pruning even runs — the
-    # stronger species remains the sole shortlisted representative of the genus.
+    # by its own indication gate. Genus membership is not a scientific gate.
     assert statuses["Scutellaria baicalensis"] == "Shortlist"
     assert statuses["Scutellaria sp."] == "Excluded"
 
@@ -155,7 +154,7 @@ def test_generic_antiinflammatory_mechanism_is_not_blood_sugar_relevance():
     assert summary.iloc[0]["Indication_Relevance"] == "No relevance"
 
 
-def test_two_relevant_congeners_keep_only_stronger_shortlist_representative():
+def test_two_relevant_congeners_are_judged_on_their_own_evidence():
     strong = _row(
         Alternative_Plant="Scutellaria baicalensis",
         Target_or_Mechanism="alpha-glucosidase inhibition and AMPK activation",
@@ -179,6 +178,8 @@ def test_two_relevant_congeners_keep_only_stronger_shortlist_representative():
     )
     statuses = dict(zip(summary["Alternative_Plant"], summary["Scientific_Triage_Status"]))
     assert statuses["Scutellaria baicalensis"] == "Shortlist"
+    # This row is exploratory because its OWN evidence is only in-vitro, not
+    # because Scutellaria baicalensis happens to share the genus.
     assert statuses["Scutellaria discolor"] == "Exploratory"
     weaker_text = summary.loc[
         summary["Alternative_Plant"] == "Scutellaria discolor", "Why_Selected_or_Rejected"

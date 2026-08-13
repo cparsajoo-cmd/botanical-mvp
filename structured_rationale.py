@@ -245,7 +245,7 @@ def clinical_rationale(
     }
 
     if tier in clinical_tiers:
-        note = f"Clinical-grade evidence exists: {tier} (Evidence_Confidence {evidence_confidence})."
+        note = f"Clinical-grade evidence exists: {tier} (Evidence Strength Index {evidence_confidence}; not a probability)."
     else:
         note = (
             f"No clinical-grade evidence was found — the strongest evidence tier "

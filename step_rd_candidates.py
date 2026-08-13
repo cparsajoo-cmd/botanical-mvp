@@ -451,7 +451,7 @@ def _prepare_plant_triage_display(df):
         "Alternative_Plant": "Plant",
         "R&D_Opportunity_Score": "R&D Opportunity Score",
         "Overall_Score": "R&D Opportunity Score",
-        "Evidence_Confidence": "Evidence Confidence",
+        "Evidence_Confidence": "Evidence Strength Index",
         "Scientific_Triage_Status": "Triage Status",
         "Go_Investigate_Hold_NoGo": "Decision",
         "Indication_Relevance": "Indication Relevance",
@@ -533,11 +533,27 @@ def _recommendation_block(result_df, report_ready_df=None):
         # never contain a row Eligible_For_Normal_Ranking says is not.
         recommended = recommended[_eligible_mask(recommended)]
 
+        # Phase 7 — ranking score/order must never overrule the validated
+        # scientific final-decision layer. When Final_Decision_Status is
+        # present, only GO / GO WITH CAUTION may remain in the recommended
+        # bucket. The score-based Go_Investigate_Hold_NoGo field is a ranking
+        # prioritization call, not a substitute for scientific eligibility.
+        if "Final_Decision_Status" in best_rows.columns:
+            final_status = best_rows["Final_Decision_Status"].fillna("").astype(str).str.strip()
+            scientifically_actionable = best_rows.index[
+                final_status.isin(("GO", "GO WITH CAUTION"))
+            ]
+            recommended = recommended.loc[recommended.index.intersection(scientifically_actionable)]
+            scientific_non_go = best_rows.loc[~best_rows.index.isin(scientifically_actionable)]
+            if not scientific_non_go.empty:
+                weak = pd.concat([weak, scientific_non_go]).loc[lambda x: ~x.index.duplicated(keep="first")]
+
         display_cols = [
             col for col in [
                 "Alternative_Plant",
                 "Target_or_Mechanism",
                 "R&D_Opportunity_Score",
+                "Final_Decision_Status",
                 "Decision_Class_AH",
                 "Go_Investigate_Hold_NoGo",
                 "Safety_Flags",
@@ -554,9 +570,11 @@ def _recommendation_block(result_df, report_ready_df=None):
         st.markdown("### ✅ Recommended / worth validating")
         st.caption(
             "\"Recommended\" means worth a human researcher's time to check, based "
-            "on the one authoritative R&D_Opportunity_Score — it is not a "
-            "certification of efficacy. See `Decision_Class_AH` and `Evidence_Confidence` "
-            "in each row for how strong the underlying basis actually is."
+            "on the authoritative R&D_Opportunity_Score for PRIORITIZATION, while "
+            "`Final_Decision_Status` remains the scientific decision authority. "
+            "The score is not a certification of efficacy. `Evidence_Confidence` is displayed as an "
+            "Evidence Strength Index: it is a deterministic evidence-strength score, "
+            "not a probability that the recommendation is correct."
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
 
@@ -1535,6 +1553,7 @@ def render_rd_candidates_step(inputs):
 
                 counts = payload["rank_stability_counts"] or {}
                 if counts:
+                    st.caption("Leave-one-section-out rank stability")
                     ordered_levels = [
                         lvl for lvl in ("Stable", "Moderately stable", "Fragile", "Tied", "Insufficient")
                         if lvl in counts
@@ -1542,6 +1561,22 @@ def render_rd_candidates_step(inputs):
                     cols = st.columns(len(ordered_levels)) if ordered_levels else []
                     for col, level in zip(cols, ordered_levels):
                         col.metric(level, counts[level])
+
+                perturb_counts = payload.get("weight_perturbation_stability_counts") or {}
+                if perturb_counts:
+                    st.caption("Actual ±10% section-weight perturbation")
+                    ordered = [
+                        lvl for lvl in ("Robust", "Moderately robust", "Sensitive")
+                        if lvl in perturb_counts
+                    ]
+                    cols = st.columns(len(ordered)) if ordered else []
+                    for col, level in zip(cols, ordered):
+                        col.metric(level, perturb_counts[level])
+
+                st.caption(
+                    f"Ranking calibration status: {payload.get('ranking_calibration_status', 'unknown')} — "
+                    f"{payload.get('ranking_calibration_notice', '')}"
+                )
 
             st.divider()
             st.markdown(f"**{payload['boundary_statement']}**")

@@ -1,0 +1,35 @@
+{
+  "benchmark_id": "independent_ranking_integrity_holdout_v1_20260812",
+  "purpose": "Engineering ranking invariants only; NOT expert calibration of weights or threshold.",
+  "cases": [
+    {"id":"rankint_001_identity","type":"identity","breakdown":{"Indication Relevance":28,"Scientific Evidence":24,"Compound Support":4,"Mechanism Support":8,"Safety & Regulatory":12,"Novelty & Market":4}},
+    {"id":"rankint_002_identity","type":"identity","breakdown":{"Indication Relevance":20,"Scientific Evidence":15,"Compound Support":3,"Mechanism Support":5,"Safety & Regulatory":15,"Novelty & Market":2}},
+    {"id":"rankint_003_identity","type":"identity","breakdown":{"Indication Relevance":35,"Scientific Evidence":30,"Compound Support":5,"Mechanism Support":10,"Safety & Regulatory":15,"Novelty & Market":5}},
+    {"id":"rankint_004_identity_negative","type":"identity","breakdown":{"Indication Relevance":20,"Scientific Evidence":-3,"Compound Support":2,"Mechanism Support":4,"Safety & Regulatory":12,"Novelty & Market":1}},
+
+    {"id":"rankint_005_dominance","type":"dominance","a":{"Indication Relevance":30,"Scientific Evidence":25,"Compound Support":4,"Mechanism Support":8,"Safety & Regulatory":15,"Novelty & Market":4},"b":{"Indication Relevance":25,"Scientific Evidence":20,"Compound Support":3,"Mechanism Support":7,"Safety & Regulatory":12,"Novelty & Market":3}},
+    {"id":"rankint_006_dominance","type":"dominance","a":{"Indication Relevance":28,"Scientific Evidence":22,"Compound Support":5,"Mechanism Support":9,"Safety & Regulatory":14,"Novelty & Market":5},"b":{"Indication Relevance":28,"Scientific Evidence":20,"Compound Support":5,"Mechanism Support":8,"Safety & Regulatory":14,"Novelty & Market":4}},
+    {"id":"rankint_007_dominance","type":"dominance","a":{"Indication Relevance":35,"Scientific Evidence":18,"Compound Support":4,"Mechanism Support":6,"Safety & Regulatory":15,"Novelty & Market":4},"b":{"Indication Relevance":30,"Scientific Evidence":18,"Compound Support":4,"Mechanism Support":6,"Safety & Regulatory":15,"Novelty & Market":4}},
+    {"id":"rankint_008_dominance","type":"dominance","a":{"Indication Relevance":24,"Scientific Evidence":30,"Compound Support":3,"Mechanism Support":9,"Safety & Regulatory":15,"Novelty & Market":3},"b":{"Indication Relevance":24,"Scientific Evidence":24,"Compound Support":3,"Mechanism Support":9,"Safety & Regulatory":15,"Novelty & Market":3}},
+    {"id":"rankint_009_dominance","type":"dominance","a":{"Indication Relevance":25,"Scientific Evidence":20,"Compound Support":4,"Mechanism Support":8,"Safety & Regulatory":15,"Novelty & Market":5},"b":{"Indication Relevance":25,"Scientific Evidence":20,"Compound Support":4,"Mechanism Support":8,"Safety & Regulatory":10,"Novelty & Market":5}},
+    {"id":"rankint_010_dominance","type":"dominance","a":{"Indication Relevance":27,"Scientific Evidence":19,"Compound Support":5,"Mechanism Support":10,"Safety & Regulatory":13,"Novelty & Market":5},"b":{"Indication Relevance":27,"Scientific Evidence":19,"Compound Support":4,"Mechanism Support":8,"Safety & Regulatory":13,"Novelty & Market":4}},
+
+    {"id":"rankint_011_genus","type":"genus","score_a":82,"score_b":81},
+    {"id":"rankint_012_genus","type":"genus","score_a":90,"score_b":79},
+    {"id":"rankint_013_genus","type":"genus","score_a":78,"score_b":78},
+    {"id":"rankint_014_genus","type":"genus","score_a":75,"score_b":74},
+
+    {"id":"rankint_015_strength","type":"strength","indication":30,"positive":25,"comparison":0},
+    {"id":"rankint_016_strength","type":"strength","indication":30,"positive":20,"comparison":-4},
+    {"id":"rankint_017_strength","type":"strength","indication":22,"positive":15,"comparison":0},
+    {"id":"rankint_018_strength","type":"strength","indication":35,"positive":30,"comparison":-6},
+
+    {"id":"rankint_019_sensitive","type":"sensitive","a":{"Indication Relevance":14,"Scientific Evidence":12,"Compound Support":3.5,"Mechanism Support":7,"Safety & Regulatory":12,"Novelty & Market":3.5},"b":{"Indication Relevance":14,"Scientific Evidence":15,"Compound Support":3.5,"Mechanism Support":4,"Safety & Regulatory":12,"Novelty & Market":3}},
+    {"id":"rankint_020_sensitive","type":"sensitive","a":{"Indication Relevance":20,"Scientific Evidence":15,"Compound Support":4,"Mechanism Support":7,"Safety & Regulatory":12,"Novelty & Market":4.5},"b":{"Indication Relevance":19,"Scientific Evidence":17,"Compound Support":4,"Mechanism Support":7,"Safety & Regulatory":12,"Novelty & Market":3.5}},
+    {"id":"rankint_021_robust","type":"robust","a":{"Indication Relevance":32,"Scientific Evidence":27,"Compound Support":5,"Mechanism Support":9,"Safety & Regulatory":15,"Novelty & Market":5},"b":{"Indication Relevance":20,"Scientific Evidence":18,"Compound Support":3,"Mechanism Support":6,"Safety & Regulatory":12,"Novelty & Market":2}},
+    {"id":"rankint_022_robust","type":"robust","a":{"Indication Relevance":30,"Scientific Evidence":25,"Compound Support":4,"Mechanism Support":9,"Safety & Regulatory":14,"Novelty & Market":4},"b":{"Indication Relevance":24,"Scientific Evidence":19,"Compound Support":3,"Mechanism Support":7,"Safety & Regulatory":11,"Novelty & Market":3}},
+
+    {"id":"rankint_023_calibration_guard","type":"calibration_guard"},
+    {"id":"rankint_024_calibration_guard","type":"calibration_guard"}
+  ]
+}

@@ -97,13 +97,14 @@ REQUIRED DOCUMENTATION POINTS (Sprint 3 spec):
    whether the underlying science is solid.
 
 7. No probabilistic uncertainty is estimated anywhere in this module —
-   no probability, confidence interval, or distribution of any kind is
-   computed or exposed (verified by test_no_probabilistic_or_scenario_fields_anywhere).
+   no probability, confidence interval, or distribution is computed. Phase 7
+   adds a deterministic bounded-weight stress envelope; its scenario-retention
+   fraction is explicitly NOT a probability.
 
-8. No scenario analysis is included. There is no evidence-priority,
-   commercial-readiness, regulatory, or innovation weighting profile,
-   no user-adjustable weight, and no alternative-objective simulation
-   anywhere in this module.
+8. Phase 7 includes deterministic section-weight perturbation only. It does
+   not expose user-tunable commercial/evidence profiles and does not alter
+   production scores. The active weights are perturbed symmetrically around
+   their current values and renormalized to 100.
 
 9. Sub-component sensitivity is unavailable (see point 4) — this is a
    repository data-availability limit, not an implementation choice
@@ -666,4 +667,171 @@ def build_robustness_analysis(df: pd.DataFrame) -> pd.Series:
         for idx in group.index:
             results[idx] = obj
 
+    return results
+
+# =====================================================================
+# Phase 7 — bounded ACTUAL weight perturbation
+# =====================================================================
+# Unlike leave-one-dimension-out above, this analysis genuinely changes the
+# section weights (within a documented deterministic envelope), renormalizes
+# them to 100, and recomputes candidate ranking from the stored section
+# contributions. It remains a sensitivity analysis, NOT a probability model.
+
+from itertools import product as _product
+from phase5_scoring_config import (
+    RANKING_COMPONENT_ACTIVE_WEIGHTS as _ACTIVE_RANKING_WEIGHTS,
+    DEFAULT_WEIGHT_PERTURBATION_RELATIVE_DELTA as _DEFAULT_WEIGHT_DELTA,
+    RANKING_CALIBRATION_STATUS as _RANKING_CALIBRATION_STATUS,
+    RANKING_CALIBRATION_NOTICE as _RANKING_CALIBRATION_NOTICE,
+)
+from ranking_score_model import normalize_weights as _normalize_ranking_weights
+
+
+def _utilities_from_weighted_breakdown(breakdown) -> dict[str, float] | None:
+    parsed = _parse_score_breakdown(breakdown)
+    if not parsed:
+        return None
+    utilities = {}
+    for name, weight in _ACTIVE_RANKING_WEIGHTS.items():
+        if name not in parsed or float(weight) == 0:
+            return None
+        utilities[name] = float(parsed[name]) / float(weight)
+    return utilities
+
+
+def _bounded_weight_scenarios(relative_delta: float = _DEFAULT_WEIGHT_DELTA) -> list[dict[str, float]]:
+    """All deterministic +/-delta corners plus the active baseline.
+
+    Six dimensions => 64 corners, small enough to enumerate exactly. Every
+    corner is renormalized to a 100-point weight vector. The returned set is
+    an engineering stress envelope, not a sample from a probability
+    distribution and therefore must never be described as a confidence level.
+    """
+    delta = float(relative_delta)
+    if not 0 < delta < 0.5:
+        raise ValueError("relative_delta must be between 0 and 0.5")
+    names = list(_ACTIVE_RANKING_WEIGHTS)
+    scenarios = [dict(_ACTIVE_RANKING_WEIGHTS)]
+    for signs in _product((-1.0, 1.0), repeat=len(names)):
+        raw = {
+            name: float(_ACTIVE_RANKING_WEIGHTS[name]) * (1.0 + sign * delta)
+            for name, sign in zip(names, signs)
+        }
+        scenarios.append(_normalize_ranking_weights(raw))
+    # de-duplicate after normalization while preserving deterministic order
+    seen = set()
+    unique = []
+    for sc in scenarios:
+        key = tuple(round(sc[n], 10) for n in names)
+        if key not in seen:
+            seen.add(key)
+            unique.append(sc)
+    return unique
+
+
+def _scenario_score(utilities: dict[str, float], weights: dict[str, float]) -> float:
+    return round(max(0.0, min(100.0, sum(utilities[n] * weights[n] for n in weights))), 6)
+
+
+def build_bounded_weight_robustness(
+    df: pd.DataFrame,
+    relative_delta: float = _DEFAULT_WEIGHT_DELTA,
+) -> pd.Series:
+    """Per-row group robustness under real +/- weight perturbations.
+
+    The active baseline winner is compared with EVERY other normally-rankable
+    candidate in the same (Reference_Plant, Reference_Compound) group under
+    all 64 deterministic corner perturbations. When an
+    Eligible_For_Normal_Ranking column exists, excluded/hold candidates are
+    removed before ranking sensitivity is assessed; model robustness must not
+    accidentally resurrect a scientific hard-stop.
+    """
+    results = pd.Series(index=df.index, dtype=object)
+    if df.empty:
+        return results
+    group_cols = [c for c in ("Reference_Plant", "Reference_Compound") if c in df.columns]
+    if len(group_cols) < 2:
+        obj = {
+            "status": "insufficient",
+            "reason": "Reference_Plant/Reference_Compound grouping columns are required.",
+            "calibration_status": _RANKING_CALIBRATION_STATUS,
+        }
+        for idx in df.index:
+            results[idx] = obj
+        return results
+
+    scenarios = _bounded_weight_scenarios(relative_delta)
+    for _, original_group in df.groupby(group_cols, sort=False):
+        group = original_group
+        if "Eligible_For_Normal_Ranking" in group.columns:
+            mask = group["Eligible_For_Normal_Ranking"].map(
+                lambda v: bool(v) if not pd.isna(v) else False
+            )
+            eligible = group[mask]
+            if not eligible.empty:
+                group = eligible
+
+        usable = []
+        for idx, row in group.iterrows():
+            utilities = _utilities_from_weighted_breakdown(row.get("Score_Breakdown"))
+            if utilities is not None:
+                usable.append((idx, str(row.get("Alternative_Plant", idx)), utilities))
+
+        if len(usable) < 2:
+            obj = {
+                "status": "insufficient",
+                "reason": "At least two candidates with reconstructable Score_Breakdown are required.",
+                "calibration_status": _RANKING_CALIBRATION_STATUS,
+            }
+        else:
+            baseline_weights = _normalize_ranking_weights(_ACTIVE_RANKING_WEIGHTS)
+            baseline_scores = [(_scenario_score(u, baseline_weights), name, idx) for idx, name, u in usable]
+            baseline_scores.sort(key=lambda x: (-x[0], x[1]))
+            baseline_winner = baseline_scores[0][1]
+            winners = []
+            ranks = []
+            gaps = []
+            for weights in scenarios:
+                scored = [(_scenario_score(u, weights), name) for _, name, u in usable]
+                scored.sort(key=lambda x: (-x[0], x[1]))
+                winners.append(scored[0][1])
+                rank = next(i + 1 for i, (_, name) in enumerate(scored) if name == baseline_winner)
+                ranks.append(rank)
+                if len(scored) >= 2:
+                    gaps.append(scored[0][0] - scored[1][0])
+
+            retained = sum(1 for w in winners if w == baseline_winner)
+            retention = retained / len(winners)
+            if retention == 1.0:
+                level = "Robust"
+            elif retention >= 0.90:
+                level = "Moderately robust"
+            else:
+                level = "Sensitive"
+            obj = {
+                "status": "available",
+                "scope": "reference_group_all_normally_rankable_candidates",
+                "relative_weight_delta": float(relative_delta),
+                "scenario_count": len(scenarios),
+                "baseline_winner": baseline_winner,
+                "winner_retention_fraction": round(retention, 4),
+                "baseline_winner_worst_rank": max(ranks),
+                "winner_changed_in_scenarios": len(winners) - retained,
+                "minimum_top_two_gap": round(min(gaps), 4) if gaps else None,
+                "maximum_top_two_gap": round(max(gaps), 4) if gaps else None,
+                "stability_level": level,
+                "calibration_status": _RANKING_CALIBRATION_STATUS,
+                "interpretation": (
+                    f"{baseline_winner} remained first in {retained}/{len(winners)} "
+                    f"deterministic +/-{relative_delta:.0%} weight scenarios."
+                ),
+                "limitations": [
+                    _RANKING_CALIBRATION_NOTICE,
+                    "Scenario retention is not a probability or confidence interval.",
+                    "Only section weights are perturbed; evidence extraction and scientific gates are fixed.",
+                ],
+            }
+
+        for idx in original_group.index:
+            results[idx] = obj
     return results

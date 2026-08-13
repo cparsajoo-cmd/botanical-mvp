@@ -32,7 +32,7 @@ PROVISIONAL_NOTICE = (
 # candidate_engine.py), which tracks decision-tier boundaries, not
 # Scientific Score component weights -- the main audit (§12) flagged
 # these as two different things that should not be silently merged.
-SCORING_MODEL_VERSION = "phase5-scientific-score-v1.0.0-provisional"
+SCORING_MODEL_VERSION = "phase5-scientific-score-v1.1.0-provisional"
 
 # ---------------------------------------------------------------------------
 # Evidence tier precedence (addendum §1.3/§2 of correction round 6-7)
@@ -156,3 +156,43 @@ MARKET_STATUS_POINTS = {
     "Search not performed": 0.0,
     "Source unavailable": 0.0,
 }
+
+# ---------------------------------------------------------------------------
+# Phase 7 — Ranking calibration / robustness contract
+# ---------------------------------------------------------------------------
+# These six maxima are also the CURRENT active ranking weights because every
+# component is expressed directly in points on this 100-point scale. Keeping
+# them here as an explicit mapping makes the model genuinely re-weightable for
+# sensitivity analysis and future expert calibration without changing any of
+# the component extraction/scientific interpretation logic.
+RANKING_COMPONENT_BASE_WEIGHTS = {
+    "Indication Relevance": 35.0,
+    "Scientific Evidence": 30.0,
+    "Compound Support": 5.0,
+    "Mechanism Support": 10.0,
+    "Safety & Regulatory": 15.0,
+    "Novelty & Market": 5.0,
+}
+RANKING_COMPONENT_ACTIVE_WEIGHTS = dict(RANKING_COMPONENT_BASE_WEIGHTS)
+
+# Existing engineering cut-point, now named centrally instead of being
+# repeated as a magic number in candidate_shortlisting.py. It remains
+# deliberately PROVISIONAL until a blinded expert-ranking benchmark is
+# adjudicated. Moving the constant does not claim the value is validated.
+RANKING_STRONG_PRIORITY_THRESHOLD = 78.0
+
+# Honest status exposed by the sensitivity/calibration layer. Code must never
+# label the model "expert calibrated" merely because internal regression or
+# synthetic holdouts pass.
+RANKING_CALIBRATION_STATUS = "PROVISIONAL_PENDING_EXPERT_CALIBRATION"
+RANKING_CALIBRATION_NOTICE = (
+    "Ranking weights and the 78-point priority threshold are engineering "
+    "defaults, not probabilities and not expert-calibrated clinical cut-offs."
+)
+
+# Deterministic bounded-weight robustness analysis. +/-10% is intentionally a
+# sensitivity envelope, not a statistical confidence interval.
+DEFAULT_WEIGHT_PERTURBATION_RELATIVE_DELTA = 0.10
+
+assert abs(sum(RANKING_COMPONENT_BASE_WEIGHTS.values()) - 100.0) < 1e-9
+assert abs(sum(RANKING_COMPONENT_ACTIVE_WEIGHTS.values()) - 100.0) < 1e-9

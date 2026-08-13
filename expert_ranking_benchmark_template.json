@@ -1,0 +1,56 @@
+{
+  "benchmark_id": "expert_ranking_benchmark_v1",
+  "status": "UNLABELLED_TEMPLATE_DO_NOT_USE_AS_VALIDATION",
+  "instructions": [
+    "Populate candidate score_breakdown values from a frozen platform run.",
+    "Expert reviewers must choose preferred=A, preferred=B, or preferred=TIE without seeing platform scores/ranks.",
+    "Keep calibration and holdout cases separate before fitting.",
+    "Do not change holdout labels/cases after inspecting model performance.",
+    "candidate_configuration must only be added after fitting calibration cases; production config is never changed automatically."
+  ],
+  "pairs": [
+    {
+      "pair_id": "example_remove_before_use",
+      "split": "calibration",
+      "preferred": null,
+      "candidate_a": {
+        "candidate_id": "A",
+        "score_breakdown": {
+          "Indication Relevance": 0,
+          "Scientific Evidence": 0,
+          "Compound Support": 0,
+          "Mechanism Support": 0,
+          "Safety & Regulatory": 0,
+          "Novelty & Market": 0
+        }
+      },
+      "candidate_b": {
+        "candidate_id": "B",
+        "score_breakdown": {
+          "Indication Relevance": 0,
+          "Scientific Evidence": 0,
+          "Compound Support": 0,
+          "Mechanism Support": 0,
+          "Safety & Regulatory": 0,
+          "Novelty & Market": 0
+        }
+      }
+    }
+  ],
+  "threshold_cases": [
+    {
+      "case_id": "example_remove_before_use",
+      "split": "calibration",
+      "expert_priority": null,
+      "score_breakdown": {
+        "Indication Relevance": 0,
+        "Scientific Evidence": 0,
+        "Compound Support": 0,
+        "Mechanism Support": 0,
+        "Safety & Regulatory": 0,
+        "Novelty & Market": 0
+      }
+    }
+  ],
+  "candidate_configuration": null
+}

@@ -146,7 +146,9 @@ def test_sensitivity_display_adapter_payload_shape_unchanged():
     payload = prepare_sensitivity_payload(result)
     assert set(payload.keys()) == {
         "status", "total_rows", "message", "fragility",
-        "rank_stability_counts", "boundary_statement", "boundary_explanation",
+        "rank_stability_counts", "weight_perturbation_stability_counts",
+        "ranking_calibration_status", "ranking_calibration_notice",
+        "boundary_statement", "boundary_explanation",
     }
 
 

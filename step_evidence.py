@@ -140,6 +140,37 @@ def render_evidence_step(inputs):
                 })
             st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
 
+        post_scores = research_output.get("post_collection_scores") or {}
+        post_ranked = research_output.get("post_collection_ranked_candidates") or []
+        if post_scores:
+            st.markdown("### Post-collection evidence maturity score")
+            st.caption(
+                "General 0–100 score calculated after Step 2 from the evidence actually "
+                "retrieved for each candidate. It combines indication relevance, study "
+                "quality, source authority, source/domain diversity, evidence volume and "
+                "retrieval coverage. It is not an efficacy probability and does not reward "
+                "positive outcomes or penalize adverse findings."
+            )
+            score_rows = []
+            ordered = post_ranked or sorted(
+                post_scores, key=lambda p: float((post_scores.get(p) or {}).get("score") or 0), reverse=True
+            )
+            for rank, plant in enumerate(ordered, 1):
+                meta = post_scores.get(plant) or {}
+                score_rows.append({
+                    "Rank": rank,
+                    "Plant": plant,
+                    "Evidence maturity / 100": meta.get("score", 0),
+                    "Unique records": meta.get("record_count", 0),
+                    "Directly relevant": meta.get("directly_relevant_records", 0),
+                    "Relevance": meta.get("relevance_score", 0),
+                    "Study quality": meta.get("methodological_quality_score", 0),
+                    "Source authority": meta.get("source_authority_score", 0),
+                    "Diversity": meta.get("source_diversity_score", 0),
+                    "Coverage": meta.get("coverage_status", "NOT_ASSESSABLE"),
+                })
+            st.dataframe(pd.DataFrame(score_rows), width="stretch")
+
         diagnostics = research_output.get("candidate_discovery_diagnostics", {}) or {}
         selection_diagnostics = (
             research_output.get("candidate_selection_diagnostics")
@@ -246,7 +277,7 @@ def render_evidence_step(inputs):
                 rows.append({
                     "Plant": plant,
                     "Shortlist status": "Selected" if plant in selected_discovery else "Not selected",
-                    "Quality-adjusted score": meta.get("score"),
+                    "Pre-collection discovery priority": meta.get("score"),
                     "Supporting records": meta.get("supporting_records"),
                     "Human/clinical": meta.get("clinical_human_records", 0),
                     "Systematic reviews": meta.get("systematic_review_records", 0),
@@ -258,19 +289,19 @@ def render_evidence_step(inputs):
                     "Matched aliases": ", ".join(meta.get("matched_aliases", [])),
                 })
             ranked_df = pd.DataFrame(rows)
-            if not ranked_df.empty and "Quality-adjusted score" in ranked_df.columns:
-                ranked_df["Quality-adjusted score"] = pd.to_numeric(
-                    ranked_df["Quality-adjusted score"], errors="coerce"
+            if not ranked_df.empty and "Pre-collection discovery priority" in ranked_df.columns:
+                ranked_df["Pre-collection discovery priority"] = pd.to_numeric(
+                    ranked_df["Pre-collection discovery priority"], errors="coerce"
                 ).fillna(0)
                 ranked_df = ranked_df.sort_values(
-                    ["Quality-adjusted score", "Human/clinical", "Systematic reviews"],
+                    ["Pre-collection discovery priority", "Human/clinical", "Systematic reviews"],
                     ascending=[False, False, False],
                 )
                 ranked_df.insert(0, "Rank", range(1, len(ranked_df) + 1))
-            st.write("**Quality-ranked discovery pool**")
+            st.write("**Pre-collection discovery-priority pool**")
             st.caption(
-                "Candidates are ranked before the requested shortlist is filled. This is a "
-                "transparent discovery-priority score, not a final efficacy claim. "
+                "Candidates are ranked before the requested shortlist is filled. This raw "
+                "priority value is not normalized to 0–100 and is not a final efficacy or evidence-maturity score. "
                 "Human/clinical and systematic-review signals receive more weight than "
                 "preclinical mentions; dosage-form fit and regulatory mentions also contribute."
             )

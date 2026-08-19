@@ -12,7 +12,6 @@ from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pubmed_connector import search_and_fetch_pubmed
 from source_registry import PILOT_MAX_RESULTS
 from retrieval_coverage import assess_retrieval_coverage, aggregate_coverage_status
-from post_collection_candidate_scoring import score_collected_candidates
 from supabase_data import load_plants_df
 import therapeutic_area_registry
 import candidate_selection
@@ -405,11 +404,11 @@ def _candidate_specific_literature_validation(
         records = []
         errors = []
         try:
-            records.extend(search_and_fetch_pubmed(query, max_results=6, timeout=8))
+            records.extend(search_and_fetch_pubmed(query, max_results=3, timeout=8))
         except Exception as exc:
             errors.append(f"PubMed: {type(exc).__name__}: {exc}")
         try:
-            records.extend(_fetch_europepmc_discovery_records(query, max_results=6))
+            records.extend(_fetch_europepmc_discovery_records(query, max_results=3))
         except Exception as exc:
             errors.append(f"Europe PMC: {type(exc).__name__}: {exc}")
 
@@ -795,13 +794,11 @@ def run_research_engine(
     # ceiling.  Successful partial results are preserved; unfinished plants are
     # reported explicitly instead of leaving the UI spinner running forever.
     plant_workers = 2 if len(candidate_plants) > 1 else 1
-    # Scale the global budget with the number of worker waves. Each per-plant
-    # collector already has a bounded ~30s source budget, so a fixed 105s
-    # ceiling could cut off otherwise healthy later plants in an 8+ candidate
-    # run. This remains bounded, generic, and independent of indication.
+    # Operational-only timeout scaling: preserve the scientific retrieval and
+    # candidate-selection logic, but avoid marking later candidates incomplete
+    # merely because a fixed wall-clock budget expired before their worker wave.
     worker_waves = max(1, (len(candidate_plants) + plant_workers - 1) // plant_workers)
-    base_wave_seconds = 35
-    quick_step_budget_seconds = max(105, worker_waves * base_wave_seconds)
+    quick_step_budget_seconds = max(105, worker_waves * 35)
     if pilot_mode:
         quick_step_budget_seconds = max(180, worker_waves * 45)
     started_at = time.monotonic()
@@ -896,25 +893,6 @@ def run_research_engine(
 
     retrieval_coverage_status = aggregate_coverage_status(retrieval_coverage_by_plant)
 
-    # Re-score the actually collected shortlist AFTER Step 2 using the full
-    # multi-source evidence returned in this run. This is the general,
-    # indication-agnostic score intended for comparison among collected
-    # candidates. The earlier discovery score remains only a pre-collection
-    # search-priority diagnostic.
-    post_collection_scores = score_collected_candidates(
-        plant_collection_results,
-        indication=indication,
-        coverage_by_plant=retrieval_coverage_by_plant,
-    )
-    post_collection_ranked_candidates = sorted(
-        post_collection_scores,
-        key=lambda plant: (
-            -float(post_collection_scores[plant].get("score") or 0),
-            -int(post_collection_scores[plant].get("directly_relevant_records") or 0),
-            plant.lower(),
-        ),
-    )
-
     discovery_diagnostics.update({
         "collection_time_budget_seconds": quick_step_budget_seconds,
         "collection_elapsed_seconds": round(time.monotonic() - started_at, 2),
@@ -941,11 +919,6 @@ def run_research_engine(
         "retrieval_coverage_by_plant": retrieval_coverage_by_plant,
         "retrieval_coverage_market": target_market,
         "retrieval_coverage_indication": indication,
-        # Post-collection evidence maturity scoring (0-100). This is based on
-        # the evidence actually retrieved in Step 2, not the small discovery
-        # sample used to choose which candidates to search.
-        "post_collection_scores": post_collection_scores,
-        "post_collection_ranked_candidates": post_collection_ranked_candidates,
         # --- New, additive keys ---------------------------------------------
         "candidate_records": [
             {

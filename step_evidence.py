@@ -140,37 +140,6 @@ def render_evidence_step(inputs):
                 })
             st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
 
-        post_scores = research_output.get("post_collection_scores") or {}
-        post_ranked = research_output.get("post_collection_ranked_candidates") or []
-        if post_scores:
-            st.markdown("### Post-collection evidence maturity score")
-            st.caption(
-                "General 0–100 score calculated after Step 2 from the evidence actually "
-                "retrieved for each candidate. It combines indication relevance, study "
-                "quality, source authority, source/domain diversity, evidence volume and "
-                "retrieval coverage. It is not an efficacy probability and does not reward "
-                "positive outcomes or penalize adverse findings."
-            )
-            score_rows = []
-            ordered = post_ranked or sorted(
-                post_scores, key=lambda p: float((post_scores.get(p) or {}).get("score") or 0), reverse=True
-            )
-            for rank, plant in enumerate(ordered, 1):
-                meta = post_scores.get(plant) or {}
-                score_rows.append({
-                    "Rank": rank,
-                    "Plant": plant,
-                    "Evidence maturity / 100": meta.get("score", 0),
-                    "Unique records": meta.get("record_count", 0),
-                    "Directly relevant": meta.get("directly_relevant_records", 0),
-                    "Relevance": meta.get("relevance_score", 0),
-                    "Study quality": meta.get("methodological_quality_score", 0),
-                    "Source authority": meta.get("source_authority_score", 0),
-                    "Diversity": meta.get("source_diversity_score", 0),
-                    "Coverage": meta.get("coverage_status", "NOT_ASSESSABLE"),
-                })
-            st.dataframe(pd.DataFrame(score_rows), width="stretch")
-
         diagnostics = research_output.get("candidate_discovery_diagnostics", {}) or {}
         selection_diagnostics = (
             research_output.get("candidate_selection_diagnostics")
@@ -301,9 +270,11 @@ def render_evidence_step(inputs):
             st.write("**Pre-collection discovery-priority pool**")
             st.caption(
                 "Candidates are ranked before the requested shortlist is filled. This raw "
-                "priority value is not normalized to 0–100 and is not a final efficacy or evidence-maturity score. "
-                "Human/clinical and systematic-review signals receive more weight than "
-                "preclinical mentions; dosage-form fit and regulatory mentions also contribute."
+                "priority value is not normalized to 0–100 and is not a final efficacy or "
+                "scientific-evidence score. The validated downstream Scientific_Evidence_Score "
+                "remains authoritative for scientific scoring. Human/clinical and systematic-review "
+                "signals receive more weight than preclinical mentions; dosage-form fit and "
+                "regulatory mentions also contribute."
             )
             st.dataframe(ranked_df, width="stretch")
 

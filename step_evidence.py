@@ -105,7 +105,7 @@ def render_evidence_step(inputs):
             st.caption("Reference/database seeds (not yet validated for this indication): " + ", ".join(reference_seeds))
         if candidate_records:
             if directly_supported:
-                st.caption("Directly supported (clinical/systematic-review literature): " + ", ".join(directly_supported))
+                st.caption("Pre-collection directly supported (clinical/systematic-review literature): " + ", ".join(directly_supported))
             if indirectly_supported:
                 st.caption("Indirectly supported (weaker literature signal): " + ", ".join(indirectly_supported))
         elif evidence_backed:
@@ -229,7 +229,7 @@ def render_evidence_step(inputs):
         st.write("**2. Literature-discovered candidates**")
         if candidate_records:
             st.write(
-                "_Directly supported (clinical/systematic-review literature):_ "
+                "_Pre-collection directly supported (clinical/systematic-review literature):_ "
                 + (", ".join(directly_supported) if directly_supported else "None")
             )
             st.write(

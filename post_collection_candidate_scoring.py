@@ -17,6 +17,7 @@ from typing import Iterable, Mapping
 from evidence_quality_engine import assess_evidence_quality
 from general_indication_relevance import build_indication_profile, score_record_relevance
 from source_registry import get_source_config
+import therapeutic_area_registry
 
 
 _COVERAGE_SCORE = {
@@ -172,7 +173,16 @@ def score_candidate_collection(
             "interpretation": "No unique evidence records were returned in this Step 2 collection run.",
         }
 
-    corpus = [_record_text(record) for _, record in unique]
+    # Reuse the platform's existing generic indication vocabulary only as a
+    # low-weight assist.  This keeps post-collection scoring aligned with the
+    # same general indication semantics used during candidate discovery without
+    # adding any indication-specific rules here.  The authoritative relevance
+    # engine caps assist-only matches below direct/corpus-derived matches.
+    assist_terms = tuple(therapeutic_area_registry.get_query_terms(indication) or ())
+    corpus = [
+        ". ".join(filter(None, (_record_text(record), _txt(item.get("title")))))
+        for item, record in unique
+    ]
     profile = build_indication_profile(indication, corpus)
 
     relevance_values = []
@@ -197,7 +207,16 @@ def score_candidate_collection(
         if domain in {"scientific_literature", "clinical"}:
             quality_values.append(_quality_score(record))
             t1, t2, t3 = _relevance_parts(record)
-            rel = score_record_relevance(profile, t1, t2, t3)
+            # Include the wrapper title because some connectors keep display
+            # text outside the standardized nested record.  assist_terms is the
+            # same generic registry vocabulary used elsewhere in the platform;
+            # it is only a fallback and cannot outrank direct evidence.
+            wrapper_title = _txt(item.get("title"))
+            if wrapper_title and wrapper_title not in t3:
+                t3 = f"{t3} {wrapper_title}".strip()
+            rel = score_record_relevance(
+                profile, t1, t2, t3, assist_terms=assist_terms
+            )
             rel_pct = max(0.0, min(100.0, float(rel.score) * 100.0))
             relevance_values.append(rel_pct)
             if rel.score >= 0.50:

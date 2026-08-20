@@ -797,10 +797,23 @@ def run_research_engine(
     # Operational-only timeout scaling: preserve the scientific retrieval and
     # candidate-selection logic, but avoid marking later candidates incomplete
     # merely because a fixed wall-clock budget expired before their worker wave.
+    #
+    # Per-wave budget must not be tighter than the per-plant collection's own
+    # worst-case internal budget (multi_source_collector.TOTAL_TIME_BUDGET =
+    # SOURCE_TIMEOUT_SECONDS * 2 = 30s), plus headroom for scheduling/network
+    # jitter across a wave of `plant_workers` plants running concurrently.
+    # The previous non-pilot value (35s/wave) left only ~5s of headroom over
+    # that 30s worst case, so later waves in an 8-candidate run were routinely
+    # marked collection_finished=False (and therefore INCOMPLETE retrieval
+    # coverage) purely from exhausting the outer wall clock -- not from any
+    # source actually failing or from evidence not existing. Non-pilot mode
+    # also does strictly more work per source (full max_results, vs pilot's
+    # reduced PILOT_MAX_RESULTS-scoped run), so it must never receive a
+    # smaller budget than pilot mode; it previously did (35s/wave & 105s
+    # floor vs pilot's 45s/wave & 180s floor). The two modes now share one
+    # formula so this can't drift apart again.
     worker_waves = max(1, (len(candidate_plants) + plant_workers - 1) // plant_workers)
-    quick_step_budget_seconds = max(105, worker_waves * 35)
-    if pilot_mode:
-        quick_step_budget_seconds = max(180, worker_waves * 45)
+    quick_step_budget_seconds = max(180, worker_waves * 45)
     started_at = time.monotonic()
 
     def _collect_one_plant(plant):

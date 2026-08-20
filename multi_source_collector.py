@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+import time
 
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
@@ -373,7 +374,25 @@ def collect_multi_source_evidence(
     try:
         future_map = {}
 
-        for source_config in enabled_sources:
+        # Small stagger between submissions: launching all N sources in the
+        # exact same instant (0.15s apart here, so ~2s to launch 15) sends a
+        # burst of near-simultaneous requests to a handful of shared hosts
+        # (e.g. PubMed and LiverTox both hit eutils.ncbi.nlm.nih.gov;
+        # CrossRef and Patent Landscape both hit api.crossref.org). Several
+        # of these providers rate-limit per-second request bursts, not just
+        # cumulative volume -- observed in production as real HTTP 429s from
+        # PubMed, CrossRef, and Semantic Scholar on the same run, even after
+        # the identification-header fixes in crossref_connector.py /
+        # patent_connector.py / livertox_connector.py. This does not
+        # guarantee an already-throttled provider recovers instantly, but it
+        # reduces how often this run itself is the thing that trips the
+        # limiter. Sources still all run concurrently and overlap in flight
+        # -- this is not a return to the old fixed-wave serialization (see
+        # MAX_WORKERS comment above), just spacing out when each one starts.
+        _SOURCE_LAUNCH_STAGGER_SECONDS = 0.15
+        for i, source_config in enumerate(enabled_sources):
+            if i > 0:
+                time.sleep(_SOURCE_LAUNCH_STAGGER_SECONDS)
             future = executor.submit(
                 _run_one_source,
                 source_config,

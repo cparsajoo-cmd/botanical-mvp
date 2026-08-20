@@ -6,7 +6,7 @@ from datetime import datetime
 
 import requests
 
-from multi_source_collector import collect_multi_source_evidence
+from multi_source_collector import collect_multi_source_evidence, TOTAL_TIME_BUDGET
 from global_candidate_ranking_engine import rank_global_candidates
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
 from pubmed_connector import search_and_fetch_pubmed
@@ -798,22 +798,27 @@ def run_research_engine(
     # candidate-selection logic, but avoid marking later candidates incomplete
     # merely because a fixed wall-clock budget expired before their worker wave.
     #
-    # Per-wave budget must not be tighter than the per-plant collection's own
-    # worst-case internal budget (multi_source_collector.TOTAL_TIME_BUDGET =
-    # SOURCE_TIMEOUT_SECONDS * 2 = 30s), plus headroom for scheduling/network
-    # jitter across a wave of `plant_workers` plants running concurrently.
-    # The previous non-pilot value (35s/wave) left only ~5s of headroom over
-    # that 30s worst case, so later waves in an 8-candidate run were routinely
-    # marked collection_finished=False (and therefore INCOMPLETE retrieval
-    # coverage) purely from exhausting the outer wall clock -- not from any
-    # source actually failing or from evidence not existing. Non-pilot mode
-    # also does strictly more work per source (full max_results, vs pilot's
-    # reduced PILOT_MAX_RESULTS-scoped run), so it must never receive a
-    # smaller budget than pilot mode; it previously did (35s/wave & 105s
-    # floor vs pilot's 45s/wave & 180s floor). The two modes now share one
-    # formula so this can't drift apart again.
+    # Per-wave budget is derived from multi_source_collector.TOTAL_TIME_BUDGET
+    # -- the actual worst-case wall-clock time a single plant's collection can
+    # legitimately take -- plus a fixed scheduling-jitter margin, instead of a
+    # second, independently-hardcoded number. Two separately-tuned constants
+    # (35s/wave here vs. the inner 30s TOTAL_TIME_BUDGET) previously drifted
+    # apart and caused two related-but-distinct production incidents: later
+    # waves in an 8-candidate run being marked collection_finished=False
+    # purely from exhausting this outer wall clock (fixed by no longer
+    # hardcoding this budget below the inner one), and separately -- once
+    # that was fixed and plants were finally given their full inner budget to
+    # run -- most sources within that inner budget still timing out because
+    # 30s was too tight for 15 sources bottlenecked through MAX_WORKERS=6
+    # concurrent connectors (see TOTAL_TIME_BUDGET's own derivation comment
+    # in multi_source_collector.py). Deriving this value from the same
+    # constant closes both gaps at once and prevents them from reopening
+    # independently in the future.
+    _SCHEDULING_JITTER_MARGIN_SECONDS = 15
     worker_waves = max(1, (len(candidate_plants) + plant_workers - 1) // plant_workers)
-    quick_step_budget_seconds = max(180, worker_waves * 45)
+    quick_step_budget_seconds = max(
+        180, worker_waves * (TOTAL_TIME_BUDGET + _SCHEDULING_JITTER_MARGIN_SECONDS)
+    )
     started_at = time.monotonic()
 
     def _collect_one_plant(plant):

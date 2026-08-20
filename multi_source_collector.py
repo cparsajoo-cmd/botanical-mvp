@@ -102,6 +102,30 @@ CONNECTOR_MAP = {
 SOURCE_TIMEOUT_SECONDS = 15
 MAX_WORKERS = 6
 
+# Total wall-clock ceiling for ONE plant's collect_multi_source_evidence()
+# call, across every enabled source. This used to be a purely internal
+# local variable (SOURCE_TIMEOUT_SECONDS * 2 = 30s), independently
+# hardcoded again in research_engine.py's outer per-wave scheduling budget
+# -- the two constants drifted apart once, causing the Step 2 wall-clock
+# regression fixed in research_engine.py. It is now a real module-level
+# constant, imported by research_engine.py, so there is exactly one place
+# that knows how long a plant collection can legitimately take.
+#
+# Value derivation, from what is actually verified in this codebase (not
+# guessed): there are 15 enabled sources (source_registry.get_enabled_sources())
+# and only MAX_WORKERS=6 run concurrently, so a plant needs
+# ceil(15 / 6) = 3 sequential waves of source calls in the worst case.
+# Individual connector HTTP calls use a 20s request timeout (see e.g.
+# clinicaltrials_connector.py, europepmc_connector.py, chebi_connector.py);
+# PubMed's own DEFAULT_TIMEOUT is 10s but collect_pubmed_evidence() issues
+# several sequential query variants internally on top of that. 3 waves *
+# 20s = 60s covers this realistically, including the retry-with-backoff
+# logic in openalex_connector.py / semantic_scholar_connector.py, which was
+# observed in production hitting real HTTP 429 rate-limiting (NCBI PubMed
+# eutils) -- confirming these worst-case waits do occur, not just in
+# theory.
+TOTAL_TIME_BUDGET = SOURCE_TIMEOUT_SECONDS * 4
+
 
 def _extract_and_save_compounds(record, source_name):
     compound_text = " ".join([
@@ -329,14 +353,10 @@ def collect_multi_source_evidence(
 
     sources_checked = [s["name"] for s in enabled_sources]
 
-    # Fixed, reasonable ceiling on total wait time, instead of
-    # SOURCE_TIMEOUT_SECONDS * number_of_sources (which was 25 * 14 =
-    # 350 seconds -- nearly 6 minutes -- before even raising a timeout
-    # error). With MAX_WORKERS running concurrently, sources finish in
-    # waves; this budget is enough for a few such waves even in a slow
-    # case.
-    TOTAL_TIME_BUDGET = SOURCE_TIMEOUT_SECONDS * 2
-
+    # TOTAL_TIME_BUDGET is now a module-level constant (see definition
+    # above) instead of being redefined here -- research_engine.py imports
+    # the same constant for its outer per-plant-wave scheduling budget, so
+    # the two can no longer independently drift out of sync.
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     try:
         future_map = {}

@@ -1,6 +1,7 @@
-"""Regression test for the Step 2 wall-clock collection budgets.
+"""Regression tests for the Step 2 wall-clock collection budget and source
+concurrency.
 
-CONTEXT -- two related, but distinct, production incidents on the same
+CONTEXT -- three related, but distinct, production incidents on the same
 feature, fixed in sequence:
 
 INCIDENT 1 (outer per-wave scheduling budget): for an 8-candidate run (the
@@ -16,36 +17,37 @@ independent of multi_source_collector.py's actual internal ceiling for that
 same call (TOTAL_TIME_BUDGET, then 30s) -- the two constants had already
 drifted apart, leaving almost no headroom.
 
-INCIDENT 2 (inner per-plant collection budget): after fixing incident 1 and
-giving every wave enough outer wall-clock time to actually run to
-completion, a real run against live sources came back with 0 saved records
-and every one of 8 plants marked INCOMPLETE. The evidence-collection error
-export showed NCBI PubMed returning real HTTP 429 (rate limited) for every
-plant, and every one of the other 13-14 sources for that same plant showing
-"Timed out after 30s (overall budget, not this source alone)" -- i.e. they
-never got a chance to even start. Verified against the code: there are 15
-enabled sources (source_registry.get_enabled_sources()) but only
-MAX_WORKERS=6 run concurrently inside multi_source_collector.py, so a
-plant needs ceil(15/6)=3 sequential waves of source calls in the worst
-case; individual connector calls use a 20s HTTP timeout, and
-openalex_connector.py / semantic_scholar_connector.py additionally retry
-with backoff on 429. The (then) 30s TOTAL_TIME_BUDGET was never enough for
-3 such waves, so most sources for most plants were abandoned before they
-ever ran -- not because anything was actually broken.
+INCIDENT 2 (fixed worker cap serializing independent sources into waves):
+after fixing incident 1, a real run against live sources still came back
+with 0 saved records and every one of 8 plants marked INCOMPLETE, with
+nearly every source (13-14 of 15) showing "Timed out after 30s (then 60s)
+(overall budget, not this source alone)" -- meaning they never even started.
+Root cause verified against the code: MAX_WORKERS was a fixed cap of 6, so
+15 independent sources (different domains, no shared resource -- pure
+I/O-bound HTTP calls) were forced through ceil(15/6)=3 sequential waves per
+plant. Sources queued behind slow/rate-limited ones never got a worker slot
+before the overall budget expired, no matter how large that budget was made
+(30s, then 60s -- both still failed the same way).
 
-THE FIX: TOTAL_TIME_BUDGET is now a real module-level constant in
-multi_source_collector.py (60s, derived from the above), and
-research_engine.py imports it and derives its own outer per-wave budget
-FROM it (TOTAL_TIME_BUDGET + a fixed scheduling-jitter margin), instead of
-hardcoding a second, independently-tuned number. This closes both
-incidents and makes it structurally impossible for the two budgets to
+INCIDENT 3 (the actual fix): max_workers is now set per-call to the number
+of enabled sources, so every source runs concurrently in one wave instead
+of being serialized into artificial rounds. Wall-clock time is now bounded
+by the single slowest source (worst case: one connector's 20s HTTP timeout
+plus the retry-with-backoff loop in openalex_connector.py /
+semantic_scholar_connector.py on real HTTP 429s, observed in production
+alongside genuine NCBI PubMed rate-limiting), not by (sources / a fixed
+worker cap) sequential rounds of that. TOTAL_TIME_BUDGET was re-derived
+down to 45s accordingly, and research_engine.py's outer per-wave budget is
+imported/derived from it (TOTAL_TIME_BUDGET + a fixed jitter margin)
+instead of a second, independently-tuned number, so none of these three can
 silently drift apart again.
 
 HOW TO RUN
     pytest -q test_step2_collection_budget.py
 """
 import research_engine as re_mod
-from multi_source_collector import TOTAL_TIME_BUDGET, MAX_WORKERS
+import multi_source_collector as msc
+from multi_source_collector import TOTAL_TIME_BUDGET
 import source_registry as sr
 
 _JITTER_MARGIN_SECONDS = 15
@@ -74,29 +76,71 @@ _EIGHT_PLANTS = [f"Plant species {i}" for i in range(8)]
 
 
 # ---------------------------------------------------------------------
-# Inner budget (multi_source_collector.TOTAL_TIME_BUDGET)
+# Incident 2/3: source concurrency -- no more fixed worker cap
 # ---------------------------------------------------------------------
 
-def test_inner_budget_covers_worst_case_source_fanout():
-    # 15 enabled sources through MAX_WORKERS=6 concurrent slots needs
-    # ceil(15/6) = 3 sequential waves; each connector's own HTTP timeout is
-    # 20s (verified in the connector modules), so a plant genuinely can
-    # need up to 3 * 20 = 60s when several sources are slow/rate-limited.
-    num_sources = len(sr.get_enabled_sources())
-    source_waves = -(-num_sources // MAX_WORKERS)  # ceil
+def test_all_enabled_sources_run_in_a_single_concurrent_wave(monkeypatch):
+    """Locks in the actual fix for incident 2: the ThreadPoolExecutor used
+    inside collect_multi_source_evidence() must be sized to run every
+    enabled source at once, not queue most of them behind a small fixed
+    cap."""
+    captured_max_workers = {}
+
+    class _FakeExecutor:
+        def __init__(self, max_workers=None):
+            captured_max_workers["value"] = max_workers
+
+        def submit(self, fn, *args, **kwargs):
+            class _ImmediateFuture:
+                def result(self_inner, timeout=None):
+                    return [], []
+                def done(self_inner):
+                    return True
+            return _ImmediateFuture()
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
+
+    monkeypatch.setattr(msc, "ThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(
+        msc, "as_completed", lambda future_map, timeout=None: list(future_map)
+    )
+
+    msc.collect_multi_source_evidence(
+        scientific_name="Test Plant",
+        indication="TestIndication",
+        dosage_form="Infusion",
+        save=False,
+    )
+
+    num_enabled_sources = len(sr.get_enabled_sources())
+    assert captured_max_workers["value"] >= num_enabled_sources, (
+        f"collect_multi_source_evidence used max_workers="
+        f"{captured_max_workers['value']}, which is fewer than the "
+        f"{num_enabled_sources} enabled sources -- sources will again be "
+        "serialized into waves and queued sources can time out before "
+        "they ever start."
+    )
+
+
+def test_inner_budget_covers_single_wave_worst_case():
+    # With every source running concurrently (no more wave queueing), the
+    # dominant worst case is a single connector's 20s HTTP timeout plus a
+    # realistic retry-with-backoff allowance for the flakiest connectors
+    # (openalex_connector.py / semantic_scholar_connector.py on HTTP 429).
     connector_timeout_seconds = 20
-    worst_case = source_waves * connector_timeout_seconds
+    retry_backoff_allowance_seconds = 15
+    worst_case = connector_timeout_seconds + retry_backoff_allowance_seconds
 
     assert TOTAL_TIME_BUDGET >= worst_case, (
         f"TOTAL_TIME_BUDGET ({TOTAL_TIME_BUDGET}s) must cover the "
-        f"{worst_case}s worst case for {num_sources} sources across "
-        f"{source_waves} waves of {MAX_WORKERS} concurrent workers, or "
-        "most sources will be abandoned before they ever run."
+        f"{worst_case}s single-wave worst case (20s connector timeout + "
+        f"{retry_backoff_allowance_seconds}s retry/backoff allowance)."
     )
 
 
 # ---------------------------------------------------------------------
-# Outer budget (research_engine.py) -- derived from the inner one
+# Incident 1: outer budget (research_engine.py) -- derived from the inner one
 # ---------------------------------------------------------------------
 
 def test_eight_candidate_non_pilot_run_has_headroom_over_worst_case(monkeypatch):

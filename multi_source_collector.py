@@ -100,31 +100,39 @@ CONNECTOR_MAP = {
 
 
 SOURCE_TIMEOUT_SECONDS = 15
-MAX_WORKERS = 6
+
+# Previously a fixed cap of 6, forcing 15 enabled sources through
+# ceil(15/6)=3 sequential waves per plant even though every source is an
+# independent, unrelated HTTP call (different domains, no shared
+# resource) -- pure I/O-bound work with nothing to gain from serializing
+# it. That artificial wave-queueing was the actual root cause of the
+# production incident where TOTAL_TIME_BUDGET (previously 30s, then 60s)
+# was hit for nearly every source on nearly every plant: sources queued
+# behind other slow/rate-limited ones never even got a worker slot before
+# the overall budget expired, regardless of how large the budget was made.
+# max_workers is now set per-call to the actual number of enabled sources
+# (see collect_multi_source_evidence below), so every source starts at
+# once and the wall-clock time is bounded by the SLOWEST single source,
+# not by (sources / a fixed worker cap) sequential rounds of them.
+MAX_WORKERS = None  # kept for any external references; no longer used to cap concurrency
 
 # Total wall-clock ceiling for ONE plant's collect_multi_source_evidence()
-# call, across every enabled source. This used to be a purely internal
-# local variable (SOURCE_TIMEOUT_SECONDS * 2 = 30s), independently
-# hardcoded again in research_engine.py's outer per-wave scheduling budget
-# -- the two constants drifted apart once, causing the Step 2 wall-clock
-# regression fixed in research_engine.py. It is now a real module-level
-# constant, imported by research_engine.py, so there is exactly one place
-# that knows how long a plant collection can legitimately take.
+# call, across every enabled source. This is a real module-level constant,
+# imported by research_engine.py, so there is exactly one place that
+# knows how long a plant collection can legitimately take -- the two
+# previously drifted apart (research_engine.py's own independent guess vs.
+# this one), which was the first Step 2 wall-clock regression.
 #
-# Value derivation, from what is actually verified in this codebase (not
-# guessed): there are 15 enabled sources (source_registry.get_enabled_sources())
-# and only MAX_WORKERS=6 run concurrently, so a plant needs
-# ceil(15 / 6) = 3 sequential waves of source calls in the worst case.
-# Individual connector HTTP calls use a 20s request timeout (see e.g.
-# clinicaltrials_connector.py, europepmc_connector.py, chebi_connector.py);
-# PubMed's own DEFAULT_TIMEOUT is 10s but collect_pubmed_evidence() issues
-# several sequential query variants internally on top of that. 3 waves *
-# 20s = 60s covers this realistically, including the retry-with-backoff
-# logic in openalex_connector.py / semantic_scholar_connector.py, which was
-# observed in production hitting real HTTP 429 rate-limiting (NCBI PubMed
-# eutils) -- confirming these worst-case waits do occur, not just in
-# theory.
-TOTAL_TIME_BUDGET = SOURCE_TIMEOUT_SECONDS * 4
+# Value derivation, now that every source runs in a single concurrent wave
+# (no more artificial ceil(sources / MAX_WORKERS) rounds): the dominant
+# single-source worst case is one connector's 20s HTTP request timeout
+# (clinicaltrials_connector.py, europepmc_connector.py, chebi_connector.py,
+# etc.), plus the retry-with-backoff loop in openalex_connector.py /
+# semantic_scholar_connector.py on HTTP 429 (observed in production
+# alongside real NCBI PubMed 429 rate-limiting -- this does happen, not
+# just in theory). 20s request timeout + ~2 backoff retries (~15s worst
+# case combined) + scheduling margin rounds to 45s.
+TOTAL_TIME_BUDGET = 45
 
 
 def _extract_and_save_compounds(record, source_name):
@@ -357,7 +365,11 @@ def collect_multi_source_evidence(
     # above) instead of being redefined here -- research_engine.py imports
     # the same constant for its outer per-plant-wave scheduling budget, so
     # the two can no longer independently drift out of sync.
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    #
+    # max_workers is set to the actual number of enabled sources so every
+    # source runs concurrently in a single wave (see MAX_WORKERS comment
+    # above for why this replaced the previous fixed cap of 6).
+    executor = ThreadPoolExecutor(max_workers=max(1, len(enabled_sources)))
     try:
         future_map = {}
 

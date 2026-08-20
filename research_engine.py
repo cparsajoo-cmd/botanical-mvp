@@ -801,19 +801,20 @@ def run_research_engine(
     # Per-wave budget is derived from multi_source_collector.TOTAL_TIME_BUDGET
     # -- the actual worst-case wall-clock time a single plant's collection can
     # legitimately take -- plus a fixed scheduling-jitter margin, instead of a
-    # second, independently-hardcoded number. Two separately-tuned constants
-    # (35s/wave here vs. the inner 30s TOTAL_TIME_BUDGET) previously drifted
-    # apart and caused two related-but-distinct production incidents: later
-    # waves in an 8-candidate run being marked collection_finished=False
-    # purely from exhausting this outer wall clock (fixed by no longer
-    # hardcoding this budget below the inner one), and separately -- once
-    # that was fixed and plants were finally given their full inner budget to
-    # run -- most sources within that inner budget still timing out because
-    # 30s was too tight for 15 sources bottlenecked through MAX_WORKERS=6
-    # concurrent connectors (see TOTAL_TIME_BUDGET's own derivation comment
-    # in multi_source_collector.py). Deriving this value from the same
-    # constant closes both gaps at once and prevents them from reopening
-    # independently in the future.
+    # second, independently-hardcoded number. Three related production
+    # incidents on this feature, in order: (1) this outer per-wave budget was
+    # once hardcoded independently of the inner one and drifted below it,
+    # so later waves in an 8-candidate run were marked
+    # collection_finished=False purely from exhausting this wall clock; (2)
+    # once fixed and plants were given their full inner budget, most sources
+    # within it still timed out, because a fixed MAX_WORKERS=6 forced 15
+    # independent sources through ceil(15/6)=3 sequential waves per plant,
+    # so sources queued behind slow ones never got a worker slot in time no
+    # matter how large the budget was made; (3) fixed at the root in
+    # multi_source_collector.py by running every source concurrently in one
+    # wave instead of a fixed worker cap (see TOTAL_TIME_BUDGET's derivation
+    # comment there). Deriving this outer budget from that single constant
+    # means all three can't reopen independently again.
     _SCHEDULING_JITTER_MARGIN_SECONDS = 15
     worker_waves = max(1, (len(candidate_plants) + plant_workers - 1) // plant_workers)
     quick_step_budget_seconds = max(

@@ -1,4 +1,28 @@
+import os
+
 import requests
+
+
+def _optional_streamlit_secret(name: str) -> str:
+    """Read a Streamlit secret when available without requiring Streamlit."""
+    try:
+        import streamlit as st
+        value = st.secrets.get(name, "")
+        return str(value).strip() if value else ""
+    except Exception:
+        return ""
+
+
+# Same host, same identification need as crossref_connector.py -- this
+# connector is itself a CrossRef bibliographic-search proxy (see
+# Source_Type below), so it benefits from CrossRef's "polite pool" the
+# same way. See crossref_connector.py's own comment for the rationale.
+CROSSREF_CONTACT_EMAIL = (
+    os.environ.get("CROSSREF_CONTACT_EMAIL", "").strip()
+    or os.environ.get("OPENALEX_CONTACT_EMAIL", "").strip()
+    or _optional_streamlit_secret("CROSSREF_CONTACT_EMAIL")
+    or _optional_streamlit_secret("OPENALEX_CONTACT_EMAIL")
+)
 
 
 def search_patents(scientific_name, indication, dosage_form="", market="European Union", max_results=5):
@@ -9,6 +33,8 @@ def search_patents(scientific_name, indication, dosage_form="", market="European
         "query": f"{query} patent",
         "rows": max_results,
     }
+    if CROSSREF_CONTACT_EMAIL:
+        params["mailto"] = CROSSREF_CONTACT_EMAIL
 
     try:
         r = requests.get(url, params=params, timeout=20)

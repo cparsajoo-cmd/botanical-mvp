@@ -1,4 +1,33 @@
+import os
+
 import requests
+
+
+def _optional_streamlit_secret(name: str) -> str:
+    """Read a Streamlit secret when available without requiring Streamlit."""
+    try:
+        import streamlit as st
+        value = st.secrets.get(name, "")
+        return str(value).strip() if value else ""
+    except Exception:
+        return ""
+
+
+# CrossRef's "polite pool" gives identified requests (a mailto param or a
+# descriptive User-Agent) much better throughput and priority than
+# anonymous requests -- see
+# https://api.crossref.org/swagger-ui/index.html#/Works/get_works .
+# openalex_connector.py already follows this exact pattern for OpenAlex's
+# own equivalent; reused here since this connector hits the same
+# api.crossref.org host and was previously sending fully anonymous
+# requests, making it more likely to be rate-limited under load (observed
+# in production: real HTTP 429s from api.crossref.org for this source).
+CROSSREF_CONTACT_EMAIL = (
+    os.environ.get("CROSSREF_CONTACT_EMAIL", "").strip()
+    or os.environ.get("OPENALEX_CONTACT_EMAIL", "").strip()
+    or _optional_streamlit_secret("CROSSREF_CONTACT_EMAIL")
+    or _optional_streamlit_secret("OPENALEX_CONTACT_EMAIL")
+)
 
 
 def search_crossref(scientific_name, indication, dosage_form="", market="European Union", max_results=5):
@@ -9,6 +38,8 @@ def search_crossref(scientific_name, indication, dosage_form="", market="Europea
         "query": query,
         "rows": max_results,
     }
+    if CROSSREF_CONTACT_EMAIL:
+        params["mailto"] = CROSSREF_CONTACT_EMAIL
 
     r = requests.get(url, params=params, timeout=20)
     r.raise_for_status()

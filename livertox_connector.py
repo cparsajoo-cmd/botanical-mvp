@@ -1,4 +1,18 @@
+import os
+
 import requests
+
+# Same host (eutils.ncbi.nlm.nih.gov) as pubmed_connector.py, but this
+# connector was never sending an email/api_key -- meaning it always used
+# NCBI's strictest anonymous-request rate limit even when an
+# NCBI_API_KEY is configured for PubMed (an API key raises NCBI's limit
+# from 3 req/s to 10 req/s, shared across all eutils calls, not just
+# PubMed's). LiverTox's own unidentified requests were adding load
+# against the same NCBI infrastructure that PubMed was already being
+# rate-limited on (observed in production: real HTTP 429s from this
+# exact host for the PubMed source, in the same run LiverTox timed out).
+NCBI_EMAIL = os.getenv("NCBI_EMAIL", "hamidbabaeiulg@gmail.com")
+NCBI_API_KEY = os.getenv("NCBI_API_KEY", "").strip()
 
 
 def search_livertox(scientific_name, indication, dosage_form="", market="Global", max_results=5):
@@ -10,7 +24,10 @@ def search_livertox(scientific_name, indication, dosage_form="", market="Global"
         "term": f"{query} LiverTox",
         "retmode": "json",
         "retmax": max_results,
+        "email": NCBI_EMAIL,
     }
+    if NCBI_API_KEY:
+        params["api_key"] = NCBI_API_KEY
 
     try:
         r = requests.get(url, params=params, timeout=20)

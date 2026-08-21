@@ -308,6 +308,82 @@ def evidence_contexts_equivalent(a, b):
     return _evidence_context_components(row_a) == _evidence_context_components(row_b)
 
 
+
+def compute_source_record_identity(record):
+    """Identity for the concrete source/evidence record itself.
+
+    Prefer the platform's persisted evidence_record_id when available; fall
+    back to article identity otherwise.  This keeps two separately curated
+    synthesis records distinct even when sparse metadata prevents robust
+    article identification.
+    """
+    if hasattr(record, "to_dict"):
+        row = record.to_dict()
+    else:
+        row = canonicalize_evidence_record(dict(record or {})) or {}
+
+    record_id = _clean_text(_get_any(row, "evidence_record_id", "Evidence_Record_ID"))
+    if record_id:
+        return ("evidence_record", f"record::{record_id}")
+    article_tier, article_key = compute_article_identity(row)
+    return ("article", f"article::{article_tier}::{article_key}")
+
+
+def _is_synthesis_record(row):
+    """Return True for evidence objects that synthesize multiple studies.
+
+    Study linkage must never collapse a systematic review/meta-analysis onto
+    one of its included trials merely because the review record happens to
+    carry or mention that trial's registration identifier.  This helper uses
+    structured source/design fields only; it does not mine free text for NCT
+    identifiers.
+    """
+    source_type = _clean_text(_get_any(row, "source_type", "Source_Type"))
+    study_design = _clean_text(_get_any(row, "study_design", "Study_Type"))
+    signal = f"{source_type} {study_design}"
+    return any(term in signal for term in (
+        "systematic review", "systematic_review", "meta analysis",
+        "meta_analysis", "meta-analysis",
+    ))
+
+
+def compute_study_identity(record):
+    """Deterministic identity for the underlying study/dependency unit.
+
+    This is deliberately different from :func:`compute_article_identity`:
+    a trial-registry record and one or more publications can be distinct
+    evidence/source objects while still depending on the SAME underlying
+    clinical trial.  When a structured trial registration is available,
+    direct trial evidence is therefore linked by that registration.
+
+    Systematic reviews/meta-analyses remain distinct evidence objects even if
+    they carry a trial id, because they synthesize a broader evidence body and
+    are not duplicates of any single included study.  Records without a
+    structured trial registration fall back conservatively to article
+    identity; no study relationship is guessed from title or free text.
+    """
+    if hasattr(record, "to_dict"):
+        row = record.to_dict()
+    else:
+        row = canonicalize_evidence_record(dict(record or {})) or {}
+
+    source_tier, source_key = compute_source_record_identity(row)
+    if _is_synthesis_record(row):
+        return ("synthesis", f"synthesis::{source_key}")
+
+    linked_trial = normalize_trial_registration(
+        _get_any(
+            row,
+            "linked_trial_id", "Linked_Trial_ID",
+            "trial_registration", "NCT_ID", "nct_id",
+        )
+    )
+    if linked_trial:
+        return ("trial", f"trial::{linked_trial}")
+
+    return (source_tier, source_key)
+
+
 def stable_identity_hash(identity_key):
     """SHA-256 hex digest of a compute_*_identity() key, for callers
     that need a fixed-length, persistence-safe id (e.g. a score

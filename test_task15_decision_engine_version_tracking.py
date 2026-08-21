@@ -69,12 +69,12 @@ def _run(evidence_df=None):
 
 # ---------------------------------------------------------------------
 # 1) DECISION_ENGINE_VERSION tracks the current decision-affecting logic.
-#    Stage 1 evidence-direction hardening changes downstream scientific
-#    interpretation, so the canonical engine version is 1.10.1.
+#    Stage 2 study-linkage hardening changes downstream evidence-body
+#    certainty, so the canonical engine version is 1.10.2.
 # ---------------------------------------------------------------------
 
-def test_decision_engine_version_constant_exists_and_equals_1_0_1():
-    assert eng.DECISION_ENGINE_VERSION == "1.10.1"
+def test_decision_engine_version_constant_exists_and_equals_1_10_2():
+    assert eng.DECISION_ENGINE_VERSION == "1.10.2"
 
 
 # ---------------------------------------------------------------------

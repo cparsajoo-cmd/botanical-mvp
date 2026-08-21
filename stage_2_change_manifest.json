@@ -1,0 +1,79 @@
+{
+  "stage": 2,
+  "name": "Study Linkage / Evidence Dependency",
+  "engine_version": "1.10.2",
+  "files": [
+    {
+      "repository_path": "botanical_rd_candidate_engine.py",
+      "status": "modified",
+      "purpose": "Bump decision engine to 1.10.2 and document Stage 2 decision-affecting dependency hardening.",
+      "tests_covering": [
+        "direct version assertion",
+        "test_task15_decision_engine_version_tracking.py (environment-limited by missing supabase)"
+      ]
+    },
+    {
+      "repository_path": "deduplication_engine.py",
+      "status": "modified",
+      "purpose": "Add source-record identity and conservative underlying-study identity without changing article/evidence dedup semantics.",
+      "tests_covering": [
+        "test_stage2_study_linkage.py"
+      ]
+    },
+    {
+      "repository_path": "evidence_body_assessment.py",
+      "status": "modified",
+      "purpose": "Count distinct governing studies for certainty while preserving governing evidence-record count.",
+      "tests_covering": [
+        "test_stage2_study_linkage.py",
+        "test_evidence_body_assessment.py",
+        "test_structured_final_decision_authority.py"
+      ]
+    },
+    {
+      "repository_path": "pubmed_connector.py",
+      "status": "modified",
+      "purpose": "Preserve structured ClinicalTrials.gov NCT accession from PubMed XML for study linkage.",
+      "tests_covering": [
+        "test_pubmed_study_linkage_identifier.py",
+        "test_connectors_phase2_identifiers.py"
+      ]
+    },
+    {
+      "repository_path": "test_task15_decision_engine_version_tracking.py",
+      "status": "modified",
+      "purpose": "Update expected decision-engine version to 1.10.2.",
+      "tests_covering": [
+        "test_task15_decision_engine_version_tracking.py"
+      ]
+    },
+    {
+      "repository_path": "test_stage2_study_linkage.py",
+      "status": "new",
+      "purpose": "Focused dependency-aware study-linkage and duplicate-inflation regression tests.",
+      "tests_covering": [
+        "self"
+      ]
+    },
+    {
+      "repository_path": "test_pubmed_study_linkage_identifier.py",
+      "status": "new",
+      "purpose": "Focused PubMed structured NCT extraction test.",
+      "tests_covering": [
+        "self"
+      ]
+    },
+    {
+      "repository_path": "STAGE2_STUDY_LINKAGE_REPORT.md",
+      "status": "new",
+      "purpose": "Stage 2 implementation, verification, limitations and scientific interpretation report.",
+      "tests_covering": []
+    },
+    {
+      "repository_path": "stage_2_change_manifest.json",
+      "status": "new",
+      "purpose": "Machine-readable Stage 2 change manifest.",
+      "tests_covering": []
+    }
+  ]
+}

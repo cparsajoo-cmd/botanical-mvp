@@ -541,7 +541,16 @@ OUTPUT_COLUMNS = [
 # predates this patch; its exact historical changelog entry is not reconstructed
 # here because the primary engine file does not contain sufficient provenance to
 # do so without inventing history.
-DECISION_ENGINE_VERSION = "1.10.1"
+# 1.10.2 — Stage 2 study-linkage/dependency hardening. Article/evidence
+# identity remains unchanged, but evidence-body certainty now counts distinct
+# underlying trial identities when a structured registration id is available.
+# Registry records, primary publications and secondary publications from the
+# same registered trial therefore cannot inflate certainty by record count
+# alone. Systematic reviews/meta-analyses remain distinct synthesis evidence
+# objects. PubMed parsing now preserves structured ClinicalTrials.gov accession
+# ids when PubMed supplies them. No scoring weights, safety/regulatory gates,
+# final-decision vocabulary, or historical validation artifacts were changed.
+DECISION_ENGINE_VERSION = "1.10.2"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s

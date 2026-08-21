@@ -18,6 +18,7 @@ import re
 from typing import Callable, Iterable, Mapping
 
 from canonical_scientific_assertion import resolve_record_direction
+from deduplication_engine import compute_study_identity
 
 
 class BodyDirection(str, Enum):
@@ -53,6 +54,9 @@ class EvidenceBodyAssessment:
     serious_methodological_concerns: tuple[str, ...]
     directness_concerns: tuple[str, ...]
     reason: str
+    # Stage 2: distinct underlying dependency units among governing records.
+    # Additive/defaulted for backward compatibility with existing constructors.
+    governing_study_count: int = 0
 
 
 _SOURCE_RANK = {
@@ -242,8 +246,10 @@ def assess_evidence_body(
             fallback_fn=direction_fn,
             allow_text_fallback=allow_text_fallback,
         )
+        _, study_identity = compute_study_identity(rec)
         rows.append({
             "identity": ident,
+            "study_identity": study_identity,
             "source_type": stype,
             "rank": _SOURCE_RANK.get(stype),
             "direction": canonical_direction.direction,
@@ -326,13 +332,18 @@ def assess_evidence_body(
                 direction = BodyDirection.MIXED
                 break
 
-    # Starting certainty is based on governing tier and independent synthesis count.
+    # Starting certainty is based on governing tier and INDEPENDENT STUDY
+    # count, not raw record count. A registry entry plus its PMID publication
+    # (or a secondary analysis from the same registered trial) are distinct
+    # evidence objects but one dependency unit for certainty. This prevents
+    # duplicate representation of a single trial from inflating the body.
+    governing_study_count = len({r["study_identity"] for r in top})
     if best_rank in {1, 2, 3, 4}:
         base = BodyCertainty.HIGH
     elif best_rank == 0:
-        base = BodyCertainty.HIGH if len(top) >= 2 else BodyCertainty.MODERATE
+        base = BodyCertainty.HIGH if governing_study_count >= 2 else BodyCertainty.MODERATE
     elif best_rank == 5:
-        base = BodyCertainty.MODERATE if len(top) >= 2 else BodyCertainty.LOW
+        base = BodyCertainty.MODERATE if governing_study_count >= 2 else BodyCertainty.LOW
     else:
         base = BodyCertainty.LOW
 
@@ -370,7 +381,7 @@ def assess_evidence_body(
         certainty = BodyCertainty.MODERATE
 
     reason = (
-        f"Governing tier={best_rank}; governing sources={len(top)}; "
+        f"Governing tier={best_rank}; governing records={len(top)}; independent governing studies={governing_study_count}; "
         f"directions={sorted(dirs)}; material limitations={limitation_count}; "
         f"structured domain coverage={coverage:.2f}; unassessed={list(unassessed)}; "
         f"methodological concerns={list(methodological)}; directness concerns={list(directness)}; "
@@ -396,4 +407,5 @@ def assess_evidence_body(
         serious_methodological_concerns=methodological,
         directness_concerns=directness,
         reason=reason,
+        governing_study_count=governing_study_count,
     )

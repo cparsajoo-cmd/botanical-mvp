@@ -61,6 +61,23 @@ def _parse_pubmed_xml(xml_text: str) -> List[Dict]:
         ]
         abstract = " ".join(abstract_parts)
         journal = _node_text(article.find("./Journal/Title"))
+
+        # PubMed XML may carry ClinicalTrials.gov identifiers in the
+        # structured DataBankList. Preserve the first NCT registration so a
+        # publication can be linked to its registry record at STUDY level
+        # without treating the two source records as the same article.
+        nct_id = ""
+        for databank in article.findall("./DataBankList/DataBank"):
+            name = _node_text(databank.find("DataBankName")).strip().lower()
+            if "clinicaltrials.gov" not in name:
+                continue
+            for accession in databank.findall("./AccessionNumberList/AccessionNumber"):
+                value = _node_text(accession).strip().upper().replace(" ", "")
+                if value.startswith("NCT") and value[3:].isdigit():
+                    nct_id = value
+                    break
+            if nct_id:
+                break
         pub_date = article.find("./Journal/JournalIssue/PubDate")
         year = _node_text(pub_date.find("Year")) if pub_date is not None else ""
         if not year and pub_date is not None:
@@ -72,6 +89,7 @@ def _parse_pubmed_xml(xml_text: str) -> List[Dict]:
 
         articles.append({
             "PMID": pmid,
+            "NCT_ID": nct_id,
             "Title": title,
             "Abstract": abstract,
             "Journal": journal,

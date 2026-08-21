@@ -1,0 +1,44 @@
+{
+  "report_type": "high_risk_validation_metrics_sidecar",
+  "source_result_path": "/mnt/data/stage3work/botanical-mvp-main/gold_corpus/decision_holdout_v5/results.json",
+  "source_version": "decision-holdout-v5/1.0.0",
+  "high_risk_metrics": {
+    "serious_safety": {
+      "target_label": "NO GO SAFETY",
+      "true_positives": 2,
+      "false_negatives": 0,
+      "false_positives": 1,
+      "reference_positive_cases": 2,
+      "evaluable_cases": 10,
+      "non_evaluable_cases": 0,
+      "recall": 1.0,
+      "precision": 0.6666666666666666,
+      "status": "evaluable"
+    },
+    "regulatory": {
+      "target_label": "NO GO REGULATORY",
+      "true_positives": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "reference_positive_cases": 0,
+      "evaluable_cases": 10,
+      "non_evaluable_cases": 0,
+      "recall": null,
+      "precision": null,
+      "status": "not_evaluable"
+    }
+  },
+  "targeted_regression_gate": {
+    "status": "partial_pass",
+    "passed": false,
+    "blockers": [],
+    "notes": [
+      "Regulatory: not evaluable because the corpus contains no reference-positive cases."
+    ]
+  },
+  "interpretation": {
+    "threshold_scope": "engineering regression threshold / internal scientific target",
+    "clinical_validation_claim": false,
+    "rule": "Zero false negatives are required only for high-risk target classes represented by reference-positive cases. A missing target class is not evaluable, never a successful zero-FN result."
+  }
+}

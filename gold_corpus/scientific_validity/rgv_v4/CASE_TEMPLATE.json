@@ -1,1 +1,25 @@
-
+{
+  "case_id": "rgv4_NNN_short_identifier",
+  "botanical": "REQUIRED_SCIENTIFIC_NAME",
+  "indication": "REQUIRED_LOCKED_INDICATION",
+  "jurisdiction": "REQUIRED",
+  "dosage_form": "REQUIRED",
+  "population": "OPTIONAL_BUT_RECOMMENDED",
+  "expected_decision": "REQUIRED_EXISTING_SIX_CLASS_LABEL",
+  "reference_established_independently_of_platform_output": false,
+  "expert_or_authoritative_reference_review_complete": false,
+  "reference_rationale": "REQUIRED_BEFORE_FREEZE",
+  "study_identity": "OPTIONAL_EXPLICIT_UNDERLYING_STUDY_IDENTITY",
+  "reference_evidence": [
+    {
+      "source_title": "REQUIRED",
+      "source_type": "REQUIRED",
+      "doi": "",
+      "pmid": "",
+      "nct_id": "",
+      "source_locator": "REQUIRED_IF_NO_STABLE_IDENTIFIER",
+      "reference_role": "reference_defining_or_supporting"
+    }
+  ],
+  "engine_input_snapshot": "snapshots/rgv4_NNN_short_identifier.json"
+}

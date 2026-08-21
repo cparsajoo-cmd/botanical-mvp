@@ -1,0 +1,13 @@
+{
+  "schema_version": "reference-grounded-validation-v4/1.0.0",
+  "dataset_name": "reference_grounded_validation_v4",
+  "dataset_status": "development",
+  "purpose": "Template for a future untouched internal holdout. No scientific reference labels have been fabricated by the platform or model.",
+  "engine_version_target": "1.10.2",
+  "labels_visible_to_engine_before_first_execution": false,
+  "used_for_engine_remediation": false,
+  "manual_study_overlap_review_complete": false,
+  "reference_label_source_requirement": "Independent qualified human/expert assessment and/or separately established authoritative reference source, completed without seeing platform output.",
+  "cases": [],
+  "reference_defining_evidence_excluded_from_engine_input": false
+}

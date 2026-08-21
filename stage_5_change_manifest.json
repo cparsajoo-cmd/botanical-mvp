@@ -1,0 +1,100 @@
+{
+  "stage": 5,
+  "name": "Clean New Internal Holdout",
+  "engine_version": "1.10.2",
+  "production_decision_logic_changed": false,
+  "files": [
+    {
+      "repository_path": "internal_holdout_v4.py",
+      "status": "new",
+      "purpose": "Shared RGV v4 schema/readiness, identifier extraction, and freeze-integrity helpers",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "check_internal_holdout_v4_leakage.py",
+      "status": "new",
+      "purpose": "Historical and within-holdout case/publication/study-identifier leakage checks",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "freeze_internal_holdout_v4.py",
+      "status": "new",
+      "purpose": "Write-once independent holdout freeze with leakage and reference-vs-engine-input separation guards",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "verify_internal_holdout_v4_freeze.py",
+      "status": "new",
+      "purpose": "Freeze hash and frozen-engine-version execution guard",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "run_internal_holdout_v4.py",
+      "status": "new",
+      "purpose": "Guarded one-time blind runner reusing existing engine/provenance path",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py",
+        "test_validation_provenance_stage4.py",
+        "test_scientific_validity_release_gate.py"
+      ]
+    },
+    {
+      "repository_path": "test_internal_holdout_v4_stage5.py",
+      "status": "new",
+      "purpose": "Focused Stage 5 regression tests",
+      "tests_covering": [
+        "self"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/scientific_validity/rgv_v4/reference_cases.json",
+      "status": "new",
+      "purpose": "Empty non-fabricated RGV v4 dataset template",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/scientific_validity/rgv_v4/CASE_TEMPLATE.json",
+      "status": "new",
+      "purpose": "Case-level authoring template requiring independent reference provenance",
+      "tests_covering": [
+        "test_internal_holdout_v4_stage5.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/scientific_validity/rgv_v4/HOLDOUT_SELECTION_PROTOCOL.md",
+      "status": "new",
+      "purpose": "Selection, leakage, freeze, one-run, and claim-boundary protocol",
+      "tests_covering": []
+    },
+    {
+      "repository_path": "gold_corpus/validation_dataset_registry.json",
+      "status": "modified",
+      "purpose": "Registers RGV v4 as development/holdout-construction-only; no validation claim",
+      "tests_covering": [
+        "test_validation_provenance_stage4.py"
+      ]
+    },
+    {
+      "repository_path": "STAGE5_CLEAN_INTERNAL_HOLDOUT_REPORT.md",
+      "status": "new",
+      "purpose": "Stage 5 implementation and verification report",
+      "tests_covering": []
+    }
+  ],
+  "verification": {
+    "focused_stage5": "9 passed",
+    "focused_and_regression": "115 passed",
+    "full_suite": "not fully collectable in local environment: 19 collection errors due to missing supabase/streamlit"
+  },
+  "scientific_status": "RGV v4 tooling only; zero cases/labels/results; no new scientific validation claim"
+}

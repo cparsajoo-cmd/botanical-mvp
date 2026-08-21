@@ -1,0 +1,74 @@
+{
+  "stage": 4,
+  "name": "Validation Provenance and Immutability",
+  "engine_version_before": "1.10.2",
+  "engine_version_after": "1.10.2",
+  "architecture_change": false,
+  "files": [
+    {
+      "repository_path": "validation_provenance.py",
+      "status": "new",
+      "purpose": "Validation-only immutable run persistence, append-only execution registry, dataset-status vocabulary, git/timestamp provenance, and fail-closed independent-status consistency checks.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "test_validation_provenance_stage4.py",
+      "status": "new",
+      "purpose": "Focused Stage 4 regression tests for overwrite refusal, provenance fields, dataset-status integrity, runner immutability, and historical v5/RGV3 distinctions.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "gold_corpus/validation_dataset_registry.json",
+      "status": "new",
+      "purpose": "Machine-readable repository-grounded status catalog separating historical blind execution from current exposed/regression use.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "decision_holdout_v2.py",
+      "status": "modified",
+      "purpose": "Stop overwriting legacy results.json; persist future executions as immutable regression runs with explicit provenance and high-risk metrics.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "decision_holdout_v3.py",
+      "status": "modified",
+      "purpose": "Stop overwriting legacy results.json; persist future executions as immutable regression runs with explicit provenance and high-risk metrics.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "decision_holdout_v4.py",
+      "status": "modified",
+      "purpose": "Stop overwriting legacy results.json; persist future executions as immutable regression runs with explicit provenance and high-risk metrics.",
+      "tests": ["test_validation_provenance_stage4.py"]
+    },
+    {
+      "repository_path": "decision_holdout_v5.py",
+      "status": "modified",
+      "purpose": "Protect the 30% historical blind result from later reruns and persist new executions only as immutable post-remediation regression artifacts.",
+      "tests": ["test_validation_provenance_stage4.py", "test_decision_holdout_v5.py", "test_validation_risk_metrics_stage3.py"]
+    },
+    {
+      "repository_path": "run_final_reference_holdout_v1.py",
+      "status": "modified",
+      "purpose": "Correct current RGV v3 provenance status, make all v1/v2/v3 reruns explicitly regression-only, and replace mutable/versioned result writes with immutable validation-run persistence.",
+      "tests": ["test_validation_provenance_stage4.py", "test_scientific_validity_release_gate.py"]
+    },
+    {
+      "repository_path": "STAGE4_VALIDATION_PROVENANCE_IMMUTABILITY_REPORT.md",
+      "status": "new",
+      "purpose": "Technical Stage 4 implementation and verification report.",
+      "tests": []
+    },
+    {
+      "repository_path": "stage_4_change_manifest.json",
+      "status": "new",
+      "purpose": "Machine-readable Stage 4 change manifest.",
+      "tests": []
+    }
+  ],
+  "verification": {
+    "focused_and_relevant_regressions": "69 passed, 0 failed",
+    "py_compile": "passed for all changed Python files",
+    "full_repository_pytest": "not fully runnable in this environment; collection stopped on 19 modules due missing supabase and streamlit packages"
+  }
+}

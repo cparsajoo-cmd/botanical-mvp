@@ -1,7 +1,7 @@
 """Runs one Reference-Grounded Validation case set (v1, v2, or v3) against
-the current engine code. v1/v2 are REGRESSION checks (see below); v3 is
-the genuine BLIND holdout, added 2026-08-11 -- see the freeze note further
-down before running it.
+the current engine code. v1/v2 are REGRESSION checks (see below); v3 was originally frozen as a BLIND holdout in engine 1.8.0, but its
+first blind output was subsequently inspected and the cases were used for
+remediation. v1/v2/v3 are therefore regression-only for every current run.
 
 BUG FOUND (2026-08-10): the original version of this script always read
 gold_corpus/scientific_validity/final_holdout_v1/frozen_reference_labels.json
@@ -14,29 +14,25 @@ not, and was only recovered because Hamid found an older commit of that
 file on GitHub. v1's original blind_results.json/release_gate_result.json
 were NOT recoverable and are gone for good.
 
-Fix: --tag is now required and selects both the input labels file
-(frozen_reference_labels_<tag>.json) and the output filenames
-(blind_results_<tag>.json, release_gate_result_<tag>.json), so running one
-case set can never again silently destroy the other's frozen labels or
-results. There is no default tag -- an explicit choice is required every
+Current protection: --tag is required and selects the versioned frozen label
+file. Every current execution is written through validation_provenance.py to
+a new immutable artifact under gold_corpus/validation_runs/ and appended to
+the JSONL run registry. Historical blind/result files are never destinations
+for a rerun. There is no default tag -- an explicit choice is required every
 time this script runs.
 
 Per the holdout integrity rule (see FINAL_REFERENCE_GROUNDED_VALIDATION_
 V2_REPORT.md): v1 and v2 are EXPOSED. Their output is a regression check
 on already-seen cases, never an independent/blind validity estimate.
 
-v3 (2026-08-11): a genuinely independent 20-case holdout -- zero overlap
-with v1/v2, gold_cases/, or decision_holdout_v2 through v5 (80 species
-checked programmatically; see FREEZE_MANIFEST_v3.json). Frozen before
-this script was ever run against it. --tag v3 is the one case where this
-script's output is a real blind validation, not a regression check --
-but ONLY if the freeze integrity check (verify_rgv3_freeze.py) passes
-first; the GitHub Actions workflow runs that check as a required prior
-step and refuses to proceed on any mismatch. Per the project's holdout
-integrity rule: if v3's result is weak, report it as weak -- do not add
-vocabulary, change a label, drop a case, tune a threshold, or add a
-special-case rule in response to seeing this output. Any such change
-would require freezing an entirely new holdout first.
+v3 (2026-08-11): originally frozen as an independent 20-case holdout with
+engine 1.8.0 and zero checked overlap with earlier validation sets (see
+FREEZE_MANIFEST_v3.json). Repository code/tests now explicitly document
+that the first blind output was inspected and v3 cases informed subsequent
+remediation. That historical blind execution must not be reinterpreted as
+a current independent estimate, and every run performed by this script now
+uses v3 only as exposed regression data. A new untouched holdout is required
+for any new independent estimate.
 
 SEMANTIC GATE WIRING (2026-08-11): the semantic-gate layer (LLM-based
 safety/regulatory assertions, semantic_gate_assertions.py) is additive
@@ -92,6 +88,8 @@ from final_decision_policy import FinalDecisionStatus, final_status_from_engine_
 from scientific_decision_validation import DecisionComparison
 from decision_benchmark_v1 import compute_metrics
 from scientific_validity_release_gate import ReferenceValidationProtocol, evaluate_reference_grounded_release
+from validation_provenance import DatasetStatus, persist_validation_run
+from validation_risk_metrics import compute_high_risk_metrics_from_confusion_matrix
 from llm_extractor import extract_gate_assertions_with_llm, extract_evidence_with_llm
 from semantic_gate_assertions import SEMANTIC_GATE_ASSERTION_VERSION
 
@@ -231,8 +229,8 @@ def main():
         required=True,
         choices=["v1", "v2", "v3"],
         help="Which exposed case set to run as a regression check. Required "
-        "(no default) so v1 and v2 can never again silently overwrite each "
-        "other's frozen labels or results -- see the 2026-08-10 note above.",
+        "(no default). v1, v2, and v3 are all exposed/regression-only; "
+        "new executions are written to immutable validation-run artifacts.",
     )
     args = ap.parse_args()
     tag = args.tag
@@ -285,9 +283,9 @@ def main():
         comps.append(DecisionComparison(c["case_id"],expected,actual,match))
 
     metrics=compute_metrics(comps)
+    metrics_dict=asdict(metrics)
     payload={"version":f"reference-grounded-final-holdout-{tag}/1.0.0","engine_version":DECISION_ENGINE_VERSION,
-             "rows":rows,"metrics":asdict(metrics)}
-    (BASE/f"blind_results_{tag}.json").write_text(json.dumps(payload,indent=2,default=str))
+             "rows":rows,"metrics":metrics_dict}
 
     class_support={}
     source_support={}
@@ -296,14 +294,32 @@ def main():
         source_support[c["case_id"]]=1
     protocol=ReferenceValidationProtocol(
         benchmark_id=f"reference-grounded-final-holdout-{tag}",
-        reference_frozen_before_engine_run=True,engine_blinded_to_reference_labels=True,
-        remediation_cases_excluded=True,reference_evidence_excluded_from_engine_input=True,
+        reference_frozen_before_engine_run=True,engine_blinded_to_reference_labels=False,
+        remediation_cases_excluded=False,reference_evidence_excluded_from_engine_input=True,
         provenance_complete=True,n_cases=len(refs),class_support=class_support,
         reference_source_support=source_support)
     gate=evaluate_reference_grounded_release(protocol,metrics)
     gate_payload={"releasable":gate.releasable,"claim":gate.claim,"blockers":list(gate.blockers),"warnings":list(gate.warnings)}
-    (BASE/f"release_gate_result_{tag}.json").write_text(json.dumps(gate_payload,indent=2))
-    print(json.dumps({"tag":tag,"engine_version":DECISION_ENGINE_VERSION,"rows":rows,"metrics":asdict(metrics),"gate":gate_payload},indent=2,default=str))
+    payload["release_gate"]=gate_payload
+    high_risk=compute_high_risk_metrics_from_confusion_matrix(
+        metrics_dict["confusion_matrix"], n_scored=metrics_dict.get("n_scored")
+    ).to_dict()
+    historical_paths={
+        "v1":"gold_corpus/scientific_validity/final_holdout_v1/FINAL_REFERENCE_GROUNDED_VALIDATION_REPORT.md",
+        "v2":"gold_corpus/scientific_validity/final_holdout_v1/FINAL_REFERENCE_GROUNDED_VALIDATION_V2_REPORT.md",
+        "v3":None,
+    }
+    artifact,registry,_=persist_validation_run(
+        repo_root=ROOT, dataset_name=f"reference_grounded_validation_{tag}", dataset_version=tag,
+        dataset_status=DatasetStatus.REGRESSION, engine_version=DECISION_ENGINE_VERSION,
+        result_payload=payload, labels_visible_before_execution=True, results_previously_inspected=True,
+        used_for_remediation=True, run_kind="post_remediation_rerun",
+        overall_result={"n_scored":metrics_dict.get("n_scored"),"n_correct":metrics_dict.get("n_correct"),"accuracy":metrics_dict.get("accuracy"),"macro_f1":metrics_dict.get("macro_f1"),"releasable":gate.releasable},
+        per_class_metrics=metrics_dict.get("per_class_recall") or {},
+        safety_regulatory_metrics=high_risk, historical_blind_result_path=historical_paths[tag],
+        notes=("All RGV v1/v2/v3 labels and prior outputs are exposed. RGV v3 was originally frozen at engine 1.8.0, but repository tests/comments document post-blind remediation use; this execution is not independent validation.")
+    )
+    print(json.dumps({"tag":tag,"engine_version":DECISION_ENGINE_VERSION,"rows":rows,"metrics":metrics_dict,"gate":gate_payload,"immutable_output_artifact":artifact.relative_to(ROOT).as_posix(),"validation_registry":registry.relative_to(ROOT).as_posix()},indent=2,default=str))
 
 
 if __name__ == "__main__":

@@ -531,7 +531,17 @@ OUTPUT_COLUMNS = [
 # mismatches cannot support efficacy, while safety/regulatory remain cross-
 # preparation protective. Missing required product context stays unresolved
 # rather than being reported as a complete match.
-DECISION_ENGINE_VERSION = "1.10.0"
+# 1.10.1 — Stage 1 Evidence Direction hardening. The existing canonical
+# five-class evidence-direction taxonomy and structured-source precedence are
+# unchanged. Generic scientific-language coverage was extended for comparative
+# efficacy, non-inferiority, explicit null findings, harm-direction findings,
+# and mixed endpoint/time-course/subgroup conclusions. No botanical, PMID,
+# indication, benchmark-record, scoring-weight, safety-gate, regulatory-gate,
+# or final-decision-specific rule was added. The repository's 1.10.0 behavior
+# predates this patch; its exact historical changelog entry is not reconstructed
+# here because the primary engine file does not contain sufficient provenance to
+# do so without inventing history.
+DECISION_ENGINE_VERSION = "1.10.1"
 
 
 # Task 10.2 — explicit allowlist for _build_evidence_text_index()'s

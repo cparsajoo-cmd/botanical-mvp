@@ -295,6 +295,8 @@ POSITIVE_PHRASES = [
     "clinically effective",
     "greater improvement",
     "better than placebo",
+    "more effective than placebo",
+    "confirmed efficacy",
     "good evidence to recommend",
     "outcomes improved",
     "outcome improved",
@@ -363,6 +365,10 @@ _POSITIVE_COMPARATIVE_REGEXES = (
     # liver-injury markers.
     re.compile(r"\b(?:significantly|substantially)\s+(?:reduces?|reduced|lowers?|lowered)\s+(?:[a-z-]+\s+){0,4}(?:symptoms?|severity|pain|risk|incidence|transaminases?|aminotransferases?|liver\s+enzymes?)\b"),
     re.compile(r"\b(?:may|might|can|could)\s+be\s+beneficial(?:\s+for)?\b"),
+    # Standard non-inferiority wording is affirmative efficacy evidence, not negation.
+    re.compile(r"\b(?:non[- ]inferior|not\s+inferior)\s+to\s+(?:the\s+)?(?:active\s+)?(?:comparator|control|treatment|standard\s+therapy)\b"),
+    # Generic between-arm endpoint comparison without endpoint-specific vocabulary.
+    re.compile(r"\bsignificantly\s+(?:lower|higher)\s+(?:[a-z-]+\s+){0,4}(?:scores?|risk|incidence|rate|severity|frequency)\s+than\b"),
 )
 
 def _positive_comparative_hits(text: str) -> List[str]:
@@ -404,6 +410,12 @@ NULL_PHRASES = [
     "not been shown to provide benefit",
     "little evidence to support",
     "evidence remains weak",
+    "no significant treatment effect",
+    "null result",
+    "did not differ significantly",
+    "no evidence of a between-group difference",
+    "no significant benefit",
+    "effect was not sustained",
 ]
 
 NEGATIVE_PHRASES = [
@@ -434,6 +446,9 @@ NEGATIVE_PHRASES = [
     "did not demonstrate an effect",
     "did not consistently demonstrate an effect",
     "neither",
+    "was ineffective",
+    "were ineffective",
+    "negative safety signal",
 ]
 
 # Study-design phrase tables, checked in priority order (protocol and
@@ -618,6 +633,10 @@ _NEGATIVE_OUTCOME_REGEXES = (
     re.compile(r"\bdoes\s+not\s+demonstrate(?:\s+any)?\s+beneficial\s+effects?\b"),
     re.compile(r"\bdid\s+not\s+demonstrate(?:\s+any)?\s+beneficial\s+effects?\b"),
     re.compile(r"\bno\s+(?:measurable|clinical|clinically\s+meaningful)\s+benefit\b"),
+    # Generic harm-direction language used in safety results sections.
+    re.compile(r"\b(?:associated\s+with|showed|had)\s+(?:an?\s+)?(?:significantly\s+)?increased\s+risk\s+of\s+(?:serious\s+)?adverse\s+(?:events?|outcomes?)\b"),
+    re.compile(r"\bhigher\s+(?:incidence|rate|risk)\s+of\s+(?:[a-z-]+\s+){0,4}(?:toxicity|hepatotoxicity|nephrotoxicity|adverse\s+events?|serious\s+adverse\s+events?)\b"),
+    re.compile(r"\bworsened\s+(?:[a-z-]+\s+){0,4}(?:relative\s+to|compared\s+with|compared\s+to)\s+(?:control|placebo)\b"),
 )
 
 def _negative_regex_hits(text: str) -> List[str]:

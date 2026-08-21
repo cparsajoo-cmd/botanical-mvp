@@ -1,0 +1,111 @@
+{
+  "stage": "Stage 1 \u2014 Evidence Direction Hardening",
+  "engine_version_before": "1.10.0",
+  "engine_version_after": "1.10.1",
+  "files": [
+    {
+      "repository_path": "botanical_rd_candidate_engine.py",
+      "status": "modified",
+      "purpose": "Bump decision engine to 1.10.1 and document Stage 1 logic change without inventing missing historical entries.",
+      "tests_covering": [
+        "direct import/version check",
+        "test_task15_decision_engine_version_tracking.py (collection blocked by missing supabase)"
+      ]
+    },
+    {
+      "repository_path": "evidence_interpretation.py",
+      "status": "modified",
+      "purpose": "Add general scientific-language coverage for positive, negative, null, and mixed Evidence Direction while preserving canonical taxonomy and structured precedence.",
+      "tests_covering": [
+        "test_evidence_direction_generalization_stage1.py",
+        "gold_corpus/test_evidence_direction_validation_v1.py",
+        "test_phase1_evidence_direction.py",
+        "test_evidence_direction_structured_resolution.py"
+      ]
+    },
+    {
+      "repository_path": "test_task15_decision_engine_version_tracking.py",
+      "status": "modified",
+      "purpose": "Update canonical engine-version expectation to 1.10.1 and align comment with Stage 1 decision-affecting change.",
+      "tests_covering": [
+        "test_task15_decision_engine_version_tracking.py (collection blocked by missing supabase)"
+      ]
+    },
+    {
+      "repository_path": "test_task16_plant_profile_regulatory_integrity.py",
+      "status": "modified",
+      "purpose": "Update canonical engine-version expectation to 1.10.1.",
+      "tests_covering": [
+        "version constant direct import check"
+      ]
+    },
+    {
+      "repository_path": "test_task17_plant_profile_evidence_freshness.py",
+      "status": "modified",
+      "purpose": "Update canonical engine-version expectation to 1.10.1.",
+      "tests_covering": [
+        "version constant direct import check"
+      ]
+    },
+    {
+      "repository_path": "test_evidence_direction_generalization_stage1.py",
+      "status": "new",
+      "purpose": "Focused regression tests for generic scientific Evidence Direction constructions.",
+      "tests_covering": [
+        "test_evidence_direction_generalization_stage1.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/evidence_direction_validation_v1.json",
+      "status": "new",
+      "purpose": "Separated 25-record five-class Stage 1 development benchmark with governance metadata.",
+      "tests_covering": [
+        "gold_corpus/test_evidence_direction_validation_v1.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/evidence_direction_validation_v1.py",
+      "status": "new",
+      "purpose": "Validation-only evaluator producing agreement, per-class recall, confusion matrix, and explicit errors.",
+      "tests_covering": [
+        "gold_corpus/test_evidence_direction_validation_v1.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/evidence_direction_validation_v1_run.json",
+      "status": "new",
+      "purpose": "Post-remediation machine-readable benchmark run artifact.",
+      "tests_covering": [
+        "gold_corpus/test_evidence_direction_validation_v1.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/run_evidence_direction_validation_v1.py",
+      "status": "new",
+      "purpose": "CLI runner for the Stage 1 development benchmark.",
+      "tests_covering": [
+        "python -m gold_corpus.run_evidence_direction_validation_v1"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/test_evidence_direction_validation_v1.py",
+      "status": "new",
+      "purpose": "Tests benchmark taxonomy/balance, evaluator metrics, unique IDs, and production/benchmark separation.",
+      "tests_covering": [
+        "gold_corpus/test_evidence_direction_validation_v1.py"
+      ]
+    },
+    {
+      "repository_path": "STAGE1_EVIDENCE_DIRECTION_HARDENING_REPORT.md",
+      "status": "new",
+      "purpose": "Stage 1 implementation, test, provenance, and interpretation report.",
+      "tests_covering": []
+    },
+    {
+      "repository_path": "stage_1_change_manifest.json",
+      "status": "new",
+      "purpose": "Machine-readable list of Stage 1 changed/new files, purposes, and test coverage.",
+      "tests_covering": []
+    }
+  ]
+}

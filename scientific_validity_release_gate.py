@@ -16,6 +16,7 @@ from typing import Mapping
 
 from final_decision_policy import FinalDecisionStatus
 from decision_benchmark_v1 import DecisionMetrics
+from validation_risk_metrics import compute_high_risk_metrics_from_confusion_matrix
 
 
 @dataclass(frozen=True)
@@ -123,10 +124,35 @@ def evaluate_reference_grounded_release(
     if review is None or review < profile.min_expert_review_recall:
         blockers.append(f"EXPERT REVIEW REQUIRED recall={review}; require >= {profile.min_expert_review_recall:.2f}.")
 
-    if metrics.serious_safety_false_negatives > profile.max_serious_safety_false_negatives:
-        blockers.append(f"Serious safety false negatives={metrics.serious_safety_false_negatives}; zero tolerated.")
-    if metrics.regulatory_false_negatives > profile.max_regulatory_false_negatives:
-        blockers.append(f"Regulatory false negatives={metrics.regulatory_false_negatives}; zero tolerated.")
+    high_risk = compute_high_risk_metrics_from_confusion_matrix(
+        metrics.confusion_matrix, n_scored=metrics.n_scored, n_total=protocol.n_cases
+    )
+
+    safety = high_risk.serious_safety
+    if safety.status == "not_evaluable":
+        blockers.append(
+            "Serious safety is not evaluable: the holdout contains zero NO GO SAFETY reference cases."
+        )
+    else:
+        safety_fn = max(int(metrics.serious_safety_false_negatives), safety.false_negatives)
+        if safety_fn > profile.max_serious_safety_false_negatives:
+            blockers.append(
+                f"Serious safety false negatives={safety_fn}/{safety.reference_positive_cases}; "
+                "zero tolerated."
+            )
+
+    regulatory = high_risk.regulatory
+    if regulatory.status == "not_evaluable":
+        blockers.append(
+            "Regulatory is not evaluable: the holdout contains zero NO GO REGULATORY reference cases."
+        )
+    else:
+        regulatory_fn = max(int(metrics.regulatory_false_negatives), regulatory.false_negatives)
+        if regulatory_fn > profile.max_regulatory_false_negatives:
+            blockers.append(
+                f"Regulatory false negatives={regulatory_fn}/{regulatory.reference_positive_cases}; "
+                "zero tolerated."
+            )
 
     insufficient=FinalDecisionStatus.INSUFFICIENT_EVIDENCE.value
     support=_support_for(insufficient,metrics.confusion_matrix)

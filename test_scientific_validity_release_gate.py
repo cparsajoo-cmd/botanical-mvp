@@ -60,3 +60,31 @@ def test_every_case_requires_reference_source_accounting():
     r=evaluate_reference_grounded_release(protocol(reference_source_support=refs),metrics())
     assert not r.releasable
     assert any("23/24" in x for x in r.blockers)
+
+
+def test_zero_regulatory_reference_support_is_not_evaluable_and_blocks_release():
+    m=matrix()
+    reg=FinalDecisionStatus.NO_GO_REGULATORY.value
+    go=FinalDecisionStatus.GO.value
+    # Remove all regulatory reference support while keeping n_scored at 24.
+    moved=sum(m[reg].values())
+    m[reg]={x:0 for x in LABELS}
+    m[go][go]+=moved
+    r=evaluate_reference_grounded_release(
+        protocol(class_support={**{x:4 for x in LABELS}, reg:0, go:8}),
+        metrics(confusion_matrix=m),
+    )
+    assert not r.releasable
+    assert any("Regulatory is not evaluable" in x for x in r.blockers)
+
+def test_safety_false_negative_blocker_reports_denominator():
+    m=matrix()
+    safety=FinalDecisionStatus.NO_GO_SAFETY.value
+    go=FinalDecisionStatus.GO.value
+    m[safety][safety]-=1
+    m[safety][go]+=1
+    r=evaluate_reference_grounded_release(
+        protocol(), metrics(confusion_matrix=m, serious_safety_false_negatives=1)
+    )
+    assert not r.releasable
+    assert any("1/4" in x for x in r.blockers if "Serious safety false negatives" in x)

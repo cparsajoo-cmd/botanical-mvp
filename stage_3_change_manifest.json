@@ -1,0 +1,90 @@
+{
+  "stage": "Stage 3 \u2014 Formal Safety and Regulatory Validation Metrics",
+  "decision_engine_version_before": "1.10.2",
+  "decision_engine_version_after": "1.10.2",
+  "production_decision_logic_changed": false,
+  "files": [
+    {
+      "repository_path": "validation_risk_metrics.py",
+      "status": "new",
+      "purpose": "Denominator-aware serious-safety and regulatory validation metrics with explicit not-evaluable handling.",
+      "tests": [
+        "test_validation_risk_metrics_stage3.py"
+      ]
+    },
+    {
+      "repository_path": "high_risk_validation_gate.py",
+      "status": "new",
+      "purpose": "Minimal validation-only high-risk regression gate with zero-FN tolerance and partial/not-evaluable states.",
+      "tests": [
+        "test_validation_risk_metrics_stage3.py"
+      ]
+    },
+    {
+      "repository_path": "validation_high_risk_report.py",
+      "status": "new",
+      "purpose": "Generate immutable sidecar high-risk metric reports from stored validation results without overwriting source artifacts.",
+      "tests": [
+        "test_validation_risk_metrics_stage3.py"
+      ]
+    },
+    {
+      "repository_path": "scientific_validity_release_gate.py",
+      "status": "modified",
+      "purpose": "Require safety/regulatory evaluability and denominator-aware false-negative release blockers while preserving existing gate architecture.",
+      "tests": [
+        "test_scientific_validity_release_gate.py",
+        "test_validation_risk_metrics_stage3.py"
+      ]
+    },
+    {
+      "repository_path": "test_scientific_validity_release_gate.py",
+      "status": "modified",
+      "purpose": "Regression coverage for zero regulatory support and denominator-aware safety FN blockers.",
+      "tests": [
+        "test_scientific_validity_release_gate.py"
+      ]
+    },
+    {
+      "repository_path": "test_validation_risk_metrics_stage3.py",
+      "status": "new",
+      "purpose": "Focused Stage 3 tests for TP/FN/recall/precision/evaluability and sidecar behavior.",
+      "tests": [
+        "self"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/validation_reports/decision_holdout_v5_high_risk_metrics_stage3.json",
+      "status": "new",
+      "purpose": "Non-destructive denominator-aware sidecar interpretation of the existing Decision Holdout v5 regression result.",
+      "tests": [
+        "test_validation_risk_metrics_stage3.py::test_decision_holdout_v5_regression_reports_regulatory_as_not_evaluable"
+      ]
+    },
+    {
+      "repository_path": "STAGE3_HIGH_RISK_VALIDATION_METRICS_REPORT.md",
+      "status": "new",
+      "purpose": "Stage 3 technical implementation and verification report.",
+      "tests": []
+    },
+    {
+      "repository_path": "stage_3_change_manifest.json",
+      "status": "new",
+      "purpose": "Machine-readable manifest of Stage 3 changed/new files.",
+      "tests": []
+    }
+  ],
+  "verification": {
+    "focused_and_broader_tests": {
+      "passed": 118,
+      "failed": 0
+    },
+    "py_compile": "passed",
+    "full_repository_suite": "not fully runnable in local environment",
+    "full_repository_collection_limitations": [
+      "supabase dependency unavailable",
+      "streamlit dependency unavailable",
+      "19 modules failed during collection due to missing dependencies"
+    ]
+  }
+}

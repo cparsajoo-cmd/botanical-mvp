@@ -77,3 +77,10 @@ The 31 failures share that environment dependency. They are not reported as pass
 
 ## Scientific interpretation
 Stage 2 improves internal dependency handling. It does **not** establish external scientific validity and does not prove that every publication-to-trial relationship in the repository is known. Linkage remains intentionally conservative: where a structured trial registration is unavailable, the platform does not fabricate study identity.
+
+## Delivery correction — version guard synchronization
+
+A CI run after applying the original Stage 2 delivery exposed two stale version-guard assertions in `test_task16_plant_profile_regulatory_integrity.py` and `test_task17_plant_profile_evidence_freshness.py`. Both still expected engine version `1.10.1` after the Stage 2 bump to `1.10.2`.
+
+This was a delivery/version-tracking omission, not a study-linkage regression. The two assertions were updated to `1.10.2`; no scientific or production behavior was changed. Focused verification: **52 passed, 0 failed** across those two files. A full local suite remains environment-limited by unavailable `supabase` and `streamlit` packages; the user's GitHub Actions environment had otherwise reached **3109 passed, 3 xfailed, 2 failed**, with the only two failures being these stale version assertions.
+

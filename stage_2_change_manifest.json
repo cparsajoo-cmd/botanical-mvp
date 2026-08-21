@@ -48,6 +48,22 @@
       ]
     },
     {
+      "repository_path": "test_task17_plant_profile_evidence_freshness.py",
+      "status": "modified",
+      "purpose": "Update the decision-engine version guard from 1.10.1 to 1.10.2 after the Stage 2 engine-version bump; no test logic otherwise changed.",
+      "tests_covering": [
+        "test_task17_plant_profile_evidence_freshness.py"
+      ]
+    },
+    {
+      "repository_path": "test_task16_plant_profile_regulatory_integrity.py",
+      "status": "modified",
+      "purpose": "Update the decision-engine version guard from 1.10.1 to 1.10.2 after the Stage 2 engine-version bump; no test logic otherwise changed.",
+      "tests_covering": [
+        "test_task16_plant_profile_regulatory_integrity.py"
+      ]
+    },
+    {
       "repository_path": "test_stage2_study_linkage.py",
       "status": "new",
       "purpose": "Focused dependency-aware study-linkage and duplicate-inflation regression tests.",

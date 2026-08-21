@@ -360,7 +360,7 @@ def test_excluded_files_untouched_by_task_16_concepts():
 
 
 # ---------------------------------------------------------------------
-# 18) DECISION_ENGINE_VERSION remains unchanged.
+# 18) DECISION_ENGINE_VERSION matches the current decision-engine release.
 # ---------------------------------------------------------------------
 
 def test_decision_engine_version_unchanged():
@@ -368,7 +368,7 @@ def test_decision_engine_version_unchanged():
     # Phase 4's Eligibility Gate redesign each bumped it separately for
     # unrelated changes (most recently 1.0.3 -> 1.4.0).
     import botanical_rd_candidate_engine as eng
-    assert eng.DECISION_ENGINE_VERSION == "1.10.1"
+    assert eng.DECISION_ENGINE_VERSION == "1.10.2"
 
 
 def test_plant_profile_page_never_references_decision_engine_version():

@@ -1,0 +1,384 @@
+{
+  "benchmark_id": "evidence-direction-validation-v1",
+  "benchmark_version": "1.0.0",
+  "status": "development_benchmark",
+  "record_count": 25,
+  "agreement": {
+    "correct": 25,
+    "total": 25,
+    "value": 1.0
+  },
+  "per_class_recall": {
+    "positive": {
+      "correct": 5,
+      "total": 5,
+      "recall": 1.0
+    },
+    "negative": {
+      "correct": 5,
+      "total": 5,
+      "recall": 1.0
+    },
+    "null": {
+      "correct": 5,
+      "total": 5,
+      "recall": 1.0
+    },
+    "mixed": {
+      "correct": 5,
+      "total": 5,
+      "recall": 1.0
+    },
+    "unclear": {
+      "correct": 5,
+      "total": 5,
+      "recall": 1.0
+    }
+  },
+  "confusion_matrix": {
+    "positive": {
+      "positive": 5,
+      "negative": 0,
+      "null": 0,
+      "mixed": 0,
+      "unclear": 0
+    },
+    "negative": {
+      "positive": 0,
+      "negative": 5,
+      "null": 0,
+      "mixed": 0,
+      "unclear": 0
+    },
+    "null": {
+      "positive": 0,
+      "negative": 0,
+      "null": 5,
+      "mixed": 0,
+      "unclear": 0
+    },
+    "mixed": {
+      "positive": 0,
+      "negative": 0,
+      "null": 0,
+      "mixed": 5,
+      "unclear": 0
+    },
+    "unclear": {
+      "positive": 0,
+      "negative": 0,
+      "null": 0,
+      "mixed": 0,
+      "unclear": 5
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "id": "EDV1_P01",
+      "origin": "realistic_scientific_language",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true,
+      "matched_positive": [
+        "more effective than placebo"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_P02",
+      "origin": "realistic_scientific_language",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true,
+      "matched_positive": [
+        "confirmed efficacy"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_P03",
+      "origin": "repository_pattern_generalization",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true,
+      "matched_positive": [
+        "significant improvement",
+        "statistically significant improvement"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_P04",
+      "origin": "realistic_scientific_language",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true,
+      "matched_positive": [
+        "non-inferior to the active comparator"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_P05",
+      "origin": "repository_pattern_generalization",
+      "expected": "positive",
+      "actual": "positive",
+      "correct": true,
+      "matched_positive": [
+        "significantly lower",
+        "significantly lower symptom",
+        "significantly lower symptom scores than"
+      ],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_N01",
+      "origin": "repository_pattern_generalization",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": [
+        "failed to demonstrate efficacy"
+      ]
+    },
+    {
+      "id": "EDV1_N02",
+      "origin": "realistic_scientific_language",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": [
+        "was ineffective"
+      ]
+    },
+    {
+      "id": "EDV1_N03",
+      "origin": "realistic_scientific_language",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": [
+        "associated with an increased risk of serious adverse events"
+      ]
+    },
+    {
+      "id": "EDV1_N04",
+      "origin": "realistic_scientific_language",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": [
+        "negative safety signal",
+        "higher incidence of hepatotoxicity"
+      ]
+    },
+    {
+      "id": "EDV1_N05",
+      "origin": "realistic_scientific_language",
+      "expected": "negative",
+      "actual": "negative",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": [
+        "no clinically meaningful benefit"
+      ]
+    },
+    {
+      "id": "EDV1_Z01",
+      "origin": "repository_pattern_generalization",
+      "expected": "null",
+      "actual": "null",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [
+        "no statistically significant difference"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_Z02",
+      "origin": "realistic_scientific_language",
+      "expected": "null",
+      "actual": "null",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [
+        "null result"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_Z03",
+      "origin": "realistic_scientific_language",
+      "expected": "null",
+      "actual": "null",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [
+        "no significant treatment effect"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_Z04",
+      "origin": "realistic_scientific_language",
+      "expected": "null",
+      "actual": "null",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [
+        "did not differ significantly"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_Z05",
+      "origin": "realistic_scientific_language",
+      "expected": "null",
+      "actual": "null",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [
+        "no evidence of a between-group difference"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_M01",
+      "origin": "repository_pattern_generalization",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true,
+      "matched_positive": [
+        "improved significantly"
+      ],
+      "matched_null": [
+        "not statistically significant"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_M02",
+      "origin": "realistic_scientific_language",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true,
+      "matched_positive": [
+        "symptoms improved"
+      ],
+      "matched_null": [
+        "effect was not sustained"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_M03",
+      "origin": "realistic_scientific_language",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true,
+      "matched_positive": [
+        "showed significant improvement",
+        "significant improvement"
+      ],
+      "matched_null": [
+        "no significant benefit"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_M04",
+      "origin": "repository_pattern_generalization",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true,
+      "matched_positive": [
+        "suggested benefit"
+      ],
+      "matched_null": [
+        "no significant difference"
+      ],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_M05",
+      "origin": "realistic_scientific_language",
+      "expected": "mixed",
+      "actual": "mixed",
+      "correct": true,
+      "matched_positive": [
+        "improved significantly"
+      ],
+      "matched_null": [],
+      "matched_negative": [
+        "worsened relative to control"
+      ]
+    },
+    {
+      "id": "EDV1_U01",
+      "origin": "realistic_scientific_language",
+      "expected": "unclear",
+      "actual": "unclear",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_U02",
+      "origin": "realistic_scientific_language",
+      "expected": "unclear",
+      "actual": "unclear",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_U03",
+      "origin": "realistic_scientific_language",
+      "expected": "unclear",
+      "actual": "unclear",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_U04",
+      "origin": "realistic_scientific_language",
+      "expected": "unclear",
+      "actual": "unclear",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    },
+    {
+      "id": "EDV1_U05",
+      "origin": "realistic_scientific_language",
+      "expected": "unclear",
+      "actual": "unclear",
+      "correct": true,
+      "matched_positive": [],
+      "matched_null": [],
+      "matched_negative": []
+    }
+  ],
+  "interpretation": "Development benchmark only. It is not an independent scientific-validation estimate and must not be used as external ground truth."
+}

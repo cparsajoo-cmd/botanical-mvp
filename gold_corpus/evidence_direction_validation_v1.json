@@ -1,0 +1,39 @@
+{
+  "benchmark_id": "evidence-direction-validation-v1",
+  "benchmark_version": "1.0.0",
+  "created_for": "Stage 1 evidence-direction hardening",
+  "status": "development_benchmark",
+  "taxonomy": ["positive", "negative", "null", "mixed", "unclear"],
+  "governance": "Benchmark labels are stored only in this validation artifact and are not imported by production code. Statements are realistic clinical/scientific language; several constructions are derived from already represented repository regression patterns. This benchmark is a development benchmark, not an independent scientific-validation claim.",
+  "records": [
+    {"id":"EDV1_P01","expected":"positive","origin":"realistic_scientific_language","text":"The intervention was more effective than placebo for reducing symptom severity."},
+    {"id":"EDV1_P02","expected":"positive","origin":"realistic_scientific_language","text":"The randomized trial confirmed efficacy on the prespecified primary clinical endpoint."},
+    {"id":"EDV1_P03","expected":"positive","origin":"repository_pattern_generalization","text":"Treatment produced a statistically significant improvement in the primary outcome compared with placebo."},
+    {"id":"EDV1_P04","expected":"positive","origin":"realistic_scientific_language","text":"The botanical was non-inferior to the active comparator for the primary efficacy endpoint."},
+    {"id":"EDV1_P05","expected":"positive","origin":"repository_pattern_generalization","text":"Participants receiving treatment had significantly lower symptom scores than those receiving placebo."},
+
+    {"id":"EDV1_N01","expected":"negative","origin":"repository_pattern_generalization","text":"The treatment failed to demonstrate efficacy for the primary endpoint."},
+    {"id":"EDV1_N02","expected":"negative","origin":"realistic_scientific_language","text":"The study concluded that the intervention was ineffective for preventing recurrence."},
+    {"id":"EDV1_N03","expected":"negative","origin":"realistic_scientific_language","text":"Treatment was associated with an increased risk of serious adverse events compared with placebo."},
+    {"id":"EDV1_N04","expected":"negative","origin":"realistic_scientific_language","text":"A negative safety signal emerged, with a higher incidence of hepatotoxicity in the treatment arm."},
+    {"id":"EDV1_N05","expected":"negative","origin":"realistic_scientific_language","text":"The intervention showed no clinically meaningful benefit and the authors concluded that efficacy was not supported."},
+
+    {"id":"EDV1_Z01","expected":"null","origin":"repository_pattern_generalization","text":"There was no statistically significant difference between treatment and placebo."},
+    {"id":"EDV1_Z02","expected":"null","origin":"realistic_scientific_language","text":"The primary analysis yielded a null result, with comparable outcomes in both groups."},
+    {"id":"EDV1_Z03","expected":"null","origin":"realistic_scientific_language","text":"No significant treatment effect was detected for the primary endpoint."},
+    {"id":"EDV1_Z04","expected":"null","origin":"realistic_scientific_language","text":"Changes from baseline did not differ significantly between the intervention and control groups."},
+    {"id":"EDV1_Z05","expected":"null","origin":"realistic_scientific_language","text":"The confidence interval crossed the null and there was no evidence of a between-group difference."},
+
+    {"id":"EDV1_M01","expected":"mixed","origin":"repository_pattern_generalization","text":"The primary endpoint was not statistically significant, although two secondary endpoints improved significantly."},
+    {"id":"EDV1_M02","expected":"mixed","origin":"realistic_scientific_language","text":"Symptoms improved at week 4, but the effect was not sustained at week 12."},
+    {"id":"EDV1_M03","expected":"mixed","origin":"realistic_scientific_language","text":"No significant benefit was found in the overall population, but a prespecified subgroup showed significant improvement."},
+    {"id":"EDV1_M04","expected":"mixed","origin":"repository_pattern_generalization","text":"Subjective outcomes suggested benefit, whereas objective measurements showed no significant difference from placebo."},
+    {"id":"EDV1_M05","expected":"mixed","origin":"realistic_scientific_language","text":"Pain scores improved significantly, but functional outcomes worsened relative to control."},
+
+    {"id":"EDV1_U01","expected":"unclear","origin":"realistic_scientific_language","text":"A trend toward improvement was observed, but the result did not reach statistical significance and the study was underpowered."},
+    {"id":"EDV1_U02","expected":"unclear","origin":"realistic_scientific_language","text":"The findings were inconclusive and do not permit a firm conclusion about efficacy."},
+    {"id":"EDV1_U03","expected":"unclear","origin":"realistic_scientific_language","text":"The intervention may offer benefit, although confidence intervals were wide and the evidence remains uncertain."},
+    {"id":"EDV1_U04","expected":"unclear","origin":"realistic_scientific_language","text":"Evidence was insufficient to determine whether the treatment improves clinically important outcomes."},
+    {"id":"EDV1_U05","expected":"unclear","origin":"realistic_scientific_language","text":"Results were suggestive but imprecise, and further adequately powered trials are required before efficacy can be established."}
+  ]
+}

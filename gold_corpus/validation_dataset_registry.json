@@ -1,0 +1,86 @@
+{
+  "schema_version": "validation-dataset-registry/1.0.0",
+  "purpose": "Repository-grounded dataset status catalog. Historical blind performance is kept distinct from current permitted use. This registry does not create a new validation claim.",
+  "datasets": [
+    {
+      "dataset_name": "reference_grounded_validation_v1",
+      "dataset_version": "v1",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": "1.4.0",
+      "historical_blind_result": {"n_cases": 24, "agreement": 0.375},
+      "historical_result_artifact": "gold_corpus/scientific_validity/final_holdout_v1/FINAL_REFERENCE_GROUNDED_VALIDATION_REPORT.md",
+      "notes": "The report states that the 24 cases are exposed and may only be used as a regression set. The runner documents that the original raw blind-results artifact was overwritten/lost historically."
+    },
+    {
+      "dataset_name": "reference_grounded_validation_v2",
+      "dataset_version": "v2",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": "1.5.2",
+      "historical_blind_result": {"n_cases": 24, "agreement": 0.20833333333333334},
+      "historical_result_artifact": "gold_corpus/scientific_validity/final_holdout_v1/FINAL_REFERENCE_GROUNDED_VALIDATION_V2_REPORT.md",
+      "notes": "The report explicitly states that this set is exposed and cannot be reused as an independent validation estimate."
+    },
+    {
+      "dataset_name": "reference_grounded_validation_v3",
+      "dataset_version": "v3",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": "1.8.0",
+      "historical_blind_result": null,
+      "historical_result_artifact": null,
+      "freeze_manifest": "gold_corpus/scientific_validity/final_holdout_v1/FREEZE_MANIFEST_v3.json",
+      "notes": "The dataset was frozen at engine 1.8.0. Repository code/tests explicitly state that its blind output was subsequently inspected and individual cases were used for remediation. No finalized aggregate blind-result artifact was located in the audited repository, so no aggregate number is reconstructed."
+    },
+    {
+      "dataset_name": "decision_holdout_v2",
+      "dataset_version": "1.0.0",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": null,
+      "historical_blind_result": {"n_cases": 5, "agreement": 0.2},
+      "historical_result_artifact": "gold_corpus/decision_holdout_v2/HOLDOUT_V2_REPORT.md",
+      "notes": "The report states that these cases are now development/regression material and must not be reused as an unseen holdout. Exact historical engine version is not asserted here because it was not established by the audited report."
+    },
+    {
+      "dataset_name": "decision_holdout_v3",
+      "dataset_version": "1.0.0",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": null,
+      "historical_blind_result": {"n_cases": 5, "agreement": 0.4},
+      "historical_result_artifact": "gold_corpus/decision_holdout_v3/HOLDOUT_V3_REPORT.md",
+      "notes": "The report states that after the first run the cases are no longer unseen and must only be used for development/regression."
+    },
+    {
+      "dataset_name": "decision_holdout_v4",
+      "dataset_version": "1.0.0",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": null,
+      "historical_blind_result": {"n_cases": 10, "agreement": 0.2},
+      "historical_result_artifact": "gold_corpus/decision_holdout_v4/FRESH_UNSEEN_HOLDOUT_V4_REPORT.md",
+      "notes": "The report explicitly says v4 is exposed and must be treated as regression/development data after the blind run."
+    },
+    {
+      "dataset_name": "decision_holdout_v5",
+      "dataset_version": "1.0.0",
+      "historical_execution_status": "independent_frozen",
+      "current_status": "exposed",
+      "permitted_current_use": "regression",
+      "historical_engine_version": null,
+      "historical_blind_result": {"n_cases": 10, "agreement": 0.3},
+      "historical_result_artifact": "gold_corpus/decision_holdout_v5/blind_run_historical_result.json",
+      "post_remediation_result_artifact": "gold_corpus/decision_holdout_v5/results.json",
+      "post_remediation_result": {"n_cases": 10, "agreement": 0.8},
+      "notes": "The 30% blind result is historical unseen performance. The 80% results.json artifact is post-remediation regression and must never replace or reinterpret the 30% result."
+    }
+  ]
+}

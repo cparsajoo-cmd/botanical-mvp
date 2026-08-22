@@ -114,6 +114,18 @@
       "historical_result_artifact": null,
       "holdout_specification": "gold_corpus/scientific_validity/rgv_v4/HOLDOUT_SELECTION_PROTOCOL.md",
       "notes": "Stage 5 created only the schema, leakage/freeze/integrity/execution tooling. No cases or scientific reference labels were fabricated. It becomes independent_frozen only after independently established labels, overlap review, snapshots, and successful freeze."
+    },
+    {
+      "dataset_name": "external_expert_validation_v1",
+      "dataset_version": "v1",
+      "historical_execution_status": null,
+      "current_status": "development",
+      "permitted_current_use": "external_validation_construction_only",
+      "historical_engine_version": null,
+      "historical_blind_result": null,
+      "historical_result_artifact": null,
+      "holdout_specification": "gold_corpus/external_expert_validation_v1/EXTERNAL_VALIDATION_PROTOCOL.md",
+      "notes": "Stage 6 provides prospective tooling/templates only. No records, expert labels, adjudicated reference, or external performance result has been fabricated. The first completed blinded study may be recorded as independent_frozen; after result inspection it is exposed, and if used for remediation all later runs are regression."
     }
   ]
 }

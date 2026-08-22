@@ -1,0 +1,13 @@
+{
+  "schema_version": "external-expert-validation-v1/1.0.0",
+  "dataset_name": "external_expert_validation_v1",
+  "dataset_status": "development",
+  "target_record_count": "30-50",
+  "purpose": "Prospective external validation dataset. No scientific records or reference labels are fabricated by repository tooling.",
+  "records_selected_independently_of_platform_output": false,
+  "records_selected_before_platform_execution": false,
+  "selection_curator_role": "",
+  "historical_overlap_check_complete": false,
+  "manual_study_overlap_review_complete": false,
+  "records": []
+}

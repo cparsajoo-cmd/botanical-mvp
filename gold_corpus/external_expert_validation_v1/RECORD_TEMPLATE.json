@@ -1,0 +1,18 @@
+{
+  "record_id": "EEV1_NNN",
+  "source_title": "REQUIRED",
+  "source_type": "REQUIRED",
+  "source_url": "",
+  "doi": "",
+  "pmid": "",
+  "nct_id": "",
+  "taxon": "REQUIRED_SCIENTIFIC_NAME",
+  "indication": "REQUIRED",
+  "preparation": "OPTIONAL_IF_NOT_REPORTED",
+  "population": "OPTIONAL_IF_NOT_REPORTED",
+  "record_text": "REQUIRED_VERBATIM_OR_TRACEABLE_SOURCE_TEXT",
+  "text_origin": "REQUIRED_EG_VERBATIM_ABSTRACT_OR_STRUCTURED_SOURCE",
+  "source_locator": "REQUIRED_PAGE_SECTION_OR_STABLE_LOCATOR",
+  "platform_output_visible_during_selection": false,
+  "selection_notes": "OPTIONAL"
+}

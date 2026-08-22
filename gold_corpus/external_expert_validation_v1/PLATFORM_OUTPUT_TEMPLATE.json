@@ -1,11 +1,10 @@
 {
-  "schema_version": "external-expert-adjudication-v1/1.0.0",
+  "schema_version": "external-expert-platform-output-v1/1.0.0",
   "dataset_name": "external_expert_validation_v1",
-  "adjudicator_role": "REQUIRED_THIRD_EXPERT_OR_PREDEFINED_ADJUDICATION_PANEL_ROLE",
-  "adjudication_method": "REQUIRED_PREDEFINED_METHOD_FOR_RESOLVING_EXPERT_DISAGREEMENTS",
-  "expert_a_original_labels_preserved": true,
-  "expert_b_original_labels_preserved": true,
-  "consensus_labels": [
+  "engine_version": "REQUIRED_EXACT_ENGINE_VERSION",
+  "processed_exact_frozen_records": false,
+  "reference_labels_visible_to_platform_before_execution": false,
+  "outputs": [
     {
       "record_id": "EEV1_NNN",
       "evidence_direction": "positive|negative|null|mixed|unclear",
@@ -14,8 +13,7 @@
       "serious_safety_evaluable": true,
       "serious_safety_signal": false,
       "regulatory_evaluable": false,
-      "regulatory_block_signal": null,
-      "reference_basis": "AGREEMENT_OR_ADJUDICATION_RATIONALE"
+      "regulatory_block_signal": null
     }
   ]
 }

@@ -1,0 +1,116 @@
+{
+  "stage": "Stage 6 — External Expert Validation Readiness",
+  "engine_version": "1.10.2",
+  "production_engine_changed": false,
+  "files": [
+    {
+      "repository_path": "external_expert_validation.py",
+      "status": "new",
+      "purpose": "Validation-only schemas, guards, metrics, and engine-version reader",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "check_external_expert_validation_v1_leakage.py",
+      "status": "new",
+      "purpose": "Pre-freeze DOI/PMID/NCT leakage checking with mandatory manual study-overlap review",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "freeze_external_expert_validation_v1.py",
+      "status": "new",
+      "purpose": "Write-once external evidence-packet freeze with hash and engine-version lock",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "score_external_expert_validation_v1.py",
+      "status": "new",
+      "purpose": "One-time blind scoring and later explicit regression scoring via immutable provenance",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py",
+        "test_validation_provenance_stage4.py"
+      ]
+    },
+    {
+      "repository_path": "test_external_expert_validation_stage6.py",
+      "status": "new",
+      "purpose": "Focused Stage 6 validation tooling regression tests",
+      "tests_covering_it": [
+        "self"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/evidence_records.json",
+      "status": "new",
+      "purpose": "Empty prospective external-validation dataset; no fabricated records or labels",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/RECORD_TEMPLATE.json",
+      "status": "new",
+      "purpose": "Traceable genuine evidence-record template",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/EXPERT_LABEL_TEMPLATE.json",
+      "status": "new",
+      "purpose": "Blinded independent expert-label template using existing taxonomies",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/ADJUDICATION_TEMPLATE.json",
+      "status": "new",
+      "purpose": "Third-expert/adjudication consensus template preserving original labels",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/PLATFORM_OUTPUT_TEMPLATE.json",
+      "status": "new",
+      "purpose": "Exact-record platform-output template with engine-version provenance",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "gold_corpus/external_expert_validation_v1/EXTERNAL_VALIDATION_PROTOCOL.md",
+      "status": "new",
+      "purpose": "Prospective external expert validation protocol",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py"
+      ]
+    },
+    {
+      "repository_path": "STAGE6_EXTERNAL_EXPERT_VALIDATION_READINESS_REPORT.md",
+      "status": "new",
+      "purpose": "Stage 6 implementation and verification report",
+      "tests_covering_it": []
+    },
+    {
+      "repository_path": "gold_corpus/validation_dataset_registry.json",
+      "status": "modified",
+      "purpose": "Register external expert validation v1 as development-only until a real blinded study is completed",
+      "tests_covering_it": [
+        "test_external_expert_validation_stage6.py",
+        "test_validation_provenance_stage4.py"
+      ]
+    }
+  ],
+  "tests": {
+    "focused": "10 passed, 0 failed",
+    "relevant_regressions": "211 passed, 0 failed",
+    "full_suite": "not completed: 19 collection errors caused by missing supabase/streamlit dependencies"
+  }
+}

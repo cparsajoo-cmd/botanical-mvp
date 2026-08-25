@@ -1532,7 +1532,7 @@ def render_rd_candidates_step(inputs):
         # entry points in scoring_sensitivity_report.py on the SAME
         # result_df already produced above — no re-run of engine.run(),
         # no new scoring logic, no change to result_df itself.
-        with st.expander("Ranking stability", expanded=False):
+        with st.expander("Scoring sensitivity and ranking robustness", expanded=False):
             payload = prepare_sensitivity_payload(result_df)
 
             if payload["status"] == "insufficient_data":

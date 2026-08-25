@@ -28,7 +28,7 @@ def render_evidence_step(inputs):
     # source_registry.PILOT_MAX_RESULTS for this collection run — see
     # research_engine.run_research_engine's pilot_mode parameter.
     pilot_mode = st.checkbox(
-        "Extended evidence coverage",
+        "Pilot-scope coverage (fuller evidence collection for a paid deliverable)",
         value=False,
         help="Search more deeply across available evidence sources.",
     )
@@ -327,7 +327,7 @@ def render_evidence_step(inputs):
             # UI constraint (no database/SQL details exposed here).
             telemetry_summary = persist_connector_telemetry(observability)
             if telemetry_summary["status"] == "persisted":
-                st.caption("Session status saved.")
+                st.caption("✅ Telemetry persisted successfully")
             else:
-                st.caption("Session status could not be saved.")
+                st.caption("ℹ️ Telemetry persistence unavailable")
 

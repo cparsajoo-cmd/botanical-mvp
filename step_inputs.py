@@ -147,19 +147,16 @@ def render_inputs():
         banner_col, clear_col = st.columns([5, 1])
         with banner_col:
             st.success(
-                f"{active} loaded — scroll down to **Step 5** and click "
-                "**\"Run Candidate Discovery\"** to see the result."
+                f"{active} loaded."
             )
         with clear_col:
             if st.button("✖️ Clear", key="demo_clear_btn"):
                 st.session_state["rd_demo_scenario_active"] = None
                 st.rerun()
 
-    with st.expander("🎬 Demo mode — one-click, pre-validated scenarios", expanded=not active):
+    with st.expander("🎬 Demo scenarios", expanded=not active):
         st.caption(
-            "These fill in every field below with a scenario that's already "
-            "been checked against known science — safe to run live without "
-            "typing anything or guessing which plant/indication to use."
+            "Choose a prepared scenario to fill the project fields automatically."
         )
         demo_cols = st.columns(len(DEMO_SCENARIOS))
         for col, (key, scenario) in zip(demo_cols, DEMO_SCENARIOS.items()):
@@ -168,14 +165,9 @@ def render_inputs():
                     _apply_demo_scenario(key)
                     st.rerun()
 
-    with st.expander("✍️ Or describe your question in your own words"):
+    with st.expander("✍️ Describe the project in your own words"):
         st.caption(
-            "e.g. \"A botanical oral product for mild cognitive impairment, "
-            "suitable for the elderly, with low CYP interaction risk, for "
-            "the European Union market.\" This pre-fills the fields below "
-            "from what it recognizes — it never submits anything on your "
-            "behalf; review and adjust the selections below before running "
-            "Step 5."
+            "Describe the indication, dosage form, target population or market. The recognized fields can be reviewed below."
         )
         free_text_question = st.text_area(
             "Your question", key="rd_free_text_question", label_visibility="collapsed",
@@ -210,10 +202,7 @@ def render_inputs():
                 st.success("Recognized from your question:\n\n" + "\n\n".join(f"- {f}" for f in found))
             else:
                 st.warning(
-                    "Nothing recognized in that question — the fields below are "
-                    "keyword-matched against a fixed vocabulary, not free NLU. "
-                    "Please select manually below, or try rephrasing using terms "
-                    "closer to the dropdown options."
+                    "The project fields could not be identified automatically. Please select them below."
                 )
             unmatched_notice = []
             if not parsed_question.indication:
@@ -277,9 +266,7 @@ def render_inputs():
         )
 
         st.caption(
-            "Optional product facts below let the evidence-transferability engine "
-            "distinguish, for example, a standardized extract from an infusion. "
-            "Leave them blank when the R&D concept has not been defined yet."
+            "Optional details can improve preparation, plant-part and dose matching. Leave them blank if they are not defined yet."
         )
         target_preparation = st.text_input(
             "Target botanical preparation (optional)",
@@ -324,12 +311,9 @@ def render_inputs():
         "constraints": parsed_question.safety_constraints if parsed_question else [],
     })
 
-    with st.expander("📐 Standardized project definition", expanded=False):
+    with st.expander("📐 Project definition", expanded=False):
         st.caption(
-            "Built by question_understanding_engine.py from the fields above "
-            "— route, product type, regulatory focus, and evidence "
-            "requirements inferred from your indication/dosage form/market, "
-            "not just passed through unchanged."
+            "Structured project information used by the analysis."
         )
         st.json(standardized_project)
 

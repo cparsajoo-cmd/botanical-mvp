@@ -4,9 +4,9 @@ from ai_discovery_engine import understand_question
 
 def render_question_step(inputs):
     st.markdown("---")
-    st.markdown("## Step 1 — Understand question")
+    st.markdown("## Step 1 — Understand the R&D question")
 
-    if st.button("Step 1: Understand R&D question"):
+    if st.button("Analyze R&D question"):
         question = understand_question(
             therapeutic_area=inputs["indication"],
             dosage_form=inputs["dosage_form"],
@@ -18,7 +18,7 @@ def render_question_step(inputs):
         if question is None:
             st.warning("No therapeutic profile found for this indication yet.")
         else:
-            st.success("Question understood.")
+            st.success("R&D question structured.")
             st.write("**Therapeutic area:**", question.get("therapeutic_area"))
             st.write("**Dosage form:**", question.get("dosage_form"))
             st.write("**Target market:**", question.get("target_market"))

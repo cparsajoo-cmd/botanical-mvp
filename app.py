@@ -14,21 +14,13 @@ st.set_page_config(
 )
 
 st.title("🌿 Botanical Product Intelligence Platform")
-st.caption("AI Botanical R&D Decision Intelligence Platform")
+st.caption("Scientific evidence, safety, regulation and candidate prioritization for botanical R&D")
 
 inputs = render_inputs()
 
 
-with st.expander("ℹ️ Core workflow (Step 0 → Step 6)", expanded=False):
-    st.caption(
-        "Step 0: define the R&D question → Step 1: understand the question → "
-        "Step 2: collect online evidence → Step 3: market & competitive landscape → "
-        "Step 4: existing scientific knowledge → Step 5: R&D candidate discovery "
-        "and decision engine → Step 6: final recommendation."
-    )
 
-
-@st.cache_data(ttl=3600, show_spinner="Loading Supabase evidence database...")
+@st.cache_data(ttl=3600, show_spinner="Loading evidence database...")
 def _cached_evidence_with_meta():
     # Cached across reruns and sessions for one hour. The previous 5-minute TTL
     # caused the full evidence table to cross the Supabase network boundary
@@ -49,34 +41,32 @@ render_question_step(inputs)
 render_evidence_step(inputs)
 render_rd_candidates_step(inputs)
 
-with st.expander("Optional: import / ingest data"):
+with st.expander("Data import", expanded=False):
     render_import_step()
 
 st.markdown("---")
 
-with st.expander("Supabase evidence database preview", expanded=False):
+with st.expander("Evidence database", expanded=False):
     mode = evidence_meta["data_source_mode"]
 
     if mode == "Full Supabase data":
         st.success(
-            f"Full Supabase data — {evidence_meta['returned_records']} of "
+            f"Evidence database ready — {evidence_meta['returned_records']} of "
             f"{evidence_meta['total_records']} total records loaded."
         )
     elif mode == "Partial Supabase data":
         total = evidence_meta["total_records"]
         total_text = str(total) if total is not None else "unknown"
         st.warning(
-            f"Partial Supabase data — only {evidence_meta['returned_records']} of "
+            f"Evidence database partially available — {evidence_meta['returned_records']} of "
             f"{total_text} total records were retrieved. Analysis below is running "
             f"on an incomplete dataset; do not treat results as full coverage."
         )
     else:  # "Unavailable"
         st.error(
-            "Could not load the Supabase evidence database preview "
+            "Could not load the evidence database "
             f"({evidence_meta.get('error') or 'unknown error'}). "
-            "No evidence data is available for this session — Step 2-5 results "
-            "will be based on whatever local/seed data those steps fall back to, "
-            "not live Supabase evidence."
+            "Live evidence data is unavailable for this session."
         )
 
     if not evidence_df.empty:

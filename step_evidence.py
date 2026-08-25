@@ -11,10 +11,7 @@ def render_evidence_step(inputs):
     st.markdown("## Step 2 — Collect online evidence")
 
     st.caption(
-        "This searches live sources for a small number of plants right "
-        "now. Full coverage across all plants happens separately and "
-        "continuously via the 'Bulk Evidence Collection' page — this "
-        "step doesn't need to be exhaustive."
+        "Search current scientific sources and collect evidence for the selected project."
     )
 
     quick_count = st.slider(
@@ -22,8 +19,7 @@ def render_evidence_step(inputs):
         min_value=3,
         max_value=30,
         value=8,
-        help="Lower = faster. Bulk Evidence Collection covers the rest "
-             "of the database in the background, so this can stay small.",
+        help="Choose how many candidate plants to include in this search.",
     )
 
     # Task 6 — pilot-scope evidence coverage. Off by default (no change
@@ -32,15 +28,13 @@ def render_evidence_step(inputs):
     # source_registry.PILOT_MAX_RESULTS for this collection run — see
     # research_engine.run_research_engine's pilot_mode parameter.
     pilot_mode = st.checkbox(
-        "Pilot-scope coverage (fuller evidence collection for a paid deliverable)",
+        "Extended evidence coverage",
         value=False,
-        help="Raises the per-source result ceiling for this collection "
-             "run only — intended for a scoped pilot deliverable, not "
-             "routine exploratory sessions.",
+        help="Search more deeply across available evidence sources.",
     )
 
-    if st.button("Step 2: Collect online evidence"):
-        with st.spinner("Searching sources and saving evidence to Supabase..."):
+    if st.button("Collect evidence"):
+        with st.spinner("Searching scientific sources..."):
             research_output = run_research_engine(
                 product_type=inputs["product_type"],
                 dosage_form=inputs["dosage_form"],
@@ -63,7 +57,7 @@ def render_evidence_step(inputs):
         sources_checked = research_output.get("sources_checked", [])
         candidate_plants = research_output.get("candidate_plants", [])
 
-        st.success(f"{len(saved_records)} online evidence records saved.")
+        st.success(f"{len(saved_records)} evidence records collected.")
 
         if sources_checked:
             st.write("**Sources checked:**")
@@ -102,31 +96,31 @@ def render_evidence_step(inputs):
         ]
 
         if reference_seeds:
-            st.caption("Reference/database seeds (not yet validated for this indication): " + ", ".join(reference_seeds))
+            st.caption("Reference candidates: " + ", ".join(reference_seeds))
         if candidate_records:
             if directly_supported:
-                st.caption("Pre-collection directly supported (clinical/systematic-review literature): " + ", ".join(directly_supported))
+                st.caption("Directly supported by clinical/review evidence: " + ", ".join(directly_supported))
             if indirectly_supported:
-                st.caption("Indirectly supported (weaker literature signal): " + ", ".join(indirectly_supported))
+                st.caption("Indirect supporting evidence: " + ", ".join(indirectly_supported))
         elif evidence_backed:
             # Backward compatibility: older research_output has no
             # per-candidate evidence_status breakdown to split on.
-            st.caption("Literature-supported/discovered: " + ", ".join(evidence_backed))
+            st.caption("Supported or identified in the literature: " + ", ".join(evidence_backed))
         if discovered:
-            st.caption("Newly discovered from literature: " + ", ".join(discovered))
+            st.caption("Additional literature candidates: " + ", ".join(discovered))
 
 
         coverage_status = research_output.get("retrieval_coverage_status", "NOT_ASSESSABLE")
         coverage_by_plant = research_output.get("retrieval_coverage_by_plant") or {}
-        st.markdown("### Retrieval coverage for downstream decisions")
+        st.markdown("### Evidence coverage")
         if coverage_status == "COMPLETE":
-            st.success("Retrieval coverage: COMPLETE for the current run.")
+            st.success("Evidence coverage complete for this run.")
         elif coverage_status == "COMPLETE_WITH_LIMITATIONS":
-            st.warning("Retrieval coverage: COMPLETE WITH LIMITATIONS. Required domains completed, but limitations are recorded below.")
+            st.warning("Evidence coverage completed with limitations; details are shown below.")
         elif coverage_status == "INCOMPLETE":
-            st.error("Retrieval coverage: INCOMPLETE. Downstream GO decisions will be held for review for affected plants.")
+            st.error("Evidence coverage is incomplete for some candidates; review is required before a final decision.")
         else:
-            st.warning("Retrieval coverage: NOT ASSESSABLE. Downstream GO decisions cannot be treated as validated for this run.")
+            st.warning("Evidence coverage could not be fully assessed for this run.")
 
         if coverage_by_plant:
             coverage_rows = []
@@ -153,7 +147,7 @@ def render_evidence_step(inputs):
         # raw implementation details. Old research_output dicts (produced
         # before this diagnostics upgrade) fall back to their previous
         # fields automatically.
-        st.markdown("### 🌿 Candidate shortlist audit")
+        st.markdown("### 🌿 Candidate selection summary")
         requested = diagnostics.get("requested_candidate_count", quick_count)
         seed_list = diagnostics.get("seed_plants_before_discovery", reference_seeds)
         discovered_list = diagnostics.get("online_discovered_plants", discovered)
@@ -191,7 +185,7 @@ def render_evidence_step(inputs):
                 f"plausible candidates were found (reason: {shortfall_reason})."
             )
         else:
-            st.success("The requested candidate count reached the collection loop.")
+            st.success("Candidate collection completed.")
 
         st.write("**1. Reference/database seed plants** _(not yet indication-validated)_")
         st.write(", ".join(seed_list) if seed_list else "None")
@@ -278,14 +272,14 @@ def render_evidence_step(inputs):
             )
             st.dataframe(ranked_df, width="stretch")
 
-        with st.expander("Raw candidate discovery diagnostics"):
+        with st.expander("Candidate collection details"):
             st.json(diagnostics)
 
         if errors:
             st.warning("Some searches produced errors.")
             st.dataframe(pd.DataFrame(errors), width="stretch")
 
-        with st.expander("🔌 Collection Session Status (Sprint 6A.1)"):
+        with st.expander("Source status"):
             st.caption(
                 "This describes ONLY the collection attempt above, in this "
                 "session — it is not persistent monitoring, not data "
@@ -333,7 +327,7 @@ def render_evidence_step(inputs):
             # UI constraint (no database/SQL details exposed here).
             telemetry_summary = persist_connector_telemetry(observability)
             if telemetry_summary["status"] == "persisted":
-                st.caption("✅ Telemetry persisted successfully")
+                st.caption("Session status saved.")
             else:
-                st.caption("ℹ️ Telemetry persistence unavailable")
+                st.caption("Session status could not be saved.")
 

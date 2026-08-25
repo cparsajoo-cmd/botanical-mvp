@@ -75,17 +75,8 @@ from general_indication_relevance import (
 # come from general_indication_relevance.py, the single authoritative
 # source -- this is not a second vocabulary, just the same categories
 # grouped by strength for scoring weights below.
-# A structured exact indication match is always strong.  The relevance engine
-# also uses MATCH_EXPLICIT_FIELD_OVERLAP for exact phrases found only in an
-# outcome/title/abstract; those matches are useful, but are intentionally capped
-# at <= 0.70 upstream and must not be promoted to "direct clinical" merely
-# because the study text mentions the indication.  Require a high record-level
-# relevance score for this ambiguous category.  This is disease-agnostic and
-# applies to every indication.
-_STRONG_EXPLICIT_OVERLAP_MIN_SCORE = 0.75
-_MATCH_STRONG = (MATCH_EXACT_INDICATION,)
+_MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
 _MATCH_SUPPORTIVE = (
-    MATCH_EXPLICIT_FIELD_OVERLAP,
     MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
     MATCH_HYBRID_SEMANTIC, MATCH_EMBEDDING_SEMANTIC,
     MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
@@ -732,11 +723,7 @@ def _result_category(row: pd.Series) -> str:
     )):
         return "harmful"
     if bool(row.get("Has_Negative_Evidence", False)) or any(t in text for t in (
-        "no significant", "not significant", "non-significant", "nonsignificant",
-        "no statistically significant", "did not significantly", "did not improve",
-        "no effect", "no difference", "no demonstrated benefit", "similar to placebo",
-        "comparable to placebo", "null", "not improved", "failed to improve",
-        "could not be substantiated", "insufficient evidence of benefit",
+        "no significant", "no effect", "null", "not improved", "failed to improve",
     )):
         return "null"
     if any(t in text for t in (
@@ -797,35 +784,6 @@ def _outcome_profile_from_row_records(row_records: list[dict]) -> dict[str, int 
     else:
         label = "Results not reported"
     return {**counts, "total": total, "label": label}
-
-def _row_is_strong_authoritative_relevance(row: pd.Series) -> bool:
-    """Return True only for genuinely strong record-level indication linkage.
-
-    MATCH_EXPLICIT_FIELD_OVERLAP covers two different situations upstream:
-    strong overlap in an explicit indication field and an exact phrase found
-    only in outcome/title/abstract text.  The latter is capped at <=0.70 by
-    general_indication_relevance.py.  Using the score threshold here prevents
-    a mere mention of the indication in unstructured text from being upgraded
-    to direct human/clinical evidence for any disease area.
-    """
-    match_type = str(row.get("Indication_Match_Type", "") or "").strip()
-    if match_type == MATCH_EXACT_INDICATION:
-        return True
-    if match_type != MATCH_EXPLICIT_FIELD_OVERLAP:
-        return False
-    try:
-        score = float(row.get("Indication_Match_Score", 0) or 0)
-    except (TypeError, ValueError):
-        score = 0.0
-    return score >= _STRONG_EXPLICIT_OVERLAP_MIN_SCORE
-
-
-def _row_is_supportive_authoritative_relevance(row: pd.Series) -> bool:
-    match_type = str(row.get("Indication_Match_Type", "") or "").strip()
-    if match_type == MATCH_EXPLICIT_FIELD_OVERLAP:
-        return not _row_is_strong_authoritative_relevance(row)
-    return match_type in _MATCH_SUPPORTIVE
-
 
 def _row_authoritative_relevance(row: pd.Series) -> tuple[str, set[str]]:
     """Read the per-record relevance already computed upstream by the single
@@ -916,8 +874,8 @@ def _indication_relevance_detail_authoritative(
         # terms happen to be empty (e.g. an exact phrase match whose query
         # had no individually tokenizable words) -- the match_type itself is
         # the signal.
-        direct_hits = (match_terms or {match_type}) if _row_is_strong_authoritative_relevance(row) else set()
-        mechanism_hits = (match_terms or {match_type}) if _row_is_supportive_authoritative_relevance(row) else set()
+        direct_hits = (match_terms or {match_type}) if match_type in _MATCH_STRONG else set()
+        mechanism_hits = (match_terms or {match_type}) if match_type in _MATCH_SUPPORTIVE else set()
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
         row_sources = _split_values([row.get("Source_Record_IDs", "")])
@@ -2355,8 +2313,8 @@ def build_plant_candidate_shortlist(
         # decided plant_status.
         if _group_has_authoritative_relevance(group):
             row_match_types = group.apply(lambda r: _row_authoritative_relevance(r)[0], axis=1)
-            direct_evidence_count = int(group.apply(_row_is_strong_authoritative_relevance, axis=1).sum())
-            mechanistic_evidence_count = int(group.apply(_row_is_supportive_authoritative_relevance, axis=1).sum())
+            direct_evidence_count = int(row_match_types.isin(_MATCH_STRONG).sum())
+            mechanistic_evidence_count = int(row_match_types.isin(_MATCH_SUPPORTIVE).sum())
         else:
             direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
             mechanistic_evidence_count = max(

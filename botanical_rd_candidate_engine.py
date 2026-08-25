@@ -4178,27 +4178,13 @@ class BotanicalRDCandidateEngine:
                     _record_source(compound_key, row)
                     _record_evidence_record(compound_key, row, text)
 
-        # Curated regulatory/clinical evidence (seed_data.SLEEP_TEA_EVIDENCE)
-        # — this is the manually-verified EMA/WHO/ESCOP + cited-study
-        # research Yalda already did for the sleep/anxiety plants. It must
-        # count as real evidence, not be treated the same as "nothing
-        # found", or every one of these plants gets its confidence capped
-        # despite having genuinely reviewed sources.
-        for plant, curated in SLEEP_TEA_EVIDENCE.items():
-            text = (
-                f"{curated.get('study_type', '')}. "
-                f"{curated.get('outcome', '')} "
-                f"EMA: {curated.get('ema_status', '')}. "
-                f"WHO: {curated.get('who_status', '')}. "
-                f"ESCOP: {curated.get('escop_status', '')}. "
-                f"Safety: {curated.get('safety_desc', '')}."
-            )
-            plant_key = _botanical_taxonomy.taxon_match_key(plant)
-            index[plant_key] += " " + text
-            # Curated evidence has no per-record URL, but it does have a
-            # named, citable source — record that instead of leaving
-            # this key's source list empty.
-            source_index[plant_key].append("seed_data.SLEEP_TEA_EVIDENCE")
+        # Do NOT inject indication-specific curated demo evidence into the
+        # generic evidence index.  SLEEP_TEA_EVIDENCE is retained for its
+        # explicitly curated regulatory metadata, but using its sleep-specific
+        # outcomes as plant-wide fallback evidence contaminates unrelated
+        # indications and can inflate relevance/evidence confidence whenever
+        # no better record is available.  Generic candidate scoring must be
+        # driven by traceable evidence records collected for the active query.
 
         return index, source_index, applicability_index, authority_index, evidence_records_index
 
@@ -6451,15 +6437,13 @@ class BotanicalRDCandidateEngine:
         return "; ".join(sorted(set(found)))
 
     def _evidence_source(self, plant, compound, evidence):
-        if self._curated_evidence_for(plant):
-            return (
-                "Curated regulatory & clinical evidence "
-                "(EMA/WHO/ESCOP-reviewed, cited studies) — "
-                "seed_data.SLEEP_TEA_EVIDENCE"
-            )
-
+        # Indication-specific curated demo evidence must never be presented as
+        # the provenance of a generic candidate row. Regulatory curation is
+        # surfaced separately by _eu_regulatory_status(); efficacy/evidence
+        # provenance here reflects only the evidence actually collected for
+        # the candidate row.
         if evidence:
-            return "Live-collected evidence (PubMed/Europe PMC/Supabase)"
+            return "Collected scientific evidence (PubMed/Europe PMC/Supabase)"
 
         return f"Seed candidate database: {plant} / {compound}"
 

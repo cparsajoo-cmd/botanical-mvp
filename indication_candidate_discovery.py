@@ -812,12 +812,31 @@ def discover_indication_candidates(
             embedding_similarity=embedding_similarity,
         )
 
-    _MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
-    _MATCH_SUPPORTIVE = (
+    # MATCH_EXPLICIT_FIELD_OVERLAP is intentionally ambiguous upstream: it
+    # includes exact indication phrases found only in outcome/title/abstract
+    # text (capped at <=0.70) as well as stronger explicit-field overlap.
+    # Treat only high-scoring overlap as strong/direct.  This avoids promoting
+    # a mere textual mention to direct evidence across *all* indications.
+    _STRONG_EXPLICIT_OVERLAP_MIN_SCORE = 0.75
+
+    def _is_strong_relevance(rel):
+        return (
+            rel.match_type == MATCH_EXACT_INDICATION
+            or (
+                rel.match_type == MATCH_EXPLICIT_FIELD_OVERLAP
+                and float(getattr(rel, "final_relevance_score", getattr(rel, "score", 0)) or 0) >= _STRONG_EXPLICIT_OVERLAP_MIN_SCORE
+            )
+        )
+
+    def _is_supportive_relevance(rel):
+        return (
+            rel.match_type == MATCH_EXPLICIT_FIELD_OVERLAP
+            and not _is_strong_relevance(rel)
+        ) or rel.match_type in (
         MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
         MATCH_HYBRID_SEMANTIC, MATCH_EMBEDDING_SEMANTIC,
         MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
-    )
+        )
 
     rows = []
 
@@ -892,8 +911,8 @@ def discover_indication_candidates(
                 _section_add("relevance", time.perf_counter() - _t)
                 _records_scored_for_relevance += 1
 
-        direct_records = [r for r in records if r["relevance"].match_type in _MATCH_STRONG]
-        mechanism_records = [r for r in records if r["relevance"].match_type in _MATCH_SUPPORTIVE]
+        direct_records = [r for r in records if _is_strong_relevance(r["relevance"])]
+        mechanism_records = [r for r in records if _is_supportive_relevance(r["relevance"])]
 
         # Database profile fields may create an exploratory lead, but never a
         # direct-evidence candidate and never a shortlist by themselves.
@@ -904,8 +923,8 @@ def discover_indication_candidates(
         profile_relevance = _score(None, indications, targets, "")
         _section_add("relevance", time.perf_counter() - _t)
         _records_scored_for_relevance += 1
-        profile_direct = profile_relevance.match_type in _MATCH_STRONG
-        profile_mechanistic = profile_relevance.match_type in _MATCH_SUPPORTIVE
+        profile_direct = _is_strong_relevance(profile_relevance)
+        profile_mechanistic = _is_supportive_relevance(profile_relevance)
 
         if not direct_records and not mechanism_records and not profile_direct and not profile_mechanistic:
             if _plants_processed % _PROGRESS_EVERY == 0:
@@ -966,8 +985,8 @@ def discover_indication_candidates(
         for record in evidence_units:
             record_text = str(record.get("text") or "")[:12000] if record else ""
             record_relevance = record["relevance"] if record else profile_relevance
-            record_direct = bool(record and record_relevance.match_type in _MATCH_STRONG)
-            record_mechanistic = bool(record and record_relevance.match_type in _MATCH_SUPPORTIVE)
+            record_direct = bool(record and _is_strong_relevance(record_relevance))
+            record_mechanistic = bool(record and _is_supportive_relevance(record_relevance))
             profile_only = record is None
 
             _t = time.perf_counter()

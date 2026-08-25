@@ -4179,12 +4179,11 @@ class BotanicalRDCandidateEngine:
                     _record_evidence_record(compound_key, row, text)
 
         # Do NOT inject indication-specific curated demo evidence into the
-        # generic evidence index.  SLEEP_TEA_EVIDENCE is retained for its
-        # explicitly curated regulatory metadata, but using its sleep-specific
-        # outcomes as plant-wide fallback evidence contaminates unrelated
-        # indications and can inflate relevance/evidence confidence whenever
-        # no better record is available.  Generic candidate scoring must be
-        # driven by traceable evidence records collected for the active query.
+        # generic evidence index. SLEEP_TEA_EVIDENCE remains available to
+        # the dedicated sleep/regulatory pathway, but its sleep-specific
+        # outcomes must not become plant-wide fallback evidence for unrelated
+        # indications. Generic scoring is driven by evidence records collected
+        # for the active query.
 
         return index, source_index, applicability_index, authority_index, evidence_records_index
 
@@ -6437,11 +6436,9 @@ class BotanicalRDCandidateEngine:
         return "; ".join(sorted(set(found)))
 
     def _evidence_source(self, plant, compound, evidence):
-        # Indication-specific curated demo evidence must never be presented as
-        # the provenance of a generic candidate row. Regulatory curation is
-        # surfaced separately by _eu_regulatory_status(); efficacy/evidence
-        # provenance here reflects only the evidence actually collected for
-        # the candidate row.
+        # Indication-specific curated demo evidence is not generic candidate
+        # provenance. Regulatory curation is surfaced in its dedicated field;
+        # efficacy provenance here reflects evidence collected for this row.
         if evidence:
             return "Collected scientific evidence (PubMed/Europe PMC/Supabase)"
 

@@ -605,8 +605,26 @@ _GENERIC_MECHANISM_ONLY = (
     "nf-kb", "nrf2", "cox-2", "il-6", "tnf-alpha", "free radical",
 )
 
-_NOVELTY_HIGH_TERMS = ("novel", "underexplored", "under-explored", "emerging", "white space", "white-space")
-_NOVELTY_LOW_TERMS = ("common", "saturated", "well-known", "well known", "widely used", "generic")
+# Commercial-opportunity terminology.  Chemical/source differentiation is
+# carried separately in Novelty_Status/Chemical_Differentiation_Status and must
+# NEVER create commercial white-space by itself.
+_COMMERCIAL_WHITE_SPACE_TERMS = (
+    "commercial white space", "commercial white-space",
+    "no verified product found", "no verified commercial product",
+)
+_COMMERCIAL_REPURPOSING_TERMS = (
+    "repurposing white space", "repurposing white-space",
+    "indication-repurposing", "indication repurposing",
+)
+_COMMERCIAL_ESTABLISHED_TERMS = (
+    "established commercial use", "verified marketed for indication",
+    "commercially active for selected indication", "active commercial use",
+)
+_COMMERCIAL_UNASSESSED_TERMS = (
+    "commercial novelty not assessed", "market data incomplete",
+    "search not performed", "source unavailable", "market not covered",
+    "connector not implemented",
+)
 
 
 def _indication_tokens(indication: str) -> list[str]:
@@ -1647,22 +1665,133 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
     return round(min(15.0, safety_points + reg_points), 1), tier
 
 def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
-    """Use genuine market/novelty evidence; placeholders remain unassessed."""
-    novelty_values = _meaningful_group_values(group, "Novelty_Status")
-    market_values = _meaningful_group_values(group, "Market_Status")
-    combined = _norm(" | ".join(novelty_values + market_values))
+    """Score COMMERCIAL opportunity only; never infer it from chemistry.
 
-    if not combined:
-        return 2.5, "Not assessed"
-    if any(t in combined for t in _NOVELTY_HIGH_TERMS):
-        return 5.0, "Novel / white-space"
-    if any(t in combined for t in _NOVELTY_LOW_TERMS):
-        return 1.0, "Saturated / common"
-    if any(t in combined for t in ("crowded", "many products", "high competition")):
-        return 1.5, "Competitive market"
+    ``Novelty_Status`` is a legacy chemical/source-differentiation field.  It
+    is intentionally NOT read here.  Commercial white-space/repurposing may be
+    awarded only from an actually completed market assessment (preferably the
+    Phase-8 Commercial_* fields).  Missing market data earns zero points rather
+    than a half-score prior, because "not searched" is not an opportunity.
+    """
+    commercial_values = []
+    for column in (
+        "Commercial_Novelty_Status",
+        "Commercial_Status_For_Indication",
+        "Commercial_Status_Overall",
+        "Commercial_Positioning",
+        "Commercial_Market_Status",
+        "Commercial_Search_Status",
+        "Indication_Market_Search_Status",
+    ):
+        commercial_values.extend(_meaningful_group_values(group, column))
+
+    # Backward-compatible fallback for historical rows that predate the
+    # Commercial_* columns.  Market_Status may be used, but Novelty_Status may
+    # not: the latter describes chemistry, not the market.
+    if not commercial_values:
+        commercial_values = _meaningful_group_values(group, "Market_Status")
+
+    combined = _norm(" | ".join(commercial_values))
+    if not combined or any(t in combined for t in _COMMERCIAL_UNASSESSED_TERMS):
+        return 0.0, "Commercial novelty not assessed"
+
+    if any(t in combined for t in _COMMERCIAL_ESTABLISHED_TERMS) or (
+        "verified marketed product" in combined
+    ):
+        return 1.0, "Established / commercially active"
+
+    if any(t in combined for t in _COMMERCIAL_REPURPOSING_TERMS):
+        return 4.0, "Indication-repurposing opportunity"
+
+    if any(t in combined for t in _COMMERCIAL_WHITE_SPACE_TERMS):
+        return 5.0, "Commercial white-space"
+
+    if any(t in combined for t in ("crowded", "many products", "high competition", "saturated")):
+        return 1.0, "Competitive / saturated market"
+
     if any(t in combined for t in ("limited products", "emerging market", "moderate competition")):
-        return 4.0, "Emerging opportunity"
-    return 3.0, "Some market information"
+        return 4.0, "Emerging commercial opportunity"
+
+    if "commercial presence verified" in combined or "verified_marketed" in combined:
+        return 1.5, "Commercial presence verified; indication status unclear"
+
+    # Regulatory monographs/traditional-use recognition are not retail-product
+    # evidence and therefore do not create commercial novelty points.
+    if "regulatory monograph" in combined or "traditional-use" in combined or "traditional use" in combined:
+        return 0.0, "Regulatory signal only; commercial novelty not assessed"
+
+    return 0.0, "Commercial novelty not established"
+
+
+def _first_group_value(group: pd.DataFrame, column: str, default: str = "") -> str:
+    values = _meaningful_group_values(group, column)
+    return values[0] if values else default
+
+
+def _max_group_number(group: pd.DataFrame, column: str, default=0):
+    if column not in group.columns:
+        return default
+    values = pd.to_numeric(group[column], errors="coerce").dropna()
+    if values.empty:
+        return default
+    value = float(values.max())
+    return int(value) if value.is_integer() else round(value, 2)
+
+
+def _commercial_summary_fields(group: pd.DataFrame) -> dict:
+    """Plant-level market summary, kept independent from chemical novelty."""
+    chemical = _join(
+        group.get(
+            "Chemical_Differentiation_Status",
+            group.get("Novelty_Status", pd.Series(dtype=object)),
+        ),
+        6,
+    )
+    commercial_market_status = _first_group_value(
+        group, "Commercial_Market_Status", "Search not performed"
+    )
+    commercial_search_status = _first_group_value(
+        group, "Commercial_Search_Status", "SEARCH_NOT_PERFORMED"
+    )
+    overall_status = _first_group_value(group, "Commercial_Status_Overall", "UNKNOWN")
+    indication_status = _first_group_value(
+        group, "Commercial_Status_For_Indication", "UNKNOWN"
+    )
+    commercial_novelty = _first_group_value(
+        group, "Commercial_Novelty_Status", "Commercial novelty not assessed"
+    )
+    positioning = _first_group_value(
+        group, "Commercial_Positioning",
+        "Market data incomplete — do not classify as new commercial R&D",
+    )
+    indication_search_status = _first_group_value(
+        group, "Indication_Market_Search_Status", "SEARCH_NOT_PERFORMED"
+    )
+    market_source_ids = sorted({
+        source_id
+        for _, row in group.iterrows()
+        for source_id in _market_source_ids_from_row(row)
+    })
+    return {
+        "Chemical_Differentiation_Status": chemical,
+        "Commercial_Market_Status": commercial_market_status,
+        "Commercial_Search_Status": commercial_search_status,
+        "Commercial_Status_Overall": overall_status,
+        "Commercial_Status_For_Indication": indication_status,
+        "Commercial_Novelty_Status": commercial_novelty,
+        "Commercial_Positioning": positioning,
+        "Overall_Product_Hits": _max_group_number(group, "Overall_Product_Hits", 0),
+        "Indication_Product_Hits": _max_group_number(group, "Indication_Product_Hits", 0),
+        "Commercial_Market_Saturation": _first_group_value(
+            group, "Commercial_Market_Saturation",
+            _first_group_value(group, "Market_Saturation", "UNKNOWN"),
+        ),
+        "Indication_Market_Saturation": _first_group_value(
+            group, "Indication_Market_Saturation", "UNKNOWN"
+        ),
+        "Indication_Market_Search_Status": indication_search_status,
+        "Commercial_Market_Source_IDs": market_source_ids,
+    }
 
 
 def _indication_component_source_ids(
@@ -1758,15 +1887,51 @@ def _safety_component_source_ids(group: pd.DataFrame) -> list[str]:
     return _source_ids_for_rows(selected)
 
 
+def _market_source_ids_from_row(row: pd.Series) -> list[str]:
+    """Extract Phase-8 market source IDs without attributing them to science."""
+    value = row.get("Commercial_Market_Source_IDs", row.get("Market_Evidence_Source_IDs", []))
+    if isinstance(value, (list, tuple, set)):
+        return sorted({str(v).strip() for v in value if str(v).strip()})
+    if isinstance(value, dict):
+        return sorted({str(v).strip() for v in value.values() if str(v).strip()})
+    text = str(value or "").strip()
+    if not text:
+        return []
+    # Lists may have round-tripped through CSV as JSON/Python-ish text.
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return sorted({str(v).strip() for v in parsed if str(v).strip()})
+    except Exception:
+        pass
+    text = text.strip("[]")
+    return sorted({part.strip().strip("'\"") for part in re.split(r"[;,|]+", text) if part.strip().strip("'\"")})
+
+
 def _novelty_component_source_ids(group: pd.DataFrame) -> list[str]:
-    selected: list[pd.Series] = []
+    """Provenance for the COMMERCIAL opportunity component.
+
+    Chemical-differentiation rows are deliberately excluded unless they also
+    carry genuine market evidence.  This prevents a scientific source ID from
+    being presented as if it supported a commercial-market claim.
+    """
+    ids = set()
     for _, row in group.iterrows():
-        if (
-            _meaningful_group_values(pd.DataFrame([row]), "Novelty_Status")
-            or _meaningful_group_values(pd.DataFrame([row]), "Market_Status")
-        ):
-            selected.append(row)
-    return _source_ids_for_rows(selected)
+        market_ids = _market_source_ids_from_row(row)
+        ids.update(market_ids)
+        if market_ids:
+            continue
+        # Legacy market rows may have their market observation and source ID on
+        # the same row.  Only accept them when Market_Status itself contains a
+        # real commercial signal; never because Novelty_Status is populated.
+        market_text = _norm(row.get("Market_Status", ""))
+        if any(term in market_text for term in (
+            "verified marketed product", "commercial evidence reported",
+            "no verified product found", "limited products", "emerging market",
+            "crowded", "many products", "high competition",
+        )):
+            ids.update(_row_source_record_ids(row))
+    return sorted(ids)
 
 
 def _component_source_record_ids(
@@ -2445,9 +2610,11 @@ def build_plant_candidate_shortlist(
             outcome_label=str(outcome_profile["label"]),
         )
         decision_class_ah = _derive_decision_class_ah(plant_status, overall_score, explanation_reason)
+        commercial_summary = _commercial_summary_fields(group)
 
         rows.append({
             "Alternative_Plant": plant,
+            **commercial_summary,
             "Scientific_Triage_Status": plant_status,
             "Scientific_Triage_Score": round(triage_score, 1),
             "Overall_Score": overall_score,

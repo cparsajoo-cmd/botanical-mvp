@@ -206,7 +206,20 @@ def score_market(records: Iterable[MarketEvidence], metrics: dict) -> dict:
             "Patent_Activity": 0.0,
             "Data_Confidence": 0.0,
         }
-        return {"Market_Score": 0.0, "Market_Score_Breakdown": breakdown, "Market_Data_Usable": False}
+        # A completed covered-source search that found zero products is still
+        # usable market evidence: it is a *negative search result*, not missing
+        # data.  Keep its score at zero (no demand/price signal), but expose the
+        # coverage as usable so downstream code can distinguish commercial white
+        # space from SEARCH_NOT_PERFORMED/SOURCE_UNAVAILABLE.
+        data_usable = (
+            not unavailable
+            and status == MarketSearchStatus.NO_PRODUCTS_FOUND.value
+        )
+        return {
+            "Market_Score": 0.0,
+            "Market_Score_Breakdown": breakdown,
+            "Market_Data_Usable": data_usable,
+        }
 
     retail = [r for r in records if r.evidence_kind == "retail"]
     trend = [r for r in records if r.evidence_kind == "trend"]

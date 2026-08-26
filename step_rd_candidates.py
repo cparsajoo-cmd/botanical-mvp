@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from botanical_rd_candidate_engine import BotanicalRDCandidateEngine
+from market_intelligence_engine import MarketIntelligenceEngine
 from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
@@ -105,6 +106,85 @@ def _get_evidence_df():
     if isinstance(evidence_df, pd.DataFrame):
         return evidence_df
     return None
+
+
+def _attach_commercial_market_intelligence(
+    result_df, *, evidence_df, indication, dosage_form, market
+):
+    """Attach one indication-aware commercial snapshot per candidate plant.
+
+    This is a local post-processing layer over the already-loaded structured
+    market evidence.  It performs no network calls, does not alter scientific
+    evidence, and never treats missing market data as white space.  The legacy
+    ``Market_Status``/``Novelty_Status`` columns remain untouched for backward
+    compatibility; new ``Commercial_*`` and ``Chemical_Differentiation_Status``
+    columns make the two concepts explicit.
+    """
+    if not isinstance(result_df, pd.DataFrame) or result_df.empty:
+        return result_df
+
+    out = result_df.copy()
+    if "Chemical_Differentiation_Status" not in out.columns and "Novelty_Status" in out.columns:
+        out["Chemical_Differentiation_Status"] = out["Novelty_Status"]
+
+    if "Alternative_Plant" not in out.columns:
+        return out
+
+    engine = MarketIntelligenceEngine(evidence_df)
+    plants = [
+        str(v).strip() for v in out["Alternative_Plant"].dropna().unique().tolist()
+        if str(v).strip()
+    ]
+    if not plants:
+        return out
+
+    rename = {
+        "Market_Status": "Commercial_Market_Status",
+        "Search_Status": "Commercial_Search_Status",
+        "Market_Data_Usable": "Commercial_Market_Data_Usable",
+        "Market_Score": "Commercial_Market_Score",
+        "Market_Saturation": "Commercial_Market_Saturation",
+        "Market_Evidence_Source_IDs": "Commercial_Market_Source_IDs",
+        "Market_Retrieval_Timestamp": "Commercial_Market_Retrieval_Timestamp",
+    }
+    keep = {
+        "Commercial_Market_Status", "Commercial_Search_Status",
+        "Commercial_Market_Data_Usable", "Commercial_Market_Score",
+        "Commercial_Market_Saturation", "Commercial_Market_Source_IDs",
+        "Commercial_Market_Retrieval_Timestamp",
+        "Commercial_Status_Overall", "Commercial_Status_For_Indication",
+        "Commercial_Novelty_Status", "Commercial_Positioning",
+        "Overall_Product_Hits", "Indication_Product_Hits",
+        "Indication_Brand_Count", "Indication_Market_Saturation",
+        "Indication_Market_Search_Status", "Indication_Market_Data_Usable",
+        "Indication_Market_Score", "Indication_Matched_Terms",
+        "Indication_Unclear_Product_Count",
+        "Indication_Explicit_Nonmatch_Product_Count",
+    }
+
+    rows = []
+    for plant in plants:
+        snapshot = engine.evaluate(
+            {"Scientific_Name": plant},
+            indication=indication,
+            dosage_form=dosage_form,
+            market=market,
+        )
+        normalized = {rename.get(k, k): v for k, v in snapshot.items()}
+        row = {"Alternative_Plant": plant}
+        row.update({k: v for k, v in normalized.items() if k in keep})
+        rows.append(row)
+
+    market_df = pd.DataFrame(rows)
+    if market_df.empty:
+        return out
+
+    # Drop only fields this function owns, allowing safe reuse on a DataFrame
+    # that was already enriched during the same Streamlit session.
+    owned = [c for c in market_df.columns if c != "Alternative_Plant" and c in out.columns]
+    if owned:
+        out = out.drop(columns=owned)
+    return out.merge(market_df, on="Alternative_Plant", how="left")
 
 
 
@@ -436,6 +516,11 @@ def _prepare_plant_triage_display(df):
         "Evidence_Confidence",
         "Scientific_Triage_Status",
         "Go_Investigate_Hold_NoGo",
+        "Commercial_Positioning",
+        "Commercial_Novelty_Status",
+        "Overall_Product_Hits",
+        "Indication_Product_Hits",
+        "Chemical_Differentiation_Status",
         "Indication_Relevance",
         "Evidence_Quality_Score",
         "Why_Selected_or_Rejected",
@@ -454,6 +539,11 @@ def _prepare_plant_triage_display(df):
         "Evidence_Confidence": "Evidence Strength Index",
         "Scientific_Triage_Status": "Triage Status",
         "Go_Investigate_Hold_NoGo": "Decision",
+        "Commercial_Positioning": "Commercial Positioning",
+        "Commercial_Novelty_Status": "Commercial Novelty",
+        "Overall_Product_Hits": "Overall Product Hits",
+        "Indication_Product_Hits": "Indication Product Hits",
+        "Chemical_Differentiation_Status": "Chemical Differentiation",
         "Indication_Relevance": "Indication Relevance",
         "Evidence_Quality_Score": "Evidence Quality Score",
         "Why_Selected_or_Rejected": "Why selected / rejected",
@@ -568,8 +658,14 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Decision_Class_AH",
                 "Go_Investigate_Hold_NoGo",
                 "Safety_Flags",
-                "Market_Status",
-                "Novelty_Status",
+                "Commercial_Positioning",
+                "Commercial_Novelty_Status",
+                "Overall_Product_Hits",
+                "Indication_Product_Hits",
+                "Commercial_Market_Status",
+                "Commercial_Status_For_Indication",
+                "Indication_Market_Search_Status",
+                "Chemical_Differentiation_Status",
                 "Rationale",
             ] if col in recommended.columns
         ]
@@ -580,12 +676,12 @@ def _recommendation_block(result_df, report_ready_df=None):
 
         st.markdown("### ✅ Recommended / worth validating")
         st.caption(
-            "\"Recommended\" means worth a human researcher's time to check, based "
-            "on the authoritative R&D_Opportunity_Score for PRIORITIZATION, while "
-            "`Final_Decision_Status` remains the scientific decision authority. "
-            "The score is not a certification of efficacy. `Evidence_Confidence` is displayed as an "
-            "Evidence Strength Index: it is a deterministic evidence-strength score, "
-            "not a probability that the recommendation is correct."
+            "\"Recommended\" means worth a human researcher's time to validate. "
+            "Scientific evidence, chemical/source differentiation, and commercial "
+            "novelty are separate signals. A candidate is never labelled commercial "
+            "white-space merely because market search was missing or because it has "
+            "an alternative chemical source. `Final_Decision_Status` remains the "
+            "scientific decision authority."
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
 
@@ -647,18 +743,23 @@ def _recommendation_block(result_df, report_ready_df=None):
             "R&D_Opportunity_Score",
             "Decision_Class",
             "Safety_Flags",
-            "Market_Status",
-            "Novelty_Status",
+            "Commercial_Positioning",
+            "Commercial_Novelty_Status",
+            "Overall_Product_Hits",
+            "Indication_Product_Hits",
+            "Commercial_Market_Status",
+            "Commercial_Status_For_Indication",
+            "Indication_Market_Search_Status",
+            "Chemical_Differentiation_Status",
             "Rationale",
         ] if col in recommended.columns
     ]
 
     st.markdown("### ✅ Recommended / worth validating")
     st.caption(
-        "\"Recommended\" means worth a human researcher's time to check, based "
-        "on chemical hypothesis + whatever evidence was found — it is not a "
-        "certification of efficacy. See `Decision_Class` and `Evidence_Level` "
-        "in each row for how strong the underlying basis actually is."
+        "\"Recommended\" means worth validation, not proof of efficacy or novelty. "
+        "Chemical/source differentiation is shown separately from commercial status; "
+        "missing commercial evidence does not count as market white-space."
     )
     st.dataframe(recommended[display_cols].head(10), width="stretch")
 
@@ -753,6 +854,31 @@ def render_rd_candidates_step(inputs):
                 ):
                     landscape_df = market_engine.market_landscape_df(market_plants)
 
+                    # General commercial classification for the CURRENT indication.
+                    # Keep it independent from the legacy regulatory/patent landscape:
+                    # a plant can be commercially established overall but still be a
+                    # repurposing candidate for this indication, or its indication
+                    # positioning can simply be unverified.
+                    commercial_df = _attach_commercial_market_intelligence(
+                        pd.DataFrame({"Alternative_Plant": market_plants}),
+                        evidence_df=_get_evidence_df(),
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        market=market,
+                    )
+                    if isinstance(commercial_df, pd.DataFrame) and not commercial_df.empty:
+                        commercial_df = commercial_df.rename(columns={"Alternative_Plant": "Plant"})
+                        commercial_cols = [
+                            c for c in commercial_df.columns
+                            if c == "Plant" or c.startswith("Commercial_")
+                            or c.startswith("Indication_")
+                            or c == "Overall_Product_Hits"
+                        ]
+                        landscape_df = landscape_df.merge(
+                            commercial_df[commercial_cols].drop_duplicates(subset=["Plant"]),
+                            on="Plant", how="left",
+                        )
+
                 st.session_state["rd_market_landscape_df"] = landscape_df
                 st.success("✅ Market analysis completed.")
 
@@ -817,6 +943,12 @@ def render_rd_candidates_step(inputs):
             "UK_Status",
             "Patent_Search_Status",
             "Retail_Products_Status",
+            "Commercial_Status_Overall",
+            "Commercial_Status_For_Indication",
+            "Commercial_Novelty_Status",
+            "Overall_Product_Hits",
+            "Indication_Product_Hits",
+            "Indication_Market_Search_Status",
         ]
         compact_columns = [c for c in compact_columns if c in landscape_df.columns]
         st.caption(
@@ -844,6 +976,16 @@ def render_rd_candidates_step(inputs):
             "Patent_Detail",
             "Retail_Products_Status",
             "Retail_Products_Detail",
+            "Commercial_Status_Overall",
+            "Commercial_Status_For_Indication",
+            "Commercial_Novelty_Status",
+            "Commercial_Positioning",
+            "Overall_Product_Hits",
+            "Indication_Product_Hits",
+            "Commercial_Market_Saturation",
+            "Indication_Market_Saturation",
+            "Indication_Market_Search_Status",
+            "Commercial_Market_Source_IDs",
         ]
         export_columns = [
             column for column in preferred_export_columns
@@ -1021,7 +1163,8 @@ def render_rd_candidates_step(inputs):
 
     st.caption(
         "Generate alternative botanical candidates and score them using evidence, "
-        "mechanism plausibility, novelty, safety, regulatory feasibility, and market opportunity."
+        "mechanism plausibility, chemical differentiation, safety, regulatory feasibility, "
+        "and independently verified market opportunity. Missing market data never counts as novelty."
     )
 
     col1, col2 = st.columns(2)
@@ -1162,6 +1305,20 @@ def render_rd_candidates_step(inputs):
                         f"engine.run() done rows={0 if result_df is None else len(result_df)} "
                         f"elapsed={time.perf_counter() - _perf_t_run:.3f} "
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+
+                    # Commercial novelty is a separate evidence domain.  Attach
+                    # indication-aware market signals before plant-level scoring
+                    # so chemical/source novelty can never masquerade as a new
+                    # commercial R&D opportunity.  This reads only the already
+                    # loaded evidence table and adds no network latency.
+                    progress.progress(0.88, text="Separating chemical novelty from commercial market status…")
+                    result_df = _attach_commercial_market_intelligence(
+                        result_df,
+                        evidence_df=evidence_df_for_run,
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        market=market,
                     )
 
                 st.session_state["rd_candidates_df"] = result_df

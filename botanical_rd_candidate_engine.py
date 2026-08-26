@@ -229,6 +229,10 @@ OUTPUT_COLUMNS = [
     "Regulatory_Recognition_Status",
     "Regulatory_Barriers",
     "Novelty_Status",
+    # Explicit semantic alias: Novelty_Status in this legacy engine describes
+    # chemical/source differentiation, NOT commercial novelty.  Keep the old
+    # field for backward compatibility and expose the honest name alongside it.
+    "Chemical_Differentiation_Status",
     "R&D_Opportunity_Score",
     "Score_Breakdown",
     "Evidence_Confidence",
@@ -2470,6 +2474,7 @@ class BotanicalRDCandidateEngine:
                                 else "None identified"
                             ),
                             "Novelty_Status": novelty_status,
+                            "Chemical_Differentiation_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
                             "Score_Breakdown": self._format_score_breakdown(score_components),
                             "Evidence_Confidence": evidence_confidence,
@@ -5221,10 +5226,11 @@ class BotanicalRDCandidateEngine:
         score += product_fit_component
         components["Product-development fit"] = product_fit_component
 
-        # 4) Novelty is valuable only after some scientific basis exists.
-        # A "common compound" novelty label (see _novelty_status) must
-        # NOT collect this bonus — a compound found everywhere is the
-        # opposite of a novel, differentiating finding.
+        # 4) CHEMICAL/SOURCE DIFFERENTIATION is valuable only after some
+        # scientific basis exists.  Historical variable/output names retain
+        # ``novelty`` for backward compatibility, but this component MUST NOT
+        # be interpreted as commercial novelty.  A "common compound" label
+        # (see _novelty_status) must not collect the differentiation bonus.
         novelty_component = 0
         if evidence_level != "No direct evidence":
             if "Common" in novelty_status or "non-specific" in novelty_status:
@@ -5591,6 +5597,13 @@ class BotanicalRDCandidateEngine:
         compound_is_common=False,
         compound_plant_count=0,
     ):
+        """Legacy-named CHEMICAL/SOURCE differentiation classifier.
+
+        This does not inspect retail products, brands, market saturation, or
+        indication-specific commercial use.  Downstream code must use the
+        independent Market Intelligence fields for commercial novelty.
+        ``Novelty_Status`` is retained only as a backward-compatible field name.
+        """
         if self._norm(ref_plant) == self._norm(alt_plant):
             return "Reference plant / benchmark"
 
@@ -6264,7 +6277,8 @@ class BotanicalRDCandidateEngine:
             f"{dosage_form}: {extraction or 'not clearly reported'}. "
             f"Concentration: {concentration or 'not clearly reported'}. "
             f"Co-compounds: {co_compounds or 'not clearly extracted'}. "
-            f"Market: {market_status}. Novelty: {novelty_status}. "
+            f"Market/regulatory text signal: {market_status}. "
+            f"Chemical/source differentiation: {novelty_status}. "
             f"{evidence_note} Decision: {decision}."
         )
 

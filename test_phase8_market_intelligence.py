@@ -170,3 +170,105 @@ def test_patent_activity_is_market_only_and_does_not_mutate_scientific_score():
     assert out["Patent_Activity_Count"] == 1
     assert input_row["Evidence_Score_Unified"] == 7.0
     assert "Evidence_Score_Unified" not in out
+
+
+def test_overall_commercial_presence_is_separate_from_selected_indication():
+    df = pd.DataFrame([{
+        "Scientific_Name": "Rhodiola rosea",
+        "Source_Type": "Official manufacturer",
+        "Source_Organization": "Example Brand",
+        "Product_Name": "Rhodiola Stress Support",
+        "Brand": "Example Brand",
+        "Claims": "Helps with perceived stress and fatigue",
+        "Country_Market": "FR",
+        "Source_URL": "https://example.test/rhodiola",
+    }])
+    out = MarketIntelligenceEngine(df).evaluate(
+        {"Scientific_Name": "Rhodiola rosea"},
+        indication="Sleep and relaxation",
+        market="FR",
+    )
+    assert out["Overall_Product_Hits"] == 1
+    assert out["Indication_Product_Hits"] == 0
+    assert out["Commercial_Status_Overall"] == "VERIFIED_MARKETED"
+    assert out["Commercial_Status_For_Indication"] == "NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES"
+    assert "repurposing" in out["Commercial_Novelty_Status"].lower()
+
+
+def test_generic_product_without_claims_does_not_create_false_repurposing_gap():
+    df = pd.DataFrame([{
+        "Scientific_Name": "Withania somnifera",
+        "Source_Type": "Major retailer",
+        "Source_Organization": "Retailer A",
+        "Product_Name": "Ashwagandha 500 mg",
+        "Brand": "Brand A",
+        "Country_Market": "FR",
+        "Source_URL": "https://example.test/ashwa",
+    }])
+    out = MarketIntelligenceEngine(df).evaluate(
+        {"Scientific_Name": "Withania somnifera"},
+        indication="Sleep and relaxation",
+        market="FR",
+    )
+    assert out["Overall_Product_Hits"] == 1
+    assert out["Indication_Product_Hits"] == 0
+    assert out["Indication_Market_Search_Status"] == "INSUFFICIENT_SAMPLE"
+    assert out["Commercial_Status_For_Indication"] == "COMMERCIAL_PRESENCE_INDICATION_UNCLEAR"
+    assert "unverified" in out["Commercial_Novelty_Status"].lower()
+
+
+def test_product_claim_matching_selected_indication_is_established_not_new_rd():
+    df = pd.DataFrame([{
+        "Scientific_Name": "Valeriana officinalis",
+        "Source_Type": "Official manufacturer",
+        "Source_Organization": "Example Brand",
+        "Product_Name": "Valerian Sleep",
+        "Brand": "Example Brand",
+        "Claims": "Supports sleep quality and helps reduce sleep latency",
+        "Country_Market": "FR",
+        "Source_URL": "https://example.test/valerian",
+    }])
+    out = MarketIntelligenceEngine(df).evaluate(
+        {"Scientific_Name": "Valeriana officinalis"},
+        indication="Sleep and relaxation",
+        market="FR",
+    )
+    assert out["Indication_Product_Hits"] == 1
+    assert out["Commercial_Status_For_Indication"] == "VERIFIED_MARKETED_FOR_INDICATION"
+    assert "commercial" in out["Commercial_Novelty_Status"].lower()
+    assert "white space" not in out["Commercial_Novelty_Status"].lower()
+
+
+def test_step_ranking_separates_established_repurposing_and_unknown(step_ranking_module):
+    sr = step_ranking_module
+    base = {
+        "Final_RnD_Score": 80,
+        "Evidence_Score_Unified": 70,
+        "Chemistry_Score_Unified": 70,
+        "Target_Match_Score": 70,
+        "Innovation_Score": 70,
+        "Market_Score": 20,
+        "Regulatory_Hits": 0,
+        "Patent_Hits": 0,
+        "Market_Data_Usable": True,
+        "Search_Status": "COMPLETED",
+    }
+    df = pd.DataFrame([
+        {**base, "Product_Hits": 3, "Overall_Product_Hits": 3, "Indication_Product_Hits": 2,
+         "Indication_Market_Search_Status": "COMPLETED",
+         "Commercial_Status_Overall": "VERIFIED_MARKETED",
+         "Commercial_Status_For_Indication": "VERIFIED_MARKETED_FOR_INDICATION"},
+        {**base, "Product_Hits": 3, "Overall_Product_Hits": 3, "Indication_Product_Hits": 0,
+         "Indication_Market_Search_Status": "COMPLETED",
+         "Commercial_Status_Overall": "VERIFIED_MARKETED",
+         "Commercial_Status_For_Indication": "NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES"},
+        {**base, "Product_Hits": 3, "Overall_Product_Hits": 3, "Indication_Product_Hits": 0,
+         "Indication_Market_Search_Status": "INSUFFICIENT_SAMPLE",
+         "Commercial_Status_Overall": "VERIFIED_MARKETED",
+         "Commercial_Status_For_Indication": "COMMERCIAL_PRESENCE_INDICATION_UNCLEAR"},
+    ])
+    out = sr.add_decision_layers(df)
+    assert out.iloc[0]["Decision_Category"] == "Established / commercially active for indication"
+    assert out.iloc[1]["Decision_Category"] == "Indication-repurposing R&D opportunity"
+    assert out.iloc[2]["Decision_Category"] == "Commercially active overall / indication unverified"
+    assert not bool(out.iloc[2]["Is_New_RnD_Opportunity"])

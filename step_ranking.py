@@ -115,6 +115,12 @@ def attach_market_intelligence(ranking, inputs):
 
 
 def add_decision_layers(ranking):
+    """Add conservative scientific + commercial positioning layers.
+
+    Commercial presence is indication-scoped.  A plant sold somewhere for a
+    different/unknown use is NOT automatically an established product for the
+    selected indication, and missing claim coverage is NOT white space.
+    """
     ranking = ranking.copy()
 
     needed_scores = [
@@ -136,6 +142,46 @@ def add_decision_layers(ranking):
 
     if "Market_Status" not in ranking.columns:
         ranking["Market_Status"] = "No market signal yet"
+    if "Search_Status" not in ranking.columns:
+        ranking["Search_Status"] = "SEARCH_NOT_PERFORMED"
+    if "Market_Data_Usable" not in ranking.columns:
+        ranking["Market_Data_Usable"] = False
+    ranking["Market_Data_Usable"] = ranking["Market_Data_Usable"].fillna(False).astype(bool)
+
+    if "Overall_Product_Hits" not in ranking.columns:
+        ranking["Overall_Product_Hits"] = ranking["Product_Hits"]
+    ranking["Overall_Product_Hits"] = pd.to_numeric(
+        ranking["Overall_Product_Hits"], errors="coerce"
+    ).fillna(0)
+
+    if "Indication_Product_Hits" not in ranking.columns:
+        # Legacy market output cannot prove that an overall product hit is for
+        # the selected indication.  Fail closed rather than copying Product_Hits.
+        ranking["Indication_Product_Hits"] = 0
+    ranking["Indication_Product_Hits"] = pd.to_numeric(
+        ranking["Indication_Product_Hits"], errors="coerce"
+    ).fillna(0)
+
+    if "Indication_Market_Search_Status" not in ranking.columns:
+        # With legacy output, zero overall products after a completed search is
+        # also zero indication products; positive overall products remain
+        # indication-unclear unless claim-scoped data exists.
+        overall_status = ranking["Search_Status"].astype(str)
+        ranking["Indication_Market_Search_Status"] = "INSUFFICIENT_SAMPLE"
+        zero_products = ranking["Overall_Product_Hits"] <= 0
+        ranking.loc[
+            zero_products & overall_status.eq("NO_PRODUCTS_FOUND"),
+            "Indication_Market_Search_Status",
+        ] = "NO_PRODUCTS_FOUND"
+        ranking.loc[
+            overall_status.isin(["SEARCH_NOT_PERFORMED", "SOURCE_UNAVAILABLE", "MARKET_NOT_COVERED", "CONNECTOR_NOT_IMPLEMENTED"]),
+            "Indication_Market_Search_Status",
+        ] = overall_status
+
+    if "Chemical_Differentiation_Status" not in ranking.columns:
+        ranking["Chemical_Differentiation_Status"] = ranking.get(
+            "Novelty_Status", pd.Series("", index=ranking.index)
+        )
 
     ranking["Scientific_RnD_Potential"] = (
         ranking["Evidence_Score_Unified"] * 0.30
@@ -144,24 +190,6 @@ def add_decision_layers(ranking):
         + ranking["Innovation_Score"] * 0.15
         + ranking["Final_RnD_Score"] * 0.10
     ).round(1)
-
-    # Phase 8: only market evidence may establish commercial presence.
-    # Regulatory_Hits is retained as a compatibility column but is never
-    # consulted here. Missing/unavailable market data is also not white space.
-    if "Search_Status" not in ranking.columns:
-        ranking["Search_Status"] = "SEARCH_NOT_PERFORMED"
-    if "Market_Data_Usable" not in ranking.columns:
-        ranking["Market_Data_Usable"] = False
-
-    ranking["Is_Marketed"] = (
-        (ranking["Market_Data_Usable"].astype(bool))
-        & (
-            (ranking["Product_Hits"] >= 1)
-            | ranking["Market_Status"].astype(str).str.contains(
-                "Market evidence available|verified marketed product", case=False, na=False
-            )
-        )
-    )
 
     eligibility = ranking.get("Eligibility_Status", pd.Series("", index=ranking.index)).astype(str).str.lower()
     partition = ranking.get("Ranking_Partition", pd.Series("", index=ranking.index)).astype(str).str.lower()
@@ -173,59 +201,119 @@ def add_decision_layers(ranking):
     )
 
     ranking["Scientific_Evidence_Insufficient"] = ranking["Evidence_Score_Unified"] < 20
-    market_search_complete = ranking["Search_Status"].astype(str).isin(["COMPLETED", "NO_PRODUCTS_FOUND"])
+    overall_search_complete = ranking["Search_Status"].astype(str).isin(["COMPLETED", "NO_PRODUCTS_FOUND"])
+    indication_search_complete = ranking["Indication_Market_Search_Status"].astype(str).isin(
+        ["COMPLETED", "NO_PRODUCTS_FOUND"]
+    )
 
-    ranking["Is_New_RnD_Opportunity"] = (
+    overall_explicit = ranking.get(
+        "Commercial_Status_Overall", pd.Series("", index=ranking.index)
+    ).astype(str)
+    indication_explicit = ranking.get(
+        "Commercial_Status_For_Indication", pd.Series("", index=ranking.index)
+    ).astype(str)
+
+    ranking["Is_Marketed_Overall"] = (
+        (ranking["Overall_Product_Hits"] >= 1)
+        & overall_search_complete
+    ) | overall_explicit.eq("VERIFIED_MARKETED")
+
+    ranking["Is_Marketed_For_Indication"] = (
+        (ranking["Indication_Product_Hits"] >= 1)
+        & indication_search_complete
+    ) | indication_explicit.eq("VERIFIED_MARKETED_FOR_INDICATION")
+
+    # Backward-compatible alias.  In an indication-specific R&D ranking,
+    # "Is_Marketed" now means marketed FOR THIS indication, not merely sold for
+    # any purpose.
+    ranking["Is_Marketed"] = ranking["Is_Marketed_For_Indication"]
+
+    scientific_threshold_pass = (
+        (ranking["Scientific_RnD_Potential"] >= 40)
+        | (ranking["Final_RnD_Score"] >= 50)
+        | (
+            (ranking["Chemistry_Score_Unified"] >= 50)
+            & (ranking["Evidence_Score_Unified"] >= 20)
+        )
+        | (
+            (ranking["Target_Match_Score"] >= 50)
+            & (ranking["Chemistry_Score_Unified"] >= 40)
+        )
+    )
+
+    ranking["Is_Indication_Repurposing_Opportunity"] = (
         (~ranking["Is_Hard_No_Go"])
         & (~ranking["Scientific_Evidence_Insufficient"])
-        & (~ranking["Is_Marketed"])
-        & market_search_complete
-        & (
-            (ranking["Scientific_RnD_Potential"] >= 40)
-            | (ranking["Final_RnD_Score"] >= 50)
-            | (
-                (ranking["Chemistry_Score_Unified"] >= 50)
-                & (ranking["Evidence_Score_Unified"] >= 20)
-            )
-            | (
-                (ranking["Target_Match_Score"] >= 50)
-                & (ranking["Chemistry_Score_Unified"] >= 40)
-            )
-        )
+        & scientific_threshold_pass
+        & ranking["Is_Marketed_Overall"]
+        & (~ranking["Is_Marketed_For_Indication"])
+        & indication_search_complete
+    )
+
+    ranking["Is_Commercial_White_Space_Opportunity"] = (
+        (~ranking["Is_Hard_No_Go"])
+        & (~ranking["Scientific_Evidence_Insufficient"])
+        & scientific_threshold_pass
+        & (~ranking["Is_Marketed_Overall"])
+        & ranking["Search_Status"].astype(str).eq("NO_PRODUCTS_FOUND")
+        & indication_search_complete
+    )
+
+    ranking["Is_New_RnD_Opportunity"] = (
+        ranking["Is_Indication_Repurposing_Opportunity"]
+        | ranking["Is_Commercial_White_Space_Opportunity"]
     )
 
     def decide(row):
         if row["Is_Hard_No_Go"]:
             return "Excluded / hard no-go"
-        if row["Scientific_Evidence_Insufficient"] and row["Is_Marketed"]:
-            return "Commercially interesting / scientifically insufficient"
+        if row["Scientific_Evidence_Insufficient"] and row["Is_Marketed_Overall"]:
+            return "Commercially active / scientifically insufficient"
         if row["Scientific_Evidence_Insufficient"]:
             return "Scientifically insufficient"
-        if row["Is_Marketed"]:
-            return "Scientifically supported / commercially active"
-        if row["Is_New_RnD_Opportunity"]:
-            return "New R&D / white-space opportunity"
-        if not market_search_complete.loc[row.name]:
+        if row["Is_Marketed_For_Indication"]:
+            return "Established / commercially active for indication"
+        if row["Is_Indication_Repurposing_Opportunity"]:
+            return "Indication-repurposing R&D opportunity"
+        if row["Is_Commercial_White_Space_Opportunity"]:
+            return "Commercial white-space R&D opportunity"
+        if row["Is_Marketed_Overall"] and not indication_search_complete.loc[row.name]:
+            return "Commercially active overall / indication unverified"
+        if not overall_search_complete.loc[row.name]:
             return "Market data incomplete / scientific assessment separate"
+        if not indication_search_complete.loc[row.name]:
+            return "Indication market data incomplete / no novelty claim"
         return "Do not prioritize now"
 
     def reason(row):
         if row["Is_Hard_No_Go"]:
             return "A hard safety/regulatory gate excludes this candidate; market demand cannot override that gate."
-        if row["Scientific_Evidence_Insufficient"] and row["Is_Marketed"]:
+        if row["Scientific_Evidence_Insufficient"] and row["Is_Marketed_Overall"]:
             return "Commercial presence exists, but scientific evidence is insufficient; market popularity is not efficacy evidence."
         if row["Scientific_Evidence_Insufficient"]:
             return "Scientific evidence is insufficient; market signals cannot create a validated scientific recommendation."
-        if row["Is_Marketed"]:
-            return "Scientific support and commercial presence are both present and are reported as separate dimensions."
-        if row["Is_New_RnD_Opportunity"]:
-            return "Scientific support is present and a completed market search indicates limited verified commercial presence."
-        if row.get("Search_Status") not in ("COMPLETED", "NO_PRODUCTS_FOUND"):
+        if row["Is_Marketed_For_Indication"]:
+            return "Verified market evidence links this plant to the selected indication; treat it as an established/commercial benchmark rather than a new botanical opportunity."
+        if row["Is_Indication_Repurposing_Opportunity"]:
+            return "The plant is commercially active overall, but a completed indication-scoped market assessment found no verified product for the selected indication in covered sources."
+        if row["Is_Commercial_White_Space_Opportunity"]:
+            return "A completed covered-source market search found no verified commercial product, while the scientific threshold for R&D prioritization is met."
+        if row["Is_Marketed_Overall"]:
+            return "Commercial products exist, but product claims are insufficient to determine whether the selected indication is already marketed; no repurposing/white-space claim is made."
+        if not overall_search_complete.loc[row.name]:
             return "Market coverage is incomplete or unavailable; no commercial-opportunity inference is made from missing data."
+        if not indication_search_complete.loc[row.name]:
+            return "Overall market evidence was found, but selected-indication claim coverage is insufficient; commercial novelty remains unassessed."
         return "Current scientific and market signals do not support prioritization."
 
     ranking["Decision_Category"] = ranking.apply(decide, axis=1)
     ranking["Decision_Reason"] = ranking.apply(reason, axis=1)
+
+    # Ensure the explicit commercial labels are present even for legacy rows.
+    if "Commercial_Novelty_Status" not in ranking.columns:
+        ranking["Commercial_Novelty_Status"] = "Commercial novelty not assessed"
+    if "Commercial_Positioning" not in ranking.columns:
+        ranking["Commercial_Positioning"] = ranking["Decision_Category"]
 
     return ranking
 
@@ -234,17 +322,19 @@ def split_ranking_sections(ranking):
     if "Decision_Category" not in ranking.columns:
         ranking = add_decision_layers(ranking)
 
-    marketed = ranking[
-        ranking["Decision_Category"] == "Already marketed / commercial candidate"
-    ]
+    marketed_categories = {
+        "Established / commercially active for indication",
+        "Commercially active overall / indication unverified",
+        "Commercially active / scientifically insufficient",
+    }
+    rd_categories = {
+        "Indication-repurposing R&D opportunity",
+        "Commercial white-space R&D opportunity",
+    }
 
-    new_rd = ranking[
-        ranking["Decision_Category"] == "New R&D / white-space opportunity"
-    ]
-
-    low = ranking[
-        ranking["Decision_Category"] == "Do not prioritize now"
-    ]
+    marketed = ranking[ranking["Decision_Category"].isin(marketed_categories)]
+    new_rd = ranking[ranking["Decision_Category"].isin(rd_categories)]
+    low = ranking[~ranking["Decision_Category"].isin(marketed_categories | rd_categories)]
 
     return marketed, new_rd, low
 
@@ -264,8 +354,15 @@ def show_table(title, df):
         "Region",
         "Decision_Category",
         "Decision_Reason",
+        "Commercial_Positioning",
+        "Commercial_Novelty_Status",
+        "Chemical_Differentiation_Status",
+        "Commercial_Status_Overall",
+        "Commercial_Status_For_Indication",
         "Market_Score",
         "Market_Status",
+        "Overall_Product_Hits",
+        "Indication_Product_Hits",
         "Product_Hits",
         "Regulatory_Hits",
         "Patent_Hits",

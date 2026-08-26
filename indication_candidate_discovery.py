@@ -530,9 +530,24 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                     "Detected_Indications", "detected_indications",
                     "Indication", "indication", "Disease", "disease", "Condition", "condition",
                 ]),
-                "tier2_text": " ".join(t for t in (
+                # Direct vs indirect evidence fix: the record's OWN reported
+                # outcome (what the study actually found/measured) is kept
+                # separate from its mechanism/target ANNOTATION (what
+                # biological pathway is implicated). A query term appearing
+                # only in the mechanism/target annotation ("GABAergic
+                # system", "sedative") is indirect/mechanistic support, not
+                # a directly reported result, and general_indication_
+                # relevance.py's outcome_text parameter (below) now scores
+                # the two differently instead of pooling them into one
+                # "tier2" blob that let either trigger the same "direct
+                # evidence" strength. This is generalizable to every
+                # indication -- it never inspects which words appear, only
+                # which FIELD they came from.
+                "outcome_text": " ".join(t for t in (
                     _structured_text(_pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"])),
                     _structured_text(_pick_from_row(engine, row, ["Result_Direction", "result_direction"])),
+                ) if t),
+                "tier2_text": " ".join(t for t in (
                     _pick_from_row(engine, row, ["Mechanism", "mechanism"]),
                     _pick_from_row(engine, row, ["Target", "target"]),
                 ) if t),
@@ -617,32 +632,73 @@ def _record_evidence_characteristics(engine, record: dict) -> dict:
     explicit_level = str(record.get("evidence_level") or "").strip()
     explicit_hierarchy = str(record.get("evidence_hierarchy") or "").strip()
     level = explicit_level or (engine._evidence_level(text) if text else "Unknown")
-    hierarchy = explicit_hierarchy or level
-    if text and not explicit_hierarchy:
+    classified_hierarchy = None
+    if text:
         try:
             from evidence_hierarchy_classifier import classify_evidence_hierarchy
-            hierarchy = classify_evidence_hierarchy(text)
+            classified_hierarchy = classify_evidence_hierarchy(text)
         except Exception:
-            pass
+            classified_hierarchy = None
+    hierarchy = explicit_hierarchy or classified_hierarchy or level
 
     if registry_without_results:
         level = "Registry record without reported results"
         hierarchy = "Registry / protocol only"
+        classified_hierarchy = None
 
     context = _norm(f"{level} {hierarchy} {text}")
-    human = (not registry_without_results) and any(t in context for t in (
-        "clinical", "human", "randomized", "randomised", "meta analysis",
-        "systematic review", "controlled trial",
-    ))
-    preclinical = any(t in context for t in (
-        "in vivo", "animal", "in vitro", "ex vivo", "preclinical", "cell",
-    ))
+
+    # Study-type/evidence-hierarchy fix (generalizable to every indication,
+    # no hardcoded plant/indication vocabulary): `human`/`preclinical` used
+    # to be decided by a bare substring check over the WHOLE pooled record
+    # text ("human" in context). That produces real false positives -- e.g.
+    # "human keratinocytes" or "human liver microsomes" (both in-vitro
+    # studies) contain the literal word "human" without being clinical
+    # evidence at all, so such a record was previously scored as "Direct
+    # human evidence" (the same tier as a genuine RCT). classify_evidence_
+    # hierarchy() (evidence_hierarchy_classifier.py) is already built,
+    # phrase-aware (requires "human trial"/"human study"/"clinical study",
+    # not a bare "human" substring) and checks tiers strongest-first, but
+    # was previously computed only for the display column
+    # (Evidence_Hierarchy_Detail) and never consulted by scoring. It is now
+    # the authoritative source for the human/preclinical split whenever it
+    # recognizes a tier; the previous substring check is kept ONLY as a
+    # fallback for text the classifier doesn't recognize at all, so
+    # existing behavior for unclassifiable free text is unchanged.
+    _HUMAN_HIERARCHY_TIERS = {
+        "Systematic review / meta-analysis", "Clinical trial",
+        "Observational human evidence",
+    }
+    _PRECLINICAL_HIERARCHY_TIERS = {
+        "Validated ex vivo / in vivo", "In vitro / mechanistic",
+    }
+    if classified_hierarchy in _HUMAN_HIERARCHY_TIERS:
+        human = not registry_without_results
+        preclinical = False
+    elif classified_hierarchy in _PRECLINICAL_HIERARCHY_TIERS:
+        human = False
+        preclinical = True
+    elif classified_hierarchy is not None:
+        # Traditional-use/monograph or occurrence/analytical-chemistry-only
+        # -- the classifier recognized a tier, and it is neither human
+        # clinical nor preclinical.
+        human = False
+        preclinical = False
+    else:
+        human = (not registry_without_results) and any(t in context for t in (
+            "clinical", "human", "randomized", "randomised", "meta analysis",
+            "systematic review", "controlled trial",
+        ))
+        preclinical = any(t in context for t in (
+            "in vivo", "animal", "in vitro", "ex vivo", "preclinical", "cell",
+        ))
     negative = any(t in result_direction for t in (
         "negative", "no effect", "no significant", "null", "worsened", "harm",
     ))
     return {
         "level": level,
         "hierarchy": hierarchy,
+        "hierarchy_tier": classified_hierarchy,
         "human": human,
         "preclinical": preclinical,
         "registry_without_results": registry_without_results,
@@ -807,9 +863,11 @@ def discover_indication_candidates(
         embedding_similarity = (
             embedding_by_record_id.get(str(record.get("record_id"))) if record else None
         )
+        outcome_text = record.get("outcome_text", "") if record else ""
         return score_record_relevance_hybrid(
             relevance_profile, tier1, tier2, tier3, assist_terms,
             embedding_similarity=embedding_similarity,
+            outcome_text=outcome_text,
         )
 
     _MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
@@ -976,6 +1034,7 @@ def discover_indication_candidates(
                 if record is not None else {
                     "level": "Profile-level hypothesis",
                     "hierarchy": "Profile-level hypothesis",
+                    "hierarchy_tier": None,
                     "human": False,
                     "preclinical": False,
                     "registry_without_results": False,
@@ -985,6 +1044,7 @@ def discover_indication_candidates(
             _section_add("characteristics", time.perf_counter() - _t)
             level = characteristics["level"]
             hierarchy = characteristics["hierarchy"]
+            hierarchy_tier = characteristics.get("hierarchy_tier")
             human = characteristics["human"]
             preclinical = characteristics["preclinical"]
             registry_without_results = characteristics["registry_without_results"]
@@ -1143,12 +1203,34 @@ def discover_indication_candidates(
                 decision = "Exploratory registered study"
                 call = "Hold — await reported results"
             elif record_direct and human:
-                evidence_points = 35
+                # Evidence-hierarchy fix (generalizable to every indication):
+                # previously every human-associated record earned the same
+                # flat 35 points regardless of study type, so a single case
+                # report scored identically to a Cochrane systematic review.
+                # classify_evidence_hierarchy() (evidence_hierarchy_
+                # classifier.py) already distinguishes these; its tier is
+                # now used to grade this bucket instead of collapsing it.
+                # Ten weak observational mentions still cannot out-rank one
+                # strong review, because this graduation applies PER
+                # RECORD -- it does not change how many records a plant can
+                # accumulate.
+                evidence_points = {
+                    "Systematic review / meta-analysis": 35,
+                    "Clinical trial": 32,
+                    "Observational human evidence": 28,
+                }.get(hierarchy_tier, 30)
                 tier = "Direct human evidence"
                 decision = "Indication-based R&D candidate"
                 call = "Investigate"
             elif record_direct and preclinical:
-                evidence_points = 27
+                # Same fix, preclinical bucket: a validated in-vivo/animal
+                # model is stronger evidence than an in-vitro/mechanistic
+                # (receptor-binding, cell-line) finding, which the previous
+                # flat 27 did not reflect.
+                evidence_points = {
+                    "Validated ex vivo / in vivo": 27,
+                    "In vitro / mechanistic": 20,
+                }.get(hierarchy_tier, 24)
                 tier = "Direct preclinical evidence"
                 decision = "Indication-based R&D candidate"
                 call = "Investigate"

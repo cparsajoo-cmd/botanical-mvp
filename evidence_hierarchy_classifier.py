@@ -52,6 +52,17 @@ _TIERS = [
         "double-blind", "double blind", "placebo-controlled",
         "placebo controlled", "rct", "phase i trial", "phase ii trial",
         "phase iii trial", "clinicaltrials.gov",
+        # General RCT phrasings that insert "human"/"clinical" between
+        # "controlled"/"randomized" and "trial" (e.g. "a randomized
+        # controlled human trial") — these are just as much a randomized
+        # controlled trial as the contiguous phrase above; the word order
+        # varies with the author's phrasing, not with the indication, so
+        # this generalizes to every indication rather than encoding any
+        # one of them.
+        "randomized controlled human trial", "randomised controlled human trial",
+        "randomized human trial", "randomised human trial",
+        "controlled human trial", "controlled clinical trial",
+        "human randomized trial", "human randomised trial",
     ]),
     ("Observational human evidence", [
         "cohort study", "case-control study", "observational study",

@@ -193,6 +193,55 @@ def _literature_quality_signals(title, abstract, source_type="", year=None):
     }
 
 
+def _alias_words(alias):
+    return tuple(alias.split())
+
+
+def _build_alias_extension_map(alias_catalog):
+    """Map each (owner, common-name alias) to the set of LONGER common-name
+    aliases -- owned by a DIFFERENT plant -- that begin with it as a whole
+    word sequence.
+
+    General fix for a species/entity-resolution bug: a single-word common
+    name like "lemon" (Citrus limon) is a literal whole-word prefix of an
+    unrelated plant's multi-word common name, "lemon verbena" (Aloysia
+    citrodora). Because alias matching below checks for `f" {alias} "` as a
+    substring, any literature mentioning "lemon verbena" ALSO satisfies the
+    substring check for the bare word "lemon" -- silently attributing
+    Aloysia citrodora's evidence to Citrus limon. This is not specific to
+    lemon/lemon verbena: the same shape of bug affects any pair of plants
+    whose common names share a whole-word prefix (e.g. a plant named
+    "X" vs another named "X Y"). The fix only inspects which ALIAS STRINGS
+    the catalogue itself already contains -- no plant-specific vocabulary
+    is added -- so it generalizes to every such pair without new code.
+
+    Scientific names are excluded here: they are unambiguous taxonomic
+    identifiers (see botanical_taxonomy.py), so this guard is only needed
+    for common names, which is exactly where ambiguity can arise.
+    """
+    common_aliases = []
+    for scientific_name, aliases in alias_catalog.items():
+        for alias, alias_type in aliases:
+            if alias_type == "common":
+                common_aliases.append((_alias_words(alias), alias, scientific_name))
+
+    by_first_word = defaultdict(list)
+    for words, alias, owner in common_aliases:
+        if words:
+            by_first_word[words[0]].append((words, alias, owner))
+
+    extensions = defaultdict(set)
+    for words_a, alias_a, owner_a in common_aliases:
+        if not words_a:
+            continue
+        for words_b, alias_b, owner_b in by_first_word.get(words_a[0], ()):
+            if owner_b == owner_a:
+                continue
+            if len(words_b) > len(words_a) and words_b[: len(words_a)] == words_a:
+                extensions[(owner_a, alias_a)].add(alias_b)
+    return extensions
+
+
 def _extract_catalogued_plants(records, alias_catalog, indication_terms, dosage_form=""):
     """Extract and quality-rank catalogue-validated plant entities.
 
@@ -220,6 +269,8 @@ def _extract_catalogued_plants(records, alias_catalog, indication_terms, dosage_
         dosage_terms = ["extract", "standardized extract", "standardised extract", "hydroalcoholic"]
     elif "essential oil" in dosage_norm:
         dosage_terms = ["essential oil", "volatile oil", "distillation"]
+
+    alias_extension_map = _build_alias_extension_map(alias_catalog)
 
     for index, record in enumerate(records):
         raw_title = record.get("Title") or record.get("Source_Title") or ""
@@ -249,6 +300,20 @@ def _extract_catalogued_plants(records, alias_catalog, indication_terms, dosage_
                 abstract_hit = f" {alias} " in f" {abstract} "
                 if not title_hit and not abstract_hit:
                     continue
+
+                # Species/entity-resolution guard (see
+                # _build_alias_extension_map): if this occurrence is
+                # actually part of a longer common name owned by a
+                # DIFFERENT plant (e.g. this "lemon" hit is really inside
+                # "lemon verbena"), it belongs to that other plant, not
+                # this one -- skip it here rather than crediting both.
+                if alias_type == "common":
+                    conflicting = alias_extension_map.get((scientific_name, alias))
+                    if conflicting and any(
+                        f" {ext} " in f" {title} " or f" {ext} " in f" {abstract} "
+                        for ext in conflicting
+                    ):
+                        continue
 
                 score = 6.0 if title_hit else 2.0
                 if alias_type == "scientific":

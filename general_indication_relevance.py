@@ -280,12 +280,16 @@ _CONFIDENCE_BY_TYPE = {
 }
 
 
+_OUTCOME_TEXT_UNSET = object()
+
+
 def score_record_relevance(
     profile: IndicationProfile,
     tier1_text: object = "",
     tier2_text: object = "",
     tier3_text: object = "",
     assist_terms: Sequence[str] = (),
+    outcome_text: object = _OUTCOME_TEXT_UNSET,
 ) -> RelevanceMatch:
     """Score one evidence record's indication relevance from field-tiered text.
 
@@ -303,6 +307,33 @@ def score_record_relevance(
     and a literal match always outranks a corpus-learned (non-literal)
     expansion-term match, wherever either is found.
 
+    ``outcome_text`` (optional, additive parameter -- direct/indirect
+    evidence fix): the record's OWN reported-outcome fields only (e.g.
+    Primary_Outcome / Result_Direction), kept separate from ``tier2_text``
+    (which, for callers that adopt this parameter, should now carry
+    mechanism/target ANNOTATION fields only -- e.g. Mechanism / Target).
+    A literal query-phrase match inside ``outcome_text`` means the record
+    directly reports a result for the requested indication, so it is scored
+    exactly like an explicit-field match (Tier 1-adjacent strength). A
+    literal match found only in ``tier2_text`` no longer receives that same
+    strength by itself: mentioning the query term in a mechanistic/target
+    annotation ("GABAergic system", "sedative") is evidence of biological
+    plausibility, not of a directly reported clinical/behavioral outcome, so
+    it falls through to the weaker outcome/mechanism-support handling below
+    (rule 4). This mirrors, generically for any indication, the distinction
+    between "reduced sleep latency" (direct outcome) and "GABA modulation"
+    (indirect mechanism).
+
+    A caller that has adopted the split passes ``outcome_text`` explicitly
+    on every call, even when a given record has no reported outcome at all
+    (``outcome_text=""``) -- that case must still be scored as indirect, not
+    silently fall back to the old pooled-tier2 behavior, so an *unset*
+    sentinel (the default) is distinguished from an explicitly empty
+    string. Only a caller that omits the parameter entirely gets the
+    old, byte-identical behavior (tier2_text alone can trigger the strong
+    literal-match path) -- every existing caller that has not adopted the
+    split is unaffected.
+
     ``assist_terms`` is the ONLY place a curated vocabulary (e.g.
     indication_semantics.py) may contribute. It is consulted only after the
     corpus-adaptive engine finds nothing at all, its contribution is capped
@@ -310,9 +341,22 @@ def score_record_relevance(
     in ``reason`` -- it never overrides or is required for a corpus-adaptive
     match.
     """
+    outcome_text_provided = outcome_text is not _OUTCOME_TEXT_UNSET
     m1 = profile.match(tier1_text)
     m2 = profile.match(tier2_text)
     m3 = profile.match(tier3_text)
+    m_outcome = profile.match(outcome_text) if outcome_text_provided and outcome_text else None
+    # Weaker/corpus-semantic scoring (rule 4 below) pools outcome_text back
+    # in with tier2_text: a corpus-learned or partial-literal match
+    # expressed only in the record's own outcome field should still be able
+    # to support exploratory/mechanistic-tier relevance, exactly as it did
+    # before this parameter existed. This pooling never grants the "direct
+    # evidence" strength decided by rules 1b/2 above, which examine
+    # outcome_text and tier2_text separately for that purpose.
+    m2_for_semantic = (
+        profile.match(f"{tier2_text} {outcome_text}".strip())
+        if outcome_text_provided and outcome_text else m2
+    )
     literal_types = ("direct lexical", "partial lexical")
 
     # 1. Tier 1 full/exact literal match -- the strongest possible signal.
@@ -324,12 +368,30 @@ def score_record_relevance(
             _CONFIDENCE_BY_TYPE[MATCH_EXACT_INDICATION],
         )
 
+    # 1b. A literal match in the record's own reported outcome is a directly
+    #     stated result for the requested indication -- as strong as an
+    #     explicit indication field, and strictly stronger than a match found
+    #     only in a mechanism/target annotation (handled below).
+    if m_outcome is not None and m_outcome.match_type == "direct lexical":
+        return RelevanceMatch(
+            round(min(_TIER2_CEILING, m_outcome.score * 0.85), 4), MATCH_EXPLICIT_FIELD_OVERLAP,
+            m_outcome.matched_terms,
+            "Exact indication phrase matched the record's own reported outcome "
+            f"(primary_outcome/result_direction); matched={', '.join(m_outcome.matched_terms) or 'query phrase'}",
+            _CONFIDENCE_BY_TYPE[MATCH_EXPLICIT_FIELD_OVERLAP],
+        )
+
     # 2. Any literal (non-corpus-derived) full/exact match found only in Tier
-    #    2 or Tier 3 -- most real evidence names its indication in a title or
-    #    abstract, not a separate structured field, so this is still strong,
-    #    directly-stated evidence. Scored below every Tier 1 result.
-    if m2.match_type == "direct lexical" or m3.match_type == "direct lexical":
-        best = m2 if m2.match_type == "direct lexical" else m3
+    #    3 (title/abstract/source text) -- most real evidence names its
+    #    indication in a title or abstract, not a separate structured field,
+    #    so this is still strong, directly-stated evidence. Scored below
+    #    every Tier 1 result. A literal match found ONLY in tier2_text
+    #    (mechanism/target annotations, once a caller supplies outcome_text
+    #    separately) is deliberately NOT included here -- see rule 1b/4 and
+    #    the outcome_text docstring above.
+    _tier2_counts_as_strong_literal = (m2.match_type == "direct lexical") and not outcome_text_provided
+    if _tier2_counts_as_strong_literal or m3.match_type == "direct lexical":
+        best = m2 if _tier2_counts_as_strong_literal else m3
         tier_label = "outcome/mechanism fields" if best is m2 else "source text (title/abstract/notes)"
         score = round(min(_TIER2_CEILING if best is m2 else _TIER2_CEILING - 0.05, best.score * 0.85), 4)
         return RelevanceMatch(
@@ -348,11 +410,13 @@ def score_record_relevance(
             _CONFIDENCE_BY_TYPE[MATCH_EXPLICIT_FIELD_OVERLAP],
         )
 
-    # 4. Tier 2 partial literal overlap, or corpus-learned terms in Tier 2.
-    if m2.score > 0:
-        score = round(min(_TIER2_CEILING, m2.score * 0.85), 4)
+    # 4. Tier 2 partial literal overlap, or corpus-learned terms in Tier 2
+    #    (pooled with outcome_text for this weaker path -- see
+    #    m2_for_semantic above).
+    if m2_for_semantic.score > 0:
+        score = round(min(_TIER2_CEILING, m2_for_semantic.score * 0.85), 4)
         match_type = (
-            MATCH_OUTCOME_OR_MECHANISM_SUPPORT if m2.match_type in literal_types
+            MATCH_OUTCOME_OR_MECHANISM_SUPPORT if m2_for_semantic.match_type in literal_types
             else MATCH_CORPUS_DERIVED_SEMANTIC
         )
         reason = (
@@ -361,8 +425,8 @@ def score_record_relevance(
             else "Corpus-learned terms co-occurring with the query matched in outcome/mechanism fields"
         )
         return RelevanceMatch(
-            score, match_type, m2.matched_terms,
-            f"{reason}; matched={', '.join(m2.matched_terms)}",
+            score, match_type, m2_for_semantic.matched_terms,
+            f"{reason}; matched={', '.join(m2_for_semantic.matched_terms)}",
             _CONFIDENCE_BY_TYPE[match_type],
         )
 
@@ -481,6 +545,7 @@ def score_record_relevance_hybrid(
     assist_terms: Sequence[str] = (),
     embedding_similarity: float | None = None,
     weights: dict[str, float] | None = None,
+    outcome_text: object = _OUTCOME_TEXT_UNSET,
 ) -> HybridScore:
     """Score one record combining the deterministic lexical/corpus-adaptive
     engine with an optional embedding-similarity signal.
@@ -533,7 +598,12 @@ def score_record_relevance_hybrid(
     # partial or Tier 2/3 full -- delegate entirely to the deterministic
     # engine's own strong-match handling (identical priority ordering to
     # score_record_relevance(), reused rather than re-implemented).
-    deterministic = score_record_relevance(profile, tier1_text, tier2_text, tier3_text, assist_terms)
+    # outcome_text is forwarded unchanged so a caller that has adopted the
+    # direct/indirect split (see score_record_relevance's outcome_text
+    # docstring) gets the same distinction here.
+    deterministic = score_record_relevance(
+        profile, tier1_text, tier2_text, tier3_text, assist_terms, outcome_text=outcome_text,
+    )
     if deterministic.match_type in (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP):
         return HybridScore(
             deterministic.score, deterministic.match_type, deterministic.matched_terms,

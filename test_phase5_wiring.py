@@ -55,9 +55,20 @@ def test_scoring_fields_are_unchanged_by_the_phase5_wiring():
     engine = _engine(candidate_data, evidence_rows)
     out = engine.run("type 2 diabetes", discovery_mode="indication")
     row = out.iloc[0]
-    # These exact values match what Phase 3's formula produces for
-    # direct+human evidence — unchanged by adding the Phase 5 columns.
-    assert row["Score_Breakdown"]["Direct indication evidence"] == 35
+    # Root-cause fix (evidence-hierarchy wiring, see indication_candidate_
+    # discovery.py::_record_evidence_characteristics /
+    # evidence_hierarchy_classifier.py): "Direct indication evidence" for
+    # human clinical evidence is no longer a flat 35 regardless of study
+    # type -- it is now graduated by the record's classified hierarchy
+    # tier (Systematic review/meta-analysis=35, Clinical trial=32,
+    # Observational human evidence=28, unclassified human=30), so a single
+    # RCT-worded record (this fixture) genuinely reporting a randomized
+    # controlled human trial now scores 32, reserving 35 for a systematic
+    # review/meta-analysis. This assertion was updated to match that
+    # intentional behavior change; Phase 5's own claim (normalization/
+    # validation are additive and do not themselves alter scoring) is
+    # untouched -- the evidence-hierarchy wiring is a separate, later fix.
+    assert row["Score_Breakdown"]["Direct indication evidence"] == 32
     assert row["Score_Breakdown"]["Baseline development potential"] == 10
 
 

@@ -189,7 +189,7 @@ def _record_text(row: pd.Series) -> str:
     )
     values = []
     for col in preferred:
-        if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip():
+        if col in row and pd.notna(row.get(col)) and str(row.get(col)).strip():
             values.append(str(row.get(col)))
 
     # A record can exist solely to carry structured safety/interaction JSONB
@@ -210,7 +210,7 @@ def _record_text(row: pd.Series) -> str:
         "Interactions", "interactions",
     )
     for col in structured_cols:
-        if col in row.index:
+        if col in row:
             rendered = _structured_text(row.get(col))
             if rendered:
                 values.append(rendered)
@@ -454,7 +454,20 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
     for frame in frames:
         if not isinstance(frame, pd.DataFrame) or frame.empty:
             continue
-        for idx, row in frame.iterrows():
+        # Root-cause fix (2026-08-26): frame.iterrows() builds a full
+        # pandas.Series (with its own index/dtype machinery) for every
+        # single row, purely so the loop body can call row.get(col) a
+        # few times. Measured as the dominant cost of this function
+        # (12.2s of 22,500 rows in a prior offline benchmark at
+        # production scale). zip(frame.index, frame.to_dict("records"))
+        # preserves the exact same (idx, row) pairs -- idx is still the
+        # frame's original index, row is now a plain dict -- but skips
+        # the per-row Series construction. Every consumer below
+        # (_pick_from_row/engine._pick, _record_text, _record_source,
+        # _record_id) already calls only row.get(name, ...), which is
+        # identical on a dict and a Series, so this is a pure speed-up,
+        # not a behavior change.
+        for idx, row in zip(frame.index, frame.to_dict("records")):
             _rows_examined += 1
             row_plant = _pick_from_row(engine, row, list(plant_cols))
             plant_key = _norm(row_plant)
@@ -927,7 +940,13 @@ def discover_indication_candidates(
         f"Scoring 0 / {_total_candidate_plants} plants…",
     )
 
-    for _, item in candidates.iterrows():
+    # Root-cause fix (2026-08-26): same Series-construction overhead as
+    # _build_plant_evidence_index above, at production scale (~2,100
+    # candidate plants). The only consumer of `item` below is
+    # engine._pick(item, [...]), which only ever calls .get(name, ""),
+    # identical on a dict and on a Series -- pure speed-up, no behavior
+    # change.
+    for item in candidates.to_dict("records"):
         _plants_processed += 1
         plant = engine._pick(item, ["Scientific_Name", "scientific_name", "Plant", "plant"])
         if not plant:

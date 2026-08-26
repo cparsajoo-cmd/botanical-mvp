@@ -78,6 +78,25 @@ def _norm(v):
     return _clean(v).lower()
 
 
+def _plant_key_variants(v):
+    """Return stable lookup keys for a structured plant-name field.
+
+    Market evidence should carry a structured scientific/common plant name.
+    We index the full normalized value and, for scientific names that include
+    an author suffix (for example ``Valeriana officinalis L.``), the leading
+    binomial.  This gives tolerant structured matching without ever scanning
+    the whole market table per candidate.
+    """
+    text = _norm(v)
+    if not text:
+        return ()
+    keys = {text}
+    tokens = re.findall(r"[a-z0-9×x-]+", text)
+    if len(tokens) >= 2:
+        keys.add(" ".join(tokens[:2]))
+    return tuple(keys)
+
+
 def _pick(row, *names):
     for name in names:
         if name in row and _clean(row.get(name)):
@@ -398,18 +417,10 @@ class MarketIntelligenceEngine:
                 # Preserve the historical fail-closed behavior.
                 self._market_rows = pd.DataFrame()
 
-        # Per-market cache.  Each value is a dict containing:
-        #   rows: scoped market dataframe
-        #   haystack: legacy substring-search fallback
-        #   exact_index: normalized plant/common-name -> row-index set
-        #   status: MarketSearchStatus
-        #
-        # The crucial performance property is that evaluate() normally uses
-        # ``exact_index`` (O(1)-style dictionary lookup) instead of running
-        # ``haystack.str.contains`` across every market row for every candidate.
-        # The substring scan is retained only as a compatibility fallback when
-        # a structured source stores a decorated value rather than an exact
-        # plant/common name.
+        # Per-market cache.  Candidate matching is STRICTLY index based in
+        # Step 5: no per-candidate ``str.contains`` fallback is allowed.  The
+        # previous fallback reintroduced candidates x market_rows behavior for
+        # the common case where a candidate simply had no commercial record.
         self._scope_cache = {}
         self._candidate_match_cache = {}
 
@@ -424,7 +435,6 @@ class MarketIntelligenceEngine:
             if scoped.empty:
                 result = {
                     "rows": scoped,
-                    "haystack": None,
                     "exact_index": {},
                     "status": MarketSearchStatus.MARKET_NOT_COVERED,
                 }
@@ -438,7 +448,6 @@ class MarketIntelligenceEngine:
         if not searchable_cols:
             result = {
                 "rows": market_rows,
-                "haystack": None,
                 "exact_index": {},
                 "status": MarketSearchStatus.INSUFFICIENT_SAMPLE,
             }
@@ -446,27 +455,20 @@ class MarketIntelligenceEngine:
             return result
 
         searchable = market_rows[searchable_cols].fillna("").astype(str)
-        normalized = searchable.copy()
-        for col in searchable_cols:
-            normalized[col] = normalized[col].str.strip().str.lower()
 
-        # Build the direct lookup once per market.  Most structured market
-        # evidence has exact Scientific_Name/Common_Name fields, so virtually
-        # all candidate matching should terminate here without a dataframe scan.
+        # Build a structured lookup once per market.  Each source value gets
+        # its full normalized key plus a scientific-binomial key when present,
+        # so author-suffixed names still match without a table-wide substring
+        # scan.  A missing key is a constant-time "no row in covered sources"
+        # result, not a reason to rescan every market row.
         exact_index = {}
         for col in searchable_cols:
-            series = normalized[col]
-            nonblank = series[~series.isin({"", "nan", "none", "null"})]
-            if nonblank.empty:
-                continue
-            for value, idxs in nonblank.groupby(nonblank, sort=False).groups.items():
-                exact_index.setdefault(value, set()).update(idxs)
+            for idx, value in searchable[col].items():
+                for key_variant in _plant_key_variants(value):
+                    exact_index.setdefault(key_variant, set()).add(idx)
 
-        # Keep one normalized joined series for rare compatibility fallbacks.
-        haystack = normalized.agg(" ".join, axis=1)
         result = {
             "rows": market_rows,
-            "haystack": haystack,
             "exact_index": exact_index,
             "status": MarketSearchStatus.COMPLETED,
         }
@@ -474,14 +476,19 @@ class MarketIntelligenceEngine:
         return result
 
     def _matched_market_rows(self, scope, terms, market: str):
-        """Return candidate-specific rows without rescanning the full table.
+        """Return candidate-specific rows using only the prebuilt index.
 
-        Exact structured plant/common-name matches are dictionary lookups.  A
-        full substring scan is used only if no exact indexed value exists, which
-        preserves compatibility with older/decorated market records while
-        removing the candidates × market_rows hot path for normal data.
+        No dataframe-wide substring fallback is permitted here.  Structured
+        market rows are indexed by normalized full name and scientific
+        binomial, which is sufficient for the production Step 5 path and keeps
+        a true O(candidates + market_rows) matching profile.
         """
-        normalized_terms = tuple(sorted({_norm(t) for t in terms if _norm(t)}))
+        normalized_terms = tuple(sorted({
+            key
+            for term in terms
+            for key in _plant_key_variants(term)
+            if key
+        }))
         cache_key = (_norm(market), normalized_terms)
         if cache_key in self._candidate_match_cache:
             idxs = self._candidate_match_cache[cache_key]
@@ -491,15 +498,6 @@ class MarketIntelligenceEngine:
         exact_index = scope["exact_index"]
         for term in normalized_terms:
             idxs.update(exact_index.get(term, ()))
-
-        if not idxs and scope["haystack"] is not None:
-            # Compatibility fallback only.  Because this runs only when the
-            # structured exact index has no match, it should be rare in normal
-            # Step 5 operation.
-            mask = pd.Series(False, index=scope["rows"].index)
-            for term in normalized_terms:
-                mask |= scope["haystack"].str.contains(term, regex=False, na=False)
-            idxs.update(scope["rows"].index[mask].tolist())
 
         frozen = tuple(idxs)
         self._candidate_match_cache[cache_key] = frozen

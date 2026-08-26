@@ -28,6 +28,16 @@ def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
 
 
+# Step 5 performance guardrails.  Commercial evidence can contribute at most
+# five points to the authoritative plant-level score, so candidates more than
+# this margin below the current top-50 boundary cannot enter the final top 50
+# solely because of market enrichment.  We still keep a generous hard cap for
+# pathological tie-heavy datasets.
+_STEP5_FINAL_MAX_CANDIDATES = 50
+_STEP5_COMMERCIAL_SCORE_MARGIN = 5.0
+_STEP5_COMMERCIAL_MAX_PLANTS = 120
+
+
 
 def _unique_nonempty(values):
     seen = set()
@@ -109,7 +119,7 @@ def _get_evidence_df():
 
 
 def _attach_commercial_market_intelligence(
-    result_df, *, evidence_df, indication, dosage_form, market
+    result_df, *, evidence_df, indication, dosage_form, market, candidate_plants=None
 ):
     """Attach one indication-aware commercial snapshot per candidate plant.
 
@@ -131,11 +141,59 @@ def _attach_commercial_market_intelligence(
         return out
 
     engine = MarketIntelligenceEngine(evidence_df)
-    plants = [
-        str(v).strip() for v in out["Alternative_Plant"].dropna().unique().tolist()
-        if str(v).strip()
-    ]
+
+    # IMPORTANT PERFORMANCE RULE: Step 5 passes a bounded pre-shortlist here.
+    # Never silently expand that back to every raw candidate plant.
+    if candidate_plants is None:
+        plants = [
+            str(v).strip() for v in out["Alternative_Plant"].dropna().unique().tolist()
+            if str(v).strip()
+        ]
+    else:
+        allowed = {str(v).strip().lower() for v in candidate_plants if str(v).strip()}
+        plants = [
+            str(v).strip() for v in out["Alternative_Plant"].dropna().unique().tolist()
+            if str(v).strip() and str(v).strip().lower() in allowed
+        ]
     if not plants:
+        return out
+
+    # If there is no structured market evidence at all, do not call evaluate()
+    # once per candidate just to rediscover the same SEARCH_NOT_PERFORMED state.
+    # Populate the honest neutral fields in one vectorized assignment instead.
+    if getattr(engine, "_market_rows", pd.DataFrame()).empty:
+        indication_status = "UNKNOWN" if str(indication or "").strip() else "NOT_REQUESTED"
+        defaults = {
+            "Commercial_Market_Status": "Search not performed",
+            "Commercial_Search_Status": "SEARCH_NOT_PERFORMED",
+            "Commercial_Market_Data_Usable": False,
+            "Commercial_Market_Score": None,
+            "Commercial_Market_Saturation": "UNKNOWN",
+            "Commercial_Status_Overall": "UNKNOWN",
+            "Commercial_Status_For_Indication": indication_status,
+            "Commercial_Novelty_Status": "Commercial novelty not assessed",
+            "Commercial_Positioning": "Market data incomplete — do not classify as new commercial R&D",
+            "Overall_Product_Hits": 0,
+            "Indication_Product_Hits": 0,
+            "Indication_Brand_Count": 0,
+            "Indication_Market_Saturation": "UNKNOWN",
+            "Indication_Market_Search_Status": "SEARCH_NOT_PERFORMED" if str(indication or "").strip() else "NOT_REQUESTED",
+            "Indication_Market_Data_Usable": False,
+            "Indication_Market_Score": None,
+            "Indication_Matched_Terms": None,
+            "Indication_Unclear_Product_Count": 0,
+            "Indication_Explicit_Nonmatch_Product_Count": 0,
+        }
+        plant_mask = out["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(
+            {p.lower() for p in plants}
+        )
+        for column, value in defaults.items():
+            if column not in out.columns:
+                out[column] = None
+            if isinstance(value, (list, dict, set)):
+                out.loc[plant_mask, column] = [value] * int(plant_mask.sum())
+            else:
+                out.loc[plant_mask, column] = value
         return out
 
     rename = {
@@ -185,6 +243,69 @@ def _attach_commercial_market_intelligence(
     if owned:
         out = out.drop(columns=owned)
     return out.merge(market_df, on="Alternative_Plant", how="left")
+
+
+def _step5_commercial_enrichment_plants(pre_summary_df):
+    """Choose the only plants that need commercial enrichment in Step 5.
+
+    The scientific/eligibility shortlist is built first.  Market opportunity
+    can add at most five points, so only non-excluded plants within five points
+    of the current final-top-50 boundary can plausibly enter that top 50 because
+    of commercial evidence.  The hard cap protects tie-heavy datasets.
+    """
+    if not isinstance(pre_summary_df, pd.DataFrame) or pre_summary_df.empty:
+        return []
+    if "Alternative_Plant" not in pre_summary_df.columns:
+        return []
+
+    eligible = pre_summary_df.copy()
+    if "Scientific_Triage_Status" in eligible.columns:
+        eligible = eligible[eligible["Scientific_Triage_Status"] != "Excluded"]
+    if eligible.empty:
+        return []
+
+    scores = pd.to_numeric(eligible.get("Overall_Score"), errors="coerce").fillna(0.0)
+    eligible = eligible.assign(_step5_pre_score=scores).sort_values(
+        "_step5_pre_score", ascending=False
+    )
+    if len(eligible) > _STEP5_FINAL_MAX_CANDIDATES:
+        cutoff = float(eligible.iloc[_STEP5_FINAL_MAX_CANDIDATES - 1]["_step5_pre_score"])
+        eligible = eligible[
+            eligible["_step5_pre_score"] >= cutoff - _STEP5_COMMERCIAL_SCORE_MARGIN
+        ]
+
+    eligible = eligible.head(_STEP5_COMMERCIAL_MAX_PLANTS)
+    return [
+        str(v).strip() for v in eligible["Alternative_Plant"].tolist()
+        if str(v).strip()
+    ]
+
+
+def _combine_step5_final_summary(pre_summary_df, enriched_summary_df):
+    """Keep the re-scored enriched top candidates plus all excluded audit rows."""
+    if not isinstance(enriched_summary_df, pd.DataFrame) or enriched_summary_df.empty:
+        if not isinstance(pre_summary_df, pd.DataFrame):
+            return pd.DataFrame()
+        primary = pre_summary_df
+        if "Scientific_Triage_Status" in primary.columns:
+            keep = primary[primary["Scientific_Triage_Status"] != "Excluded"].head(
+                _STEP5_FINAL_MAX_CANDIDATES
+            )
+            excluded = primary[primary["Scientific_Triage_Status"] == "Excluded"]
+            return pd.concat([keep, excluded], ignore_index=True)
+        return primary.head(_STEP5_FINAL_MAX_CANDIDATES).reset_index(drop=True)
+
+    enriched_primary = enriched_summary_df
+    if "Scientific_Triage_Status" in enriched_primary.columns:
+        enriched_primary = enriched_primary[
+            enriched_primary["Scientific_Triage_Status"] != "Excluded"
+        ].head(_STEP5_FINAL_MAX_CANDIDATES)
+
+    if isinstance(pre_summary_df, pd.DataFrame) and "Scientific_Triage_Status" in pre_summary_df.columns:
+        excluded = pre_summary_df[pre_summary_df["Scientific_Triage_Status"] == "Excluded"]
+    else:
+        excluded = pd.DataFrame()
+    return pd.concat([enriched_primary, excluded], ignore_index=True)
 
 
 
@@ -1307,19 +1428,65 @@ def render_rd_candidates_step(inputs):
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                     )
 
-                    # Commercial novelty is a separate evidence domain.  Attach
-                    # indication-aware market signals before plant-level scoring
-                    # so chemical/source novelty can never masquerade as a new
-                    # commercial R&D opportunity.  This reads only the already
-                    # loaded evidence table and adds no network latency.
-                    progress.progress(0.88, text="Separating chemical novelty from commercial market status…")
+                # Build the scientific/eligibility shortlist FIRST.  The previous
+                # implementation enriched every unique raw candidate before this
+                # reduction, which made Step 5 scale with the entire candidate
+                # universe instead of the decision set.
+                if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+                    progress.progress(0.87, text="Building scientific pre-shortlist…")
+                    _perf_t_pre_shortlist = time.perf_counter()
+                    pre_summary_df, triage_audit_df = build_plant_candidate_shortlist(
+                        result_df,
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        max_candidates=0,
+                        target_context=transferability_target_context,
+                    )
+                    market_plants = _step5_commercial_enrichment_plants(pre_summary_df)
+                    _perf(
+                        f"pre-shortlist done plants={len(pre_summary_df)} "
+                        f"market_enrichment_plants={len(market_plants)} "
+                        f"elapsed={time.perf_counter() - _perf_t_pre_shortlist:.3f}"
+                    )
+
+                    progress.progress(0.90, text="Checking commercial status for shortlisted candidates…")
+                    _perf_t_market = time.perf_counter()
                     result_df = _attach_commercial_market_intelligence(
                         result_df,
                         evidence_df=evidence_df_for_run,
                         indication=indication,
                         dosage_form=dosage_form,
                         market=market,
+                        candidate_plants=market_plants,
                     )
+                    _perf(
+                        f"commercial enrichment done plants={len(market_plants)} "
+                        f"elapsed={time.perf_counter() - _perf_t_market:.3f}"
+                    )
+
+                    # Re-score only the bounded enriched pool.  Scientific triage
+                    # for the whole raw universe was already computed above; doing
+                    # a second full-universe aggregation would throw away the
+                    # performance gain.
+                    if market_plants:
+                        market_keys = {p.lower() for p in market_plants}
+                        selected_raw = result_df[
+                            result_df["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(market_keys)
+                        ]
+                        enriched_summary_df, _ = build_plant_candidate_shortlist(
+                            selected_raw,
+                            indication=indication,
+                            dosage_form=dosage_form,
+                            max_candidates=_STEP5_FINAL_MAX_CANDIDATES,
+                            target_context=transferability_target_context,
+                        )
+                    else:
+                        enriched_summary_df = pd.DataFrame()
+                    plant_summary_df = _combine_step5_final_summary(
+                        pre_summary_df, enriched_summary_df
+                    )
+                else:
+                    plant_summary_df, triage_audit_df = pd.DataFrame(), pd.DataFrame()
 
                 st.session_state["rd_candidates_df"] = result_df
                 # Any previously prepared CSV bytes belong to the former run.
@@ -1327,19 +1494,8 @@ def render_rd_candidates_step(inputs):
                 st.session_state.pop("rd_triage_audit_csv_bytes", None)
 
                 if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-                    progress.progress(0.90, text="Aggregating plant-level shortlist…")
-                    _perf_t_shortlist = time.perf_counter()
-                    plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
-                        result_df,
-                        indication=indication,
-                        dosage_form=dosage_form,
-                        max_candidates=50,
-                        target_context=transferability_target_context,
-                    )
                     _perf(
-                        f"build_plant_candidate_shortlist() done "
-                        f"plants={0 if plant_summary_df is None else len(plant_summary_df)} "
-                        f"elapsed={time.perf_counter() - _perf_t_shortlist:.3f} "
+                        f"final plant shortlist ready plants={0 if plant_summary_df is None else len(plant_summary_df)} "
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                     )
                     st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df

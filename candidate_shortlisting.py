@@ -679,6 +679,56 @@ def _evidence_context(group: pd.DataFrame) -> tuple[bool, bool]:
     return human, preclinical
 
 
+def _candidate_specific_blob_row(row: Mapping[str, Any], indication: str) -> str:
+    """Row-level equivalent of _candidate_specific_blob() for exactly one
+    record. Root-cause fix (2026-08-26): the per-row loops in
+    _indication_relevance_detail_authoritative/_legacy_fallback used to
+    wrap each row in a fresh pd.DataFrame([row]) (~2.7ms/call at this
+    project's 90-column OUTPUT_COLUMNS width -- measured directly) just to
+    call the group-level _candidate_specific_blob()/_evidence_context()
+    below. For a single-row group, group[col].dropna().tolist() yields
+    either [value] (value not NaN) or [] (value NaN) -- exactly what
+    `if not pd.isna(row.get(col))` selects here. Same columns, same
+    pd.isna() missingness test dropna() itself uses, same
+    _strip_research_question_leakage() call -- output is identical to
+    calling _candidate_specific_blob(pd.DataFrame([row]), indication),
+    without constructing that DataFrame.
+    """
+    parts: list[str] = []
+    for col in _INDICATION_TEXT_COLUMNS:
+        value = row.get(col)
+        if pd.isna(value):
+            continue
+        cleaned = _strip_research_question_leakage(value, indication)
+        if cleaned:
+            parts.append(cleaned)
+    return " | ".join(parts)
+
+
+def _evidence_context_row(row: Mapping[str, Any]) -> tuple[bool, bool]:
+    """Row-level equivalent of _evidence_context() for exactly one record.
+    See _candidate_specific_blob_row()'s docstring for the equivalence
+    rationale -- same reasoning applies here.
+    """
+    text = " | ".join(
+        _norm(row.get(col))
+        for col in (
+            "Evidence_Level", "Evidence_Hierarchy_Detail",
+            "Candidate_Evidence_Strength_Tier", "GRADE_Certainty",
+        )
+        if not pd.isna(row.get(col))
+    )
+    human = any(term in text for term in (
+        "human", "clinical trial", "randomized", "randomised",
+        "meta-analysis", "systematic review",
+    ))
+    preclinical = human or any(term in text for term in (
+        "animal", "in vivo", "in vitro", "cell", "preclinical",
+        "ex vivo", "validated",
+    ))
+    return human, preclinical
+
+
 def _row_has_traceable_source(row: pd.Series) -> bool:
     return not _is_missing(row.get("Source_Record_IDs", ""))
 
@@ -884,8 +934,17 @@ def _indication_relevance_detail_authoritative(
     mechanism_hits_all: set[str] = set()
     inferred_mechanism_hits: set[str] = set()
 
+    # Root-cause fix (2026-08-26): the old per-row pd.DataFrame([row])
+    # (~2.7ms/call at this project's 90-column OUTPUT_COLUMNS width --
+    # measured directly) to call the group-level
+    # _candidate_specific_blob()/_evidence_context() was the dominant cost
+    # of per-plant "scoring" in production (PERF log: 438s/2119 plants).
+    # _evidence_context_row() below reads the row with .get(), which
+    # pandas.Series already supports -- so group.iterrows() is kept
+    # (measured faster than group.to_dict("records") at this function's
+    # typical per-plant row count) and only the DataFrame construction is
+    # removed.
     for _, row in group.iterrows():
-        row_frame = pd.DataFrame([row])
         match_type, match_terms = _row_authoritative_relevance(row)
         # A qualifying match_type always counts as at least one "hit" for the
         # concept-breadth bonus below, even on the rare record whose matched
@@ -897,7 +956,7 @@ def _indication_relevance_detail_authoritative(
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
         row_sources = _split_values([row.get("Source_Record_IDs", "")])
-        row_human, row_preclinical = _evidence_context(row_frame)
+        row_human, row_preclinical = _evidence_context_row(row)
 
         if direct_hits and traceable and empirical and not _row_is_inferred_or_generic(row):
             direct_hits_all.update(direct_hits)
@@ -969,7 +1028,15 @@ def _indication_relevance_detail_legacy_fallback(
         blob = _candidate_specific_blob(group, indication)
         tokens = _indication_tokens(indication)
         hits = [t for t in tokens if re.search(rf"\b{re.escape(t)}\b", blob)]
-        supported_rows = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)]
+        # Root-cause fix (2026-08-26): same iterrows/apply Series-construction
+        # cost as the rest of this module (see _candidate_specific_blob_row()'s
+        # docstring); _row_has_candidate_specific_empirical_support only ever
+        # calls row.get(name, default), identical on a dict and a Series.
+        supported_mask = [
+            _row_has_candidate_specific_empirical_support(row)
+            for row in group.to_dict("records")
+        ]
+        supported_rows = group[supported_mask]
         source_count = len(set(map(_norm, _split_values(supported_rows.get("Source_Record_IDs", [])))))
         if len(hits) >= 2 and source_count >= 2:
             points = min(27.0, 21.0 + min(4.0, math.log2(1 + source_count) * 1.5) + min(2.0, len(hits) * 0.5))
@@ -986,15 +1053,18 @@ def _indication_relevance_detail_legacy_fallback(
     mechanism_hits_all: set[str] = set()
     inferred_mechanism_hits: set[str] = set()
 
+    # Root-cause fix (2026-08-26): same DataFrame-construction removal as
+    # the authoritative sibling loop above (group.iterrows() kept -- it
+    # measured faster than group.to_dict("records") here; the win is
+    # entirely from removing the per-row pd.DataFrame([row]) construction).
     for _, row in group.iterrows():
-        row_frame = pd.DataFrame([row])
-        row_blob = _candidate_specific_blob(row_frame, indication)
+        row_blob = _candidate_specific_blob_row(row, indication)
         direct_hits = set(_matched_terms(row_blob, family["direct"]))
         mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
         traceable = _row_has_traceable_source(row)
         empirical = _row_has_candidate_specific_empirical_support(row)
         row_sources = _split_values([row.get("Source_Record_IDs", "")])
-        row_human, row_preclinical = _evidence_context(row_frame)
+        row_human, row_preclinical = _evidence_context_row(row)
 
         if direct_hits and traceable and empirical and not _row_is_inferred_or_generic(row):
             direct_hits_all.update(direct_hits)
@@ -1118,20 +1188,51 @@ def _build_evidence_row_records(group: pd.DataFrame) -> list[dict]:
     happen exactly once here.  Both the legacy all-tier diagnostic score and
     the authoritative primary-tier score consume these same records.
     """
-    empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
-    if empirical.empty:
+    # Root-cause fix (2026-08-26): the old code built a full pandas.Series
+    # (block-manager machinery included) per row THREE separate times per
+    # plant here (two group.apply(fn, axis=1) + one empirical.iterrows())
+    # -- at this project's 90-column OUTPUT_COLUMNS width, that was
+    # measured as a dominant cost of per-plant "scoring" in production
+    # (PERF log: 438s across 2119 plants, ~89% of the plant-level
+    # shortlist stage). group.to_dict("records") is called exactly ONCE
+    # here (an earlier version of this fix called it three times, which
+    # measured SLOWER than the original iterrows()/apply() at this
+    # function's typical per-plant row count -- to_dict("records") only
+    # wins when it replaces apply(axis=1) directly, or is called once
+    # over a large frame, not when called repeatedly over small slices).
+    # Filtering, the "_source_key" computation, and the
+    # drop_duplicates(subset=["_source_key"], keep="first") dedup below
+    # are then done in plain Python on that one materialized list --
+    # keep="first" is exactly "skip if key already seen, else keep", in
+    # original row order, which is what pandas' drop_duplicates does.
+    # Every predicate/lambda here only ever calls row.get(name, default),
+    # identical on a dict and a Series, so this is a pure speed-up, not a
+    # behavior change. `idx` values match the original DataFrame index
+    # labels the old apply(axis=1) lambda read via `row.name`.
+    all_rows = list(zip(group.index, group.to_dict("records")))
+
+    empirical_pairs = [
+        (idx, row) for idx, row in all_rows
+        if _row_has_candidate_specific_empirical_support(row)
+    ]
+    if not empirical_pairs:
         return []
 
-    empirical["_source_key"] = empirical.apply(
-        lambda row: _norm(row.get("Source_Record_IDs", ""))
-        or _norm(row.get("Evidence_Source", ""))
-        or f"row-{row.name}",
-        axis=1,
-    )
-    empirical = empirical.drop_duplicates(subset=["_source_key"], keep="first")
+    seen_source_keys: set[str] = set()
+    deduped: list[tuple[object, dict, str]] = []
+    for idx, row in empirical_pairs:
+        source_key = (
+            _norm(row.get("Source_Record_IDs", ""))
+            or _norm(row.get("Evidence_Source", ""))
+            or f"row-{idx}"
+        )
+        if source_key in seen_source_keys:
+            continue
+        seen_source_keys.add(source_key)
+        deduped.append((idx, row, source_key))
 
     row_records: list[dict] = []
-    for idx, row in empirical.iterrows():
+    for idx, row, source_key in deduped:
         base_points, label = _row_hierarchy_points(row)
         authority = classify_source_authority_from_row(row)
         authority_multiplier = _authority_hierarchy_multiplier(authority.score)
@@ -1144,7 +1245,7 @@ def _build_evidence_row_records(group: pd.DataFrame) -> list[dict]:
         row_records.append({
             "row_id": idx,
             "row": row,
-            "source_key": row.get("_source_key", "") or f"row-{idx}",
+            "source_key": source_key or f"row-{idx}",
             "base_points": base_points,
             "label": label,
             "authority_label": authority.label,
@@ -1540,6 +1641,14 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
     """Supporting chemistry only; capped at 5% of the 100-point score."""
     best_by_name: dict[str, float] = {}
     linked_weight = 0.0
+    # NOTE (2026-08-26): measured directly -- for this function's typical
+    # per-plant row count, group.iterrows() is faster than
+    # group.to_dict("records") (the fixed per-call conversion cost of
+    # to_dict("records") only pays off when it replaces group.apply(...,
+    # axis=1) specifically, or when called once over a large frame; see
+    # _build_evidence_row_records()'s docstring for the case where it does
+    # help). Every use of `row` below is row.get(name, default), so this
+    # stays a pure iteration-mechanism choice either way.
     for _, row in group.iterrows():
         row_weight = _compound_weight(
             row.get("Shared_or_Similar_Compound", ""), row.get("Novelty_Status", "")
@@ -2140,6 +2249,7 @@ def build_plant_candidate_shortlist(
     dosage_form: str = "",
     max_candidates: int = 50,
     target_context: Mapping[str, Any] | None = None,
+    progress_callback=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return ``(plant_summary, row_audit)`` for any indication.
 
@@ -2160,7 +2270,29 @@ def build_plant_candidate_shortlist(
     for such callers, since there is no legacy field to adapt them from.
     Explicit ``target_context`` values always take precedence over
     anything derived from the legacy arguments.
+
+    ``progress_callback`` (2026-08-26, UX fix) -- optional, backward-
+    compatible, presentation-only, mirroring the same-named hook already
+    used by indication_candidate_discovery.discover_indication_candidates().
+    It receives ``(current_plant_count, total_plant_count, message)`` and
+    never feeds back into scoring, filtering, ranking, or scientific
+    interpretation. Before this, the Streamlit progress bar had nothing to
+    update during this function's entire runtime (measured in production
+    at several minutes -- see the plant-loop PERF instrumentation below),
+    which looked identical to a genuine hang. A caller that does not pass
+    this argument gets byte-identical behavior to before.
     """
+    def _progress(current: int = 0, total: int = 0, message: str = ""):
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(current, total, message)
+        except Exception:
+            # UI telemetry must never be able to change or abort scientific
+            # execution -- same guard as discover_indication_candidates()'s
+            # own _progress() helper.
+            pass
+
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
         return pd.DataFrame(), pd.DataFrame()
     if "Alternative_Plant" not in raw_df.columns:
@@ -2275,6 +2407,7 @@ def build_plant_candidate_shortlist(
     _t = time.perf_counter()
     _grouped = audit.groupby("Alternative_Plant", sort=False, dropna=False)
     _perf(f"grouping (groupby call) done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
+    _progress(0, audit["Alternative_Plant"].nunique(), "Scoring plant candidates…")
 
     _t_grouping_loop = time.perf_counter()
     for plant, group in _grouped:
@@ -2730,8 +2863,13 @@ def build_plant_candidate_shortlist(
         _plant_section_add("row_append", time.perf_counter() - _t)
 
         if _plants_processed % _PLANT_PROGRESS_EVERY == 0:
+            _total_plants_estimate = audit["Alternative_Plant"].nunique()
             _print_plant_loop_profile(
-                f"{_plants_processed}", f"/~{audit['Alternative_Plant'].nunique()}"
+                f"{_plants_processed}", f"/~{_total_plants_estimate}"
+            )
+            _progress(
+                _plants_processed, _total_plants_estimate,
+                f"Scoring {_plants_processed} / {_total_plants_estimate} plant candidates…",
             )
 
     _perf(

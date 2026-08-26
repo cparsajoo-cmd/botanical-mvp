@@ -1434,6 +1434,23 @@ def render_rd_candidates_step(inputs):
                 # universe instead of the decision set.
                 if isinstance(result_df, pd.DataFrame) and not result_df.empty:
                     progress.progress(0.87, text="Building scientific pre-shortlist…")
+
+                    def _pre_shortlist_progress(current=0, total=0, message=""):
+                        # UX fix (2026-08-26): build_plant_candidate_shortlist()
+                        # previously took no progress_callback at all, so this
+                        # entire stage (measured in production at several
+                        # minutes -- see its own PERF "scoring" instrumentation)
+                        # left the bar frozen at 0.87 with no visible movement,
+                        # indistinguishable from a genuine hang. Mapped into the
+                        # existing 0.87-0.90 band reserved for this stage; never
+                        # touches scoring/filtering/ranking itself.
+                        fraction = (float(current) / float(total)) if total else 0.0
+                        value = 0.87 + 0.03 * max(0.0, min(1.0, fraction))
+                        progress.progress(
+                            max(0.0, min(1.0, value)),
+                            text=message or "Building scientific pre-shortlist…",
+                        )
+
                     _perf_t_pre_shortlist = time.perf_counter()
                     pre_summary_df, triage_audit_df = build_plant_candidate_shortlist(
                         result_df,
@@ -1441,6 +1458,7 @@ def render_rd_candidates_step(inputs):
                         dosage_form=dosage_form,
                         max_candidates=0,
                         target_context=transferability_target_context,
+                        progress_callback=_pre_shortlist_progress,
                     )
                     market_plants = _step5_commercial_enrichment_plants(pre_summary_df)
                     _perf(
@@ -1473,12 +1491,25 @@ def render_rd_candidates_step(inputs):
                         selected_raw = result_df[
                             result_df["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(market_keys)
                         ]
+
+                        def _rescore_progress(current=0, total=0, message=""):
+                            # UX fix (2026-08-26) -- see _pre_shortlist_progress()
+                            # above; same reasoning, mapped into the 0.90-0.97
+                            # band reserved for this smaller, bounded re-score.
+                            fraction = (float(current) / float(total)) if total else 0.0
+                            value = 0.90 + 0.07 * max(0.0, min(1.0, fraction))
+                            progress.progress(
+                                max(0.0, min(1.0, value)),
+                                text=message or "Scoring enriched candidate pool…",
+                            )
+
                         enriched_summary_df, _ = build_plant_candidate_shortlist(
                             selected_raw,
                             indication=indication,
                             dosage_form=dosage_form,
                             max_candidates=_STEP5_FINAL_MAX_CANDIDATES,
                             target_context=transferability_target_context,
+                            progress_callback=_rescore_progress,
                         )
                     else:
                         enriched_summary_df = pd.DataFrame()

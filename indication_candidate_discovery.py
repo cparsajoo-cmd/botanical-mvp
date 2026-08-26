@@ -189,7 +189,7 @@ def _record_text(row: pd.Series) -> str:
     )
     values = []
     for col in preferred:
-        if col in row and pd.notna(row.get(col)) and str(row.get(col)).strip():
+        if col in row.index and pd.notna(row.get(col)) and str(row.get(col)).strip():
             values.append(str(row.get(col)))
 
     # A record can exist solely to carry structured safety/interaction JSONB
@@ -210,7 +210,7 @@ def _record_text(row: pd.Series) -> str:
         "Interactions", "interactions",
     )
     for col in structured_cols:
-        if col in row:
+        if col in row.index:
             rendered = _structured_text(row.get(col))
             if rendered:
                 values.append(rendered)
@@ -454,21 +454,7 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
     for frame in frames:
         if not isinstance(frame, pd.DataFrame) or frame.empty:
             continue
-        # Performance fix (Step 5 runtime audit): frame.iterrows() rebuilds a
-        # full pandas Series -- with its own dtype-unification and index
-        # machinery -- for every one of the (real production: ~22,500+)
-        # evidence rows, purely so this function can call row.get(col) a
-        # few dozen times per row. That Series construction, not the field
-        # lookups themselves, was measured as the dominant cost of this
-        # loop. frame.to_dict("records") converts the whole frame to plain
-        # dicts in one vectorized pass; iterating those dicts (paired back
-        # up with the frame's original index via zip, so idx/_record_id's
-        # fallback-index behavior is byte-identical to before) preserves
-        # every field value and type exactly -- pd.notna()/str() behave the
-        # same on a dict's scalar values as on a Series', and the `col in
-        # row` checks above were updated to work for both -- while removing
-        # only the per-row Series-construction overhead itself.
-        for idx, row in zip(frame.index, frame.to_dict("records")):
+        for idx, row in frame.iterrows():
             _rows_examined += 1
             row_plant = _pick_from_row(engine, row, list(plant_cols))
             plant_key = _norm(row_plant)
@@ -941,14 +927,7 @@ def discover_indication_candidates(
         f"Scoring 0 / {_total_candidate_plants} plants…",
     )
 
-    # Same performance fix as _build_plant_evidence_index() above, applied to
-    # the outer per-candidate-plant loop: candidates.iterrows() pays Series-
-    # construction cost once per candidate plant (real production: ~2,000+)
-    # purely to support engine._pick(item, [...]), which only ever calls
-    # item.get(name, "") -- identical on a dict. Converting once, up front,
-    # to a list of plain dicts removes that per-plant overhead with no
-    # change to which plant, field, or value is read.
-    for item in candidates.to_dict("records"):
+    for _, item in candidates.iterrows():
         _plants_processed += 1
         plant = engine._pick(item, ["Scientific_Name", "scientific_name", "Plant", "plant"])
         if not plant:
@@ -1271,6 +1250,28 @@ def discover_indication_candidates(
                 decision = "Exploratory profile hypothesis"
                 call = "Hold — collect candidate-specific evidence"
 
+            if negative and not registry_without_results:
+                # Contradictory/negative-evidence fix (generalizable to
+                # every indication): a record whose own reported result was
+                # null/negative ("no significant difference vs placebo")
+                # must not earn the same evidence_points as a positive
+                # result of the same study-design tier -- otherwise a plant
+                # whose only RCT found NO benefit scores the same as one
+                # whose RCT found a real benefit, using only the study's
+                # TYPE and ignoring what it actually found. This mirrors,
+                # at this additive discovery-stage score, the same
+                # direction-aware discount candidate_shortlisting.py's
+                # Direction_Factor/Evidence_Consistency_Factor already
+                # apply at the aggregate plant-level score (CONSISTENT_
+                # NULL/MOSTLY_NEGATIVE -> nearly/actually zero) -- this
+                # closes the same gap for callers that read this module's
+                # own R&D_Opportunity_Score/Score_Breakdown directly,
+                # without going through that later aggregation stage.
+                evidence_points = min(evidence_points, 6)
+                tier = f"{tier} (reported result was null/negative)"
+                decision = "Exploratory hypothesis — reported result did not support efficacy"
+                call = "Hold — reported result was null/negative for this indication"
+
             trace_points = 2 if source or record_id else 0
             mechanism_points = 10 if record_mechanistic else 3 if profile_mechanistic else 0
             applicability_points = 8 if preparation_status == "Compatible" else 0
@@ -1372,7 +1373,7 @@ def discover_indication_candidates(
                 },
                 "Evidence_Confidence": confidence,
                 "Decision_Class": decision,
-                "Decision_Class_AH": "C" if record_direct and not registry_without_results else "F",
+                "Decision_Class_AH": "C" if record_direct and not registry_without_results and not negative else "F",
                 # Phase 4 — Eligibility Gate compatibility fields.
                 # This module has its OWN hard-safety-exclusion logic
                 # (safety_findings above) that is untouched by Phase 4 —

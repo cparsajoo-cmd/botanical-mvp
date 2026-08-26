@@ -231,3 +231,110 @@ def test_end_to_end_direct_outcome_outranks_mechanism_only_mention():
     assert direct_row["R&D_Opportunity_Score"] > mech_row["R&D_Opportunity_Score"]
     assert mech_row["Indication_Match_Type"] == MATCH_OUTCOME_OR_MECHANISM_SUPPORT
     assert direct_row["Indication_Match_Type"] == MATCH_EXPLICIT_FIELD_OVERLAP
+
+
+# ---------------------------------------------------------------------------
+# 4. Negative/null reported result must reduce the discovery-stage score
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 5. Preparation/route-of-administration transferability ("tea" recognition)
+# ---------------------------------------------------------------------------
+
+def test_bare_tea_is_recognized_as_an_aqueous_infusion_preparation():
+    """Querying with dosage_form="tea" (the natural phrasing, far more
+    common than "herbal tea") must actually populate a preparation target
+    -- previously it silently produced no target at all, disabling the
+    whole preparation-applicability gate for the single most common way
+    anyone actually asks for this product."""
+    from standard_evidence_builder import (
+        preparation_category_from_text, preparation_from_product_form,
+        canonical_preparation_identity,
+    )
+    assert preparation_category_from_text("tea") == "aqueous"
+    assert preparation_category_from_text("sleep tea") == "aqueous"
+    assert preparation_from_product_form("tea") == "tea"
+    assert canonical_preparation_identity("tea") == "infusion"
+    # "tea tree" is a different, essential-oil preparation and must not be
+    # swept into the aqueous-infusion category just because it contains
+    # the word "tea".
+    assert preparation_category_from_text("tea tree oil") == ""
+    assert canonical_preparation_identity("tea tree oil") == ""
+
+
+def test_essential_oil_evidence_is_flagged_mismatch_for_a_tea_query():
+    """Full production path: a plant whose only evidence is essential-oil
+    inhalation/aromatherapy must be flagged Mismatch (and scored lower)
+    for a tea-dosage-form query, never silently treated as Compatible --
+    mirrors a real reported issue where Lavandula angustifolia (essential
+    oil evidence only) outranked Melissa officinalis (genuine oral
+    infusion/tea evidence) for a sleep-tea query."""
+    candidate_data = [
+        {"Scientific_Name": "Fictus oleosus", "Known_Active_Compounds": ["Fictol"],
+         "Known_Targets": [], "Indications": []},
+        {"Scientific_Name": "Fictus infusus", "Known_Active_Compounds": ["Fictusin"],
+         "Known_Targets": [], "Indications": []},
+    ]
+    evidence_rows = [
+        {
+            "plant": "Fictus oleosus", "Source_URL": "https://example.org/oil1",
+            "title": "Fictus oleosus for sleep quality",
+            "abstract": "A meta-analysis found Fictus oleosus essential oil inhalation aromatherapy improved sleep quality.",
+            "preparation": "essential oil inhalation aromatherapy",
+        },
+        {
+            "plant": "Fictus infusus", "Source_URL": "https://example.org/inf1",
+            "title": "Fictus infusus for insomnia",
+            "abstract": "A randomized controlled trial found Fictus infusus oral aqueous infusion tea improved sleep quality and insomnia severity.",
+            "preparation": "oral aqueous infusion tea",
+        },
+    ]
+    engine = _engine(candidate_data, evidence_rows)
+    out = engine.run("sleep", dosage_form="tea", discovery_mode="indication")
+    oil_row = out[out["Alternative_Plant"] == "Fictus oleosus"].iloc[0]
+    infusion_row = out[out["Alternative_Plant"] == "Fictus infusus"].iloc[0]
+    assert oil_row["Preparation_Applicability"] == "Mismatch"
+    assert infusion_row["Preparation_Applicability"] == "Compatible"
+    assert infusion_row["R&D_Opportunity_Score"] > oil_row["R&D_Opportunity_Score"]
+
+
+def test_negative_rct_result_is_penalized_not_rewarded():
+    """A plant whose only RCT explicitly found NO benefit must score well
+    below a plant whose RCT found a real benefit -- the previous discovery-
+    stage formula computed evidence_points purely from study-design TIER
+    (both are "Clinical trial") and ignored the reported direction, so a
+    negative RCT scored the same as a positive one of the same design.
+    This regression case mirrors a real reported issue: Bacopa monnieri
+    ranked near Valeriana officinalis despite two negative human RCTs for
+    sleep."""
+    candidate_data = [
+        {"Scientific_Name": "Fictus negativus", "Known_Active_Compounds": ["Fictusol"],
+         "Known_Targets": [], "Indications": []},
+        {"Scientific_Name": "Fictus positivus", "Known_Active_Compounds": ["Fictusin"],
+         "Known_Targets": [], "Indications": []},
+    ]
+    evidence_rows = [
+        {
+            "plant": "Fictus negativus", "Source_URL": "https://example.org/neg1",
+            "title": "Fictus negativus for poor sleep",
+            "abstract": (
+                "A randomized controlled trial of Fictus negativus for sleep quality."
+            ),
+            "primary_outcome": "No significant difference vs placebo in sleep quality",
+        },
+        {
+            "plant": "Fictus positivus", "Source_URL": "https://example.org/pos1",
+            "title": "Fictus positivus for insomnia",
+            "abstract": (
+                "A randomized controlled trial found Fictus positivus reduced "
+                "sleep latency and improved sleep quality in adults with insomnia."
+            ),
+        },
+    ]
+    engine = _engine(candidate_data, evidence_rows)
+    out = engine.run("sleep", discovery_mode="indication")
+    neg_row = out[out["Alternative_Plant"] == "Fictus negativus"].iloc[0]
+    pos_row = out[out["Alternative_Plant"] == "Fictus positivus"].iloc[0]
+    assert neg_row["R&D_Opportunity_Score"] < pos_row["R&D_Opportunity_Score"] - 15
+    assert neg_row["Go_Investigate_Hold_NoGo"].startswith("Hold")
+    assert neg_row["Decision_Class_AH"] == "F"

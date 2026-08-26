@@ -1176,6 +1176,18 @@ _PREPARATION_CATEGORY_PATTERNS = (
         r"\baqueous(?:\s+\w+){0,3}\s+extract\b",
         r"\bwater(?:\s+\w+){0,3}\s+extract\b",
         r"\binfusion\b", r"\bdecoction\b", r"\bherbal\s+tea\b", r"\btisane\b",
+        # Bare "tea" (e.g. a user searching for "sleep tea", or a source
+        # calling it "green tea" / "chamomile tea" / "brewed as a tea")
+        # names the same aqueous-infusion preparation as "herbal tea" --
+        # requiring the extra word "herbal" excluded the single most
+        # natural way anyone actually phrases this preparation, which
+        # silently disabled the whole preparation-applicability gate for
+        # any query or record using it (see evidence_transferability_
+        # fields / evaluate_applicability, which have nothing to compare
+        # against once Target_Preparation/Evidence_Preparation come back
+        # empty). Excludes "tea tree" (oil), which is a different,
+        # unrelated preparation despite containing the word "tea".
+        r"\btea\b(?!\s+tree)",
     )),
     # Allow an explicitly named botanical part between ``dry`` and ``extract``
     # (e.g. "standardized dry leaf extract" / "dry root extract").
@@ -1236,8 +1248,15 @@ def canonical_preparation_identity(value: Any) -> str:
         ("juice", ("fresh juice", "expressed juice")),
     )
     # When a source explicitly says infusion plus a descriptive hot-water
-    # extraction phrase, the named preparation is still an infusion.
-    if "infusion" in text or "herbal tea" in text or "tisane" in text:
+    # extraction phrase, the named preparation is still an infusion. Bare
+    # "tea" (excluding "tea tree", a different, essential-oil preparation)
+    # is included for the same reason given in _PREPARATION_CATEGORY_
+    # PATTERNS above -- it is the single most natural way this preparation
+    # is actually phrased, by users and sources alike.
+    if (
+        "infusion" in text or "herbal tea" in text or "tisane" in text
+        or ("tea" in text and "tea tree" not in text)
+    ):
         return "infusion"
     for identity, terms in specific_patterns:
         if any(term in text for term in terms):

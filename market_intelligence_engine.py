@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import asdict
+from functools import lru_cache
 import re
 import pandas as pd
 
@@ -127,6 +128,7 @@ def _market_scope_mask(df: pd.DataFrame, market: str) -> pd.Series:
     return scope.eq("") | scope.str.contains(re.escape(target), regex=True, na=False)
 
 
+@lru_cache(maxsize=256)
 def _indication_phrases(indication: str) -> tuple[str, ...]:
     """Direct commercial-claim phrases for a canonical or free-text indication.
 
@@ -134,6 +136,13 @@ def _indication_phrases(indication: str) -> tuple[str, ...]:
     is not automatically a marketed insomnia product.  For known indication
     families we use the canonical name + aliases + direct outcome terms.  For
     free text we fall back to meaningful tokens/phrases.
+
+    Pure function of ``indication`` alone (INDICATION_SEMANTICS is a fixed
+    module-level table), so this is cached: ``_classify_indication_row()``
+    previously re-resolved the full indication-semantics table once per
+    market row being classified, which meant re-doing that resolution for
+    every product row of every candidate plant in a Step 5 run instead of
+    once per distinct indication.
     """
     indication = _clean(indication)
     if not indication:
@@ -345,6 +354,44 @@ class MarketIntelligenceEngine:
             except Exception:
                 self._market_rows = pd.DataFrame()
 
+        # Cache of (scoped_market_rows, haystack, status) keyed by normalized
+        # market value.  ``market`` is a single fixed value for an entire
+        # Step 5 batch (every candidate plant evaluated in one run shares the
+        # same requested market/indication inputs), so the scope filter and
+        # the lower-cased plant-name haystack only need to be built once per
+        # distinct market — never once per candidate.  Without this, each
+        # evaluate() call re-scanned/rejoined the full market dataframe from
+        # scratch, producing candidates × market_rows work and stalling
+        # Step 5 once the market evidence table or candidate count grew.
+        self._scope_cache = {}
+
+    def _scoped_market_index(self, market: str):
+        key = _norm(market)
+        if key in self._scope_cache:
+            return self._scope_cache[key]
+
+        market_rows = self._market_rows
+        if market:
+            scoped = market_rows[_market_scope_mask(market_rows, market)].copy()
+            if scoped.empty:
+                result = (scoped, None, MarketSearchStatus.MARKET_NOT_COVERED)
+                self._scope_cache[key] = result
+                return result
+            market_rows = scoped
+
+        searchable_cols = [c for c in market_rows.columns if c.lower() in {
+            "scientific_name", "common_name", "plant", "ingredient", "plant_ingredient"
+        }]
+        if not searchable_cols:
+            result = (market_rows, None, MarketSearchStatus.INSUFFICIENT_SAMPLE)
+            self._scope_cache[key] = result
+            return result
+
+        haystack = market_rows[searchable_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+        result = (market_rows, haystack, MarketSearchStatus.COMPLETED)
+        self._scope_cache[key] = result
+        return result
+
     def evaluate(self, row, indication="", dosage_form="", market=""):
         plant = _clean(row.get("Scientific_Name", "") or row.get("Alternative_Plant", ""))
         common = _clean(row.get("Common_Name", ""))
@@ -358,23 +405,16 @@ class MarketIntelligenceEngine:
                 indication_search_status=MarketSearchStatus.SEARCH_NOT_PERFORMED.value,
             )
 
-        market_rows = self._market_rows
-        if market:
-            scoped = market_rows[_market_scope_mask(market_rows, market)].copy()
-            if scoped.empty:
-                return self._result(
-                    [], MarketSearchStatus.MARKET_NOT_COVERED, market,
-                    "Requested market not covered by available structured market sources",
-                    indication=indication,
-                    indication_records=[],
-                    indication_search_status=MarketSearchStatus.MARKET_NOT_COVERED.value,
-                )
-            market_rows = scoped
-
-        searchable_cols = [c for c in market_rows.columns if c.lower() in {
-            "scientific_name", "common_name", "plant", "ingredient", "plant_ingredient"
-        }]
-        if not searchable_cols:
+        market_rows, haystack, scope_status = self._scoped_market_index(market)
+        if scope_status == MarketSearchStatus.MARKET_NOT_COVERED:
+            return self._result(
+                [], MarketSearchStatus.MARKET_NOT_COVERED, market,
+                "Requested market not covered by available structured market sources",
+                indication=indication,
+                indication_records=[],
+                indication_search_status=MarketSearchStatus.MARKET_NOT_COVERED.value,
+            )
+        if scope_status == MarketSearchStatus.INSUFFICIENT_SAMPLE:
             return self._result(
                 [], MarketSearchStatus.INSUFFICIENT_SAMPLE, market,
                 "Insufficient structured market data",
@@ -383,7 +423,6 @@ class MarketIntelligenceEngine:
                 indication_search_status=MarketSearchStatus.INSUFFICIENT_SAMPLE.value,
             )
 
-        haystack = market_rows[searchable_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
         # Commercial status is plant-specific.  A shared compound is not enough
         # to prove that the alternative plant itself is marketed.
         terms = [t.lower() for t in (plant, common) if t]

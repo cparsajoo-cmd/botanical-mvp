@@ -540,13 +540,24 @@ def _recommendation_block(result_df, report_ready_df=None):
         # prioritization call, not a substitute for scientific eligibility.
         if "Final_Decision_Status" in best_rows.columns:
             final_status = best_rows["Final_Decision_Status"].fillna("").astype(str).str.strip()
-            scientifically_actionable = best_rows.index[
-                final_status.isin(("GO", "GO WITH CAUTION"))
-            ]
-            recommended = recommended.loc[recommended.index.intersection(scientifically_actionable)]
-            scientific_non_go = best_rows.loc[~best_rows.index.isin(scientifically_actionable)]
-            if not scientific_non_go.empty:
-                weak = pd.concat([weak, scientific_non_go]).loc[lambda x: ~x.index.duplicated(keep="first")]
+            # Apply the Phase 7 authority only where an authoritative final
+            # status is actually present. Blank status means the structured
+            # final-decision layer did not produce a decision for that row;
+            # in that case keep the already validated Phase 3/4
+            # Go/Investigate/Hold/No-Go classification instead of silently
+            # demoting every blank-status candidate into the weak bucket.
+            has_final_status = final_status.ne("")
+            actionable_status = final_status.isin(("GO", "GO WITH CAUTION"))
+            authoritative_non_go = has_final_status & ~actionable_status
+
+            if authoritative_non_go.any():
+                recommended = recommended.loc[
+                    ~recommended.index.isin(best_rows.index[authoritative_non_go])
+                ]
+                scientific_non_go = best_rows.loc[authoritative_non_go]
+                weak = pd.concat([weak, scientific_non_go]).loc[
+                    lambda x: ~x.index.duplicated(keep="first")
+                ]
 
         display_cols = [
             col for col in [
@@ -673,7 +684,7 @@ def render_rd_candidates_step(inputs):
     )
 
     st.markdown("---")
-    st.markdown("## Step 3 — Market & regulatory landscape")
+    st.markdown("## Step 3 — Market & Competitive Landscape")
 
     st.caption(
         "Check what already exists in the market: existing botanical products, "
@@ -883,7 +894,7 @@ def render_rd_candidates_step(inputs):
 
 
     st.markdown("---")
-    st.markdown("## Step 4 — Scientific knowledge")
+    st.markdown("## Step 4 — Existing Scientific Knowledge")
 
     st.caption(
         "Review the current scientific inventory for the Step 2 shortlist: "
@@ -1006,7 +1017,7 @@ def render_rd_candidates_step(inputs):
             )
 
     st.markdown("---")
-    st.markdown("## Step 5 — Candidate comparison & R&D decision")
+    st.markdown("## Step 5 — R&D Candidate Discovery & Decision Engine")
 
     st.caption(
         "Generate alternative botanical candidates and score them using evidence, "
@@ -1070,7 +1081,7 @@ def render_rd_candidates_step(inputs):
     discovery_lock = _candidate_discovery_process_lock()
     discovery_busy = discovery_lock.locked()
     run_clicked = st.button(
-        "Compare candidates",
+        "Run Candidate Discovery",
         type="primary",
         key="run_step3_candidates",
         disabled=discovery_busy,
@@ -1089,7 +1100,7 @@ def render_rd_candidates_step(inputs):
             and isinstance(existing_result, pd.DataFrame)
             and not existing_result.empty
         ):
-            st.info("The current project has already been analyzed; the existing result is shown below.")
+            st.info("Same inputs detected — reusing the completed Step 5 result.")
             _rerun_after_discovery = True
         elif not discovery_lock.acquire(blocking=False):
             st.warning(
@@ -1262,7 +1273,9 @@ def render_rd_candidates_step(inputs):
         is_indication_mode = _detect_discovery_mode(result_df) == "indication"
         if is_indication_mode:
             st.info(
-                "Candidate selection is based on indication-relevant scientific evidence; chemistry is used as supporting context."
+                "🔎 **Indication-centric discovery:** candidates enter through "
+                "plant-specific indication or mechanism evidence. Shared chemistry "
+                "is supporting metadata only and is not used as an entry gate."
             )
         elif "Reference_Plant" in result_df.columns:
             n_ref_plants = result_df["Reference_Plant"].nunique()
@@ -1313,7 +1326,9 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_decision_metadata"] = decision_metadata
 
         st.info(
-            "The main view summarizes plant-level candidates. Scores support prioritization and should not be interpreted as efficacy claims."
+            "📊 **Scientific triage:** the main view shows only plant-level results. "
+            "Raw plant–compound associations and excluded rows remain available as CSV audit files. "
+            "The triage score prioritizes review; it is not an efficacy claim."
         )
 
         if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty:
@@ -1374,9 +1389,9 @@ def render_rd_candidates_step(inputs):
                 "their gate failures and rejection reasons are preserved in the complete CSV."
             )
 
-        st.markdown("#### Data exports")
+        st.markdown("#### Audit downloads")
         st.caption(
-            "Detailed data files are available on request."
+            "Large audit files are prepared only on request, so normal Step 5 viewing stays responsive on mobile."
         )
 
         raw_csv_bytes = st.session_state.get("rd_raw_candidate_csv_bytes")
@@ -1388,11 +1403,11 @@ def render_rd_candidates_step(inputs):
             and audit_csv_bytes is None
         ):
             if st.button(
-                "Prepare detailed CSV files",
+                "Prepare full audit CSV files",
                 key="rd_prepare_audit_csv_btn",
                 help="Formats the large raw network only when you actually need to download it.",
             ):
-                with st.spinner("Preparing detailed data files..."):
+                with st.spinner("Preparing large audit files..."):
                     export_df = add_development_concept_column(
                         result_df, inputs.get("standardized_project")
                     )
@@ -1421,7 +1436,7 @@ def render_rd_candidates_step(inputs):
                     key="rd_download_triage_audit_csv",
                 )
 
-        with st.expander("🌍 Market & patent details (optional)"):
+        with st.expander("🌍 Enrich with market/patent landscape (optional, per-candidate)"):
             st.caption(
                 "Merges each candidate's real regulatory (EMA/WHO/ESCOP), patent, "
                 "and retail search status into the table above — kept separate "
@@ -1460,9 +1475,14 @@ def render_rd_candidates_step(inputs):
                     key="rd_download_enriched_csv",
                 )
 
-        with st.expander("Technical validation"):
+        with st.expander("📐 Validate output contract (Data Contracts adapter)"):
             st.caption(
-                "Checks the result structure for technical consistency."
+                "Checks every row against data_contracts.CandidateAssessment — "
+                "the named schema this output is supposed to have. A clean "
+                "result means the real columns and the documented contract "
+                "still agree; any errors here mean something drifted (a "
+                "renamed column, an unexpected type) and point to exactly "
+                "which row and field."
             )
             if st.button("Run contract validation", key="rd_validate_contract_btn"):
                 records, errors_df = validate_result_df(
@@ -1625,10 +1645,10 @@ def render_rd_candidates_step(inputs):
             st.markdown(report_markdown)
 
     st.markdown("---")
-    st.markdown("## Step 6 — Final recommendation")
+    st.markdown("## Step 6 — Final Recommendation")
 
     st.caption(
-        "Generate a concise recommendation based on the candidate comparison above."
+        "Generate a concise R&D recommendation based on the decision table produced in Step 5."
     )
 
     if st.button("Generate Final Recommendation", type="primary", key="run_step4_recommendation"):

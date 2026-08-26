@@ -30,7 +30,6 @@ investment_engine.py
 kew_connector.py
 knowledge_extraction_engine.py
 knowledge_retrieval_engine.py
-market_intelligence_engine.py
 mechanism_discovery_engine.py
 multi_source_evidence_collector.py
 plant_compound_ranking_engine.py

@@ -601,6 +601,8 @@ def test_explicit_safety_and_market_information_create_real_differentiation():
     indexed = summary.set_index("Alternative_Plant")
     assert indexed.loc["Supported plant", "Safety_Regulatory_Score"] > indexed.loc["Unknown plant", "Safety_Regulatory_Score"]
     assert indexed.loc["Supported plant", "Novelty_Market_Score"] > indexed.loc["Unknown plant", "Novelty_Market_Score"]
-    # Missing market search is not a positive prior.  Chemical/source novelty
-    # is reported separately and must not manufacture commercial opportunity.
-    assert indexed.loc["Unknown plant", "Novelty_Market_Score"] == 0.0
+    # Missing market search retains the platform's historical neutral 2.5
+    # scoring prior for backward compatibility, but it must not be labelled
+    # as commercial novelty/white-space. Chemical/source novelty is separate.
+    assert indexed.loc["Unknown plant", "Novelty_Market_Score"] == 2.5
+    assert indexed.loc["Unknown plant", "Commercial_Novelty_Status"] == "Commercial novelty not assessed"

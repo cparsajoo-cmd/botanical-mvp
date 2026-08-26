@@ -1693,7 +1693,11 @@ def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
 
     combined = _norm(" | ".join(commercial_values))
     if not combined or any(t in combined for t in _COMMERCIAL_UNASSESSED_TERMS):
-        return 0.0, "Commercial novelty not assessed"
+        # Preserve the platform's historical neutral prior so legacy scientific
+        # score contracts do not shift merely because commercial intelligence
+        # was unavailable.  The LABEL is deliberately non-claiming: 2.5 is a
+        # neutral scoring prior, not evidence of novelty or white-space.
+        return 2.5, "Commercial novelty not assessed"
 
     if any(t in combined for t in _COMMERCIAL_ESTABLISHED_TERMS) or (
         "verified marketed product" in combined

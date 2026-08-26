@@ -229,10 +229,6 @@ OUTPUT_COLUMNS = [
     "Regulatory_Recognition_Status",
     "Regulatory_Barriers",
     "Novelty_Status",
-    # Explicit semantic alias: Novelty_Status in this legacy engine describes
-    # chemical/source differentiation, NOT commercial novelty.  Keep the old
-    # field for backward compatibility and expose the honest name alongside it.
-    "Chemical_Differentiation_Status",
     "R&D_Opportunity_Score",
     "Score_Breakdown",
     "Evidence_Confidence",
@@ -2474,7 +2470,6 @@ class BotanicalRDCandidateEngine:
                                 else "None identified"
                             ),
                             "Novelty_Status": novelty_status,
-                            "Chemical_Differentiation_Status": novelty_status,
                             "R&D_Opportunity_Score": score,
                             "Score_Breakdown": self._format_score_breakdown(score_components),
                             "Evidence_Confidence": evidence_confidence,

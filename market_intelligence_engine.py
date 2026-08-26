@@ -111,6 +111,47 @@ def _is_market_row(row) -> bool:
     )
 
 
+def _first_nonblank_series(df: pd.DataFrame, names) -> pd.Series:
+    """Vectorized equivalent of ``_pick`` for dataframe-wide preprocessing.
+
+    It is intentionally used only for market-row/index construction.  Row-level
+    evidence semantics continue to use ``_pick`` so the public behavior stays
+    unchanged while avoiding ``DataFrame.apply(..., axis=1)`` on large evidence
+    tables.
+    """
+    out = pd.Series("", index=df.index, dtype="object")
+    for name in names:
+        if name not in df.columns:
+            continue
+        values = df[name].fillna("").astype(str).str.strip()
+        valid = ~values.str.lower().isin({"", "nan", "none", "null"})
+        take = out.eq("") & valid
+        if take.any():
+            out.loc[take] = values.loc[take]
+    return out
+
+
+def _market_row_mask(df: pd.DataFrame) -> pd.Series:
+    """Vectorized market-row classifier matching ``_is_market_row`` semantics."""
+    if df is None or df.empty:
+        return pd.Series(False, index=getattr(df, "index", None), dtype=bool)
+
+    source_type = _first_nonblank_series(df, ("Market_Source_Type", "Source_Type")).str.lower()
+    evidence_type = _first_nonblank_series(df, ("Evidence_Type", "Publication_Type", "Study_Type")).str.lower()
+    source_org = _first_nonblank_series(df, ("Source_Organization", "Source", "Seller", "Retailer")).str.lower()
+    combined = source_type.str.cat(evidence_type, sep=" ").str.cat(source_org, sep=" ")
+
+    excluded = pd.Series(False, index=df.index)
+    for term in _EXCLUDED_SOURCE_TERMS:
+        excluded |= combined.str.contains(re.escape(term), regex=True, na=False)
+
+    explicit_market_source = source_type.isin(_MARKET_SOURCE_TYPES)
+    product = _first_nonblank_series(df, ("Product_Name", "product_name"))
+    seller = _first_nonblank_series(df, ("Brand", "brand", "Retailer", "Seller", "seller"))
+    structured_product = product.ne("") & seller.ne("")
+    return (~excluded) & (explicit_market_source | structured_product)
+
+
 def _market_scope_mask(df: pd.DataFrame, market: str) -> pd.Series:
     """Rows that are compatible with the requested market.
 
@@ -348,22 +389,29 @@ class MarketIntelligenceEngine:
         self._market_rows = pd.DataFrame()
         if self.evidence_df is not None and not self.evidence_df.empty:
             try:
-                self._market_rows = self.evidence_df[
-                    self.evidence_df.apply(_is_market_row, axis=1)
-                ].copy()
+                # IMPORTANT: do this once, vectorized.  The previous
+                # ``DataFrame.apply(_is_market_row, axis=1)`` incurred Python
+                # function-call overhead for every evidence row and became a
+                # noticeable part of Step 5 on large evidence tables.
+                self._market_rows = self.evidence_df[_market_row_mask(self.evidence_df)].copy()
             except Exception:
+                # Preserve the historical fail-closed behavior.
                 self._market_rows = pd.DataFrame()
 
-        # Cache of (scoped_market_rows, haystack, status) keyed by normalized
-        # market value.  ``market`` is a single fixed value for an entire
-        # Step 5 batch (every candidate plant evaluated in one run shares the
-        # same requested market/indication inputs), so the scope filter and
-        # the lower-cased plant-name haystack only need to be built once per
-        # distinct market — never once per candidate.  Without this, each
-        # evaluate() call re-scanned/rejoined the full market dataframe from
-        # scratch, producing candidates × market_rows work and stalling
-        # Step 5 once the market evidence table or candidate count grew.
+        # Per-market cache.  Each value is a dict containing:
+        #   rows: scoped market dataframe
+        #   haystack: legacy substring-search fallback
+        #   exact_index: normalized plant/common-name -> row-index set
+        #   status: MarketSearchStatus
+        #
+        # The crucial performance property is that evaluate() normally uses
+        # ``exact_index`` (O(1)-style dictionary lookup) instead of running
+        # ``haystack.str.contains`` across every market row for every candidate.
+        # The substring scan is retained only as a compatibility fallback when
+        # a structured source stores a decorated value rather than an exact
+        # plant/common name.
         self._scope_cache = {}
+        self._candidate_match_cache = {}
 
     def _scoped_market_index(self, market: str):
         key = _norm(market)
@@ -374,7 +422,12 @@ class MarketIntelligenceEngine:
         if market:
             scoped = market_rows[_market_scope_mask(market_rows, market)].copy()
             if scoped.empty:
-                result = (scoped, None, MarketSearchStatus.MARKET_NOT_COVERED)
+                result = {
+                    "rows": scoped,
+                    "haystack": None,
+                    "exact_index": {},
+                    "status": MarketSearchStatus.MARKET_NOT_COVERED,
+                }
                 self._scope_cache[key] = result
                 return result
             market_rows = scoped
@@ -383,14 +436,74 @@ class MarketIntelligenceEngine:
             "scientific_name", "common_name", "plant", "ingredient", "plant_ingredient"
         }]
         if not searchable_cols:
-            result = (market_rows, None, MarketSearchStatus.INSUFFICIENT_SAMPLE)
+            result = {
+                "rows": market_rows,
+                "haystack": None,
+                "exact_index": {},
+                "status": MarketSearchStatus.INSUFFICIENT_SAMPLE,
+            }
             self._scope_cache[key] = result
             return result
 
-        haystack = market_rows[searchable_cols].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
-        result = (market_rows, haystack, MarketSearchStatus.COMPLETED)
+        searchable = market_rows[searchable_cols].fillna("").astype(str)
+        normalized = searchable.copy()
+        for col in searchable_cols:
+            normalized[col] = normalized[col].str.strip().str.lower()
+
+        # Build the direct lookup once per market.  Most structured market
+        # evidence has exact Scientific_Name/Common_Name fields, so virtually
+        # all candidate matching should terminate here without a dataframe scan.
+        exact_index = {}
+        for col in searchable_cols:
+            series = normalized[col]
+            nonblank = series[~series.isin({"", "nan", "none", "null"})]
+            if nonblank.empty:
+                continue
+            for value, idxs in nonblank.groupby(nonblank, sort=False).groups.items():
+                exact_index.setdefault(value, set()).update(idxs)
+
+        # Keep one normalized joined series for rare compatibility fallbacks.
+        haystack = normalized.agg(" ".join, axis=1)
+        result = {
+            "rows": market_rows,
+            "haystack": haystack,
+            "exact_index": exact_index,
+            "status": MarketSearchStatus.COMPLETED,
+        }
         self._scope_cache[key] = result
         return result
+
+    def _matched_market_rows(self, scope, terms, market: str):
+        """Return candidate-specific rows without rescanning the full table.
+
+        Exact structured plant/common-name matches are dictionary lookups.  A
+        full substring scan is used only if no exact indexed value exists, which
+        preserves compatibility with older/decorated market records while
+        removing the candidates × market_rows hot path for normal data.
+        """
+        normalized_terms = tuple(sorted({_norm(t) for t in terms if _norm(t)}))
+        cache_key = (_norm(market), normalized_terms)
+        if cache_key in self._candidate_match_cache:
+            idxs = self._candidate_match_cache[cache_key]
+            return scope["rows"].loc[list(idxs)] if idxs else scope["rows"].iloc[0:0]
+
+        idxs = set()
+        exact_index = scope["exact_index"]
+        for term in normalized_terms:
+            idxs.update(exact_index.get(term, ()))
+
+        if not idxs and scope["haystack"] is not None:
+            # Compatibility fallback only.  Because this runs only when the
+            # structured exact index has no match, it should be rare in normal
+            # Step 5 operation.
+            mask = pd.Series(False, index=scope["rows"].index)
+            for term in normalized_terms:
+                mask |= scope["haystack"].str.contains(term, regex=False, na=False)
+            idxs.update(scope["rows"].index[mask].tolist())
+
+        frozen = tuple(idxs)
+        self._candidate_match_cache[cache_key] = frozen
+        return scope["rows"].loc[list(frozen)] if frozen else scope["rows"].iloc[0:0]
 
     def evaluate(self, row, indication="", dosage_form="", market=""):
         plant = _clean(row.get("Scientific_Name", "") or row.get("Alternative_Plant", ""))
@@ -405,7 +518,9 @@ class MarketIntelligenceEngine:
                 indication_search_status=MarketSearchStatus.SEARCH_NOT_PERFORMED.value,
             )
 
-        market_rows, haystack, scope_status = self._scoped_market_index(market)
+        scope = self._scoped_market_index(market)
+        market_rows = scope["rows"]
+        scope_status = scope["status"]
         if scope_status == MarketSearchStatus.MARKET_NOT_COVERED:
             return self._result(
                 [], MarketSearchStatus.MARKET_NOT_COVERED, market,
@@ -434,10 +549,7 @@ class MarketIntelligenceEngine:
                 indication_search_status=MarketSearchStatus.INSUFFICIENT_SAMPLE.value,
             )
 
-        mask = pd.Series(False, index=market_rows.index)
-        for term in terms:
-            mask |= haystack.str.contains(term, regex=False, na=False)
-        matched = market_rows[mask]
+        matched = self._matched_market_rows(scope, terms, market)
         if matched.empty:
             # The covered structured source was actually queried.  This is not
             # equivalent to SEARCH_NOT_PERFORMED, but the absence claim is only

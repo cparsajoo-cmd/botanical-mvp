@@ -9,10 +9,12 @@ calls ``evaluate()`` once per unique candidate plant, this produced
 candidates x market_rows work and stalled Step 5 once either side of that
 product grew.
 
-The fix caches the scoped market rows + haystack per distinct ``market``
-value on the ``MarketIntelligenceEngine`` instance (``market`` is constant
-across an entire Step 5 batch), so the expensive dataframe join/lower-case
-pass now runs once per run instead of once per candidate.
+The complete fix must do more than cache the joined haystack.  Candidate
+matching itself must use a pre-built exact plant/common-name index, otherwise
+``haystack.str.contains(...)`` still scans every market row once per candidate.
+The haystack is retained only as a rare compatibility fallback for decorated
+legacy values.  Market-row classification is also vectorized so engine startup
+does not call a Python row function across the entire evidence dataframe.
 
 These tests prove:
   1. Step 5 does not repeatedly rebuild/rescan the full market dataframe per
@@ -97,16 +99,63 @@ def test_scoped_market_index_is_built_once_per_market_value_not_per_candidate():
     assert len(engine._scope_cache) == 1  # ...but only ever builds it once
 
 
+def test_exact_candidate_lookup_does_not_scan_full_haystack_per_candidate():
+    """The former cache-only fix was insufficient: evaluate() still called
+    ``haystack.str.contains`` over every row for every candidate.  Exact
+    structured plant names must now resolve from the pre-built dictionary index.
+
+    Replacing the cached haystack with an object whose ``str.contains`` explodes
+    makes this a deterministic structural test rather than a timing guess.
+    """
+    df = _big_market_df(n_plants=40, rows_per_plant=25)
+    engine = MarketIntelligenceEngine(df)
+    scope = engine._scoped_market_index("FR")
+
+    class _BombStr:
+        def contains(self, *args, **kwargs):
+            raise AssertionError("full haystack scan executed for an exact indexed plant")
+
+    class _BombHaystack:
+        @property
+        def str(self):
+            return _BombStr()
+
+    scope["haystack"] = _BombHaystack()
+    for i in range(40):
+        result = engine.evaluate(
+            {"Scientific_Name": f"Species genus{i}"},
+            indication="stress",
+            market="FR",
+        )
+        assert result["Market_Evidence_Count"] == 25
+
+
+def test_engine_init_does_not_use_rowwise_dataframe_apply(monkeypatch):
+    """Large evidence tables must be classified vectorially at engine startup."""
+    df = _big_market_df(n_plants=10, rows_per_plant=10)
+    original_apply = pd.DataFrame.apply
+
+    def _forbid_apply(self, *args, **kwargs):
+        raise AssertionError("row-wise DataFrame.apply used during market-engine initialization")
+
+    monkeypatch.setattr(pd.DataFrame, "apply", _forbid_apply)
+    try:
+        engine = MarketIntelligenceEngine(df)
+    finally:
+        monkeypatch.setattr(pd.DataFrame, "apply", original_apply)
+    assert len(engine._market_rows) == len(df)
+
+
 def test_many_candidates_against_large_market_table_is_fast():
     """End-to-end timing guard matching the reported symptom: Step 5 must
     stay responsive as candidate count and market table size grow."""
-    df = _big_market_df(n_plants=50, rows_per_plant=40)  # 2000 market rows
+    df = _big_market_df(n_plants=200, rows_per_plant=50)  # 10,000 market rows
     engine = MarketIntelligenceEngine(df)
 
     started = time.perf_counter()
-    for i in range(200):  # 200 candidate plants, several re-evaluated
+    for i in range(400):  # 400 evaluations across 200 candidate plants
         engine.evaluate(
-            {"Scientific_Name": f"Species genus{i % 50}"},
+            {"Scientific_Name": f"Species genus{i % 200}"},
             indication="stress",
             market="FR",
         )

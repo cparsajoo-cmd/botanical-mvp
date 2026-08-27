@@ -52,7 +52,7 @@ def test_generate_candidate_insights_runs_all_three_stages(monkeypatch):
     )
     monkeypatch.setattr(
         svc, "generate_hypotheses",
-        lambda edges, synthesis, score_summary=None, evidence_ids=None: [
+        lambda edges, synthesis, score_summary=None, evidence_ids=None, evidence_items=None: [
             {"hypothesis": "test", "evidence_label": "rd_hypothesis"}
         ],
     )
@@ -76,7 +76,7 @@ def test_k_global_ai_outage_orchestrator_still_returns_well_formed_empty_result(
     def _raise_synthesis(items):
         raise RuntimeError("OpenAI unavailable")
 
-    def _raise_hypotheses(edges, synthesis, score_summary=None, evidence_ids=None):
+    def _raise_hypotheses(edges, synthesis, score_summary=None, evidence_ids=None, evidence_items=None):
         raise RuntimeError("OpenAI unavailable")
 
     monkeypatch.setattr(svc, "reason_about_mechanisms", _raise_mechanism)
@@ -107,7 +107,7 @@ def test_one_stage_failing_does_not_prevent_the_others(monkeypatch):
     )
     monkeypatch.setattr(
         svc, "generate_hypotheses",
-        lambda edges, synthesis, score_summary=None, evidence_ids=None: [],
+        lambda edges, synthesis, score_summary=None, evidence_ids=None, evidence_items=None: [],
     )
 
     result = svc.generate_candidate_insights("Valeriana officinalis", _evidence_df())

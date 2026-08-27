@@ -143,7 +143,8 @@ def generate_candidate_insights(
     try:
         evidence_ids = [item["evidence_id"] for item in evidence_items]
         hypotheses = generate_hypotheses(
-            mechanistic_edges, synthesis, score_summary=score_summary, evidence_ids=evidence_ids
+            mechanistic_edges, synthesis, score_summary=score_summary,
+            evidence_ids=evidence_ids, evidence_items=evidence_items,
         )
     except Exception:
         hypotheses = []

@@ -107,11 +107,35 @@ def resolve_model(task_env_var: Optional[str] = None) -> str:
     return project_model
 
 
-def _cache_key(task: str, model: str, normalized_input: str, schema_version: str) -> str:
+def _cache_key(
+    task: str,
+    model: str,
+    normalized_input: str,
+    schema_version: str,
+    system_prompt_hash: str,
+    schema_hash: str,
+) -> str:
     digest = hashlib.sha256(
-        f"{task}|{model}|{schema_version}|{normalized_input}".encode("utf-8")
+        f"{task}|{model}|{schema_version}|{system_prompt_hash}|{schema_hash}|{normalized_input}".encode("utf-8")
     ).hexdigest()
     return digest
+
+
+def _stable_digest(text: str) -> str:
+    """SHA-256 over the exact text -- stable across processes/restarts,
+    unlike Python's process-randomized hash(). Used for both the
+    system-prompt and schema components of the cache key."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _stable_schema_digest(schema: dict) -> str:
+    """Deterministic serialization (sorted keys, no whitespace
+    ambiguity) so semantically-identical schemas always hash the same,
+    and any real schema change (new field, changed enum, etc.) always
+    changes the digest -- this is what makes the cache key correct even
+    when a developer forgets to bump schema_version (see Issue 3)."""
+    serialized = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    return _stable_digest(serialized)
 
 
 def clear_cache() -> None:
@@ -144,9 +168,14 @@ def call_structured_json(
       model-not-found error" fallback already used by
       llm_extractor.extract_gate_assertions_with_llm
     - a simple result cache keyed on (task, model, normalized input,
-      schema_version) -- see module docstring's caching note. A cache
-      hit never re-calls the API. An exception is never cached, so a
-      transient failure is retried on the caller's next attempt.
+      schema_version, a stable hash of system_prompt, a stable hash of
+      the schema) -- see module docstring's caching note and Issue 3's
+      hardening: a changed system_prompt or schema always changes the
+      cache key, even if the caller forgets to bump schema_version, so
+      a stale cached result can never be returned for genuinely new
+      prompt/schema content. A cache hit never re-calls the API. An
+      exception is never cached, so a transient failure is retried on
+      the caller's next attempt.
 
     Raises whatever the underlying SDK call raises on non-model-name
     errors (auth, rate limit, schema/prompt errors, malformed JSON via
@@ -158,7 +187,10 @@ def call_structured_json(
 
     cache_key = None
     if use_cache:
-        cache_key = _cache_key(task, model, user_content, schema_version)
+        cache_key = _cache_key(
+            task, model, user_content, schema_version,
+            _stable_digest(system_prompt), _stable_schema_digest(schema),
+        )
         if cache_key in _RESULT_CACHE:
             return _RESULT_CACHE[cache_key]
 

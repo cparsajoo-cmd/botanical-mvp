@@ -95,3 +95,128 @@ def test_output_never_contains_a_numeric_score_field():
     """Structural guarantee: the schema itself has no field that could
     be mistaken for or used as a final candidate score."""
     assert "score" not in svc.HYPOTHESIS_SCHEMA["properties"]["hypotheses"]["items"]["properties"]
+
+
+# ---------------------------------------------------------------------
+# Issue 2 hardening: hypothesis-to-evidence semantic grounding
+# ---------------------------------------------------------------------
+
+_EVIDENCE_ITEMS = [
+    {"evidence_id": "PMID1", "plant": "Valeriana officinalis",
+     "text_snippet": "Valeriana officinalis extract contains valerenic acid."},
+    {"evidence_id": "PMID2", "compound": "Valerenic acid", "target": "GABA-A receptor",
+     "text_snippet": "Valerenic acid modulates GABA-A receptors in vitro."},
+    {"evidence_id": "PMID3", "plant": "Valeriana officinalis",
+     "text_snippet": "Valerian is cultivated widely across temperate Europe."},
+]
+
+
+def test_hypothesis_grounding_1_unrelated_citation_is_dropped_and_hypothesis_removed(monkeypatch):
+    """Hypothesis cites a real but topically-unrelated evidence id (PMID3,
+    about cultivation, not about the mechanism/premise) -- expected:
+    the citation is removed, and since that leaves no supporting
+    evidence, the hypothesis itself is removed."""
+    def _fake(**kwargs):
+        if kwargs.get("task") == "hypothesis_generation":
+            return {
+                "hypotheses": [{
+                    "hypothesis": "Valerenic acid's GABA-A modulation warrants a dose-ranging trial.",
+                    "hypothesis_type": "evidence_gap",
+                    "supporting_evidence_ids": ["PMID3"],
+                    "contradicting_evidence_ids": [],
+                    "uncertainties": ["No clinical dose-response data"],
+                    "confidence": 0.6,
+                    "research_next_step": "Run a dose-ranging RCT.",
+                }]
+            }
+        # grounding verification call
+        return {
+            "grounded_supporting_evidence_ids": [],
+            "grounded_contradicting_evidence_ids": [],
+            "reason": "PMID3 discusses cultivation, not the mechanism/premise.",
+        }
+
+    monkeypatch.setattr(svc.llm_client, "call_structured_json", _fake)
+    result = svc.generate_hypotheses(
+        _EDGES, _SYNTHESIS,
+        evidence_ids=["PMID1", "PMID2", "PMID3"],
+        evidence_items=_EVIDENCE_ITEMS,
+    )
+    assert result == []
+
+
+def test_hypothesis_grounding_2_premise_support_retained_not_treated_as_proof(monkeypatch):
+    """Evidence supports the PREMISE (plant contains compound; compound
+    affects a target) but does not itself establish the final
+    hypothesis (that investigating indication Y is warranted) --
+    expected: hypothesis retained, still labeled rd_hypothesis."""
+    def _fake(**kwargs):
+        if kwargs.get("task") == "hypothesis_generation":
+            return {
+                "hypotheses": [{
+                    "hypothesis": "Given valerenic acid's GABA-A activity, Valeriana officinalis "
+                                   "warrants investigation for sleep maintenance insomnia.",
+                    "hypothesis_type": "mechanistic_gap",
+                    "supporting_evidence_ids": ["PMID1", "PMID2"],
+                    "contradicting_evidence_ids": [],
+                    "uncertainties": ["No direct clinical evidence for this indication yet"],
+                    "confidence": 0.55,
+                    "research_next_step": "Conduct a preclinical sleep-model study.",
+                }]
+            }
+        return {
+            "grounded_supporting_evidence_ids": ["PMID1", "PMID2"],
+            "grounded_contradicting_evidence_ids": [],
+            "reason": "Both items genuinely establish the premise (compound presence, target activity).",
+        }
+
+    monkeypatch.setattr(svc.llm_client, "call_structured_json", _fake)
+    result = svc.generate_hypotheses(
+        _EDGES, _SYNTHESIS,
+        evidence_ids=["PMID1", "PMID2", "PMID3"],
+        evidence_items=_EVIDENCE_ITEMS,
+    )
+    assert len(result) == 1
+    assert result[0]["evidence_label"] == "rd_hypothesis"
+    assert set(result[0]["supporting_evidence_ids"]) == {"PMID1", "PMID2"}
+
+
+def test_hypothesis_grounding_verification_unavailable_drops_citations_and_hypothesis(monkeypatch):
+    def _fake(**kwargs):
+        if kwargs.get("task") == "hypothesis_generation":
+            return {
+                "hypotheses": [{
+                    "hypothesis": "test", "hypothesis_type": "other",
+                    "supporting_evidence_ids": ["PMID1"], "contradicting_evidence_ids": [],
+                    "uncertainties": [], "confidence": 0.4, "research_next_step": "x",
+                }]
+            }
+        raise RuntimeError("grounding verifier unavailable")
+
+    monkeypatch.setattr(svc.llm_client, "call_structured_json", _fake)
+    result = svc.generate_hypotheses(
+        _EDGES, _SYNTHESIS, evidence_ids=["PMID1"], evidence_items=_EVIDENCE_ITEMS,
+    )
+    assert result == []
+
+
+def test_hypothesis_without_evidence_items_skips_semantic_layer_backward_compatibly(monkeypatch):
+    """Legacy call shape (no evidence_items) must behave exactly as
+    before this hardening patch -- citation-existence validation only,
+    no semantic grounding call made."""
+    calls = []
+
+    def _fake(**kwargs):
+        calls.append(kwargs.get("task"))
+        return {
+            "hypotheses": [{
+                "hypothesis": "test", "hypothesis_type": "other",
+                "supporting_evidence_ids": ["PMID1"], "contradicting_evidence_ids": [],
+                "uncertainties": [], "confidence": 0.4, "research_next_step": "x",
+            }]
+        }
+
+    monkeypatch.setattr(svc.llm_client, "call_structured_json", _fake)
+    result = svc.generate_hypotheses(_EDGES, _SYNTHESIS)
+    assert len(result) == 1
+    assert calls == ["hypothesis_generation"]  # no grounding-verification call made

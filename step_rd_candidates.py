@@ -15,6 +15,11 @@ from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
 from decision_explainability import attach_decision_explanations
 from ai_rd_insight_service import generate_candidate_insights
+from evidence_adjudication_engine import (
+    adjudicate_candidate,
+    apply_negative_evidence_cap,
+    compute_deterministic_adjustments,
+)
 from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
     get_scientific_evidence_by_ids,
@@ -27,6 +32,98 @@ from standard_evidence_builder import (
 # change. See the "Run Candidate Discovery" button handler below.
 def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
+
+
+def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target_context):
+    """Controlled AI evidence-adjudication post-processing pass (part 3C/14/15
+    of the adjudication architecture) -- see evidence_adjudication_engine.py's
+    module docstring for why this runs HERE (after
+    build_plant_candidate_shortlist() returns, before merge_authoritative_scores())
+    rather than inside the deterministic engine itself.
+
+    Mutates and returns plant_summary_df with the new adjudication columns
+    (listed in candidate_shortlisting.merge_authoritative_scores'
+    authoritative_fields) added, and with Decision_Class_AH /
+    Go_Investicate_Hold_NoGo downgraded (never upgraded) where
+    apply_negative_evidence_cap() finds a material negative-human-evidence
+    cap applies. Only Shortlist/Exploratory rows within
+    _ADJUDICATION_MAX_CANDIDATES are adjudicated (cost control, part 17/19);
+    every other row gets neutral/UNKNOWN placeholder columns so the
+    dataframe shape never depends on how many rows were actually
+    adjudicated. Never raises -- any per-candidate failure falls back to
+    adjudicate_candidate()'s own fail-open status fields (part 16); this
+    function has no additional try/except of its own around that call
+    because adjudicate_candidate() already guarantees it never raises.
+    """
+    if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
+        return plant_summary_df
+    if "Alternative_Plant" not in plant_summary_df.columns:
+        return plant_summary_df
+
+    eligible_mask = plant_summary_df.get(
+        "Scientific_Triage_Status", pd.Series(["Excluded"] * len(plant_summary_df))
+    ).isin(["Shortlist", "Exploratory"])
+    eligible_plants = (
+        plant_summary_df.loc[eligible_mask, "Alternative_Plant"]
+        .dropna().astype(str).drop_duplicates().tolist()[:_ADJUDICATION_MAX_CANDIDATES]
+    )
+    eligible_set = set(eligible_plants)
+
+    new_columns = {col: [None] * len(plant_summary_df) for col in (
+        "Indication_Evidence_Direction", "Human_Evidence_Strength", "Evidence_Conflict_Level",
+        "Negative_Evidence_Severity", "Preparation_Compatibility", "Plant_Part_Compatibility",
+        "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
+        "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
+        "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
+        "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Adjustment",
+        "Negative_Human_Evidence_Adjustment", "Preparation_Adjustment", "Plant_Part_Adjustment",
+        "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score", "Decision_Cap_Reason",
+    )}
+
+    for idx, row in plant_summary_df.iterrows():
+        plant = str(row.get("Alternative_Plant") or "")
+        base_score = row.get("Overall_Score", 0.0)
+        if plant not in eligible_set:
+            new_columns["Evidence_Adjudication_Status"][idx] = "AI_ADJUDICATION_NOT_RUN"
+            new_columns["Base_R&D_Opportunity_Score"][idx] = base_score
+            new_columns["Final_R&D_Opportunity_Score"][idx] = base_score
+            continue
+
+        adjudication = adjudicate_candidate(
+            plant, indication, evidence_df,
+            dimension_status=row.get("Dimension_Status"),
+            target_context=target_context,
+            commercial_status=row.get("Commercial_Novelty_Status"),
+        )
+        adjustments = compute_deterministic_adjustments(adjudication, base_score)
+
+        new_decision_class, new_go_call, cap_reason = apply_negative_evidence_cap(
+            row.get("Decision_Class_AH", ""), row.get("Go_Investigate_Hold_NoGo", ""), adjudication,
+        )
+        if cap_reason:
+            plant_summary_df.at[idx, "Decision_Class_AH"] = new_decision_class
+            plant_summary_df.at[idx, "Go_Investigate_Hold_NoGo"] = new_go_call
+
+        for key in (
+            "Indication_Evidence_Direction", "Human_Evidence_Strength", "Evidence_Conflict_Level",
+            "Negative_Evidence_Severity", "Preparation_Compatibility", "Plant_Part_Compatibility",
+            "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
+            "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
+            "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
+            "Evidence_Adjudication_Rationale",
+        ):
+            new_columns[key][idx] = adjudication.get(key)
+        for key in (
+            "Evidence_Adjudication_Adjustment", "Negative_Human_Evidence_Adjustment",
+            "Preparation_Adjustment", "Plant_Part_Adjustment",
+            "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score",
+        ):
+            new_columns[key][idx] = adjustments.get(key)
+        new_columns["Decision_Cap_Reason"][idx] = cap_reason
+
+    for col, values in new_columns.items():
+        plant_summary_df[col] = values
+    return plant_summary_df
 
 
 # Step 5 performance guardrails.  Commercial evidence can contribute at most
@@ -42,6 +139,12 @@ _STEP5_COMMERCIAL_MAX_PLANTS = 120
 # hypotheses) cost control -- bounds how many shortlisted candidates get
 # AI insight generation per run, independent of _STEP5_FINAL_MAX_CANDIDATES.
 _AI_RD_INSIGHTS_MAX_CANDIDATES = 10
+# Same cost-control rationale as _AI_RD_INSIGHTS_MAX_CANDIDATES -- part 19
+# of the adjudication request (minimal, bounded change). Applied to
+# plant_summary_df's Shortlist/Exploratory rows only (see
+# _run_evidence_adjudication below), so Excluded candidates -- who most
+# need no further AI spend -- are never adjudicated.
+_ADJUDICATION_MAX_CANDIDATES = 15
 
 
 def _render_ai_rd_insights():
@@ -1644,6 +1747,27 @@ def render_rd_candidates_step(inputs):
                 st.session_state.pop("rd_triage_audit_csv_bytes", None)
 
                 if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+                    # Controlled AI evidence-adjudication layer (part 3C/14/15).
+                    # Runs on plant_summary_df BEFORE merge_authoritative_scores()
+                    # below, so the new structured columns and any negative-
+                    # evidence decision cap are already present on every row
+                    # merge_authoritative_scores() reads -- see that function's
+                    # authoritative_fields and evidence_adjudication_engine.py's
+                    # module docstring for the full rationale. Never blocks Step 5:
+                    # adjudicate_candidate() itself is fail-open (part 16), and
+                    # this call has no external try/except of its own for the
+                    # same reason the AI R&D insight block below does not need
+                    # one around generate_candidate_insights() per-plant.
+                    _perf_t_adjudication = time.perf_counter()
+                    plant_summary_df = _run_evidence_adjudication(
+                        plant_summary_df, evidence_df_for_run, indication,
+                        transferability_target_context,
+                    )
+                    _perf(
+                        f"evidence adjudication done "
+                        f"elapsed={time.perf_counter() - _perf_t_adjudication:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
                     _perf(
                         f"final plant shortlist ready plants={0 if plant_summary_df is None else len(plant_summary_df)} "
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"

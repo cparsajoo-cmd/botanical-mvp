@@ -3018,6 +3018,22 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "All_Tier_Evidence_Quality_Diagnostic", "All_Tier_Outcome_Consistency_Diagnostic",
         "Scoring_Model_Version", "Component_Source_Record_IDs", "Authoritative_Source_Record_IDs",
         "Authoritative_Narrative_Source_Record_ID", "Authoritative_Narrative_Provenance",
+        # Controlled AI evidence-adjudication layer (evidence_adjudication_engine.py).
+        # Computed by step_rd_candidates.py as a post-processing pass over
+        # plant_summary_df, AFTER build_plant_candidate_shortlist() returns and
+        # BEFORE this function runs -- see that module's docstring for why it is
+        # not called from inside build_plant_candidate_shortlist() itself. Listed
+        # here only so these columns survive the merge into the report-ready
+        # frame like every other plant-level field; this function does not
+        # compute or interpret any of them.
+        "Indication_Evidence_Direction", "Human_Evidence_Strength", "Evidence_Conflict_Level",
+        "Negative_Evidence_Severity", "Preparation_Compatibility", "Plant_Part_Compatibility",
+        "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
+        "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
+        "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
+        "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Adjustment",
+        "Negative_Human_Evidence_Adjustment", "Preparation_Adjustment", "Plant_Part_Adjustment",
+        "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score", "Decision_Cap_Reason",
     )
 
     merged_rows = []

@@ -155,10 +155,12 @@ def _truncate(text: str, max_chars: int) -> str:
 def extract_botanical_entities_ai(
     title: str,
     abstract: str,
+    deadline_seconds: Optional[float] = None,
 ) -> List[dict]:
     """Return a list of proposed botanical entities (see
     BOTANICAL_ENTITY_SCHEMA) that passed the confidence pre-filter and
-    are flagged is_botanical, or an empty list on any failure. Never
+    are flagged is_botanical, or an empty list on any failure -- including
+    no remaining Stage 2 budget (Part 17/20, ``deadline_seconds``). Never
     raises -- see module docstring's fail-open note.
 
     This function does NOT validate taxonomy. Every returned entity's
@@ -183,6 +185,7 @@ def extract_botanical_entities_ai(
             task="botanical_entity_extraction",
             model_env_var=ENTITY_EXTRACTION_MODEL_ENV_VAR,
             schema_version=_SCHEMA_VERSION,
+            deadline_seconds=deadline_seconds,
         )
     except Exception:
         return []

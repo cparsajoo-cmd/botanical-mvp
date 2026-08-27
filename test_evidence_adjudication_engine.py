@@ -182,7 +182,12 @@ def test_preparation_adjustment_never_double_counts_score():
 # Part 6/15 Case A -- negative human evidence matters and caps the
 # decision, generically (no plant/indication hardcoding).
 # ---------------------------------------------------------------------
-def test_consistent_negative_human_evidence_caps_to_no_go():
+def test_consistent_negative_human_evidence_caps_to_hold():
+    # part B4 fix: consistent negative EFFICACY evidence is a scientific
+    # insufficiency, not a safety finding, so it must cap at "G — Hold /
+    # insufficient evidence" (never "H — No-go / safety concern", which is
+    # reserved for actual safety/regulatory gates elsewhere in the
+    # pipeline).
     adjudication = {
         "Indication_Evidence_Direction": "CONSISTENT_NEGATIVE",
         "Human_Evidence_Strength": "STRONG",
@@ -191,8 +196,8 @@ def test_consistent_negative_human_evidence_caps_to_no_go():
     new_class, new_go, reason = ea.apply_negative_evidence_cap(
         "B — Established scientific candidate", "Go", adjudication,
     )
-    assert new_go == "No-Go"
-    assert new_class == "H — No-go / safety concern"
+    assert new_go == "Hold"
+    assert new_class == "G — Hold / insufficient evidence"
     assert reason == "consistent_negative_human_evidence"
 
 
@@ -226,7 +231,13 @@ def test_no_cap_when_negative_evidence_is_mechanistic_only():
     assert new_go == "Go"
 
 
-def test_negative_human_evidence_adjustment_only_when_human_evidence_present():
+def test_no_negative_evidence_double_counting_regardless_of_human_evidence(monkeypatch):
+    # part 8 correction (this session): the deterministic scientific
+    # score already represents negative/null evidence via
+    # Direction_Factor/Evidence_Consistency_Factor/Scientific_Evidence_
+    # Score upstream (candidate_shortlisting.py) -- adjudication must
+    # NEVER subtract a second, arbitrary numerical penalty for that same
+    # information, whether or not human evidence is present.
     with_human = ea.compute_deterministic_adjustments(
         {"Negative_Evidence_Severity": "HIGH", "Human_Evidence_Strength": "STRONG",
          "Indication_Evidence_Direction": "CONSISTENT_NEGATIVE"},
@@ -237,8 +248,11 @@ def test_negative_human_evidence_adjustment_only_when_human_evidence_present():
          "Indication_Evidence_Direction": "MOSTLY_NEGATIVE"},
         base_score=70.0,
     )
-    assert with_human["Evidence_Adjudication_Adjustment"] < without_human["Evidence_Adjudication_Adjustment"]
-    assert with_human["Final_R&D_Opportunity_Score"] < with_human["Base_R&D_Opportunity_Score"]
+    for adjustments in (with_human, without_human):
+        assert adjustments["Evidence_Adjudication_Adjustment"] == 0.0
+        assert adjustments["Negative_Human_Evidence_Adjustment"] == 0.0
+        assert adjustments["Final_R&D_Opportunity_Score"] == adjustments["Base_R&D_Opportunity_Score"]
+        assert adjustments["Final_R&D_Opportunity_Score"] == 70.0
 
 
 # ---------------------------------------------------------------------
@@ -277,7 +291,9 @@ def test_final_recommendation_can_differ_for_scientifically_valid_reasons(monkey
     class_b, go_b, _ = ea.apply_negative_evidence_cap("B — Established scientific candidate", "Go", adjudication_b)
     assert (class_a, go_a) != (class_b, go_b)
     assert go_a == "Go"
-    assert go_b == "No-Go"
+    # part B4 fix: negative efficacy caps to Hold, never No-Go (No-Go/"H"
+    # is reserved for actual safety findings).
+    assert go_b == "Hold"
 
 
 # ---------------------------------------------------------------------
@@ -319,6 +335,121 @@ def test_authoritative_fields_include_adjudication_columns():
 # Rationale generation (part 13) -- deterministic, from structured
 # fields only.
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Part B9 -- human/animal/in-vitro classification must not require the
+# literal word "human" to appear in free-text Population.
+# ---------------------------------------------------------------------
+def test_human_evidence_recognized_without_literal_word_human():
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Valeriana officinalis",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive",
+         "Population": "adults with insomnia", "Study_Type": "randomized controlled trial"},
+    ])
+    items = ea.build_adjudication_evidence_items(df, "Valeriana officinalis", "sleep")
+    assert items[0]["human_animal_in_vitro"] == "HUMAN"
+    fallback = ea._deterministic_fallback(items)
+    assert fallback["Human_Evidence_Strength"] != "NONE"
+    assert fallback["Key_Human_Evidence_IDs"] == ["E1"]
+
+
+def test_animal_evidence_not_misclassified_as_human():
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Valeriana officinalis",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive",
+         "Population": "Sprague-Dawley rats", "Study_Type": "animal model"},
+    ])
+    items = ea.build_adjudication_evidence_items(df, "Valeriana officinalis", "sleep")
+    assert items[0]["human_animal_in_vitro"] == "ANIMAL_OR_IN_VITRO"
+    fallback = ea._deterministic_fallback(items)
+    assert fallback["Human_Evidence_Strength"] == "NONE"
+    assert fallback["Key_Human_Evidence_IDs"] == []
+
+
+def test_unclassifiable_study_context_is_unknown_not_guessed():
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Valeriana officinalis",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive"},
+    ])
+    items = ea.build_adjudication_evidence_items(df, "Valeriana officinalis", "sleep")
+    assert items[0]["human_animal_in_vitro"] == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------
+# Part B10 -- a WEAK (lexical/fallback) indication match must not
+# silently count as equivalent to a direct/explicit indication match.
+# ---------------------------------------------------------------------
+def test_weak_lexical_match_excluded_from_deterministic_tally():
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Citrus limon",
+         "Indication_Match_Type": "weak_lexical", "Result_Direction": "positive",
+         "Population": "human"},
+    ])
+    items = ea.build_adjudication_evidence_items(df, "Citrus limon", "sleep")
+    assert items[0]["indication_match_strength"] == "WEAK"
+    fallback = ea._deterministic_fallback(items)
+    assert fallback["Positive_Evidence_IDs"] == []
+    assert fallback["Indication_Evidence_Direction"] == "INSUFFICIENT"
+
+
+def test_direct_match_strength_recognized():
+    assert ea._match_strength("explicit_field_overlap") == "DIRECT"
+    assert ea._match_strength("exact_indication") == "DIRECT"
+    assert ea._match_strength("weak_lexical") == "WEAK"
+    assert ea._match_strength("something_unrecognized") == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------
+# Part B11 -- the specific fallback root cause must survive even after
+# Evidence_Adjudication_Status collapses to the generic
+# AI_ADJUDICATION_FALLBACK value.
+# ---------------------------------------------------------------------
+def test_fallback_reason_preserved_on_ai_timeout(monkeypatch):
+    class _FakeTimeout(Exception):
+        pass
+
+    def _raise_timeout(**kwargs):
+        raise _FakeTimeout("Request timed out")
+
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Plant A",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive"},
+    ])
+    monkeypatch.setattr(ea.llm_client, "call_structured_json", _raise_timeout)
+    result = ea.adjudicate_candidate("Plant A", "sleep", df)
+    assert result["Evidence_Adjudication_Status"] == "AI_ADJUDICATION_FALLBACK"
+    assert result["Evidence_Adjudication_Fallback_Reason"] == "TIMEOUT"
+
+
+def test_fallback_reason_preserved_on_invalid_schema(monkeypatch):
+    monkeypatch.setattr(ea.llm_client, "call_structured_json", lambda **kwargs: {"bad": "shape"})
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Plant A",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive"},
+    ])
+    result = ea.adjudicate_candidate("Plant A", "sleep", df)
+    assert result["Evidence_Adjudication_Status"] == "AI_ADJUDICATION_FALLBACK"
+    assert result["Evidence_Adjudication_Fallback_Reason"] == "INVALID_SCHEMA"
+
+
+def test_fallback_reason_none_when_adjudication_succeeds(monkeypatch):
+    def _fake_ok(**kwargs):
+        return {
+            "indication_evidence_direction": "MOSTLY_POSITIVE", "human_evidence_strength": "MODERATE",
+            "evidence_conflict_level": "NONE", "negative_evidence_severity": "NONE",
+            "scientific_evidence_confidence": "MODERATE", "positive_evidence_ids": ["E1"],
+            "negative_evidence_ids": [], "key_human_evidence_ids": ["E1"],
+            "preparation_mismatch_evidence_ids": [], "summary_note": "ok",
+        }
+    monkeypatch.setattr(ea.llm_client, "call_structured_json", _fake_ok)
+    df = _evidence_df([
+        {"Evidence_Record_ID": "E1", "Scientific_Name": "Plant A",
+         "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive"},
+    ])
+    result = ea.adjudicate_candidate("Plant A", "sleep", df)
+    assert result["Evidence_Adjudication_Status"] == "AI_ADJUDICATION_OK"
+    assert result["Evidence_Adjudication_Fallback_Reason"] is None
+
+
 def test_rationale_reflects_preparation_mismatch():
     structured = {
         "Human_Evidence_Strength": "MODERATE", "Indication_Evidence_Direction": "MOSTLY_POSITIVE",

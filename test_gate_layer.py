@@ -546,7 +546,16 @@ def test_deterministic_output_contract_locked_engineering_regression():
     #
     # Bumped 82 -> 83 by Scientific Decision Validation: Final_Decision_Status
     # is the explicit six-class source-of-truth for final scientific decisions.
-    assert len(result.columns) == 87
+    #
+    # Bumped 87 -> 91 by Part 9 (structured safety status, this session):
+    # Safety_Assertion_Status, Safety_Concern_Level, Safety_Evidence_IDs, and
+    # Safety_Status_Rationale are new, additive columns derived from the
+    # SAME existing safety_assertion_engine assertions already computed
+    # for Safety_Flags/Safety_Assertions -- see
+    # safety_assertion_engine.derive_structured_safety_status. Named
+    # Safety_Status_Rationale (not Safety_Rationale) to avoid colliding
+    # with the pre-existing free-text Safety_Rationale column.
+    assert len(result.columns) == 91
     assert "Gate_Results" in result.columns
     assert "Applicability_Summary" in result.columns
     assert "Decision_Engine_Version" in result.columns

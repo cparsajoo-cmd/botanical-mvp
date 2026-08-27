@@ -2,8 +2,15 @@ import requests
 
 GBIF_API = "https://api.gbif.org/v1/species/search"
 
+# Part 19 (Stage 2 remediation) -- see kew_connector.DEFAULT_TIMEOUT_SECONDS
+# for the same rationale.
+DEFAULT_TIMEOUT_SECONDS = 30
 
-def search_gbif_plants(keyword, limit=30):
+
+def search_gbif_plants(keyword, limit=30, timeout=DEFAULT_TIMEOUT_SECONDS):
+    """Fails closed (returns []) on any network/HTTP error, including a
+    timeout -- never raises. ``timeout`` should be derived from the
+    caller's remaining Stage 2 budget when one exists (Part 19)."""
 
     try:
 
@@ -17,7 +24,7 @@ def search_gbif_plants(keyword, limit=30):
                 "limit": limit
             },
 
-            timeout=30
+            timeout=max(0.01, timeout) if timeout is not None else DEFAULT_TIMEOUT_SECONDS
 
         )
 

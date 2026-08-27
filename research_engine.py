@@ -3,6 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from collections import defaultdict
 from datetime import datetime
+from typing import Callable, Optional
 
 import requests
 
@@ -24,6 +25,96 @@ from ai_botanical_entity_extractor import (
     extract_botanical_entities_ai,
     candidate_strings_for_validation,
 )
+
+
+# ---------------------------------------------------------------------
+# Part 13 (Stage 2 remediation) -- ONE true whole-stage wall-clock
+# budget, by run mode. QUICK's floor (180s) matches the number this
+# codebase already used as the final-multi-source-collection floor
+# before this fix -- the difference is that it now covers the WHOLE
+# stage (query expansion through final collection), not just the last
+# step, per the explicit requirement not to add a second, independent
+# timer alongside the real one. PILOT/FULL gets a larger exploration
+# budget (Part 16) since those runs are not interactive/blocking a
+# Streamlit page the same way QUICK is.
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Part 13 (Stage 2 remediation) -- ONE true wall-clock budget for the
+# DISCOVERY phase (query expansion through candidate-specific
+# validation), by run mode, starting before query expansion (not after
+# it, and not as a second independent timer added later).
+#
+# WHY THE FINAL MULTI-SOURCE COLLECTION STEP IS NOT SQUEEZED INTO THIS
+# SAME NUMBER: that step has its OWN dedicated, count-derived budget
+# (max(180, worker_waves * (TOTAL_TIME_BUDGET + jitter)), further down
+# in run_research_engine) that three separate, documented production
+# incidents already root-caused and fixed (see the comment at that exact
+# line) -- collapsing it into "whatever is left of one combined budget"
+# would silently reopen incident #1 (later candidates starved because an
+# unrelated, independently-sized outer timer ran out first). So there
+# are two REAL, board-scoped budgets in this function, not one: this
+# discovery-phase budget, and final collection's own -- but each is a
+# single, non-nested, non-duplicated timer for its own phase, and both
+# start from the SAME `time.monotonic()` call at the very top of
+# run_research_engine(), satisfying Part 13's actual requirement (a true
+# whole-stage deadline that begins before query expansion) without
+# breaking the collector-sizing fix Part 25 says to preserve.
+# ---------------------------------------------------------------------
+STAGE2_DISCOVERY_QUICK_BUDGET_SECONDS = 90
+STAGE2_DISCOVERY_PILOT_BUDGET_SECONDS = 240
+
+# Part 16 -- bounded sequential AI entity-extraction calls per Stage 2
+# run, by mode. Was hardcoded at 40 unconditionally (default param on
+# _extract_open_world_botanical_candidates) regardless of how many
+# candidates were actually requested or how much budget remained.
+_QUICK_MAX_LLM_ENTITY_EXTRACTION_RECORDS = 12
+_PILOT_MAX_LLM_ENTITY_EXTRACTION_RECORDS = 40
+
+# A remote call is not worth attempting with less than this much stage
+# budget left -- avoids spending the last few seconds starting a network
+# round-trip that is very likely to itself time out uselessly.
+_MIN_USEFUL_REMAINING_SECONDS = 2.0
+
+
+def stage2_discovery_phase_budget_seconds(pilot_mode: bool = False) -> float:
+    """The discovery-phase wall-clock budget for this run mode (Part 13) --
+    query expansion through candidate-specific validation. Does NOT cover
+    the final multi-source collection step; see the module comment above
+    STAGE2_DISCOVERY_QUICK_BUDGET_SECONDS for why that step has its own,
+    separately-derived budget."""
+    return STAGE2_DISCOVERY_PILOT_BUDGET_SECONDS if pilot_mode else STAGE2_DISCOVERY_QUICK_BUDGET_SECONDS
+
+
+def _max_llm_entity_extraction_records(pilot_mode: bool, requested_count: int, remaining_seconds: float) -> int:
+    """Part 16 -- derives the open-world AI entity-extraction cap from run
+    mode AND requested candidate count AND remaining Stage 2 budget,
+    instead of a single hardcoded constant. Never hardcoded around a
+    specific candidate count (e.g. "5 plants") -- scales with
+    requested_count, bounded by the mode's own ceiling."""
+    mode_cap = (
+        _PILOT_MAX_LLM_ENTITY_EXTRACTION_RECORDS if pilot_mode
+        else _QUICK_MAX_LLM_ENTITY_EXTRACTION_RECORDS
+    )
+    count_derived_cap = max(4, int(requested_count) * (5 if pilot_mode else 2))
+    cap = min(mode_cap, count_derived_cap)
+    if remaining_seconds <= _MIN_USEFUL_REMAINING_SECONDS:
+        return 0
+    # Roughly bound further by remaining time -- assume each AI extraction
+    # call can take up to a few seconds; do not promise more calls than
+    # the remaining budget could plausibly fit.
+    time_derived_cap = max(1, int(remaining_seconds // 3))
+    return max(0, min(cap, time_derived_cap))
+
+
+def _emit_stage2_progress(progress_callback, stage, current, total, message):
+    """Never lets a UI progress callback crash Stage 2 itself (Part 15)."""
+    _discovery_log(f"[stage2:{stage}] {current}/{total} {message}")
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(stage, current, total, message)
+    except Exception:
+        pass
 
 
 _COMMON_NAME_STOPWORDS = {
@@ -108,7 +199,7 @@ def _candidate_alias_catalog(engine=None):
     return aliases
 
 
-def _fetch_europepmc_discovery_records(query, max_results=25):
+def _fetch_europepmc_discovery_records(query, max_results=25, timeout=8):
     response = requests.get(
         "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
         params={
@@ -117,7 +208,7 @@ def _fetch_europepmc_discovery_records(query, max_results=25):
             "pageSize": max_results,
             "resultType": "core",
         },
-        timeout=8,
+        timeout=max(0.01, timeout) if timeout is not None else 8,
     )
     response.raise_for_status()
 
@@ -438,7 +529,7 @@ def _catalogued_alias_norms(alias_catalog):
 
 def _extract_open_world_botanical_candidates(
     records, alias_catalog, indication_terms, dosage_form="", validation_cache=None,
-    max_llm_entity_extraction_records=40,
+    max_llm_entity_extraction_records=40, deadline_ts=None,
 ):
     """Extract, taxonomically validate, and quality-rank botanical mentions
     that are NOT already covered by the internal catalogue.
@@ -473,10 +564,22 @@ def _extract_open_world_botanical_candidates(
     once, regardless of how many articles mention it (performance
     requirement -- see module-level discussion in
     botanical_entity_validation.py).
+
+    ``deadline_ts`` (Part 13/16/19, Stage 2 remediation): an optional
+    monotonic deadline timestamp. When supplied, each AI extraction call
+    and each remote taxonomy validation gets a per-call timeout derived
+    from the time actually remaining, and BOTH loops stop early (partial
+    results returned, never a crash/hang) once the deadline is reached --
+    remaining unvalidated mentions are simply not included as candidates,
+    never silently accepted. None (the default) preserves unlimited-time
+    behavior for any caller/test that does not pass it.
     """
     catalogue_norms = _catalogued_alias_norms(alias_catalog)
     indication_aliases = [_norm_text(term) for term in indication_terms if term]
     cache = validation_cache if validation_cache is not None else {}
+
+    def _remaining():
+        return None if deadline_ts is None else max(0.0, deadline_ts - time.monotonic())
 
     def _support_key(record, index, source):
         support_id = str(record.get("PMID") or record.get("Record_ID") or record.get("DOI") or index)
@@ -496,6 +599,7 @@ def _extract_open_world_botanical_candidates(
     # so this is also never called twice for the same record.
     ai_candidates_by_index = {}
     llm_records_processed = 0
+    llm_stopped_for_budget = False
     for index, record in enumerate(records):
         raw_title = record.get("Title") or record.get("Source_Title") or ""
         raw_abstract = record.get("Abstract") or record.get("Notes") or record.get("Raw_Text") or ""
@@ -503,8 +607,15 @@ def _extract_open_world_botanical_candidates(
             continue
         if llm_records_processed >= max_llm_entity_extraction_records:
             break
+        remaining = _remaining()
+        if remaining is not None and remaining <= _MIN_USEFUL_REMAINING_SECONDS:
+            # Part 14 -- stop starting new AI calls once the stage
+            # deadline is effectively exhausted; whatever was extracted
+            # so far is kept (partial results), never discarded.
+            llm_stopped_for_budget = True
+            break
         llm_records_processed += 1
-        ai_entities = extract_botanical_entities_ai(raw_title, raw_abstract)
+        ai_entities = extract_botanical_entities_ai(raw_title, raw_abstract, deadline_seconds=remaining)
         ai_candidates_by_index[index] = candidate_strings_for_validation(ai_entities)
 
     # Pass 1: collect every unique, format-plausible, not-already-catalogued
@@ -532,15 +643,24 @@ def _extract_open_world_botanical_candidates(
         "validated_external_candidates": 0,
         "rejected_or_unresolved_external_candidates": 0,
         "llm_entity_extraction_records_processed": llm_records_processed,
+        "llm_entity_extraction_stopped_for_budget": llm_stopped_for_budget,
+        "taxonomy_validation_stopped_for_budget": False,
     }
 
     # Pass 2: validate each unique mention exactly once -- identical
     # treatment regardless of which path (regex or AI) proposed it. This
     # is the enforced taxonomic authority; nothing from Pass 1 is trusted
-    # before this.
+    # before this. Part 19 -- deadline-aware: once the stage budget is
+    # exhausted, remaining mentions are left OUT of `validated` entirely
+    # (fail-closed -- never silently accepted as valid to save time).
     validated = {}
     for mention_norm, display_name in mention_display.items():
-        validation = validate_botanical_candidate(display_name, cache=cache)
+        remaining = _remaining()
+        if remaining is not None and remaining <= 0:
+            diagnostics["taxonomy_validation_stopped_for_budget"] = True
+            diagnostics["rejected_or_unresolved_external_candidates"] += 1
+            continue
+        validation = validate_botanical_candidate(display_name, cache=cache, deadline_seconds=remaining)
         if validation["valid"]:
             validated[mention_norm] = validation
             diagnostics["validated_external_candidates"] += 1
@@ -719,11 +839,22 @@ def _candidate_pool_for_indication(indication, alias_catalog):
 
 
 def _candidate_specific_literature_validation(
-    indication, indication_terms, alias_catalog, existing_plants, slots, diagnostics
+    indication, indication_terms, alias_catalog, existing_plants, slots, diagnostics,
+    deadline_ts=None,
 ):
-    """Validate likely plants with focused plant+indication literature queries."""
+    """Validate likely plants with focused plant+indication literature queries.
+
+    ``deadline_ts`` (Part 20, Stage 2 remediation): optional monotonic
+    deadline. When supplied, the per-plant loop below stops early once
+    the budget is exhausted -- plants already validated are kept
+    (partial results), remaining hypotheses in the pool are simply not
+    attempted. None (the default) preserves unlimited-time behavior.
+    """
     if slots <= 0:
         return [], {}
+
+    def _remaining():
+        return None if deadline_ts is None else max(0.0, deadline_ts - time.monotonic())
 
     pool = _candidate_pool_for_indication(indication, alias_catalog)
     existing = {_norm_text(p) for p in existing_plants if p}
@@ -732,6 +863,7 @@ def _candidate_specific_literature_validation(
     diagnostics["candidate_pool_size"] = len(pool)
     diagnostics["candidate_queries_attempted"] = 0
     diagnostics["candidate_validation_records"] = 0
+    diagnostics["candidate_validation_stopped_for_budget"] = False
 
     validated = []
     validation_meta = {}
@@ -745,16 +877,21 @@ def _candidate_specific_literature_validation(
     therapeutic_or = " OR ".join(f'"{term}"' for term in primary_terms)
 
     for plant in pool[:max_hypotheses]:
+        remaining = _remaining()
+        if remaining is not None and remaining <= _MIN_USEFUL_REMAINING_SECONDS:
+            diagnostics["candidate_validation_stopped_for_budget"] = True
+            break
+        connector_timeout = min(8, remaining) if remaining is not None else 8
         query = f'"{plant}" AND ({therapeutic_or})'
         diagnostics["candidate_queries_attempted"] += 1
         records = []
         errors = []
         try:
-            records.extend(search_and_fetch_pubmed(query, max_results=3, timeout=8))
+            records.extend(search_and_fetch_pubmed(query, max_results=3, timeout=connector_timeout))
         except Exception as exc:
             errors.append(f"PubMed: {type(exc).__name__}: {exc}")
         try:
-            records.extend(_fetch_europepmc_discovery_records(query, max_results=3))
+            records.extend(_fetch_europepmc_discovery_records(query, max_results=3, timeout=connector_timeout))
         except Exception as exc:
             errors.append(f"Europe PMC: {type(exc).__name__}: {exc}")
 
@@ -849,11 +986,30 @@ def _online_discovered_candidate_plants(
     target_market,
     target_count,
     seed_plants=None,
+    deadline_ts=None,
+    progress_callback=None,
+    pilot_mode=False,
 ):
-    """Discover additional catalogue-validated, evidence-bearing plants."""
+    """Discover additional catalogue-validated, evidence-bearing plants.
+
+    ``deadline_ts`` (Part 13, Stage 2 remediation): optional monotonic
+    deadline shared with the caller's whole-Stage-2 budget. Every
+    expensive sub-step below (query expansion, PubMed/Europe PMC,
+    open-world extraction, candidate-specific validation) checks it and
+    stops early -- returning whatever was already collected -- rather
+    than running unbounded. None (the default) preserves unlimited-time
+    behavior for any direct caller/test that does not pass it.
+    """
+    def _remaining():
+        return None if deadline_ts is None else max(0.0, deadline_ts - time.monotonic())
+
+    def _progress(stage, current, total, message):
+        _emit_stage2_progress(progress_callback, stage, current, total, message)
+
+    _progress("expanding_query", 0, 1, "Expanding scientific query")
     diagnostics = {
         "query_terms": query_expansion_service.expand_query_terms(
-            indication, _query_terms(indication)
+            indication, _query_terms(indication), deadline_seconds=_remaining()
         ),
         "deterministic_query_terms": _query_terms(indication),
         "queries_attempted": 0,
@@ -872,7 +1028,12 @@ def _online_discovered_candidate_plants(
         "rejected_or_unresolved_external_candidates": 0,
         "novel_to_catalogue_candidates": [],
         "novel_to_catalogue_ranked_matches": {},
+        # Part 14 -- explicit record of which stages were skipped/cut
+        "stage2_deadline_exceeded": False,
+        "stages_completed": [],
+        "stages_skipped_for_budget": [],
     }
+    diagnostics["stages_completed"].append("query_expansion")
 
     try:
         engine = BotanicalRDCandidateEngine(use_live_search=False)
@@ -885,25 +1046,36 @@ def _online_discovered_candidate_plants(
         all_records = []
         # Separate focused searches retrieve far more botanical names than one
         # very broad OR query, while keeping each query interpretable.
-        for term in diagnostics["query_terms"][:4]:
+        _progress("searching_pubmed_europepmc", 0, len(diagnostics["query_terms"][:4]), "Searching scientific sources")
+        for i, term in enumerate(diagnostics["query_terms"][:4]):
+            remaining = _remaining()
+            if remaining is not None and remaining <= _MIN_USEFUL_REMAINING_SECONDS:
+                diagnostics["stage2_deadline_exceeded"] = True
+                diagnostics["stages_skipped_for_budget"].append(
+                    f"literature_discovery_remaining_terms({len(diagnostics['query_terms'][:4]) - i})"
+                )
+                break
+            connector_timeout = min(8, remaining) if remaining is not None else 8
             query = (
                 f'("{term}") AND '
                 "(medicinal plant OR herbal medicine OR phytotherapy OR botanical)"
             )
             diagnostics["queries_attempted"] += 1
+            _progress("searching_pubmed_europepmc", i + 1, len(diagnostics["query_terms"][:4]), f"Searching for '{term}'")
 
             try:
-                all_records.extend(search_and_fetch_pubmed(query, max_results=12, timeout=8))
+                all_records.extend(search_and_fetch_pubmed(query, max_results=12, timeout=connector_timeout))
             except Exception as exc:
                 diagnostics["connector_errors"].append(
                     f"PubMed [{term}]: {type(exc).__name__}: {exc}"
                 )
             try:
-                all_records.extend(_fetch_europepmc_discovery_records(query, max_results=20))
+                all_records.extend(_fetch_europepmc_discovery_records(query, max_results=20, timeout=connector_timeout))
             except Exception as exc:
                 diagnostics["connector_errors"].append(
                     f"Europe PMC [{term}]: {type(exc).__name__}: {exc}"
                 )
+        diagnostics["stages_completed"].append("literature_discovery")
 
         diagnostics["records_retrieved"] = len(all_records)
         unique_records = []
@@ -922,6 +1094,7 @@ def _online_discovered_candidate_plants(
             diagnostics["query_terms"],
             dosage_form=dosage_form,
         )
+        diagnostics["stages_completed"].append("catalogued_plant_extraction")
 
         existing_list = [str(p).strip() for p in (seed_plants or []) if p]
         existing = {_norm_text(p) for p in existing_list}
@@ -935,13 +1108,33 @@ def _online_discovered_candidate_plants(
         # run, no matter how many articles/queries surfaced it.
         diagnostics["internal_candidate_universe_size"] = len(alias_catalog)
         novel_validation_cache = {}
-        novel_ranked, novel_match_diagnostics, novel_diag = _extract_open_world_botanical_candidates(
-            unique_records,
-            alias_catalog,
-            diagnostics["query_terms"],
-            dosage_form=dosage_form,
-            validation_cache=novel_validation_cache,
-        )
+        remaining = _remaining()
+        if remaining is not None and remaining <= _MIN_USEFUL_REMAINING_SECONDS:
+            diagnostics["stage2_deadline_exceeded"] = True
+            diagnostics["stages_skipped_for_budget"].append("open_world_extraction")
+            novel_ranked, novel_match_diagnostics, novel_diag = [], {}, {}
+        else:
+            _progress(
+                "extracting_botanical_entities", 0, len(unique_records),
+                "Extracting botanical entities from literature",
+            )
+            novel_ranked, novel_match_diagnostics, novel_diag = _extract_open_world_botanical_candidates(
+                unique_records,
+                alias_catalog,
+                diagnostics["query_terms"],
+                dosage_form=dosage_form,
+                validation_cache=novel_validation_cache,
+                max_llm_entity_extraction_records=_max_llm_entity_extraction_records(
+                    pilot_mode, target_count, remaining if remaining is not None else float("inf")
+                ),
+                deadline_ts=deadline_ts,
+            )
+            diagnostics["stages_completed"].append("open_world_extraction")
+            if novel_diag.get("llm_entity_extraction_stopped_for_budget") or novel_diag.get(
+                "taxonomy_validation_stopped_for_budget"
+            ):
+                diagnostics["stage2_deadline_exceeded"] = True
+                diagnostics["stages_skipped_for_budget"].append("open_world_extraction_partial")
         diagnostics["potential_external_botanical_mentions"] = novel_diag.get(
             "potential_external_botanical_mentions", 0
         )
@@ -969,14 +1162,26 @@ def _online_discovered_candidate_plants(
         # independently, then both routes compete on the same quality score.
         generic_pool_limit = max(12, discovery_slots * 4)
         generic_pool = ranked[:generic_pool_limit]
-        validated, validation_meta = _candidate_specific_literature_validation(
-            indication=indication,
-            indication_terms=diagnostics["query_terms"],
-            alias_catalog=alias_catalog,
-            existing_plants=existing_list,
-            slots=max(1, discovery_slots),
-            diagnostics=diagnostics,
-        )
+        remaining = _remaining()
+        if remaining is not None and remaining <= _MIN_USEFUL_REMAINING_SECONDS:
+            diagnostics["stage2_deadline_exceeded"] = True
+            diagnostics["stages_skipped_for_budget"].append("candidate_specific_validation")
+            validated, validation_meta = [], {}
+        else:
+            _progress("validating_candidate_evidence", 0, max(1, discovery_slots), "Validating candidate evidence")
+            validated, validation_meta = _candidate_specific_literature_validation(
+                indication=indication,
+                indication_terms=diagnostics["query_terms"],
+                alias_catalog=alias_catalog,
+                existing_plants=existing_list,
+                slots=max(1, discovery_slots),
+                diagnostics=diagnostics,
+                deadline_ts=deadline_ts,
+            )
+            diagnostics["stages_completed"].append("candidate_specific_validation")
+            if diagnostics.get("candidate_validation_stopped_for_budget"):
+                diagnostics["stage2_deadline_exceeded"] = True
+                diagnostics["stages_skipped_for_budget"].append("candidate_specific_validation_partial")
 
         merged_meta = dict(match_diagnostics)
         merged_meta.update(validation_meta)
@@ -1045,12 +1250,30 @@ def run_research_engine(
     save=True,
     global_candidate_count=8,
     pilot_mode=False,
+    progress_callback: Optional[Callable] = None,
 ):
+    # Part 13 (Stage 2 remediation) -- the TRUE whole-stage wall-clock
+    # deadline starts HERE, before anything else (query expansion,
+    # candidate seeding, PubMed/Europe PMC discovery, botanical entity
+    # extraction, taxonomy validation, candidate-specific validation, and
+    # the final multi-source collection all share this ONE deadline --
+    # see stage2_total_budget_seconds()). This replaces the prior
+    # arrangement where a timer only started right before the final
+    # collection step, so a "3 minute" budget for that one step could
+    # still be preceded by several unbounded minutes of earlier work.
+    _stage2_started_at = time.monotonic()
+    _stage2_total_budget = stage2_discovery_phase_budget_seconds(pilot_mode)
+    _stage2_deadline_ts = _stage2_started_at + _stage2_total_budget
+
+    def _stage2_remaining():
+        return max(0.0, _stage2_deadline_ts - time.monotonic())
+
     requested_count = max(1, int(global_candidate_count))
 
     # --- Staged candidate selection (general architecture) -----------------
     # A. Reference/database seeds. These are NOT yet validated for this
     #    indication -- they are only a stable starting inventory.
+    _emit_stage2_progress(progress_callback, "preparing_candidate_universe", 0, 1, "Preparing candidate universe")
     reference_seed_plants = _richer_candidate_plants(
         indication=indication,
         dosage_form=dosage_form,
@@ -1072,6 +1295,9 @@ def run_research_engine(
         target_market=target_market,
         target_count=requested_count,
         seed_plants=[],
+        deadline_ts=_stage2_deadline_ts,
+        progress_callback=progress_callback,
+        pilot_mode=pilot_mode,
     )
     discovered = list(dict.fromkeys(discovered or []))
     ranked_meta = discovery_diagnostics.get("ranked_matches", {}) or {}
@@ -1299,10 +1525,21 @@ def run_research_engine(
     # means all three can't reopen independently again.
     _SCHEDULING_JITTER_MARGIN_SECONDS = 15
     worker_waves = max(1, (len(candidate_plants) + plant_workers - 1) // plant_workers)
+    # This is final collection's OWN dedicated budget -- deliberately NOT
+    # derived from _stage2_deadline_ts/_stage2_remaining() (the discovery-
+    # phase budget above). See the module-level comment next to
+    # STAGE2_DISCOVERY_QUICK_BUDGET_SECONDS for why: this exact formula
+    # is the fix behind 3 documented production incidents (below) and
+    # must not be squeezed by how much of a SEPARATE, earlier phase's
+    # budget happened to be used.
     quick_step_budget_seconds = max(
         180, worker_waves * (TOTAL_TIME_BUDGET + _SCHEDULING_JITTER_MARGIN_SECONDS)
     )
     started_at = time.monotonic()
+    _emit_stage2_progress(
+        progress_callback, "collecting_evidence", 0, len(candidate_plants),
+        f"Collecting evidence for {len(candidate_plants)} plant(s)",
+    )
 
     def _collect_one_plant(plant):
         return plant, collect_multi_source_evidence(
@@ -1402,7 +1639,30 @@ def run_research_engine(
         "collection_unfinished_plants": unfinished,
         "collection_unfinished_plant_count": len(unfinished),
         "retrieval_coverage_status": retrieval_coverage_status,
+        # Part 13/14 (Stage 2 remediation) -- explicit, whole-stage
+        # completion status, from the SAME deadline started at the top of
+        # this function. "partial" whenever any earlier sub-stage was cut
+        # short for budget (discovery_diagnostics' own
+        # stage2_deadline_exceeded/stages_skipped_for_budget, set by
+        # _online_discovered_candidate_plants) OR the final collection
+        # step itself did not finish every plant in time.
+        "stage2_total_budget_seconds": _stage2_total_budget,
+        "stage2_elapsed_seconds": round(time.monotonic() - _stage2_started_at, 2),
+        "stage2_completion_status": (
+            "partial_budget_exhausted"
+            if (discovery_diagnostics.get("stage2_deadline_exceeded") or unfinished)
+            else "complete"
+        ),
     })
+    _emit_stage2_progress(
+        progress_callback,
+        "complete" if discovery_diagnostics["stage2_completion_status"] == "complete" else "partial",
+        len(completed_plants), len(candidate_plants),
+        (
+            "Stage 2 complete" if discovery_diagnostics["stage2_completion_status"] == "complete"
+            else "Stage 2 partial -- budget exhausted before every source finished"
+        ),
+    )
 
     return {
         # --- Existing public keys, preserved unchanged in type/shape -------

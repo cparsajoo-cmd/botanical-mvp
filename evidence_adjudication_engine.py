@@ -96,6 +96,16 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional, Sequence
 
 import llm_client
+from evidence_hierarchy_classifier import classify_evidence_hierarchy
+from final_decision_policy import FinalDecisionStatus
+from general_indication_relevance import (
+    MATCH_EXACT_INDICATION,
+    MATCH_EXPLICIT_FIELD_OVERLAP,
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT,
+    MATCH_CORPUS_DERIVED_SEMANTIC,
+    MATCH_WEAK_LEXICAL,
+    MATCH_CURATED_ASSIST_FALLBACK,
+)
 
 # ---------------------------------------------------------------------
 # Controlled vocabularies (part 5 of the request)
@@ -174,6 +184,78 @@ def _row_get(row, *keys) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------
+# Study-context (human/animal/in-vitro) derivation -- part B9 fix.
+#
+# WHY THIS EXISTS
+# The evidence item previously stored the raw Population free-text
+# directly under the key "human_animal_in_vitro", and the deterministic
+# fallback below tested `"human" in population_text.lower()`. Population
+# and study model are not the same concept, and a real human record
+# such as "adults with insomnia" never contains the literal substring
+# "human" -- so that check silently misclassified real human evidence as
+# non-human. This derives the classification generically from the
+# study-design/model text (via the existing, already-tested
+# evidence_hierarchy_classifier), falling back to a small, explicit
+# population-vocabulary check only when the study-design text itself
+# gives no signal. It never invents a classification: UNKNOWN is
+# returned, not guessed, when nothing in the supplied fields indicates
+# either human or animal/in-vitro context.
+# ---------------------------------------------------------------------
+_HUMAN_HIERARCHY_TIERS = {
+    "Systematic review / meta-analysis", "Clinical trial", "Observational human evidence",
+}
+_NONHUMAN_HIERARCHY_TIERS = {
+    "Validated ex vivo / in vivo", "In vitro / mechanistic",
+}
+_POPULATION_HUMAN_TERMS = (
+    "patients", "participants", "subjects", "volunteers", "adults", "human",
+    "women", "men", "children", "elderly", "outpatients", "inpatients",
+)
+_POPULATION_NONHUMAN_TERMS = (
+    "rat", "rats", "mice", "mouse", "murine", "rabbit", "rabbits",
+    "zebrafish", "in vitro", "cell line", "cell culture", "guinea pig",
+    "sprague-dawley", "wistar",
+)
+
+
+def _derive_study_context(study_model: str, study_type_design: str, population: str) -> str:
+    """Returns 'HUMAN', 'ANIMAL_OR_IN_VITRO', or 'UNKNOWN'."""
+    design_text = " ".join(t for t in (study_model, study_type_design) if t)
+    tier = classify_evidence_hierarchy(design_text) if design_text else None
+    if tier in _HUMAN_HIERARCHY_TIERS:
+        return "HUMAN"
+    if tier in _NONHUMAN_HIERARCHY_TIERS:
+        return "ANIMAL_OR_IN_VITRO"
+    population_lower = (population or "").lower()
+    if population_lower:
+        if any(term in population_lower for term in _POPULATION_NONHUMAN_TERMS):
+            return "ANIMAL_OR_IN_VITRO"
+        if any(term in population_lower for term in _POPULATION_HUMAN_TERMS):
+            return "HUMAN"
+    return "UNKNOWN"
+
+
+# ---------------------------------------------------------------------
+# Indication-match strength (part B10) -- differentiates a direct/exact
+# indication match from a weak lexical or curated-fallback match, reusing
+# general_indication_relevance.py's own production match-type vocabulary
+# rather than inventing a parallel one.
+# ---------------------------------------------------------------------
+_MATCH_STRENGTH_BY_TYPE = {
+    MATCH_EXACT_INDICATION: "DIRECT",
+    MATCH_EXPLICIT_FIELD_OVERLAP: "DIRECT",
+    MATCH_OUTCOME_OR_MECHANISM_SUPPORT: "SUPPORTIVE",
+    MATCH_CORPUS_DERIVED_SEMANTIC: "SUPPORTIVE",
+    MATCH_WEAK_LEXICAL: "WEAK",
+    MATCH_CURATED_ASSIST_FALLBACK: "WEAK",
+}
+
+
+def _match_strength(match_type: str) -> str:
+    return _MATCH_STRENGTH_BY_TYPE.get((match_type or "").strip().lower(), "UNKNOWN")
+
+
 def _dimension_to_compatibility(status: Optional[str]) -> str:
     """MATCH/PARTIAL/MISMATCH/UNKNOWN/NOT_APPLICABLE (phase5_scoring_config
     vocabulary, already computed by candidate_shortlisting.py) ->
@@ -241,6 +323,15 @@ def _is_indication_relevant_row(row, indication_tokens: Sequence[str]) -> bool:
     return any(token in haystack for token in indication_tokens)
 
 
+# Public alias -- this is the SAME indication-relevance predicate used to
+# build adjudication's own evidence bundle (Part 7 of this session's
+# request: the Stage 5 explanatory AI must reuse it rather than seeing a
+# plant's whole, indication-agnostic evidence history). Exposed under a
+# public name specifically for that reuse; internal callers in this
+# module keep using the underscored name unchanged.
+is_indication_relevant_row = _is_indication_relevant_row
+
+
 def build_adjudication_evidence_items(
     evidence_df,
     plant_name: str,
@@ -293,6 +384,10 @@ def build_adjudication_evidence_items(
         )
         if not evidence_id:
             continue
+        study_model = _row_get(row, "Study_Model", "study_model")
+        study_type_design = _row_get(row, "Study_Type", "study_design")
+        population = _row_get(row, "Population", "population")
+        match_type = _row_get(row, *_INDICATION_MATCH_TYPE_COLUMNS)
         item = {
             "evidence_id": evidence_id,
             "scientific_name": plant_name,
@@ -302,10 +397,14 @@ def build_adjudication_evidence_items(
             "target": _row_get(row, "Target", "target") or None,
             "mechanism": _row_get(row, "Mechanism", "mechanism") or None,
             "result_direction": _row_get(row, "Result_Direction", "evidence_direction") or None,
-            "study_model": _row_get(row, "Study_Model", "study_model") or None,
-            "study_type_design": _row_get(row, "Study_Type", "study_design") or None,
-            "human_animal_in_vitro": _row_get(row, "Population", "population") or None,
-            "population": _row_get(row, "Population", "population") or None,
+            "study_model": study_model or None,
+            "study_type_design": study_type_design or None,
+            # Derived classification (HUMAN / ANIMAL_OR_IN_VITRO / UNKNOWN),
+            # NOT the raw Population text -- see _derive_study_context's
+            # docstring (part B9). Never requires the literal word "human"
+            # to appear in free-text population.
+            "human_animal_in_vitro": _derive_study_context(study_model, study_type_design, population),
+            "population": population or None,
             "endpoint_outcome": _row_get(row, "Primary_Outcome", "outcome") or None,
             "sample_size": _row_get(row, "Sample_Size", "sample_size") or None,
             "plant_part": _row_get(row, "Plant_Part", "plant_part") or None,
@@ -316,6 +415,12 @@ def build_adjudication_evidence_items(
             "dosage_form_requested_context": _row_get(row, "Dosage_Form", "dosage_form") or None,
             "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text") or "")[:_MAX_SNIPPET_CHARS] or None,
             "source_citation_id": _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID") or None,
+            # part B10 -- how strongly this record was matched to the
+            # requested indication (DIRECT/SUPPORTIVE/WEAK/UNKNOWN), reused
+            # from general_indication_relevance.py's production vocabulary
+            # rather than treating every non-empty match type as equal.
+            "indication_match_type": match_type or None,
+            "indication_match_strength": _match_strength(match_type),
         }
         items.append(item)
     return items
@@ -370,10 +475,13 @@ Guidance:
   records. If evidence is present but too sparse/heterogeneous to
   characterize, use INSUFFICIENT. If no relevant evidence was supplied,
   use UNKNOWN.
-- human_evidence_strength: based only on records whose population/
-  human_animal_in_vitro field indicates human/clinical evidence. NONE if
-  no human evidence was supplied; UNKNOWN if population is not stated on
-  any candidate human record.
+- human_evidence_strength: based only on records whose human_animal_in_vitro
+  field is HUMAN. NONE if no human evidence was supplied; UNKNOWN if no
+  candidate record could be classified as human or non-human.
+- indication_match_strength: WEAK-matched records are lexical/fallback
+  matches, not confirmed direct evidence for the requested indication --
+  do not treat them as equivalent to DIRECT/SUPPORTIVE records when
+  judging direction, strength, or confidence.
 - evidence_conflict_level: how much the supplied records disagree with
   each other in direction for this indication.
 - negative_evidence_severity: how severe/consistent the NEGATIVE or null
@@ -500,8 +608,14 @@ def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
     positive_ids, negative_ids, human_ids = [], [], []
     pos_count = neg_count = 0
     for item in evidence_items:
+        # part B10: a WEAK (lexical/fallback) indication match is not
+        # confirmed direct/supportive evidence for the requested
+        # indication -- it is not tallied into direction/severity, though
+        # it is still visible to the AI path via indication_match_strength.
+        if item.get("indication_match_strength") == "WEAK":
+            continue
         direction = (item.get("result_direction") or "").lower()
-        is_human = "human" in (item.get("human_animal_in_vitro") or "").lower()
+        is_human = item.get("human_animal_in_vitro") == "HUMAN"
         if any(k in direction for k in ("positive", "significant improvement", "efficacious")):
             pos_count += 1
             positive_ids.append(item["evidence_id"])
@@ -586,6 +700,75 @@ def _build_rationale(
     return " ".join(clauses)
 
 
+# ---------------------------------------------------------------------
+# Part 10 (this session) -- ONE deterministic, final-decision-level
+# rationale renderer, built ONLY from structured facts already computed
+# elsewhere in this pipeline (adjudication, safety, commercial, final
+# decision sync). Never free-form AI prose -- ai_rd_insight_service.py's
+# explanatory prose may exist separately in the UI, but is never
+# authoritative. Unlike _build_rationale() above (which explains ONE
+# adjudication call's own evidence characterization), this operates on a
+# full report-ready ROW (a dict-like / pandas Series with the merged
+# report-ready frame's columns) and additionally covers route
+# compatibility, structured safety status, commercial status, and the
+# final decision itself -- the dimensions Part 10 asks for that
+# _build_rationale does not cover. Reuses _build_rationale's
+# deterministic clause-list pattern rather than inventing a new one.
+# ---------------------------------------------------------------------
+def _get_field(row, *keys) -> str:
+    for key in keys:
+        try:
+            value = row.get(key)
+        except AttributeError:
+            value = row[key] if key in row else None
+        cleaned = _clean(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def build_final_rationale(row) -> str:
+    """Returns a deterministic final rationale string for one report-ready
+    row. Never raises -- a field that is missing/UNKNOWN simply omits its
+    clause rather than fabricating a claim. Called once per row when the
+    report-ready frame is built (see step_rd_candidates.py's
+    _merge_and_sync_final_decision_status)."""
+    clauses = []
+
+    adjudication_rationale = _get_field(row, "Evidence_Adjudication_Rationale")
+    if adjudication_rationale:
+        clauses.append(adjudication_rationale)
+
+    for compat_key, label in (
+        ("Preparation_Compatibility", "preparation"),
+        ("Route_Compatibility", "route"),
+        ("Plant_Part_Compatibility", "plant part"),
+    ):
+        value = _get_field(row, compat_key)
+        if value == "MISMATCH":
+            clauses.append(f"The requested {label} does not match the strongest available evidence.")
+        elif value == "PARTIAL":
+            clauses.append(f"{label.capitalize()} compatibility with the requested product form is partial.")
+
+    safety_rationale = _get_field(row, "Safety_Status_Rationale")
+    if safety_rationale:
+        clauses.append(safety_rationale)
+
+    commercial_status = _get_field(row, "Commercial_Status_For_Indication", "Commercial_Status_Overall")
+    if commercial_status and commercial_status not in ("UNKNOWN", "NOT_REQUESTED"):
+        clauses.append(f"Commercial status for this indication: {commercial_status}.")
+
+    final_status = _get_field(row, "Final_Decision_Status")
+    decision_class = _get_field(row, "Decision_Class_AH")
+    if final_status or decision_class:
+        tail = f" ({decision_class})" if decision_class else ""
+        clauses.append(f"Final decision: {final_status or 'UNKNOWN'}{tail}.")
+
+    if not clauses:
+        return "Insufficient structured evidence was available to generate a detailed rationale."
+    return " ".join(clauses)
+
+
 def adjudicate_candidate(
     plant_name: str,
     indication: str,
@@ -600,6 +783,12 @@ def adjudicate_candidate(
     in part 5/13/16 of the request plus Evidence_Adjudication_Status.
     Never raises."""
     compatibility = compatibility_fields_from_dimension_status(dimension_status)
+    # part B11 -- preserves WHY a fallback happened even after the status
+    # itself collapses to the generic AI_ADJUDICATION_FALLBACK, so a
+    # reviewer/log can distinguish "OpenAI unavailable" from "malformed
+    # schema" from "adjudication was disabled" without exposing exception
+    # internals/credentials in the exported dataframe.
+    fallback_reason: Optional[str] = None
 
     try:
         evidence_items = build_adjudication_evidence_items(evidence_df, plant_name, indication)
@@ -612,6 +801,7 @@ def adjudicate_candidate(
     elif not use_ai:
         structured = _deterministic_fallback(evidence_items)
         status = ADJUDICATION_STATUS_DISABLED
+        fallback_reason = "DISABLED"
     else:
         allowed_ids = {item["evidence_id"] for item in evidence_items}
         try:
@@ -624,14 +814,16 @@ def adjudicate_candidate(
                 model_env_var=ADJUDICATION_MODEL_ENV_VAR,
                 schema_version=_SCHEMA_VERSION,
             )
-        except Exception:
+        except Exception as exc:
             structured = _deterministic_fallback(evidence_items)
             status = ADJUDICATION_STATUS_UNAVAILABLE
+            fallback_reason = _classify_llm_exception(exc)
         else:
             validated = _validate_ai_result(raw, allowed_ids)
             if validated is None:
                 structured = _deterministic_fallback(evidence_items)
                 status = ADJUDICATION_STATUS_INVALID
+                fallback_reason = "INVALID_SCHEMA"
             else:
                 structured = validated
                 status = ADJUDICATION_STATUS_OK
@@ -642,6 +834,7 @@ def adjudicate_candidate(
     result = dict(compatibility)
     result.update({k: v for k, v in structured.items() if not k.startswith("_")})
     result["Evidence_Adjudication_Status"] = status
+    result["Evidence_Adjudication_Fallback_Reason"] = fallback_reason
     result["Evidence_Adjudication_Evidence_Count"] = len(evidence_items)
     result["Evidence_Adjudication_Rationale"] = _build_rationale(
         plant_name, indication, structured, compatibility, commercial_status,
@@ -649,45 +842,78 @@ def adjudicate_candidate(
     return result
 
 
+def _classify_llm_exception(exc: Exception) -> str:
+    """Root-cause bucket for an LLM-call failure (part B11), without
+    exposing exception internals/credentials. Inspects only the exception
+    class name and message (never any request/response payload)."""
+    type_name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    if "timeout" in type_name or "timeout" in message or "timed out" in message:
+        return "TIMEOUT"
+    if any(k in type_name or k in message for k in (
+        "authentic", "permission", "unauthorized", "api_key", "apikey",
+    )):
+        return "PROVIDER_ERROR"
+    if any(k in type_name or k in message for k in (
+        "ratelimit", "rate_limit", "connection", "internalserver",
+        "apistatuserror", "service_unavailable", "bad_gateway", "server_error",
+    )):
+        return "PROVIDER_ERROR"
+    return "UNAVAILABLE"
+
+
 # ---------------------------------------------------------------------
 # Bounded deterministic adjustments (parts 6-8, 15) -- exposed
 # individually, never averaged into an opaque second score.
+#
+# NO numeric negative-evidence penalty table here (deliberately removed
+# by this session's correction): the deterministic scientific score
+# already represents negative/null evidence via Direction_Factor /
+# Evidence_Consistency_Factor / Scientific_Evidence_Score in
+# candidate_shortlisting.py. See compute_deterministic_adjustments'
+# docstring below for the full rationale.
 # ---------------------------------------------------------------------
-_NEGATIVE_ADJUSTMENT_BY_SEVERITY = {"HIGH": -8.0, "MODERATE": -4.0, "LOW": -1.0, "NONE": 0.0, "UNKNOWN": 0.0}
 
 
 def compute_deterministic_adjustments(adjudication: Mapping[str, Any], base_score: float) -> dict:
     """Evidence_Adjudication_Adjustment / Negative_Human_Evidence_Adjustment
     / Preparation_Adjustment / Plant_Part_Adjustment / Final_R&D_Opportunity_Score
-    (part 8). Preparation_Adjustment and Plant_Part_Adjustment are reported
-    as 0.0: that dimension is ALREADY applied, multiplicatively, via
-    Plant_Applicability_Factor in the base score (see module docstring) --
-    reporting a second additive penalty here would double-count it, which
-    part 8 of the request explicitly forbids. They are exposed as their
-    own columns purely for auditability (part 18), not because they add a
-    second time.
+    (part 8). ALL FOUR are reported as 0.0: every dimension they represent
+    (negative/null evidence direction and severity, preparation, plant
+    part) is ALREADY applied inside the base score itself --
+    Direction_Factor / Evidence_Consistency_Factor / Scientific_Evidence_
+    Score already reduce support for negative/null/mixed evidence, and
+    Plant_Applicability_Factor already applies preparation/plant-part
+    compatibility multiplicatively (see candidate_shortlisting.py and
+    this module's docstring). Applying a second, arbitrary additive
+    penalty here for information already scored upstream would double-
+    count it -- exactly what part 8 (and this session's follow-up
+    correction) forbids.
+
+    Structured adjudication's role for negative evidence is DECISION
+    interpretation/capping (see apply_negative_evidence_cap below), not
+    a second scoring pass: Negative_Evidence_Severity, Human_Evidence_
+    Strength, and Indication_Evidence_Direction can still force a
+    Hold/insufficient-evidence decision cap, but they do not move
+    Final_R&D_Opportunity_Score away from the base score. All four
+    columns are retained purely for auditability (so a reviewer can see
+    that adjudication ran and confirm no second penalty was applied),
+    not because any of them still adds a number.
+
+    If a genuinely NEW, non-overlapping numerical adjustment is ever
+    introduced here in the future, it must be proven -- in comments and
+    tests -- to represent a dimension the base score does not already
+    capture, per this same rule.
     """
-    severity = adjudication.get("Negative_Evidence_Severity", "UNKNOWN")
-    strength = adjudication.get("Human_Evidence_Strength", "UNKNOWN")
-    direction = adjudication.get("Indication_Evidence_Direction", "UNKNOWN")
-
-    negative_adjustment = _NEGATIVE_ADJUSTMENT_BY_SEVERITY.get(severity, 0.0)
-    # Only applies when there IS human evidence to be negative about --
-    # mechanistic-only negative severity should not, by itself, move the
-    # score (part 6: "preclinical mechanism evidence cannot by itself
-    # convert contradictory human evidence"; the inverse also holds).
-    if strength in ("NONE", "UNKNOWN"):
-        negative_adjustment = -1.0 if severity == "HIGH" else 0.0
-
     try:
         base = float(base_score)
     except (TypeError, ValueError):
         base = 0.0
-    final_score = round(max(0.0, min(100.0, base + negative_adjustment)), 1)
+    final_score = round(max(0.0, min(100.0, base)), 1)
 
     return {
-        "Evidence_Adjudication_Adjustment": round(negative_adjustment, 1),
-        "Negative_Human_Evidence_Adjustment": round(negative_adjustment, 1),
+        "Evidence_Adjudication_Adjustment": 0.0,
+        "Negative_Human_Evidence_Adjustment": 0.0,
         "Preparation_Adjustment": 0.0,
         "Plant_Part_Adjustment": 0.0,
         "Base_R&D_Opportunity_Score": round(base, 1),
@@ -716,7 +942,12 @@ def apply_negative_evidence_cap(
     cap_go = None
     reason = None
     if direction == "CONSISTENT_NEGATIVE" and strength in ("MODERATE", "STRONG"):
-        cap_class, cap_go = "H — No-go / safety concern", "No-Go"
+        # part B4: consistent negative EFFICACY evidence is a scientific
+        # insufficiency, not a safety finding -- "H" is reserved for actual
+        # safety/regulatory gates elsewhere in the pipeline. Capping here at
+        # "G — Hold / insufficient evidence" (never "H") is the deliberate
+        # fix for the prior mislabeling; see module docstring.
+        cap_class, cap_go = "G — Hold / insufficient evidence", "Hold"
         reason = "consistent_negative_human_evidence"
     elif direction == "MOSTLY_NEGATIVE" and strength in ("MODERATE", "STRONG"):
         cap_class, cap_go = "G — Hold / insufficient evidence", "Hold"
@@ -738,3 +969,54 @@ def apply_negative_evidence_cap(
 
     applied = (new_class != decision_class_ah) or (new_go != go_call)
     return new_class, new_go, (reason if applied else None)
+
+
+# ---------------------------------------------------------------------
+# Part 4 (this session) -- ONE deterministic final-decision
+# synchronization point. apply_negative_evidence_cap() above can
+# downgrade Decision_Class_AH/Go_Investigate_Hold_NoGo, but the raw
+# engine row's Final_Decision_Status (set once, at engine.run() time, by
+# final_decision_policy.decide_final() -- see botanical_rd_candidate_
+# engine.py) was never re-synchronized afterward, so a downgraded
+# Decision_Class_AH="G — Hold..." could sit next to an unchanged
+# Final_Decision_Status="GO". sync_final_decision_status() is the single
+# place that keeps them consistent, called right after
+# apply_negative_evidence_cap() in step_rd_candidates.py.
+# ---------------------------------------------------------------------
+_FINAL_STATUS_RANK = {
+    FinalDecisionStatus.NO_GO_SAFETY.value: 0,
+    FinalDecisionStatus.NO_GO_REGULATORY.value: 0,
+    FinalDecisionStatus.EXPERT_REVIEW_REQUIRED.value: 1,
+    FinalDecisionStatus.INSUFFICIENT_EVIDENCE.value: 2,
+    FinalDecisionStatus.GO_WITH_CAUTION.value: 3,
+    FinalDecisionStatus.GO.value: 4,
+}
+# Decision_Class_AH -> the Final_Decision_Status it implies, when that
+# class is the one actually in force after a cap. Only the two classes
+# apply_negative_evidence_cap() can ever produce are mapped here -- this
+# is a synchronization map for THIS cap, not a general AH->status table.
+_DECISION_CLASS_AH_TO_FINAL_STATUS = {
+    "H — No-go / safety concern": FinalDecisionStatus.NO_GO_SAFETY.value,
+    "G — Hold / insufficient evidence": FinalDecisionStatus.INSUFFICIENT_EVIDENCE.value,
+}
+
+
+def sync_final_decision_status(current_final_status: str, decision_class_ah: str) -> str:
+    """Returns the Final_Decision_Status that is consistent with
+    decision_class_ah, DOWNGRADE-ONLY (never raises an existing, more
+    conservative Final_Decision_Status -- e.g. an existing
+    NO_GO_REGULATORY from a real regulatory hard-stop is never weakened
+    to INSUFFICIENT_EVIDENCE just because the efficacy cap also fired).
+    If decision_class_ah is not one this module's cap can produce (i.e.
+    no cap applied, or a class outside {G, H}), the current status is
+    returned unchanged -- this function only ever tightens consistency
+    around this module's own cap, never invents a decision for classes
+    it did not touch.
+    """
+    target = _DECISION_CLASS_AH_TO_FINAL_STATUS.get(decision_class_ah)
+    if target is None:
+        return current_final_status
+    current_rank = _FINAL_STATUS_RANK.get(str(current_final_status).strip(), 4)
+    target_rank = _FINAL_STATUS_RANK[target]
+    return current_final_status if current_rank <= target_rank else target
+

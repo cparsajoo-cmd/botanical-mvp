@@ -50,9 +50,9 @@ def test_c_llm_common_name_proposal_validated_and_reaches_stage5(monkeypatch):
     )
     monkeypatch.setattr(
         bev, "search_kew_plants",
-        lambda name, limit=20: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
+        lambda name, limit=20, timeout=None: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
     )
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["anxiety"]
@@ -132,8 +132,8 @@ def test_d_llm_hallucinated_non_plant_is_rejected_by_taxonomy(monkeypatch):
         },
     )
     # No external taxonomic source confirms this fabricated binomial.
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["inflammation"]
@@ -196,7 +196,7 @@ def test_f_duplicate_discovery_across_regex_and_llm_collapses_to_one_candidate(m
         bev, "search_kew_plants",
         lambda name, limit=20: [{"Scientific_Name": "Withania somnifera", "Source": "Kew POWO"}],
     )
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["stress"]
@@ -256,9 +256,9 @@ def test_l_existing_regex_only_open_world_discovery_still_works_when_ai_unavaila
     monkeypatch.setattr(ai_bev.llm_client, "call_structured_json", _raise)
     monkeypatch.setattr(
         bev, "search_kew_plants",
-        lambda name, limit=20: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
+        lambda name, limit=20, timeout=None: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
     )
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["stress"]

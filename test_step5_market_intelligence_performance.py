@@ -284,7 +284,12 @@ def test_commercial_attach_is_additive_and_preserves_scientific_columns():
 
 def test_output_columns_contract_unchanged():
     from botanical_rd_candidate_engine import OUTPUT_COLUMNS
-    assert len(OUTPUT_COLUMNS) == 87
+    # Bumped 87 -> 91 by Part 9 (structured safety status, this session):
+    # Safety_Assertion_Status, Safety_Concern_Level, Safety_Evidence_IDs,
+    # Safety_Status_Rationale -- new, additive columns (see
+    # botanical_rd_candidate_engine.py's OUTPUT_COLUMNS comment and
+    # test_gate_layer.py's matching bump).
+    assert len(OUTPUT_COLUMNS) == 91
     assert "Chemical_Differentiation_Status" not in OUTPUT_COLUMNS
 
 

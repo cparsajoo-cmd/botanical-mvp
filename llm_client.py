@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from typing import Any, Optional
 
 import streamlit as st
@@ -46,8 +47,61 @@ from openai import OpenAI
 DEFAULT_MODEL_ENV_VAR = "OPENAI_MODEL"
 DEFAULT_MODEL_FALLBACK = "gpt-4o-mini"
 
+# Part F4 -- one slow/hung request must never block a Stage 2/5 run for
+# minutes. Explicit, centrally-configured request timeout and a small
+# bounded retry count (never unbounded/infinite retry). Env-overridable so
+# a slower task (e.g. a larger schema) can raise it without a code change.
+DEFAULT_TIMEOUT_ENV_VAR = "LLM_REQUEST_TIMEOUT_SECONDS"
+DEFAULT_TIMEOUT_SECONDS_FALLBACK = 20.0
+DEFAULT_MAX_RETRIES_ENV_VAR = "LLM_REQUEST_MAX_RETRIES"
+DEFAULT_MAX_RETRIES_FALLBACK = 1
+
 _client_singleton: Optional[OpenAI] = None
 _RESULT_CACHE: dict[str, Any] = {}
+
+
+def resolve_timeout_seconds() -> float:
+    """Centralized request timeout (seconds), overridable via
+    LLM_REQUEST_TIMEOUT_SECONDS. Falls back to the hardcoded default on a
+    missing/invalid env value rather than raising."""
+    raw = (os.getenv(DEFAULT_TIMEOUT_ENV_VAR) or "").strip()
+    if not raw:
+        return DEFAULT_TIMEOUT_SECONDS_FALLBACK
+    try:
+        value = float(raw)
+        return value if value > 0 else DEFAULT_TIMEOUT_SECONDS_FALLBACK
+    except ValueError:
+        return DEFAULT_TIMEOUT_SECONDS_FALLBACK
+
+
+def resolve_max_retries() -> int:
+    """Bounded retry count for transient failures (timeout/rate-limit/
+    connection errors) -- never unbounded. Overridable via
+    LLM_REQUEST_MAX_RETRIES."""
+    raw = (os.getenv(DEFAULT_MAX_RETRIES_ENV_VAR) or "").strip()
+    if not raw:
+        return DEFAULT_MAX_RETRIES_FALLBACK
+    try:
+        value = int(raw)
+        return value if value >= 0 else DEFAULT_MAX_RETRIES_FALLBACK
+    except ValueError:
+        return DEFAULT_MAX_RETRIES_FALLBACK
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """Timeout/rate-limit/connection/server errors are worth one bounded
+    retry; auth, bad-request, and schema errors are not (retrying them
+    would just fail identically and burn the caller's time budget)."""
+    type_name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return any(
+        k in type_name or k in message
+        for k in (
+            "timeout", "timed out", "ratelimit", "rate_limit", "connection",
+            "internalserver", "apistatuserror", "service_unavailable",
+            "bad_gateway", "server_error",
+        )
+    )
 
 
 def _streamlit_secret(name: str):
@@ -158,6 +212,7 @@ def call_structured_json(
     schema_version: str = "v1",
     temperature: float = 0,
     use_cache: bool = True,
+    deadline_seconds: Optional[float] = None,
 ) -> dict:
     """Call the Responses API with a strict json_schema output format and
     return the parsed JSON object.
@@ -167,6 +222,20 @@ def call_structured_json(
     - the "retry once against the project default model on a
       model-not-found error" fallback already used by
       llm_extractor.extract_gate_assertions_with_llm
+    - an explicit request timeout (LLM_REQUEST_TIMEOUT_SECONDS, default
+      20s) and a small bounded retry (LLM_REQUEST_MAX_RETRIES, default 1
+      extra attempt) for transient failures only -- timeout/rate-limit/
+      connection/server errors. A hung or slow request can never block
+      the caller beyond timeout_seconds * (max_retries + 1) (part F4).
+    - ``deadline_seconds`` (Part 17, Stage 2 remediation): an optional
+      remaining-time budget from the CALLER's own deadline (e.g. Stage
+      2's whole-stage wall-clock budget). When supplied, the per-attempt
+      timeout is min(configured_request_timeout, remaining_seconds) --
+      never the full configured timeout if less time than that remains
+      -- and NO retry is attempted once the deadline itself has already
+      passed (a retry is only worth attempting if there is still budget
+      for it). deadline_seconds=None (the default) preserves the exact
+      prior behavior for every caller that does not pass it.
     - a simple result cache keyed on (task, model, normalized input,
       schema_version, a stable hash of system_prompt, a stable hash of
       the schema) -- see module docstring's caching note and Issue 3's
@@ -211,14 +280,60 @@ def call_structured_json(
         },
     }
 
+    timeout_seconds = resolve_timeout_seconds()
+    max_retries = resolve_max_retries()
+    # Part 17 -- an external caller-supplied deadline caps the per-attempt
+    # timeout and the retry budget. A monotonic absolute deadline
+    # timestamp is computed once, here, at call time (not re-derived per
+    # attempt from a relative "seconds remaining" that would otherwise
+    # silently reset on every retry).
+    call_deadline_ts = (
+        time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+    )
+
+    def _call(target_model: str, call_timeout: float):
+        return client.responses.create(
+            model=target_model, timeout=call_timeout, **request_kwargs
+        )
+
+    def _call_with_bounded_retry(target_model: str):
+        # Small, bounded retry (never unbounded) for transient failures
+        # only (part F4) -- an auth/schema/bad-request error is retried
+        # zero times since it would just fail identically.
+        attempts = max_retries + 1
+        last_exc: Optional[Exception] = None
+        for attempt in range(attempts):
+            if call_deadline_ts is not None:
+                remaining = call_deadline_ts - time.monotonic()
+                if remaining <= 0:
+                    # No stage budget left for even one more attempt
+                    # (part 17: "do not allow a retry to exceed the
+                    # remaining Stage 2 deadline"). Raise whatever we
+                    # already have, or a clear timeout if this is the
+                    # very first attempt and the deadline was already
+                    # exhausted before starting.
+                    raise last_exc or TimeoutError(
+                        "No remaining Stage 2 budget for this LLM call"
+                    )
+                call_timeout = min(timeout_seconds, remaining)
+            else:
+                call_timeout = timeout_seconds
+            try:
+                return _call(target_model, call_timeout)
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= attempts - 1 or not _is_transient_error(exc):
+                    raise
+        raise last_exc  # pragma: no cover -- unreachable, defensive only
+
     try:
-        response = client.responses.create(model=model, **request_kwargs)
+        response = _call_with_bounded_retry(model)
     except Exception as exc:
         message = str(exc).lower()
         model_error = "model_not_found" in message or "does not exist" in message
         if not model_error or model == project_model:
             raise
-        response = client.responses.create(model=project_model, **request_kwargs)
+        response = _call_with_bounded_retry(project_model)
 
     result = json.loads(response.output_text)
     if cache_key is not None:

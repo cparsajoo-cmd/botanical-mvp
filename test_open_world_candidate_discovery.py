@@ -93,9 +93,9 @@ def test_valid_novel_candidate_survives_stage2_and_enters_stage5(monkeypatch):
 
     monkeypatch.setattr(
         bev, "search_kew_plants",
-        lambda name, limit=20: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
+        lambda name, limit=20, timeout=None: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "Kew POWO"}],
     )
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["stress"]
@@ -151,8 +151,8 @@ def test_false_botanical_entity_is_rejected_and_never_enters_stage5(monkeypatch)
 
     # No external source confirms anything -- simulates a genuine
     # non-botanical phrase that happens to be capitalized.
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     novel_ranked, novel_meta, novel_diag = re_mod._extract_open_world_botanical_candidates(
         records, alias_catalog, ["sleep"]
@@ -251,8 +251,8 @@ def test_supabase_unavailable_fallback_still_works_and_can_be_supplemented():
 
 def test_external_taxonomy_unavailable_known_candidates_unaffected_novel_not_promoted(monkeypatch):
     # Both external connectors degrade to [] (their own real failure mode).
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     alias_catalog = _alias_catalog_for("Valeriana officinalis", "valerian")
     records = [{

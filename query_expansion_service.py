@@ -99,10 +99,14 @@ def generate_ai_query_concepts(
     indication: object,
     relevant_mechanisms: Optional[List[str]] = None,
     search_concepts_hint: Optional[List[str]] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> List[str]:
     """Return a small, validated list of AI-proposed search concepts, or
     an empty list on any failure (missing API key, network error,
-    malformed JSON). Never raises."""
+    malformed JSON, or -- Part 17, Stage 2 remediation -- no remaining
+    stage budget). Never raises. ``deadline_seconds`` is passed straight
+    through to llm_client.call_structured_json; None (the default)
+    preserves prior behavior exactly."""
     indication_text = str(indication or "").strip()
     if not indication_text:
         return []
@@ -128,6 +132,7 @@ def generate_ai_query_concepts(
             task="query_expansion",
             model_env_var=QUERY_EXPANSION_MODEL_ENV_VAR,
             schema_version=_SCHEMA_VERSION,
+            deadline_seconds=deadline_seconds,
         )
         if not isinstance(raw, dict):
             return []
@@ -144,6 +149,7 @@ def expand_query_terms(
     deterministic_terms: List[str],
     relevant_mechanisms: Optional[List[str]] = None,
     search_concepts_hint: Optional[List[str]] = None,
+    deadline_seconds: Optional[float] = None,
 ) -> List[str]:
     """Combine the existing deterministic query terms with validated
     AI-derived concepts, deduplicated (case-insensitive) and capped at
@@ -152,14 +158,17 @@ def expand_query_terms(
     that only looks at the first few terms behaves exactly as before
     when the AI contributes nothing.
 
-    Never raises. On any AI failure this returns deterministic_terms
-    unchanged (deduplicated/capped the same way), which matches the
-    pipeline's behavior from before this module existed.
+    Never raises. On any AI failure -- including no remaining Stage 2
+    budget (Part 17, ``deadline_seconds``) -- this returns
+    deterministic_terms unchanged (deduplicated/capped the same way),
+    which matches the pipeline's behavior from before this module
+    existed.
     """
     base_terms = [str(t).strip() for t in (deterministic_terms or []) if str(t).strip()]
 
     ai_concepts = generate_ai_query_concepts(
-        indication, relevant_mechanisms=relevant_mechanisms, search_concepts_hint=search_concepts_hint
+        indication, relevant_mechanisms=relevant_mechanisms, search_concepts_hint=search_concepts_hint,
+        deadline_seconds=deadline_seconds,
     )
 
     combined: List[str] = []

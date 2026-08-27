@@ -80,6 +80,7 @@ from interaction_severity_classifier import (
 from safety_assertion_engine import (
     classify_safety_assertions as _classify_safety_assertions,
     summarize_safety_assertions as _summarize_safety_assertions,
+    derive_structured_safety_status as _derive_structured_safety_status,
     SafetyAssertion as _SafetyAssertion,
     SafetyAssertionType as _SafetyAssertionType,
     SafetyConfidence as _SafetyConfidence,
@@ -252,6 +253,13 @@ OUTPUT_COLUMNS = [
     "Clinical_Rationale",
     "Comparative_Rationale",
     "Comparative_Rationale_Structured",
+    # Part 9 (this session) -- structured, candidate-level safety STATUS,
+    # additive to the existing free-text Safety_Rationale/Safety_Flags
+    # above (see safety_assertion_engine.derive_structured_safety_status).
+    "Safety_Assertion_Status",
+    "Safety_Concern_Level",
+    "Safety_Evidence_IDs",
+    "Safety_Status_Rationale",
     "Rationale",
     # Task 1 — Formal Gate Layer. Additive only: see _evaluate_gates()
     # and CandidateAssessment.gate_results. Never read by _decision_class()
@@ -2108,6 +2116,13 @@ class BotanicalRDCandidateEngine:
                         _structured_safety_assertions = list(pooled_safety_assertions)
                     _structured_safety_assertions = tuple(_structured_safety_assertions)
                     _safety_assertion_summary = _summarize_safety_assertions(_structured_safety_assertions)
+                    # Part 9 (this session) -- structured, candidate-level
+                    # safety STATUS, purely additive: derived from the SAME
+                    # _structured_safety_assertions already computed above,
+                    # no new extraction, no new safety facts, never
+                    # authoritative over the hard safety/regulatory gates
+                    # below (_classify_safety_finding / eligibility_gate.py).
+                    _structured_safety_status = _derive_structured_safety_status(_structured_safety_assertions)
 
                     _safety_finding = _classify_safety_finding(
                         hit_terms=_row_hit_terms,
@@ -2439,6 +2454,26 @@ class BotanicalRDCandidateEngine:
                             "Co_Compounds": co_compounds or "Not clearly extracted",
                             "Safety_Flags": safety_flags or "No explicit flag found",
                             "Interaction_Flags": interaction_flags or "No explicit flag found",
+                            # Part 9 (this session) -- structured safety
+                            # summary fields, additive only (see
+                            # safety_assertion_engine.derive_structured_
+                            # safety_status's docstring). Safety_Evidence_IDs
+                            # stored as a "; "-joined string, matching this
+                            # row schema's existing string-joined ID
+                            # convention (e.g. Source_Record_IDs below).
+                            "Safety_Assertion_Status": _structured_safety_status["Safety_Assertion_Status"],
+                            "Safety_Concern_Level": _structured_safety_status["Safety_Concern_Level"],
+                            "Safety_Evidence_IDs": (
+                                "; ".join(_structured_safety_status["Safety_Evidence_IDs"])
+                                if _structured_safety_status["Safety_Evidence_IDs"] else ""
+                            ),
+                            # NOTE: named Safety_Status_Rationale, NOT
+                            # Safety_Rationale -- "Safety_Rationale" is an
+                            # existing, separately-computed column further
+                            # below in this same dict literal (a different,
+                            # older narrative field); reusing that name here
+                            # would have silently collided with it.
+                            "Safety_Status_Rationale": _structured_safety_status["Safety_Rationale"],
                             "Evidence_Source": self._evidence_source(
                                 alt_plant,
                                 matched_compound,
@@ -2954,6 +2989,19 @@ class BotanicalRDCandidateEngine:
                 best["Safety_Gate_Evidence_IDs"] = "; ".join(_merged_eligibility.safety_finding.evidence_ids)
                 best["Regulatory_Gate_Evidence_IDs"] = "; ".join(_merged_eligibility.regulatory_finding.evidence_ids)
                 best["Safety_Assertions"] = json.dumps([a.to_dict() for a in _merged_assertions], sort_keys=True, ensure_ascii=False)
+                # Part 9 (this session) -- recompute the structured safety
+                # STATUS fields from the SAME _merged_assertions (every
+                # sub-row's assertions, not just the "best" sub-row's own),
+                # for the same reason Safety_Flags is merged above: a
+                # concern/interaction signal on a lower-scoring sub-row must
+                # not silently disappear from the displayed/exported status.
+                _merged_safety_status = _derive_structured_safety_status(_merged_assertions)
+                best.update({
+                    "Safety_Assertion_Status": _merged_safety_status["Safety_Assertion_Status"],
+                    "Safety_Concern_Level": _merged_safety_status["Safety_Concern_Level"],
+                    "Safety_Evidence_IDs": "; ".join(_merged_safety_status["Safety_Evidence_IDs"]),
+                    "Safety_Status_Rationale": _merged_safety_status["Safety_Rationale"],
+                })
                 best["Safety_Decision_Confidence"] = _merged_eligibility.safety_finding.confidence.value
                 best["Safety_Evidence_Conflict"] = _merged_eligibility.safety_finding.evidence_conflict
                 best["Safety_Severity_Rule"] = _merged_eligibility.safety_finding.severity_rule

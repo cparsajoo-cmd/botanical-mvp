@@ -43,6 +43,7 @@ from typing import List, Optional
 from mechanistic_reasoning_service import reason_about_mechanisms
 from evidence_synthesis_service import synthesize_evidence
 from hypothesis_generation_service import generate_hypotheses
+from evidence_adjudication_engine import is_indication_relevant_row
 
 # Cost control -- bound how many raw evidence rows are turned into
 # evidence_items for one candidate, regardless of how many the
@@ -62,11 +63,20 @@ def _row_get(row, *keys):
     return ""
 
 
-def _evidence_items_from_df(evidence_df, plant_name: str) -> List[dict]:
+def _evidence_items_from_df(evidence_df, plant_name: str, indication: str = "") -> List[dict]:
     """Read-only adapter: raw evidence_records_df rows for one plant ->
     the generic evidence_items contract the AI services expect. Returns
     [] for any missing/empty dataframe or plant with no matching rows --
-    never raises."""
+    never raises.
+
+    Part 7 (this session) -- filtered to INDICATION-RELEVANT rows only,
+    reusing evidence_adjudication_engine.is_indication_relevant_row (the
+    exact same predicate the adjudication layer applies), so this
+    explanatory AI stage sees the same evidence scope adjudication saw
+    rather than the plant's whole, indication-agnostic evidence history.
+    When indication is empty, every matched row is kept (nothing to
+    filter on -- matches is_indication_relevant_row's own behavior).
+    """
     if evidence_df is None:
         return []
     try:
@@ -93,8 +103,17 @@ def _evidence_items_from_df(evidence_df, plant_name: str) -> List[dict]:
     except Exception:
         return []
 
+    indication_tokens = [t for t in str(indication or "").strip().lower().split() if len(t) > 2]
+
     items = []
-    for _, row in matched.head(MAX_EVIDENCE_ROWS_PER_CANDIDATE).iterrows():
+    for _, row in matched.iterrows():
+        if len(items) >= MAX_EVIDENCE_ROWS_PER_CANDIDATE:
+            break
+        try:
+            if not is_indication_relevant_row(row, indication_tokens):
+                continue
+        except Exception:
+            pass  # never let the relevance check itself block this fail-open adapter
         evidence_id = _row_get(row, "Evidence_Record_ID", "evidence_record_id", "PMID", "pmid", "Record_ID")
         if not evidence_id:
             continue
@@ -116,6 +135,7 @@ def generate_candidate_insights(
     plant_name: str,
     evidence_df,
     score_summary: Optional[dict] = None,
+    indication: str = "",
 ) -> dict:
     """Return {"evidence_items_count", "mechanistic_edges",
     "evidence_synthesis", "hypotheses"} for one candidate. Every AI
@@ -124,8 +144,11 @@ def generate_candidate_insights(
     propagating to the caller. Always returns a dict (never raises), so
     Stage 5 rendering can call this unconditionally and just check
     whether each section is non-empty before displaying it.
+
+    ``indication`` (Part 7, this session) narrows the evidence bundle to
+    indication-relevant rows only -- see _evidence_items_from_df.
     """
-    evidence_items = _evidence_items_from_df(evidence_df, plant_name)
+    evidence_items = _evidence_items_from_df(evidence_df, plant_name, indication)
 
     mechanistic_edges: List[dict] = []
     try:

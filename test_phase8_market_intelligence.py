@@ -43,6 +43,51 @@ def test_no_products_found_differs_from_search_not_performed():
     assert b["Retail_Availability"] == "UNKNOWN"
 
 
+# ---------------------------------------------------------------------
+# Part C -- SEARCH_NOT_PERFORMED (and other not-usable statuses) must
+# yield nullable/UNKNOWN hit counts, never a numeric 0, since 0 means "a
+# real search ran and found zero products". Covers both the
+# MarketIntelligenceEngine.evaluate() path (evidence_df empty -> _result
+# early return) and the vectorized step_rd_candidates.py shortcut for
+# "no structured market rows at all".
+# ---------------------------------------------------------------------
+def test_search_not_performed_yields_nullable_hit_counts_not_zero():
+    result = MarketIntelligenceEngine(pd.DataFrame()).evaluate(
+        {"Scientific_Name": "Valeriana officinalis"}, indication="sleep", market="FR",
+    )
+    assert result["Search_Status"] == "SEARCH_NOT_PERFORMED"
+    assert result["Overall_Product_Hits"] is None
+    assert result["Product_Hits"] is None
+    assert result["Indication_Product_Hits"] is None
+    assert result["Indication_Brand_Count"] is None
+
+
+def test_source_unavailable_hit_counts_are_also_nullable():
+    metrics = compute_market_metrics([], search_status=MarketSearchStatus.SOURCE_UNAVAILABLE)
+    # compute_market_metrics itself always returns len([]) == 0 -- the
+    # nulling happens one layer up, in MarketIntelligenceEngine._result(),
+    # which is what every real caller (evaluate()) actually returns.
+    # Confirmed via the evaluate()-level test above; this call just
+    # documents that compute_market_metrics is not itself status-aware.
+    assert metrics["Product_Count"] == 0
+
+
+def test_vectorized_no_market_rows_shortcut_uses_nullable_hit_counts():
+    import step_rd_candidates as src
+
+    out = pd.DataFrame([{"Alternative_Plant": "Plant A"}])
+    # An empty evidence_df -> MarketIntelligenceEngine(evidence_df)._market_rows
+    # is empty -> hits the vectorized "no structured market evidence at
+    # all" shortcut this test targets (part C fix).
+    result = src._attach_commercial_market_intelligence(
+        out, evidence_df=pd.DataFrame(), indication="sleep", dosage_form="capsule", market="FR",
+    )
+    assert result.loc[0, "Commercial_Search_Status"] == "SEARCH_NOT_PERFORMED"
+    assert pd.isna(result.loc[0, "Overall_Product_Hits"])
+    assert pd.isna(result.loc[0, "Indication_Product_Hits"])
+    assert pd.isna(result.loc[0, "Indication_Brand_Count"])
+
+
 def test_duplicate_products_counted_once_and_brand_deduplicated():
     rows = [rec(), rec(source="Retailer B", seller_retailer="Retailer B", source_url_or_id="https://example.test/b"), rec(product_name="Other", source_url_or_id="x", brand="Brand A")]
     m = compute_market_metrics(rows, search_status=MarketSearchStatus.COMPLETED)

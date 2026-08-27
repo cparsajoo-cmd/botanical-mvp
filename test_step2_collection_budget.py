@@ -66,7 +66,8 @@ def _mock_pipeline(monkeypatch, candidate_plants):
     )
     monkeypatch.setattr(
         re_mod, "_online_discovered_candidate_plants",
-        lambda indication, dosage_form, target_market, target_count, seed_plants=None: (
+        lambda indication, dosage_form, target_market, target_count, seed_plants=None,
+               deadline_ts=None, progress_callback=None, pilot_mode=False: (
             [], {"connector_errors": [], "ranked_matches": {}},
         ),
     )

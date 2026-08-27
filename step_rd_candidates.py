@@ -19,6 +19,8 @@ from evidence_adjudication_engine import (
     adjudicate_candidate,
     apply_negative_evidence_cap,
     compute_deterministic_adjustments,
+    sync_final_decision_status,
+    build_final_rationale,
 )
 from standard_evidence_builder import (
     build_scientific_evidence_presentation_payload,
@@ -32,6 +34,66 @@ from standard_evidence_builder import (
 # change. See the "Run Candidate Discovery" button handler below.
 def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
+
+
+def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
+    """merge_authoritative_scores() + Part 4 fix: the merged report-ready
+    frame's Final_Decision_Status comes from the raw engine row (set once,
+    at engine.run() time, before adjudication ever ran) while
+    Decision_Class_AH is the POST-adjudication authoritative value (see
+    merge_authoritative_scores' authoritative_fields). Without this step
+    the two can contradict each other -- e.g. Decision_Class_AH downgraded
+    to "G — Hold / insufficient evidence" by apply_negative_evidence_cap()
+    while Final_Decision_Status still reads "GO". This is the single
+    synchronization point: it never runs the cap logic itself (that
+    already happened in _run_evidence_adjudication), it only re-aligns
+    Final_Decision_Status with whatever Decision_Class_AH the merge
+    produced, downgrade-only (see
+    evidence_adjudication_engine.sync_final_decision_status).
+    """
+    merged = merge_authoritative_scores(result_df, plant_summary_df)
+    if isinstance(merged, pd.DataFrame) and not merged.empty and (
+        "Final_Decision_Status" in merged.columns and "Decision_Class_AH" in merged.columns
+    ):
+        merged["Final_Decision_Status"] = [
+            sync_final_decision_status(status, decision_class_ah)
+            for status, decision_class_ah in zip(
+                merged["Final_Decision_Status"], merged["Decision_Class_AH"]
+            )
+        ]
+    # Part 10 (this session) -- ONE deterministic final rationale, built
+    # from the structured facts now finalized above (adjudication, safety,
+    # commercial, synced final decision). Additive column
+    # ("Final_Rationale") -- the existing generic "Rationale" column is
+    # left untouched for backward compatibility; this is the strictly
+    # more complete, structured-facts field going forward.
+    if isinstance(merged, pd.DataFrame) and not merged.empty:
+        merged["Final_Rationale"] = [
+            build_final_rationale(row) for _, row in merged.iterrows()
+        ]
+    return merged
+
+
+def _resolve_report_plant_column(df):
+    """Part 6 (this session) -- canonical plant-identity column resolver
+    for the report-ready frame. merge_authoritative_scores() (candidate_
+    shortlisting.py) keys the report-ready frame on "Alternative_Plant" --
+    NOT "Scientific_Name" -- so a caller that only checked for
+    "Scientific_Name" (as the Stage 5 AI-insight block previously did)
+    could silently see an empty candidate list and generate no insights
+    at all. Checked in the project's existing priority order (see
+    evidence_adjudication_engine._PLANT_NAME_COLUMNS for the same
+    convention used elsewhere) with "Alternative_Plant" first, since that
+    is this specific frame's actual canonical key. Returns None if the
+    frame has neither -- callers must treat that as "no plant column
+    available", never guess a default.
+    """
+    if not isinstance(df, pd.DataFrame):
+        return None
+    for candidate_col in ("Alternative_Plant", "Scientific_Name", "plant_species", "Plant_Scientific_Name"):
+        if candidate_col in df.columns:
+            return candidate_col
+    return None
 
 
 def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target_context):
@@ -69,16 +131,37 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
     )
     eligible_set = set(eligible_plants)
 
-    new_columns = {col: [None] * len(plant_summary_df) for col in (
-        "Indication_Evidence_Direction", "Human_Evidence_Strength", "Evidence_Conflict_Level",
-        "Negative_Evidence_Severity", "Preparation_Compatibility", "Plant_Part_Compatibility",
-        "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
-        "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
-        "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
-        "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Adjustment",
-        "Negative_Human_Evidence_Adjustment", "Preparation_Adjustment", "Plant_Part_Adjustment",
-        "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score", "Decision_Cap_Reason",
-    )}
+    # part B12 -- explicit UNKNOWN/neutral defaults for rows that are never
+    # adjudicated, instead of leaving every column as None. The categorical
+    # fields already use "UNKNOWN" as their controlled-vocabulary
+    # not-applicable value everywhere else in this module (see
+    # evidence_adjudication_engine.py's *_VALUES tuples), so reusing it here
+    # keeps the schema's meaning stable across "adjudicated" and
+    # "not adjudicated" rows rather than conflating "unknown" with "missing".
+    _CATEGORICAL_UNKNOWN_DEFAULTS = {
+        "Indication_Evidence_Direction": "UNKNOWN", "Human_Evidence_Strength": "UNKNOWN",
+        "Evidence_Conflict_Level": "UNKNOWN", "Negative_Evidence_Severity": "UNKNOWN",
+        "Preparation_Compatibility": "UNKNOWN", "Plant_Part_Compatibility": "UNKNOWN",
+        "Route_Compatibility": "UNKNOWN", "Scientific_Evidence_Confidence": "UNKNOWN",
+        "Positive_Evidence_IDs": (), "Negative_Evidence_IDs": (),
+        "Key_Human_Evidence_IDs": (), "Preparation_Mismatch_Evidence_IDs": (),
+        "Evidence_Adjudication_Evidence_Count": 0,
+        "Evidence_Adjudication_Rationale": None,
+        "Evidence_Adjudication_Fallback_Reason": None,
+        "Evidence_Adjudication_Adjustment": 0.0, "Negative_Human_Evidence_Adjustment": 0.0,
+        "Preparation_Adjustment": 0.0, "Plant_Part_Adjustment": 0.0,
+        "Decision_Cap_Reason": None,
+    }
+    new_columns = {
+        col: [
+            (list(default) if isinstance(default, tuple) else default)
+            for _ in range(len(plant_summary_df))
+        ]
+        for col, default in _CATEGORICAL_UNKNOWN_DEFAULTS.items()
+    }
+    new_columns["Evidence_Adjudication_Status"] = [None] * len(plant_summary_df)
+    new_columns["Base_R&D_Opportunity_Score"] = [None] * len(plant_summary_df)
+    new_columns["Final_R&D_Opportunity_Score"] = [None] * len(plant_summary_df)
 
     for idx, row in plant_summary_df.iterrows():
         plant = str(row.get("Alternative_Plant") or "")
@@ -110,7 +193,7 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
             "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
             "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
             "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
-            "Evidence_Adjudication_Rationale",
+            "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Fallback_Reason",
         ):
             new_columns[key][idx] = adjudication.get(key)
         for key in (
@@ -123,6 +206,19 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
 
     for col, values in new_columns.items():
         plant_summary_df[col] = values
+
+    # part B2 (ghost-score fix) -- Overall_Score becomes THIS module's
+    # single authoritative post-adjudication score, in place, for every
+    # adjudicated row. This is what makes Overall_Score, the
+    # R&D_Opportunity_Score alias (candidate_shortlisting.merge_
+    # authoritative_scores), ranking, the Streamlit shortlist/exploratory
+    # tables (which read plant_summary_df directly -- see
+    # _prepare_plant_triage_display below), and the final decision CSV all
+    # agree, without adding a second competing scoring pass: it is simply
+    # base_score + the already-computed, already-bounded adjudication
+    # adjustment. Non-adjudicated rows are a no-op here (Final ==
+    # Base == the original Overall_Score, set above).
+    plant_summary_df["Overall_Score"] = new_columns["Final_R&D_Opportunity_Score"]
     return plant_summary_df
 
 
@@ -346,16 +442,19 @@ def _attach_commercial_market_intelligence(
             "Commercial_Status_For_Indication": indication_status,
             "Commercial_Novelty_Status": "Commercial novelty not assessed",
             "Commercial_Positioning": "Market data incomplete — do not classify as new commercial R&D",
-            "Overall_Product_Hits": 0,
-            "Indication_Product_Hits": 0,
-            "Indication_Brand_Count": 0,
+            # part C fix -- SEARCH_NOT_PERFORMED means no real search ran,
+            # so these are UNKNOWN/nullable, never a numeric 0 (a 0 would
+            # falsely read as "search ran, found zero competitors").
+            "Overall_Product_Hits": None,
+            "Indication_Product_Hits": None,
+            "Indication_Brand_Count": None,
             "Indication_Market_Saturation": "UNKNOWN",
             "Indication_Market_Search_Status": "SEARCH_NOT_PERFORMED" if str(indication or "").strip() else "NOT_REQUESTED",
             "Indication_Market_Data_Usable": False,
             "Indication_Market_Score": None,
             "Indication_Matched_Terms": None,
-            "Indication_Unclear_Product_Count": 0,
-            "Indication_Explicit_Nonmatch_Product_Count": 0,
+            "Indication_Unclear_Product_Count": None,
+            "Indication_Explicit_Nonmatch_Product_Count": None,
         }
         plant_mask = out["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(
             {p.lower() for p in plants}
@@ -1780,7 +1879,7 @@ def render_rd_candidates_step(inputs):
                     # directly, so they can never disagree with the shortlist
                     # above about which plant is the top candidate.
                     _perf_t_merge = time.perf_counter()
-                    st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
+                    st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
                         result_df, plant_summary_df
                     )
                     _perf(
@@ -1836,16 +1935,17 @@ def render_rd_candidates_step(inputs):
                     try:
                         _perf_t_ai_insights = time.perf_counter()
                         _report_df = st.session_state.get("rd_report_ready_df")
+                        _insight_plant_col = _resolve_report_plant_column(_report_df)
                         _insight_plants = []
-                        if isinstance(_report_df, pd.DataFrame) and "Scientific_Name" in _report_df.columns:
+                        if _insight_plant_col is not None:
                             _insight_plants = (
-                                _report_df["Scientific_Name"].dropna().astype(str)
+                                _report_df[_insight_plant_col].dropna().astype(str)
                                 .drop_duplicates().tolist()[:_AI_RD_INSIGHTS_MAX_CANDIDATES]
                             )
                         ai_insights = {}
                         for _plant_name in _insight_plants:
                             _score_summary = None
-                            _plant_rows = _report_df[_report_df["Scientific_Name"] == _plant_name]
+                            _plant_rows = _report_df[_report_df[_insight_plant_col] == _plant_name]
                             if not _plant_rows.empty:
                                 _first_row = _plant_rows.iloc[0]
                                 _score_summary = {
@@ -1854,6 +1954,7 @@ def render_rd_candidates_step(inputs):
                                 }
                             ai_insights[_plant_name] = generate_candidate_insights(
                                 _plant_name, evidence_df_for_run, score_summary=_score_summary,
+                                indication=indication,
                             )
                         st.session_state["rd_ai_insights"] = ai_insights
                         _perf(
@@ -1934,7 +2035,7 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
             st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
             _perf_t_merge_fallback = time.perf_counter()
-            st.session_state["rd_report_ready_df"] = merge_authoritative_scores(
+            st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
                 result_df, plant_summary_df
             )
             _perf(f"fallback-path merge_authoritative_scores() done elapsed={time.perf_counter() - _perf_t_merge_fallback:.3f}")
@@ -1947,7 +2048,7 @@ def render_rd_candidates_step(inputs):
             _perf(f"fallback-path build_decision_metadata() done elapsed={time.perf_counter() - _perf_t_decision_fallback:.3f}")
         report_ready_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(report_ready_df, pd.DataFrame):
-            report_ready_df = merge_authoritative_scores(result_df, plant_summary_df)
+            report_ready_df = _merge_and_sync_final_decision_status(result_df, plant_summary_df)
             st.session_state["rd_report_ready_df"] = report_ready_df
         decision_metadata = st.session_state.get("rd_decision_metadata")
         if not decision_metadata:
@@ -2241,9 +2342,22 @@ def render_rd_candidates_step(inputs):
             st.markdown(f"**{payload['boundary_statement']}**")
             st.caption(payload["boundary_explanation"])
 
+        # part B6 fix -- this is the PRIMARY final decision-table download,
+        # so it must be the authoritative, adjudicated, plant-level
+        # report_ready_df (Base/Final_R&D_Opportunity_Score, the
+        # Evidence_Adjudication_* fields, final decision fields, safety and
+        # commercial status all live there — see candidate_shortlisting.
+        # merge_authoritative_scores' authoritative_fields). result_df is
+        # the raw, pre-aggregation per-compound association network; it is
+        # still available separately above under "Download raw
+        # plant–compound network (CSV)" for audit purposes, so nothing is
+        # lost by no longer exporting it here.
+        _decision_table_source_df = st.session_state.get("rd_report_ready_df")
+        if not isinstance(_decision_table_source_df, pd.DataFrame) or _decision_table_source_df.empty:
+            _decision_table_source_df = result_df
         st.download_button(
             "Download decision table (CSV)",
-            data=result_df.to_csv(index=False).encode("utf-8"),
+            data=_decision_table_source_df.to_csv(index=False).encode("utf-8"),
             file_name="botanical_rd_candidates.csv",
             mime="text/csv",
         )

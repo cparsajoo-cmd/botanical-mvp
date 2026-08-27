@@ -65,6 +65,19 @@ _UNAVAILABLE_SEARCH_STATES = {
     MarketSearchStatus.CONNECTOR_NOT_IMPLEMENTED.value,
     MarketSearchStatus.MARKET_NOT_COVERED.value,
 }
+# MarketSearchStatus-enum-keyed alias of the same set, for call sites (the
+# hit-count nulling below) that already hold the enum member rather than
+# its .value string -- avoids repeated .value conversions/typos.
+#
+# NOTE: INSUFFICIENT_SAMPLE is deliberately NOT included here. Unlike the
+# statuses above, it means a real search completed and a real (possibly
+# zero) product count was obtained -- it is just too small a sample to
+# compute reliable saturation/pricing statistics from. Nulling its
+# Product_Count would contradict existing, intentional behavior (see
+# test_generic_product_without_claims_does_not_create_false_repurposing_gap
+# in test_phase8_market_intelligence.py, which asserts a real 0 for this
+# exact case).
+_UNUSABLE_MARKET_STATUSES = {MarketSearchStatus(v) for v in _UNAVAILABLE_SEARCH_STATES}
 
 
 def _clean(v):
@@ -689,6 +702,28 @@ class MarketIntelligenceEngine:
         )
         indication_scored = score_market(indication_records, indication_metrics)
 
+        # Part C fix -- a numeric hit count of 0 means "a real search ran
+        # and found zero products"; these statuses instead mean the search
+        # never produced usable commercial evidence at all (not performed,
+        # no configured provider, market/coverage gap, or too small a
+        # sample to trust). Zero is a claim; UNKNOWN is an honest absence
+        # of a claim -- these must never be represented the same way, or
+        # downstream ranking/novelty logic can read "no search" as "zero
+        # competitors" and fabricate a false novelty signal.
+        overall_hits = metrics["Product_Count"]
+        overall_brand_count = metrics["Brand_Count"]
+        overall_retailer_count = metrics["Retailer_Count"]
+        if search_status in _UNUSABLE_MARKET_STATUSES:
+            overall_hits = None
+            overall_brand_count = None
+            overall_retailer_count = None
+
+        indication_hits = indication_metrics["Product_Count"]
+        indication_brand_count = indication_metrics["Brand_Count"]
+        if indication_metric_status in _UNUSABLE_MARKET_STATUSES:
+            indication_hits = None
+            indication_brand_count = None
+
         overall_status = _commercial_overall_status(search_status, metrics["Product_Count"])
         indication_status = _commercial_indication_status(
             indication,
@@ -707,8 +742,10 @@ class MarketIntelligenceEngine:
             **scored,
             **metrics,
             "Market_Status": status_text,
-            "Product_Hits": metrics["Product_Count"],  # backward-compatible overall count
-            "Overall_Product_Hits": metrics["Product_Count"],
+            "Product_Hits": overall_hits,  # backward-compatible overall count
+            "Overall_Product_Hits": overall_hits,
+            "Brand_Count": overall_brand_count,
+            "Retailer_Count": overall_retailer_count,
             "Patent_Hits": metrics["Patent_Activity_Count"],
             "Regulatory_Hits": 0,  # regulatory is never market evidence
             "White_Space": "Unknown" if metrics["Market_Saturation"] == "UNKNOWN" else (
@@ -718,8 +755,8 @@ class MarketIntelligenceEngine:
             "Commercial_Status_For_Indication": indication_status,
             "Commercial_Novelty_Status": commercial_novelty,
             "Commercial_Positioning": positioning,
-            "Indication_Product_Hits": indication_metrics["Product_Count"],
-            "Indication_Brand_Count": indication_metrics["Brand_Count"],
+            "Indication_Product_Hits": indication_hits,
+            "Indication_Brand_Count": indication_brand_count,
             "Indication_Market_Saturation": indication_metrics["Market_Saturation"],
             "Indication_Market_Search_Status": indication_search_status,
             "Indication_Market_Data_Usable": indication_scored["Market_Data_Usable"],

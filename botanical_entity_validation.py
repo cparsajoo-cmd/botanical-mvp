@@ -51,6 +51,12 @@ STATUS_VALIDATED_CURATED_SYNONYM = "validated_curated_synonym"
 STATUS_VALIDATED_EXTERNAL_TAXONOMY = "validated_external_taxonomy"
 STATUS_UNRESOLVED = "unresolved"
 STATUS_REJECTED_FORMAT = "rejected_non_binomial_format"
+# Part 19 (Stage 2 remediation) -- distinct from STATUS_UNRESOLVED (which
+# means "we asked Kew/GBIF and got no match"): this means the remote
+# lookup was never attempted at all because no Stage 2 budget remained.
+# Kept separate for auditability -- a caller inspecting Stage 2 results
+# can tell "genuinely not found" apart from "not checked due to time".
+STATUS_SKIPPED_BUDGET_EXHAUSTED = "skipped_budget_exhausted"
 
 # Confidence scores are deliberately modest and ordered, not calibrated
 # probabilities -- callers compare them relatively (curated > external) and
@@ -158,7 +164,9 @@ def _external_source_confirms(candidate_key: str, results: Iterable[dict]) -> Op
     return None
 
 
-def validate_botanical_candidate(name: object, cache: Optional[Dict[str, dict]] = None) -> dict:
+def validate_botanical_candidate(
+    name: object, cache: Optional[Dict[str, dict]] = None, deadline_seconds: Optional[float] = None,
+) -> dict:
     """Validate one candidate botanical name against real taxonomic sources.
 
     Returns a structured provenance dict:
@@ -175,6 +183,17 @@ def validate_botanical_candidate(name: object, cache: Optional[Dict[str, dict]] 
     candidate name; when supplied, a candidate already validated earlier in
     the same run is never re-queried against a live service (see module
     docstring's performance requirement).
+
+    ``deadline_seconds`` (Part 19, Stage 2 remediation): remaining stage
+    budget, if the caller has one. When supplied, each remote connector's
+    own network timeout is min(connector_default, remaining_seconds), so
+    a candidate validated near the end of Stage 2's budget cannot itself
+    consume the rest of it -- and if there is no budget left at all
+    (<=0), the remote lookups are skipped entirely and the candidate is
+    marked UNKNOWN/unresolved rather than silently validated (fail-closed
+    -- an unverified name is never treated as confirmed just to save
+    time). None (the default) preserves the exact prior behavior (the
+    connectors' own 30s default).
     """
     raw = str(name or "").strip()
     cache_key = raw.lower()
@@ -215,10 +234,34 @@ def validate_botanical_candidate(name: object, cache: Optional[Dict[str, dict]] 
 
     # 2. Kew POWO, then 3. GBIF. Each connector already fails closed
     # (returns []) on any network/HTTP error -- never raises here.
-    matched = _external_source_confirms(candidate_key, search_kew_plants(raw))
+    # Part 19 -- if no Stage 2 budget remains at all, skip the remote
+    # lookups entirely rather than spending the connectors' full default
+    # timeout with nothing left to show for it; the candidate is marked
+    # explicitly unverified (fail-closed), never silently validated.
+    if deadline_seconds is not None and deadline_seconds <= 0:
+        result = {
+            "original_mention": raw,
+            "valid": False,
+            "botanical_validation_status": STATUS_SKIPPED_BUDGET_EXHAUSTED,
+            "botanical_validation_score": _SCORE_UNRESOLVED,
+            "taxonomic_source": "",
+            "matched_scientific_name": "",
+        }
+        if cache is not None:
+            cache[cache_key] = result
+        return result
+
+    connector_timeout = (
+        min(30, deadline_seconds) if deadline_seconds is not None else None
+    )
+    matched = _external_source_confirms(
+        candidate_key, search_kew_plants(raw, timeout=connector_timeout)
+    )
     source = "Kew POWO" if matched else ""
     if not matched:
-        matched = _external_source_confirms(candidate_key, search_gbif_plants(raw))
+        matched = _external_source_confirms(
+            candidate_key, search_gbif_plants(raw, timeout=connector_timeout)
+        )
         source = "GBIF" if matched else source
 
     if matched:

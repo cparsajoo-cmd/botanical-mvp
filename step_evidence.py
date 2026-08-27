@@ -34,6 +34,29 @@ def render_evidence_step(inputs):
     )
 
     if st.button("Collect evidence"):
+        # Part 15 (Stage 2 remediation) -- real progress reporting instead
+        # of a plain spinner that shows no information for the whole
+        # run. run_research_engine() calls progress_callback(stage,
+        # current, total, message) at each major sub-stage boundary
+        # (query expansion, PubMed/Europe PMC search, botanical entity
+        # extraction, candidate validation, evidence collection); this
+        # closure is the ONLY Streamlit-aware code involved -- the
+        # research engine itself never imports streamlit (see
+        # research_engine._emit_stage2_progress).
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def _stage2_progress_callback(stage, current, total, message):
+            try:
+                fraction = min(1.0, max(0.0, current / total)) if total else 0.0
+            except (TypeError, ZeroDivisionError):
+                fraction = 0.0
+            try:
+                progress_bar.progress(fraction)
+                status_text.caption(message)
+            except Exception:
+                pass  # never let a UI update failure interrupt Stage 2
+
         with st.spinner("Searching scientific sources..."):
             research_output = run_research_engine(
                 product_type=inputs["product_type"],
@@ -45,6 +68,17 @@ def render_evidence_step(inputs):
                 save=True,
                 global_candidate_count=quick_count,
                 pilot_mode=pilot_mode,
+                progress_callback=_stage2_progress_callback,
+            )
+
+        progress_bar.empty()
+        status_text.empty()
+
+        if research_output.get("stage2_completion_status") == "partial_budget_exhausted":
+            st.warning(
+                "⏱️ Step 2 reached its time budget before every source finished. "
+                "The evidence collected so far is preserved below; some sources or "
+                "candidates may be incomplete -- see the coverage details."
             )
 
         st.session_state["research_output"] = research_output

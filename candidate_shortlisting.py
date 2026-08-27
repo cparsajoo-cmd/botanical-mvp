@@ -3031,7 +3031,8 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
         "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
         "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
-        "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Adjustment",
+        "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Fallback_Reason",
+        "Evidence_Adjudication_Adjustment",
         "Negative_Human_Evidence_Adjustment", "Preparation_Adjustment", "Plant_Part_Adjustment",
         "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score", "Decision_Cap_Reason",
     )

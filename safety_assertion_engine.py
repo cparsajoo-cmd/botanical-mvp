@@ -498,6 +498,120 @@ def classify_safety_assertions(
     return tuple(out)
 
 
+# ---------------------------------------------------------------------
+# Part 9 (this session) -- structured, candidate-level safety STATUS
+# output. Reuses this module's own SafetyAssertion/AssertionPolarity
+# vocabulary and summarize_safety_assertions() above; adds no new
+# extraction logic and no new safety facts. Deliberately coarse and
+# explicit about missing data: "no adverse events reported in one
+# study" is STUDY_SPECIFIC_REASSURANCE_ONLY, never a general safety
+# claim, and an empty assertion set is NO_SAFETY_EVIDENCE_RETRIEVED
+# (not "safe").
+#
+# NAMING NOTE: the output key is "Safety_Assertion_Status", not the more
+# obvious "Safety_Data_Status" -- indication_candidate_discovery.py
+# already uses "Safety_Data_Status" for a DIFFERENT, pre-existing,
+# lowercase snake_case vocabulary (not_assessed / source_excluded /
+# adverse_signal_present / reassurance_reported / interaction_signal_
+# present), produced by a different extraction path
+# (safety_interaction_attribution.py) for the indication-centric
+# discovery mode. That is a separate pipeline this change does not
+# touch (Part 25: reuse, don't rewrite) -- reusing its exact column name
+# for a structurally different vocabulary here would silently produce
+# two incompatible value sets under one column name. "Safety_Assertion_
+# Status" makes explicit which underlying mechanism (the structured
+# SafetyAssertion objects) this status is derived from.
+# ---------------------------------------------------------------------
+SAFETY_STATUS_NO_EVIDENCE = "NO_SAFETY_EVIDENCE_RETRIEVED"
+SAFETY_STATUS_REASSURANCE_ONLY = "STUDY_SPECIFIC_REASSURANCE_ONLY"
+SAFETY_STATUS_CONCERN = "SAFETY_CONCERN_RETRIEVED"
+SAFETY_STATUS_INTERACTION = "INTERACTION_SIGNAL_RETRIEVED"
+SAFETY_STATUS_CONFLICTING = "CONFLICTING_SAFETY_EVIDENCE"
+SAFETY_STATUS_INSUFFICIENT = "INSUFFICIENT_OR_UNKNOWN"
+
+# Assertion types that are specifically INTERACTION signals (as opposed
+# to a standalone safety concern like contraindication/organ toxicity/
+# adverse event) -- kept as its own bucket because an interaction signal
+# is actionable differently (co-administration risk) than a standalone
+# concern.
+_INTERACTION_ASSERTION_TYPES = frozenset({
+    SafetyAssertionType.SERIOUS_DRUG_INTERACTION, SafetyAssertionType.MODERATE_INTERACTION,
+    SafetyAssertionType.CYP_INDUCTION, SafetyAssertionType.CYP_INHIBITION,
+    SafetyAssertionType.PGP_INTERACTION, SafetyAssertionType.NARROW_THERAPEUTIC_INDEX_INTERACTION,
+})
+
+_SEVERITY_RANK = {SeverityLevel.NONE: 0, SeverityLevel.MINOR: 1, SeverityLevel.MODERATE: 2, SeverityLevel.SERIOUS: 3}
+
+
+def derive_structured_safety_status(assertions: Iterable[SafetyAssertion]) -> dict[str, Any]:
+    """Returns {"Safety_Assertion_Status", "Safety_Concern_Level",
+    "Safety_Evidence_IDs", "Safety_Rationale"} for one candidate, derived
+    ONLY from the structured assertions already extracted upstream by
+    classify_safety_assertions() -- never a new keyword scan, never an
+    AI guess. Hard safety/regulatory gates (eligibility_gate.py) remain
+    authoritative for any GO/NO-GO decision; this is a REPORTING layer
+    on top of the same underlying assertions, not a second gate.
+    """
+    items = tuple(assertions or ())
+    evidence_ids = tuple(dict.fromkeys(a.evidence_record_id for a in items if a.evidence_record_id))
+
+    if not items:
+        return {
+            "Safety_Assertion_Status": SAFETY_STATUS_NO_EVIDENCE,
+            "Safety_Concern_Level": "UNKNOWN",
+            "Safety_Evidence_IDs": (),
+            "Safety_Rationale": "No safety-relevant evidence was retrieved for this candidate.",
+        }
+
+    risks = tuple(a for a in items if a.polarity == AssertionPolarity.RISK_PRESENT)
+    reassurances = tuple(a for a in items if a.polarity == AssertionPolarity.RISK_ABSENT)
+    concern_level = (
+        max((a.severity for a in risks), key=lambda s: _SEVERITY_RANK.get(s, 0)).value
+        if risks else ("NONE" if reassurances else "UNKNOWN")
+    )
+
+    if risks and reassurances:
+        return {
+            "Safety_Assertion_Status": SAFETY_STATUS_CONFLICTING,
+            "Safety_Concern_Level": concern_level,
+            "Safety_Evidence_IDs": evidence_ids,
+            "Safety_Rationale": (
+                "Both risk-present and risk-absent safety assertions were retrieved for this "
+                "candidate; this is an unresolved conflict, not evidence of safety."
+            ),
+        }
+    if risks:
+        if any(a.assertion_type in _INTERACTION_ASSERTION_TYPES for a in risks):
+            return {
+                "Safety_Assertion_Status": SAFETY_STATUS_INTERACTION,
+                "Safety_Concern_Level": concern_level,
+                "Safety_Evidence_IDs": evidence_ids,
+                "Safety_Rationale": "An interaction-type safety signal (drug interaction / CYP / P-gp / narrow-therapeutic-index) was retrieved.",
+            }
+        return {
+            "Safety_Assertion_Status": SAFETY_STATUS_CONCERN,
+            "Safety_Concern_Level": concern_level,
+            "Safety_Evidence_IDs": evidence_ids,
+            "Safety_Rationale": "A safety concern (e.g. contraindication, adverse event, organ toxicity) was retrieved from the evidence.",
+        }
+    if reassurances:
+        return {
+            "Safety_Assertion_Status": SAFETY_STATUS_REASSURANCE_ONLY,
+            "Safety_Concern_Level": concern_level,
+            "Safety_Evidence_IDs": evidence_ids,
+            "Safety_Rationale": (
+                "Only study-specific reassurance (e.g. \"no adverse events reported\" in a "
+                "specific study) was found. This does NOT establish general safety."
+            ),
+        }
+    return {
+        "Safety_Assertion_Status": SAFETY_STATUS_INSUFFICIENT,
+        "Safety_Concern_Level": concern_level,
+        "Safety_Evidence_IDs": evidence_ids,
+        "Safety_Rationale": "Safety-relevant evidence exists but could not be classified as a concern or as reassurance.",
+    }
+
+
 def summarize_safety_assertions(assertions: Iterable[SafetyAssertion]) -> dict[str, Any]:
     items = tuple(assertions)
     risks = tuple(a for a in items if a.polarity == AssertionPolarity.RISK_PRESENT)

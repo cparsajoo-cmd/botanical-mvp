@@ -59,10 +59,10 @@ def test_curated_synonym_is_validated_without_any_network_call(monkeypatch):
 
 
 def test_external_taxonomy_hit_validates_a_novel_candidate(monkeypatch):
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
     monkeypatch.setattr(
         bev, "search_gbif_plants",
-        lambda name, limit=30: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "GBIF"}],
+        lambda name, limit=30, timeout=None: [{"Scientific_Name": "Ocimum tenuiflorum", "Source": "GBIF"}],
     )
 
     result = bev.validate_botanical_candidate("Ocimum tenuiflorum")
@@ -73,8 +73,8 @@ def test_external_taxonomy_hit_validates_a_novel_candidate(monkeypatch):
 
 
 def test_false_botanical_entity_is_rejected_when_no_source_confirms_it(monkeypatch):
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     result = bev.validate_botanical_candidate("Interleukin signaling")
     assert result["valid"] is False
@@ -100,8 +100,8 @@ def test_external_service_failure_degrades_to_unresolved_not_a_crash(monkeypatch
     # Simulate the connector's own real behaviour: any exception is caught
     # internally and [] is returned -- validate_botanical_candidate() must
     # never see a raw exception from either connector.
-    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20: [])
-    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30: [])
+    monkeypatch.setattr(bev, "search_kew_plants", lambda name, limit=20, timeout=None: [])
+    monkeypatch.setattr(bev, "search_gbif_plants", lambda name, limit=30, timeout=None: [])
 
     result = bev.validate_botanical_candidate("Unmapped fictumus")
     assert result["valid"] is False
@@ -111,7 +111,7 @@ def test_external_service_failure_degrades_to_unresolved_not_a_crash(monkeypatch
 def test_cache_prevents_a_second_lookup_for_the_same_candidate():
     calls = {"n": 0}
 
-    def _count_and_confirm(name, limit=20):
+    def _count_and_confirm(name, limit=20, timeout=None):
         calls["n"] += 1
         return [{"Scientific_Name": "Bacopa monnieri", "Source": "Kew POWO"}]
 

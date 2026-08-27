@@ -30,6 +30,20 @@ A dedupe merge NEVER upgrades a candidate past what its best contributing
 origin actually earned -- appearing in a reference_seed list and a
 candidate_hypothesis list at the same time does not, by itself, create
 validated evidence.
+
+CANDIDATE-ORIGIN PROVENANCE (open-world discovery)
+Independently of the four ORIGIN_* values above (which describe *how a
+plant entered this Stage 2 run*), a CandidateRecord also carries whether
+the plant was already present in the internal botanical catalogue before
+this run (``already_in_internal_catalogue``) and, for a plant discovered
+directly from literature text (see research_engine.py's open-world
+extraction path), the botanical/taxonomic validation outcome that allowed
+it to be retained at all (``botanical_validation_status`` /
+``botanical_validation_score`` / ``taxonomic_source`` /
+``matched_scientific_name`` / ``original_mention``). These fields are
+purely descriptive provenance -- they do not feed into ``score`` or
+``evidence_status`` themselves, and default to inert values so every
+existing caller of ``make_candidate``/``CandidateRecord`` is unaffected.
 """
 from __future__ import annotations
 
@@ -84,6 +98,12 @@ _STATUS_RANK = {
     STATUS_FALLBACK_HYPOTHESIS: 1,
 }
 
+# --- candidate_origin vocabulary (internal catalogue vs. open-world literature
+# discovery -- orthogonal to ORIGIN_* above, which describes how the plant
+# entered THIS run's candidate pool, not whether it pre-existed in Supabase) --
+CATALOGUE_STATUS_INTERNAL = "internal_catalogue"
+CATALOGUE_STATUS_LITERATURE_DISCOVERED = "literature_discovered"
+
 # --- Controlled shortfall_reason vocabulary ----------------------------------
 SHORTFALL_NONE = "none"
 SHORTFALL_INSUFFICIENT_HYPOTHESES = "insufficient_candidate_hypotheses"
@@ -136,6 +156,19 @@ class CandidateRecord:
     # contributing origin actually used. See merge_candidates().
     submitted_name: str = ""
 
+    # --- Open-world discovery provenance (see module docstring) -----------
+    # Whether this plant was already present in the internal catalogue
+    # (Supabase plants/plant_compounds) before this run. Defaults to True
+    # so every pre-existing caller (which never populates this) keeps its
+    # historical meaning unchanged.
+    already_in_internal_catalogue: bool = True
+    candidate_origin: str = CATALOGUE_STATUS_INTERNAL
+    botanical_validation_status: str = ""
+    botanical_validation_score: float = 0.0
+    taxonomic_source: str = ""
+    matched_scientific_name: str = ""
+    original_mention: str = ""
+
     def __post_init__(self) -> None:
         if not self.evidence_status:
             self.evidence_status = _ORIGIN_DEFAULT_STATUS.get(
@@ -154,13 +187,32 @@ def make_candidate(
     evidence_status: Optional[str] = None,
     notes: str = "",
     alias_lookup: Optional[dict] = None,
+    already_in_internal_catalogue: bool = True,
+    candidate_origin: Optional[str] = None,
+    botanical_validation_status: str = "",
+    botanical_validation_score: float = 0.0,
+    taxonomic_source: str = "",
+    matched_scientific_name: str = "",
+    original_mention: str = "",
 ) -> Optional[CandidateRecord]:
-    """Build one CandidateRecord. Returns None for an empty/unusable name."""
+    """Build one CandidateRecord. Returns None for an empty/unusable name.
+
+    ``already_in_internal_catalogue`` / ``candidate_origin`` / the
+    ``botanical_validation_*`` / ``taxonomic_source`` /
+    ``matched_scientific_name`` / ``original_mention`` parameters are all
+    optional open-world-discovery provenance (see module docstring); every
+    existing caller that omits them keeps the historical "already in the
+    internal catalogue" default.
+    """
     raw = str(name or "").strip()
     canonical = canonicalize_plant_name(name, alias_lookup)
     if not canonical:
         return None
     base_weight = _ORIGIN_BASE_WEIGHT.get(origin, 0.0)
+    resolved_candidate_origin = candidate_origin or (
+        CATALOGUE_STATUS_INTERNAL if already_in_internal_catalogue
+        else CATALOGUE_STATUS_LITERATURE_DISCOVERED
+    )
     return CandidateRecord(
         name=canonical,
         origin=origin,
@@ -170,6 +222,13 @@ def make_candidate(
         sources=tuple(sources or ()),
         notes=notes,
         submitted_name=raw,
+        already_in_internal_catalogue=bool(already_in_internal_catalogue),
+        candidate_origin=resolved_candidate_origin,
+        botanical_validation_status=botanical_validation_status,
+        botanical_validation_score=float(botanical_validation_score or 0.0),
+        taxonomic_source=taxonomic_source,
+        matched_scientific_name=matched_scientific_name,
+        original_mention=original_mention or raw,
     )
 
 
@@ -218,6 +277,23 @@ def merge_candidates(candidates: Iterable[Optional[CandidateRecord]]) -> List[Ca
         merged_components = dict(best.score_components)
         merged_components["contributing_origins"] = contributing_origins
         merged_components["contributing_original_names"] = contributing_original_names
+        # A plant counts as already-in-the-internal-catalogue if ANY
+        # contributing record says so -- e.g. it was both a reference_seed
+        # (internal) AND independently literature-discovered this run.
+        already_in_catalogue = any(r.already_in_internal_catalogue for r in group)
+        # Prefer the strongest (curated > external-taxonomy > unresolved)
+        # botanical validation among contributing records, not just the
+        # best-evidence record's own -- a weaker-evidence origin may have
+        # been the one that actually ran taxonomic validation.
+        validation_rank = {
+            "validated_curated_synonym": 3,
+            "validated_external_taxonomy": 2,
+            "unresolved": 1,
+            "": 0,
+        }
+        best_validation = max(
+            group, key=lambda r: validation_rank.get(r.botanical_validation_status, 0)
+        )
         merged.append(CandidateRecord(
             name=best.name,
             origin=best.origin,
@@ -227,6 +303,16 @@ def merge_candidates(candidates: Iterable[Optional[CandidateRecord]]) -> List[Ca
             sources=all_sources,
             notes=best.notes,
             submitted_name=best.submitted_name,
+            already_in_internal_catalogue=already_in_catalogue,
+            candidate_origin=(
+                CATALOGUE_STATUS_INTERNAL if already_in_catalogue
+                else CATALOGUE_STATUS_LITERATURE_DISCOVERED
+            ),
+            botanical_validation_status=best_validation.botanical_validation_status,
+            botanical_validation_score=best_validation.botanical_validation_score,
+            taxonomic_source=best_validation.taxonomic_source,
+            matched_scientific_name=best_validation.matched_scientific_name,
+            original_mention=best.original_mention,
         ))
 
     merged.sort(key=lambda r: (-_STATUS_RANK.get(r.evidence_status, 0), -r.score, r.name.lower()))
@@ -318,9 +404,19 @@ def select_candidates(
                 "contributing_original_names": r.score_components.get(
                     "contributing_original_names", [r.submitted_name]
                 ),
+                "already_in_internal_catalogue": r.already_in_internal_catalogue,
+                "candidate_origin": r.candidate_origin,
+                "botanical_validation_status": r.botanical_validation_status,
+                "botanical_validation_score": r.botanical_validation_score,
+                "taxonomic_source": r.taxonomic_source,
+                "matched_scientific_name": r.matched_scientific_name,
+                "original_mention": r.original_mention,
             }
             for r in deduped
         },
+        "novel_to_catalogue_candidate_count": sum(
+            1 for r in deduped if not r.already_in_internal_catalogue
+        ),
         "selection_score_components": {r.name: r.score_components for r in selected},
     }
     return selected, diagnostics

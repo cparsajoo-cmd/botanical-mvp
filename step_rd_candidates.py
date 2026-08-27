@@ -365,6 +365,29 @@ def _get_step2_candidate_shortlist():
     return [], "unavailable"
 
 
+def _get_step2_novel_discovered_candidates(*, indication, market):
+    """Return the validated novel (not-yet-in-Supabase) candidates Stage 2
+    discovered for THESE exact indication/market inputs, in the shape
+    BotanicalRDCandidateEngine.__init__'s ``discovered_candidates``
+    parameter expects.
+
+    Scoped to the same indication/market the research run was for -- a
+    novel candidate discovered while researching "sleep" must not silently
+    leak into an unrelated "diabetes" Step 5 run. Returns [] (never raises)
+    when no research run has been made for these inputs yet, mirroring
+    _get_step2_retrieval_coverage()'s own fail-safe pattern.
+    """
+    research_output = st.session_state.get("research_output")
+    if not isinstance(research_output, dict):
+        return []
+    if _norm_run_context(research_output.get("retrieval_coverage_market")) != _norm_run_context(market):
+        return []
+    if _norm_run_context(research_output.get("retrieval_coverage_indication")) != _norm_run_context(indication):
+        return []
+    candidates = research_output.get("novel_discovered_candidates")
+    return candidates if isinstance(candidates, list) else []
+
+
 def _collect_evidence_record_ids(result_df):
     """Task 13.2C — the union of every candidate row's own
     Applicability_Summary.evidence_record_ids (Task 10.2), deduplicated,
@@ -513,12 +536,28 @@ def _evidence_fingerprint(evidence_df):
 ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v1"
 
 
+def _discovered_candidates_fingerprint(discovered_candidates):
+    """Hashable fingerprint for st.cache_resource's cache key. The actual
+    list of dicts is passed separately as an underscore-prefixed argument
+    (excluded from Streamlit's hashing, same convention already used for
+    ``_evidence_df`` below) since a list of dicts is not itself hashable.
+    """
+    if not discovered_candidates:
+        return ("none", 0)
+    names = tuple(sorted(
+        str(item.get("Scientific_Name") or "") for item in discovered_candidates
+    ))
+    return (names, len(names))
+
+
 @st.cache_resource(ttl=3600, show_spinner=False)
 def _cached_engine(
     use_live_search: bool,
     evidence_fingerprint,
     engine_cache_version: str,
+    discovered_candidates_fingerprint=("none", 0),
     _evidence_df=None,
+    _discovered_candidates=None,
 ):
     plant_compounds_df, plant_compounds_ok = _cached_plant_compounds_df()
     compound_profiles_df, compound_profiles_ok = _cached_compound_profiles_df()
@@ -545,16 +584,19 @@ def _cached_engine(
             plant_compounds_ok and compound_profiles_ok
             and scientific_evidence_ok and evidence_records_ok
         ),
+        discovered_candidates=_discovered_candidates,
     )
 
 
-def _build_engine(evidence_df, use_live_search):
+def _build_engine(evidence_df, use_live_search, discovered_candidates=None):
     fingerprint = _evidence_fingerprint(evidence_df)
     return _cached_engine(
         use_live_search,
         fingerprint,
         ENGINE_CACHE_VERSION,
+        discovered_candidates_fingerprint=_discovered_candidates_fingerprint(discovered_candidates),
         _evidence_df=evidence_df,
+        _discovered_candidates=discovered_candidates,
     )
 
 
@@ -1401,11 +1443,18 @@ def render_rd_candidates_step(inputs):
             try:
                 _perf_t0 = time.perf_counter()
                 _perf(f"build_engine start discovery_mode={discovery_mode!r} indication={indication!r}")
+                novel_discovered_candidates = _get_step2_novel_discovered_candidates(
+                    indication=indication, market=market,
+                )
                 engine = _build_engine(
                     evidence_df_for_run,
                     use_live_search=use_live_search,
+                    discovered_candidates=novel_discovered_candidates,
                 )
-                _perf(f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f}")
+                _perf(
+                    f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f} "
+                    f"novel_discovered_candidates={len(novel_discovered_candidates)}"
+                )
 
                 with st.spinner("Discovering and scoring R&D candidates..."):
                     _perf_t_run = time.perf_counter()

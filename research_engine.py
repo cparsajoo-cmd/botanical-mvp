@@ -15,6 +15,10 @@ from retrieval_coverage import assess_retrieval_coverage, aggregate_coverage_sta
 from supabase_data import load_plants_df
 import therapeutic_area_registry
 import candidate_selection
+from botanical_entity_validation import (
+    extract_binomial_mentions,
+    validate_botanical_candidate,
+)
 
 
 _COMMON_NAME_STOPWORDS = {
@@ -28,6 +32,17 @@ def _norm_text(value):
     text = str(value or "").lower().replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _discovery_log(msg: str) -> None:
+    """Concise, single-line diagnostics for the open-world discovery path.
+
+    Deliberately one summary line per run stage, never per-article -- see
+    the module's logging requirement (avoid spamming logs with every
+    article). Mirrors the project's existing "[STAGE] message" print-based
+    diagnostic convention (see indication_candidate_discovery.py's _perf).
+    """
+    print(f"[DISCOVERY] {msg}", flush=True)
 
 
 def _query_terms(indication):
@@ -405,6 +420,201 @@ def _extract_catalogued_plants(records, alias_catalog, indication_terms, dosage_
     return ranked, diagnostics
 
 
+def _catalogued_alias_norms(alias_catalog):
+    """Every normalized alias string already covered by the internal
+    catalogue -- used to decide whether a literature mention is genuinely
+    novel (see _extract_open_world_botanical_candidates)."""
+    norms = set()
+    for aliases in alias_catalog.values():
+        for alias, _alias_type in aliases:
+            norms.add(alias)
+    return norms
+
+
+def _extract_open_world_botanical_candidates(
+    records, alias_catalog, indication_terms, dosage_form="", validation_cache=None
+):
+    """Extract, taxonomically validate, and quality-rank botanical mentions
+    that are NOT already covered by the internal catalogue.
+
+    This is the open-world counterpart of _extract_catalogued_plants: it is
+    what lets Stage 2 discover a plant that has real literature support but
+    has simply never been loaded into Supabase. It applies the SAME two
+    safeguards a catalogue plant already gets here (indication co-mention,
+    literature quality signals), PLUS an explicit botanical/taxonomic
+    validation step catalogue plants don't need -- see
+    botanical_entity_validation.py -- and an extra confidence penalty
+    (novel candidates must outscore catalogue-known ones on real evidence,
+    not on novelty).
+
+    ``validation_cache`` should be a dict shared across one Stage 2 run so
+    each unique candidate string is validated against Kew/GBIF at most
+    once, regardless of how many articles mention it (performance
+    requirement -- see module-level discussion in
+    botanical_entity_validation.py).
+    """
+    catalogue_norms = _catalogued_alias_norms(alias_catalog)
+    indication_aliases = [_norm_text(term) for term in indication_terms if term]
+    cache = validation_cache if validation_cache is not None else {}
+
+    def _support_key(record, index, source):
+        support_id = str(record.get("PMID") or record.get("Record_ID") or record.get("DOI") or index)
+        return f"{source}:{support_id}"
+
+    def _indication_hit(title_norm, abstract_norm):
+        if not indication_aliases:
+            return True
+        combined = f" {title_norm} {abstract_norm} "
+        return any(term in combined for term in indication_aliases)
+
+    # Pass 1: collect every unique, format-plausible, not-already-catalogued
+    # mention across all indication-relevant records.
+    mention_display = {}
+    for index, record in enumerate(records):
+        raw_title = record.get("Title") or record.get("Source_Title") or ""
+        raw_abstract = record.get("Abstract") or record.get("Notes") or record.get("Raw_Text") or ""
+        if not _indication_hit(_norm_text(raw_title), _norm_text(raw_abstract)):
+            continue
+        for raw_text in (raw_title, raw_abstract):
+            for mention in extract_binomial_mentions(raw_text):
+                mention_norm = _norm_text(mention)
+                if mention_norm in catalogue_norms:
+                    continue  # already handled by _extract_catalogued_plants
+                mention_display.setdefault(mention_norm, mention)
+
+    diagnostics = {
+        "potential_external_botanical_mentions": len(mention_display),
+        "validated_external_candidates": 0,
+        "rejected_or_unresolved_external_candidates": 0,
+    }
+
+    # Pass 2: validate each unique mention exactly once.
+    validated = {}
+    for mention_norm, display_name in mention_display.items():
+        validation = validate_botanical_candidate(display_name, cache=cache)
+        if validation["valid"]:
+            validated[mention_norm] = validation
+            diagnostics["validated_external_candidates"] += 1
+        else:
+            diagnostics["rejected_or_unresolved_external_candidates"] += 1
+
+    if not validated:
+        return [], {}, diagnostics
+
+    # Pass 3: score each validated candidate with the same literature-
+    # quality signals catalogue plants use, keyed by the canonical
+    # (taxonomically resolved) scientific name so two different raw
+    # mentions of the same accepted taxon merge into one candidate.
+    scores = defaultdict(float)
+    supports = defaultdict(set)
+    title_supports = defaultdict(set)
+    clinical_supports = defaultdict(set)
+    systematic_supports = defaultdict(set)
+    preclinical_supports = defaultdict(set)
+    regulatory_supports = defaultdict(set)
+    safety_supports = defaultdict(set)
+    provenance = {}
+
+    for index, record in enumerate(records):
+        raw_title = record.get("Title") or record.get("Source_Title") or ""
+        raw_abstract = record.get("Abstract") or record.get("Notes") or record.get("Raw_Text") or ""
+        title_norm = _norm_text(raw_title)
+        abstract_norm = _norm_text(raw_abstract)
+        if not _indication_hit(title_norm, abstract_norm):
+            continue
+
+        source = str(record.get("Source_Type") or record.get("Source") or "literature")
+        support_key = _support_key(record, index, source)
+        quality = _literature_quality_signals(
+            title_norm, abstract_norm, source, record.get("Year") or record.get("Publication_Year")
+        )
+
+        seen_this_record = set()
+        for raw_text, in_title in ((raw_title, True), (raw_abstract, False)):
+            for mention in extract_binomial_mentions(raw_text):
+                mention_norm = _norm_text(mention)
+                if mention_norm not in validated:
+                    continue
+                canonical = validated[mention_norm]["matched_scientific_name"] or mention
+                if canonical in seen_this_record:
+                    continue
+                seen_this_record.add(canonical)
+                provenance.setdefault(canonical, dict(validated[mention_norm]))
+
+                record_score = 4.0 + quality["quality_bonus"] - quality["evidence_penalty"]
+                scores[canonical] += max(0.5, record_score)
+                supports[canonical].add(support_key)
+                if in_title:
+                    title_supports[canonical].add(support_key)
+                if quality["clinical_human"]:
+                    clinical_supports[canonical].add(support_key)
+                if quality["systematic_review"]:
+                    systematic_supports[canonical].add(support_key)
+                if quality["preclinical"]:
+                    preclinical_supports[canonical].add(support_key)
+                if quality["regulatory"]:
+                    regulatory_supports[canonical].add(support_key)
+                if quality["safety_signal"]:
+                    safety_supports[canonical].add(support_key)
+
+    # Independent-record breadth receives a capped bonus (same shape as
+    # _extract_catalogued_plants), and a flat novelty-confidence penalty is
+    # applied on top -- an explicit requirement that a novel-to-catalogue
+    # candidate needs stronger evidence than a catalogue-known one to reach
+    # the same effective score.
+    final_scores = {}
+    _NOVELTY_CONFIDENCE_PENALTY = 3.0
+    for plant in scores:
+        breadth_bonus = min(12.0, len(supports[plant]) * 1.2)
+        title_bonus = min(10.0, len(title_supports[plant]) * 2.0)
+        human_bonus = min(15.0, len(clinical_supports[plant]) * 3.0)
+        synthesis_bonus = min(12.0, len(systematic_supports[plant]) * 4.0)
+        regulatory_bonus = min(6.0, len(regulatory_supports[plant]) * 2.0)
+        safety_penalty = min(8.0, len(safety_supports[plant]) * 1.5)
+        final_scores[plant] = (
+            scores[plant] + breadth_bonus + title_bonus + human_bonus
+            + synthesis_bonus + regulatory_bonus
+            - safety_penalty - _NOVELTY_CONFIDENCE_PENALTY
+        )
+
+    ranked = sorted(
+        final_scores,
+        key=lambda plant: (
+            -len(systematic_supports[plant]),
+            -len(clinical_supports[plant]),
+            -len(title_supports[plant]),
+            -final_scores[plant],
+            -len(supports[plant]),
+            plant.lower(),
+        ),
+    )
+    match_diagnostics = {
+        plant: {
+            "score": round(final_scores[plant], 2),
+            "entity_score": round(scores[plant], 2),
+            "supporting_records": len(supports[plant]),
+            "title_supporting_records": len(title_supports[plant]),
+            "clinical_human_records": len(clinical_supports[plant]),
+            "systematic_review_records": len(systematic_supports[plant]),
+            "preclinical_records": len(preclinical_supports[plant]),
+            "regulatory_records": len(regulatory_supports[plant]),
+            "safety_signal_records": len(safety_supports[plant]),
+            "matched_aliases": [provenance.get(plant, {}).get("original_mention", plant)],
+            "ranking_basis": "open-world literature discovery + botanical/taxonomic validation",
+            "candidate_origin": candidate_selection.CATALOGUE_STATUS_LITERATURE_DISCOVERED,
+            "already_in_internal_catalogue": False,
+            "botanical_validation_status": provenance.get(plant, {}).get("botanical_validation_status", ""),
+            "botanical_validation_score": provenance.get(plant, {}).get("botanical_validation_score", 0.0),
+            "taxonomic_source": provenance.get(plant, {}).get("taxonomic_source", ""),
+            "matched_scientific_name": plant,
+            "original_mention": provenance.get(plant, {}).get("original_mention", plant),
+        }
+        for plant in ranked
+    }
+    diagnostics["ranked_novel_candidates"] = ranked
+    return ranked, match_diagnostics, diagnostics
+
+
 def _candidate_pool_for_indication(indication, alias_catalog):
     """Return a deterministic pool for candidate-specific literature checks.
 
@@ -578,6 +788,16 @@ def _online_discovered_candidate_plants(
         "catalogue_size": 0,
         "connector_errors": [],
         "ranked_matches": {},
+        # Open-world (novel-to-catalogue) discovery diagnostics -- populated
+        # below regardless of whether any novel candidate is ultimately
+        # selected, so a run can always report these counts (see
+        # research_engine.py's module-level logging requirement).
+        "internal_candidate_universe_size": 0,
+        "potential_external_botanical_mentions": 0,
+        "validated_external_candidates": 0,
+        "rejected_or_unresolved_external_candidates": 0,
+        "novel_to_catalogue_candidates": [],
+        "novel_to_catalogue_ranked_matches": {},
     }
 
     try:
@@ -631,8 +851,44 @@ def _online_discovered_candidate_plants(
 
         existing_list = [str(p).strip() for p in (seed_plants or []) if p]
         existing = {_norm_text(p) for p in existing_list}
-        ranked = [plant for plant in ranked if _norm_text(plant) not in existing]
         discovery_slots = max(0, int(target_count) - len(existing))
+
+        # Open-world discovery: botanical mentions in the SAME literature
+        # pull that are NOT already covered by the internal catalogue,
+        # accepted only after explicit taxonomic validation (see
+        # botanical_entity_validation.py). A shared cache means each
+        # unique mention string is validated at most once for this whole
+        # run, no matter how many articles/queries surfaced it.
+        diagnostics["internal_candidate_universe_size"] = len(alias_catalog)
+        novel_validation_cache = {}
+        novel_ranked, novel_match_diagnostics, novel_diag = _extract_open_world_botanical_candidates(
+            unique_records,
+            alias_catalog,
+            diagnostics["query_terms"],
+            dosage_form=dosage_form,
+            validation_cache=novel_validation_cache,
+        )
+        diagnostics["potential_external_botanical_mentions"] = novel_diag.get(
+            "potential_external_botanical_mentions", 0
+        )
+        diagnostics["validated_external_candidates"] = novel_diag.get(
+            "validated_external_candidates", 0
+        )
+        diagnostics["rejected_or_unresolved_external_candidates"] = novel_diag.get(
+            "rejected_or_unresolved_external_candidates", 0
+        )
+        novel_ranked = [plant for plant in novel_ranked if _norm_text(plant) not in existing]
+        # Bounded the same way the catalogue-known generic pool is bounded
+        # above -- keeps Stage 2 (and the downstream Stage 5 unified
+        # universe) from growing unboundedly on a single noisy run, while
+        # still comfortably covering every genuinely validated candidate a
+        # normal literature pull surfaces.
+        novel_pool_limit = max(10, discovery_slots * 3)
+        novel_ranked = novel_ranked[:novel_pool_limit]
+        diagnostics["novel_to_catalogue_candidates"] = novel_ranked
+        diagnostics["novel_to_catalogue_ranked_matches"] = novel_match_diagnostics
+
+        ranked = [plant for plant in ranked if _norm_text(plant) not in existing]
 
         # Retain a wider generic discovery pool for comparison rather than
         # accepting the first N matches.  Candidate-specific validation is run
@@ -671,6 +927,13 @@ def _online_discovered_candidate_plants(
         diagnostics["discovery_candidate_pool_count"] = len(candidate_pool)
         diagnostics["selected_discovery_candidates"] = selected
         diagnostics["excluded_discovery_candidates"] = excluded
+        _discovery_log(
+            f"Internal candidate universe: {diagnostics['internal_candidate_universe_size']} | "
+            f"Potential external botanical mentions: {diagnostics['potential_external_botanical_mentions']} | "
+            f"Validated external candidates: {diagnostics['validated_external_candidates']} | "
+            f"Rejected/unresolved external candidates: {diagnostics['rejected_or_unresolved_external_candidates']} | "
+            f"Novel-to-catalogue candidates: {len(novel_ranked)}"
+        )
         return selected, diagnostics
     except Exception as exc:
         diagnostics["connector_errors"].append(
@@ -806,6 +1069,42 @@ def run_research_engine(
             sources=("global_candidate_ranking",),
         ))
 
+    # E-bis. Validated novel (open-world, not-yet-in-Supabase) candidates.
+    # These compete in the SAME merge/rank/select pipeline as every other
+    # origin above -- candidate_selection.py's soft source-diversity
+    # selection and canonical-name dedup apply identically, so a novel
+    # candidate is never treated as a second, parallel candidate system.
+    # They are ALSO exposed separately below (novel_discovered_candidates)
+    # so Stage 5's indication-mode candidate universe -- which scores the
+    # full internal catalogue independently of this run's small
+    # requested_count shortlist -- can admit them too (see
+    # botanical_rd_candidate_engine.py's discovered_candidates parameter).
+    novel_candidates = discovery_diagnostics.get("novel_to_catalogue_candidates", []) or []
+    novel_meta = discovery_diagnostics.get("novel_to_catalogue_ranked_matches", {}) or {}
+    for plant in novel_candidates:
+        meta = novel_meta.get(plant, {})
+        has_strong_support = bool(
+            meta.get("clinical_human_records") or meta.get("systematic_review_records")
+        )
+        candidate_records.append(candidate_selection.make_candidate(
+            plant,
+            candidate_selection.ORIGIN_VALIDATED_LITERATURE,
+            score=float(meta.get("score") or 0.0),
+            score_components=meta,
+            sources=("literature_discovery_novel",),
+            evidence_status=(
+                candidate_selection.STATUS_VALIDATED_DIRECT if has_strong_support
+                else candidate_selection.STATUS_VALIDATED_INDIRECT
+            ),
+            already_in_internal_catalogue=False,
+            candidate_origin=candidate_selection.CATALOGUE_STATUS_LITERATURE_DISCOVERED,
+            botanical_validation_status=meta.get("botanical_validation_status", ""),
+            botanical_validation_score=float(meta.get("botanical_validation_score") or 0.0),
+            taxonomic_source=meta.get("taxonomic_source", ""),
+            matched_scientific_name=meta.get("matched_scientific_name", plant),
+            original_mention=meta.get("original_mention", plant),
+        ))
+
     # F + G + H. Deduplicate, rank by evidence strength/relevance, and
     # select up to the requested count -- with a shortfall reported only
     # when scientifically plausible candidates genuinely run out.
@@ -832,6 +1131,38 @@ def run_research_engine(
     # possible to distinguish "discovery returned nothing" from "discovery
     # worked but candidates were later removed or replaced by fallback rows".
     discovery_diagnostics = dict(discovery_diagnostics or {})
+    # Unified-universe payload for Stage 5: EVERY validated novel candidate
+    # from this run (not just the ones that made Stage 2's own small
+    # requested_count shortlist above), shaped exactly like the internal
+    # candidate_data records BotanicalRDCandidateEngine already builds from
+    # plant_compounds (see _candidates_from_plant_compounds()), so the two
+    # can be merged with no special-casing. Known_Active_Compounds/
+    # Known_Targets are explicitly empty -- never fabricated -- Stage 5's
+    # existing missing-data conventions (Data_Completeness) already handle
+    # a candidate with no compound data.
+    novel_discovered_candidates = [
+        {
+            "Scientific_Name": plant,
+            "Common_Name": "",
+            "Region": "",
+            "Indications": [indication] if indication else [],
+            "Known_Active_Compounds": [],
+            "Known_Targets": [],
+            "Plant_Part": "",
+            "Extraction_Method": "",
+            "EMA_Status": "",
+            "candidate_origin": candidate_selection.CATALOGUE_STATUS_LITERATURE_DISCOVERED,
+            "already_in_supabase": False,
+            "is_novel_candidate": True,
+            "botanical_validation_status": novel_meta.get(plant, {}).get("botanical_validation_status", ""),
+            "botanical_validation_score": novel_meta.get(plant, {}).get("botanical_validation_score", 0.0),
+            "taxonomic_source": novel_meta.get(plant, {}).get("taxonomic_source", ""),
+            "matched_scientific_name": novel_meta.get(plant, {}).get("matched_scientific_name", plant),
+            "original_mention": novel_meta.get(plant, {}).get("original_mention", plant),
+        }
+        for plant in novel_candidates
+    ]
+
     discovery_diagnostics.update({
         "requested_candidate_count": requested_count,
         "seed_plants_before_discovery": reference_seed_plants,
@@ -846,7 +1177,14 @@ def run_research_engine(
         "candidate_shortfall": selection_diagnostics["candidate_shortfall"],
         "shortfall_reason": selection_diagnostics["shortfall_reason"],
         "candidate_selection_diagnostics": selection_diagnostics,
+        "novel_to_catalogue_candidate_count_entering_stage5": len(novel_discovered_candidates),
     })
+    _discovery_log(
+        f"Unified Stage 5 candidate universe (internal + novel-to-catalogue): "
+        f"internal={discovery_diagnostics.get('internal_candidate_universe_size', 0)} + "
+        f"novel={len(novel_discovered_candidates)}. "
+        f"Novel-to-catalogue candidates entering Stage 5: {len(novel_discovered_candidates)}"
+    )
 
     all_saved_records = []
     all_errors = []
@@ -1011,10 +1349,23 @@ def run_research_engine(
                 "evidence_status": record.evidence_status,
                 "score": record.score,
                 "sources": list(record.sources),
+                "candidate_origin": record.candidate_origin,
+                "already_in_internal_catalogue": record.already_in_internal_catalogue,
+                "botanical_validation_status": record.botanical_validation_status,
+                "botanical_validation_score": record.botanical_validation_score,
+                "taxonomic_source": record.taxonomic_source,
+                "matched_scientific_name": record.matched_scientific_name,
+                "original_mention": record.original_mention,
             }
             for record in selected_records
         ],
         "candidate_selection_diagnostics": selection_diagnostics,
         "validated_literature_plants": validated_literature_plants,
         "reference_seed_plants": reference_seed_selected,
+        # Every validated novel (open-world, not-yet-in-Supabase) candidate
+        # from this run, in the shape BotanicalRDCandidateEngine expects for
+        # its ``discovered_candidates`` constructor parameter -- this is the
+        # Stage 2 -> Stage 5 bridge (see step_rd_candidates.py, which reads
+        # this key from st.session_state["research_output"]).
+        "novel_discovered_candidates": novel_discovered_candidates,
     }

@@ -1031,6 +1031,7 @@ class BotanicalRDCandidateEngine:
         data_source_reliable=True,
         scoring_config=None,
         allow_legacy_text_fallback=False,
+        discovered_candidates=None,
     ):
         # Task 3 — externalized, versioned scoring weights. Defaults to
         # DEFAULT_SCORING_CONFIG (byte-identical to the pre-Task-3
@@ -1119,11 +1120,30 @@ class BotanicalRDCandidateEngine:
             # Indications tag (so it still can't be picked as a
             # reference plant via indication text-matching — only as an
             # alternative-plant match target), to make alt-plant search
-            # cover the full local dataset.
-            self.candidate_data = (
-                GLOBAL_PLANT_CANDIDATES + self._seed_data_only_candidates()
-            )
+            # cover the full local dataset. Defensive per-dict copy (not a
+            # mutation of the shared module-level GLOBAL_PLANT_CANDIDATES
+            # list) so tagging candidate_origin below never leaks back
+            # into that shared data structure.
+            self.candidate_data = [
+                dict(item, candidate_origin=item.get("candidate_origin", "internal_catalogue"),
+                     already_in_supabase=item.get("already_in_supabase", True))
+                for item in GLOBAL_PLANT_CANDIDATES
+            ] + self._seed_data_only_candidates()
             self.candidate_source = "local_fallback"
+
+        # Open-world discovery merge (backward-compatible, additive only):
+        # union in validated novel (not-yet-in-Supabase) candidates from
+        # THIS run's Stage 2 literature discovery (see research_engine.py's
+        # "novel_discovered_candidates" output). Every path above -- an
+        # explicit override, the real Supabase catalogue, and the local
+        # fallback -- is built exactly as before; discovered_candidates
+        # only ever adds to whichever of those already ran. See
+        # _merge_discovered_candidates() for the canonical-name dedup rule
+        # (an internal record for the same taxon always wins as the base
+        # structured record).
+        self.discovered_candidates_merged_count = 0
+        if discovered_candidates:
+            self.candidate_data = self._merge_discovered_candidates(discovered_candidates)
 
         self.compound_to_class, self.compound_to_targets, self.compound_to_target_sources = (
             self._build_compound_indexes()
@@ -3781,9 +3801,55 @@ class BotanicalRDCandidateEngine:
                     group.get("extraction_method")
                 ),
                 "EMA_Status": "",
+                "candidate_origin": "internal_catalogue",
+                "already_in_supabase": True,
             })
 
         return candidates or GLOBAL_PLANT_CANDIDATES
+
+    def _merge_discovered_candidates(self, discovered_candidates):
+        """Union validated novel (open-world, literature-discovered)
+        candidates into self.candidate_data, deduplicated by canonical
+        taxonomic name against whatever is already present.
+
+        An internal record for the SAME taxon always wins as the base
+        structured record -- its real compound/target/plant_part data is
+        kept completely intact; the novel discovery only ever *adds* a new
+        taxon, it never overwrites or shadows an existing one. This
+        mirrors the required behaviour: "the internal Supabase record
+        should remain the base structured record when available, while
+        Stage 2 literature evidence/provenance should enrich it" -- here,
+        "enrich" means the plant becomes visible to Stage 5 at all when it
+        wasn't already; an existing internal record needs no enrichment
+        from this path since it's already fully structured.
+
+        Uses botanical_taxonomy.taxon_match_key (already the platform's
+        one canonical-identity function, also used by candidate_selection.
+        py) so a novel mention that is actually a known synonym of an
+        existing internal plant (e.g. a taxonomic reclassification) is
+        correctly recognized as the SAME plant, not duplicated.
+        """
+        existing_keys = {
+            _botanical_taxonomy.taxon_match_key(item.get("Scientific_Name"))
+            for item in self.candidate_data
+            if item.get("Scientific_Name")
+        }
+
+        merged = list(self.candidate_data)
+        added = 0
+        for item in discovered_candidates or []:
+            name = item.get("Scientific_Name")
+            if not name:
+                continue
+            key = _botanical_taxonomy.taxon_match_key(name)
+            if not key or key in existing_keys:
+                continue
+            existing_keys.add(key)
+            merged.append(dict(item))
+            added += 1
+
+        self.discovered_candidates_merged_count = added
+        return merged
 
     @staticmethod
     def _unique_clean_list(values):
@@ -3858,6 +3924,8 @@ class BotanicalRDCandidateEngine:
                 "Plant_Part": "",
                 "Extraction_Method": extraction,
                 "EMA_Status": "",
+                "candidate_origin": "internal_catalogue",
+                "already_in_supabase": True,
             })
 
         return candidates

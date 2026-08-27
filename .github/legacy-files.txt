@@ -21,13 +21,11 @@ evidence_classifier.py
 evidence_filtering_engine.py
 evidence_quality_engine.py
 evidence_retriever.py
-gbif_connector.py
 global_discovery_connectors.py
 global_plant_discovery_engine.py
 i18n.py
 investment_decision_engine.py
 investment_engine.py
-kew_connector.py
 knowledge_extraction_engine.py
 knowledge_retrieval_engine.py
 mechanism_discovery_engine.py

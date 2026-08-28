@@ -752,6 +752,23 @@ def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_item
     direct_human = [i for i in human_items if i.get("indication_match_strength") == "DIRECT"]
 
     def hierarchy(item: Mapping[str, Any]) -> str:
+        # ``study_type_design`` can already contain the project's canonical
+        # hierarchy label (e.g. ``Clinical trial``).  Preserve that signal
+        # directly instead of asking the free-text classifier to rediscover
+        # it from keywords; the classifier intentionally keys on concrete
+        # trial descriptors such as RCT/double-blind and therefore does not
+        # treat the bare canonical label as free-text evidence on its own.
+        canonical = _clean(item.get("study_type_design"))
+        if canonical in {
+            "Systematic review / meta-analysis",
+            "Clinical trial",
+            "Observational human evidence",
+            "Validated ex vivo / in vivo",
+            "In vitro / mechanistic",
+            "Traditional-use / regulatory monograph",
+            "Occurrence / analytical chemistry only",
+        }:
+            return canonical
         text = " ".join(str(item.get(k) or "") for k in ("study_model", "study_type_design"))
         return classify_evidence_hierarchy(text) or ""
 
@@ -1155,7 +1172,7 @@ def apply_negative_evidence_cap(
     cap_class = None
     cap_go = None
     reason = None
-    if direction == "CONSISTENT_NEGATIVE" and strength in ("MODERATE", "STRONG"):
+    if direction == "CONSISTENT_NEGATIVE" and strength in ("WEAK", "MODERATE", "STRONG"):
         # part B4: consistent negative EFFICACY evidence is a scientific
         # insufficiency, not a safety finding -- "H" is reserved for actual
         # safety/regulatory gates elsewhere in the pipeline. Capping here at

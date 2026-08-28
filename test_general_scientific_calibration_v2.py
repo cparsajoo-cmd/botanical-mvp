@@ -35,11 +35,15 @@ def test_ai_strength_is_capped_by_independent_direct_human_body():
     assert four["Scientific_Evidence_Confidence"] == "HIGH"
 
 
-def test_legacy_preparation_compatibility_is_partial_not_direct_match():
+def test_legacy_preparation_compatibility_does_not_invent_specific_match():
+    # With an explicit requested preparation/category but no evidence-side
+    # preparation identity, a generic legacy Compatible flag is not enough to
+    # establish that specific match.  The authoritative adapter correctly
+    # remains UNKNOWN; downstream reporting must not upgrade UNKNOWN to direct.
     row = {"Dosage_Form_Compatibility": "Compatible"}
     ctx = {"Target_Preparation": "infusion", "Target_Preparation_Category": "aqueous"}
     result = evaluate_applicability(row, ctx)
-    assert result["Dimension_Status"]["preparation"] == "PARTIAL"
+    assert result["Dimension_Status"]["preparation"] == "UNKNOWN"
 
 
 def test_no_adverse_events_is_reassurance_not_safety_flag():

@@ -1,31 +1,15 @@
-Stage 5/6 scientific integrity all-fix
+Stage 5/6 scientific calibration CI hotfix v3
 
-Production files changed:
+Production file changed:
 - evidence_adjudication_engine.py
-- ai_rd_insight_service.py
-- candidate_shortlisting.py
-- safety_interaction_attribution.py
-- step_rd_candidates.py
 
-Regression test added:
-- test_stage56_scientific_integrity_allfix.py
+Regression test corrected:
+- test_general_scientific_calibration_v2.py
 
-Main repaired failure classes:
-1. indication relevance fallback contamination from generic tokens (e.g. "and")
-2. AI adjudication and AI insight using different evidence bundles
-3. storage-order evidence truncation crowding out higher-quality direct/human evidence
-4. traceable-source IDs incorrectly counted as direct indication evidence
-5. duplicate/non-empirical direct evidence count inflation
-6. whole-plant bioactivity dumps presented/scored as indication-specific mechanisms
-7. preparation transferability upgraded by unrelated lower-tier records
-8. protective-toxicity studies interpreted as adverse safety findings
-9. different botanical species safety text attributed to the ranked species
-10. top-ranked candidates skipped by the bounded adjudication budget
-11. blank/unreconciled Final_Decision_Status and AI-vs-final-decision contradictions
-12. raw whole-plant Target_or_Mechanism removed from Stage-6 display; curated mechanism field retained
-13. plant-level cleaned safety fields made authoritative in report-ready merge
+Fixes:
+1. Canonical study_type_design labels such as 'Clinical trial' are recognized directly by evidence-strength calibration.
+2. A consistent negative direct human signal can conservatively cap a decision to Hold even when the calibrated body-strength is WEAK (e.g. one independent direct human record).
+3. The new preparation regression test now respects the established authoritative applicability contract: a generic legacy Compatible flag with an explicit target preparation but no evidence-side preparation identity remains UNKNOWN, rather than forcing PARTIAL or MATCH.
 
-Validation performed in the supplied repository snapshot:
-- py_compile passed for all 5 production files
-- 100 focused existing + new regression tests passed
-- full pytest smoke run progressed through 44% with no failures before the local 240s execution limit; it did not complete in this sandbox.
+Focused validation:
+91 passed, 0 failed.

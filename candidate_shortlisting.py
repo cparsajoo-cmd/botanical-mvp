@@ -2820,6 +2820,15 @@ def build_plant_candidate_shortlist(
             "Mechanism_Support_Score": mech_points,
             "Safety_Regulatory_Score": safety_reg_points,
             "Novelty_Market_Score": novelty_points,
+            # Stage 5 candidate-funnel performance fix -- tiny additive,
+            # backward-compatible fields (no existing field renamed or
+            # removed). These let rescore_commercial_component() below
+            # regenerate the Go/decision-class/explanation text after a
+            # commercial-only update WITHOUT recomputing evidence quality
+            # or safety/regulatory from scratch, so market enrichment can
+            # never trigger a second full scientific scoring pass.
+            "Scientific_Evidence_Tier": evq_tier,
+            "Safety_Regulatory_Tier": safety_reg_tier,
             "Reference_Plants": _join(usable.get("Reference_Plant", []), 8),
             "Reference_Plant_Count": len(references),
             "Distinctive_Shared_Compounds": "; ".join(distinctive_compounds[:10]),
@@ -2910,6 +2919,131 @@ def build_plant_candidate_shortlist(
     _perf(f"build_plant_candidate_shortlist done total_elapsed={time.perf_counter() - _t0:.3f} output_rows={len(summary)}")
 
     return summary, audit
+
+
+def rescore_commercial_component(
+    plant_summary: pd.DataFrame,
+    enriched_raw_df: pd.DataFrame,
+    plants: Iterable[str],
+) -> pd.DataFrame:
+    """Update ONLY the Novelty & Market score component for ``plants`` after
+    commercial enrichment, reusing every other already-computed scientific
+    component -- never a second full ``build_plant_candidate_shortlist()``
+    pass.
+
+    Stage 5 candidate-funnel performance fix (see
+    STAGE5_CANDIDATE_FUNNEL_ROOT_CAUSE_REPORT.md, part 8/9). Previously,
+    Step 5 called ``build_plant_candidate_shortlist()`` a second time on the
+    market-enriched subset to fold Commercial_* fields into the score, which
+    recomputed indication relevance, scientific evidence, compound quality,
+    mechanism support and safety/regulatory from scratch for those same
+    plants -- work that had already been done identically in the first
+    pass, since none of those five components depend on commercial data.
+
+    ``Overall_Score`` is a fixed linear combination of six raw component
+    points (see :func:`ranking_score_model.score_from_breakdown`):
+    ``Indication Relevance``, ``Scientific Evidence``, ``Compound Support``,
+    ``Mechanism Support``, ``Safety & Regulatory``, ``Novelty & Market``.
+    Every one of the first five is already stored verbatim on
+    ``plant_summary`` (Indication_Relevance_Score, Scientific_Evidence_Score,
+    Compound_Quality_Score, Mechanism_Support_Score, Safety_Regulatory_Score)
+    from the single authoritative scoring pass. Only ``Novelty & Market``
+    (Novelty_Market_Score) can change from commercial enrichment, so this
+    function recomputes ONLY that component -- via the same
+    :func:`_novelty_market` the full pass would have called -- and folds it
+    back into the existing breakdown with the same
+    :func:`ranking_score_model.reweight_score_breakdown` /
+    :func:`ranking_score_model.score_from_breakdown` the full pass uses, so
+    the result is mathematically identical to what a full re-score would
+    have produced for a plant whose scientific evidence did not change.
+
+    A plant not present in ``plant_summary`` or with no rows in
+    ``enriched_raw_df`` is left untouched.
+    """
+    if not isinstance(plant_summary, pd.DataFrame) or plant_summary.empty:
+        return plant_summary
+    plant_keys = {str(p).strip().lower() for p in (plants or []) if str(p).strip()}
+    if not plant_keys:
+        return plant_summary
+    if not isinstance(enriched_raw_df, pd.DataFrame) or enriched_raw_df.empty:
+        return plant_summary
+    if "Alternative_Plant" not in enriched_raw_df.columns:
+        return plant_summary
+
+    out = plant_summary.copy()
+    plant_col = out["Alternative_Plant"].fillna("").astype(str).str.strip()
+    raw_by_plant = enriched_raw_df[
+        enriched_raw_df["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(plant_keys)
+    ].groupby(
+        enriched_raw_df["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower(), sort=False
+    )
+
+    _t0 = time.perf_counter()
+    updated = 0
+    for idx, row in out.iterrows():
+        key = str(row.get("Alternative_Plant", "")).strip().lower()
+        if key not in plant_keys or key not in raw_by_plant.groups:
+            continue
+        group = raw_by_plant.get_group(key)
+        new_novelty_points, new_novelty_tier = _novelty_market(group)
+
+        raw_score_breakdown = {
+            "Indication Relevance": row.get("Indication_Relevance_Score", 0.0),
+            "Scientific Evidence": row.get("Scientific_Evidence_Score", 0.0),
+            "Compound Support": row.get("Compound_Quality_Score", 0.0),
+            "Mechanism Support": row.get("Mechanism_Support_Score", 0.0),
+            "Safety & Regulatory": row.get("Safety_Regulatory_Score", 0.0),
+            "Novelty & Market": new_novelty_points,
+        }
+        new_score_breakdown = reweight_score_breakdown(
+            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
+        )
+        new_overall_score = score_from_breakdown(
+            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
+        )
+        new_score_breakdown_display = _format_breakdown([
+            (name, new_score_breakdown[name], RANKING_COMPONENT_ACTIVE_WEIGHTS[name])
+            for name in RANKING_COMPONENT_ACTIVE_WEIGHTS
+        ])
+
+        status = str(row.get("Scientific_Triage_Status", ""))
+        go_call = _derive_go_call(
+            status, new_overall_score,
+            dosage_compatibility=str(row.get("Dosage_Form_Compatibility", "Unknown")),
+            safety_tier=str(row.get("Safety_Regulatory_Tier", "Safety not adequately assessed")),
+            outcome_label=str(row.get("Outcome_Consistency", "Results not reported")),
+        )
+        decision_class_ah = _derive_decision_class_ah(status, new_overall_score)
+
+        score_components = {
+            "indication": (row.get("Indication_Relevance_Score", 0.0), str(row.get("Indication_Relevance", ""))),
+            "evidence": (row.get("Scientific_Evidence_Score", 0.0), str(row.get("Scientific_Evidence_Tier", ""))),
+            "compound": (row.get("Compound_Quality_Score", 0.0), ""),
+            "mechanism": (row.get("Mechanism_Support_Score", 0.0), ""),
+            "safety": (row.get("Safety_Regulatory_Score", 0.0), str(row.get("Safety_Regulatory_Tier", ""))),
+            "novelty": (new_novelty_points, new_novelty_tier),
+        }
+        why_text = _explain_candidate(
+            status, score_components,
+            int(row.get("Distinctive_Compound_Count", 0) or 0),
+            "" if status != "Excluded" else str(row.get("Why_Selected_or_Rejected", "")),
+        )
+
+        out.at[idx, "Novelty_Market_Score"] = new_novelty_points
+        out.at[idx, "Overall_Score"] = new_overall_score
+        out.at[idx, "R&D_Opportunity_Score"] = new_overall_score
+        out.at[idx, "Score_Breakdown"] = new_score_breakdown
+        out.at[idx, "Score_Breakdown_Display"] = new_score_breakdown_display
+        out.at[idx, "Go_Investigate_Hold_NoGo"] = go_call
+        out.at[idx, "Decision_Class_AH"] = decision_class_ah
+        out.at[idx, "Why_Selected_or_Rejected"] = why_text
+        updated += 1
+
+    _perf(
+        f"rescore_commercial_component done plants_updated={updated} "
+        f"elapsed={time.perf_counter() - _t0:.3f}"
+    )
+    return out
 
 
 def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame) -> pd.DataFrame:

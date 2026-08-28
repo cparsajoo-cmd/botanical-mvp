@@ -9,7 +9,12 @@ from market_intelligence_engine import MarketIntelligenceEngine
 from pharma_report_generator import generate_pharma_report
 from product_development_concept import add_development_concept_column
 from candidate_output_adapter import validate_result_df
-from candidate_shortlisting import build_plant_candidate_shortlist, merge_authoritative_scores
+from candidate_shortlisting import (
+    build_plant_candidate_shortlist,
+    merge_authoritative_scores,
+    rescore_commercial_component,
+)
+from stage5_candidate_prescreen import prescreen_candidate_universe
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -578,6 +583,45 @@ def _combine_step5_final_summary(pre_summary_df, enriched_summary_df):
     else:
         excluded = pd.DataFrame()
     return pd.concat([enriched_primary, excluded], ignore_index=True)
+
+
+def _finalize_step5_summary(plant_summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Re-sort and cap the single authoritative Step 5 summary.
+
+    Stage 5 candidate-funnel performance fix: replaces the old two-pass
+    ``_combine_step5_final_summary(pre_summary_df, enriched_summary_df)``
+    merge, which existed only because commercial enrichment used to require
+    a second, separately-sorted ``build_plant_candidate_shortlist()`` call.
+    With commercial enrichment now folded in via
+    ``rescore_commercial_component()`` (in place, on the one summary that
+    already exists), the enriched Novelty & Market component can change a
+    plant's Overall_Score and therefore its rank -- so this re-sorts using
+    the exact same key build_plant_candidate_shortlist() itself sorts by,
+    then applies the same "keep all Excluded rows for audit, cap only the
+    non-excluded primary table" rule as before.
+    """
+    if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
+        return plant_summary_df
+    if "Scientific_Triage_Status" not in plant_summary_df.columns:
+        return plant_summary_df.head(_STEP5_FINAL_MAX_CANDIDATES).reset_index(drop=True)
+
+    status_order = pd.Categorical(
+        plant_summary_df["Scientific_Triage_Status"],
+        categories=["Shortlist", "Exploratory", "Excluded"],
+        ordered=True,
+    )
+    sort_cols = ["Overall_Score", "Traceable_Source_Count", "Distinctive_Compound_Count"]
+    sort_cols = [c for c in sort_cols if c in plant_summary_df.columns]
+    sorted_df = plant_summary_df.assign(_status_order=status_order).sort_values(
+        ["_status_order", *sort_cols],
+        ascending=[True] + [False] * len(sort_cols),
+    ).drop(columns=["_status_order"]).reset_index(drop=True)
+
+    keep = sorted_df[sorted_df["Scientific_Triage_Status"] != "Excluded"].head(
+        _STEP5_FINAL_MAX_CANDIDATES
+    )
+    excluded = sorted_df[sorted_df["Scientific_Triage_Status"] == "Excluded"]
+    return pd.concat([keep, excluded], ignore_index=True)
 
 
 
@@ -1749,14 +1793,47 @@ def render_rd_candidates_step(inputs):
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                     )
 
-                # Build the scientific/eligibility shortlist FIRST.  The previous
-                # implementation enriched every unique raw candidate before this
-                # reduction, which made Step 5 scale with the entire candidate
-                # universe instead of the decision set.
+                # Stage 5 candidate-funnel performance fix.  A cheap,
+                # high-recall pre-screen runs BEFORE any expensive per-plant
+                # scientific scoring, so build_plant_candidate_shortlist()
+                # only ever runs its expensive component functions across a
+                # bounded candidate pool instead of the entire raw catalogue
+                # universe -- and runs exactly ONCE per Stage 5 run (see
+                # rescore_commercial_component() below for how commercial
+                # enrichment updates the score without a second pass).
+                # Supabase remains the internal catalogue; nothing here
+                # replaces it with online-only discovery -- the pre-screen
+                # only narrows which already-discovered plants pay for full
+                # scoring. See STAGE5_CANDIDATE_FUNNEL_ROOT_CAUSE_REPORT.md.
                 if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-                    progress.progress(0.87, text="Building scientific pre-shortlist…")
+                    progress.progress(0.83, text="Pre-screening catalogue candidates…")
 
-                    def _pre_shortlist_progress(current=0, total=0, message=""):
+                    def _prescreen_progress(current=0, total=0, message=""):
+                        fraction = (float(current) / float(total)) if total else 0.0
+                        value = 0.83 + 0.03 * max(0.0, min(1.0, fraction))
+                        progress.progress(
+                            max(0.0, min(1.0, value)),
+                            text=message or "Pre-screening catalogue candidates…",
+                        )
+
+                    _perf_t_prescreen = time.perf_counter()
+                    scoring_pool_df, prescreen_audit_df = prescreen_candidate_universe(
+                        result_df,
+                        dosage_form=dosage_form,
+                        novel_candidate_plants=novel_discovered_candidates,
+                        progress_callback=_prescreen_progress,
+                    )
+                    _perf(
+                        f"stage5 prescreen done "
+                        f"input_plants={result_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in result_df.columns else 0} "
+                        f"retained_plants={scoring_pool_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in scoring_pool_df.columns else 0} "
+                        f"elapsed={time.perf_counter() - _perf_t_prescreen:.3f}"
+                    )
+                    st.session_state["rd_candidate_prescreen_audit_df"] = prescreen_audit_df
+
+                    progress.progress(0.87, text="Building scientific shortlist…")
+
+                    def _shortlist_progress(current=0, total=0, message=""):
                         # UX fix (2026-08-26): build_plant_candidate_shortlist()
                         # previously took no progress_callback at all, so this
                         # entire stage (measured in production at several
@@ -1769,23 +1846,25 @@ def render_rd_candidates_step(inputs):
                         value = 0.87 + 0.03 * max(0.0, min(1.0, fraction))
                         progress.progress(
                             max(0.0, min(1.0, value)),
-                            text=message or "Building scientific pre-shortlist…",
+                            text=message or "Building scientific shortlist…",
                         )
 
-                    _perf_t_pre_shortlist = time.perf_counter()
-                    pre_summary_df, triage_audit_df = build_plant_candidate_shortlist(
-                        result_df,
+                    # ONE authoritative expensive scientific-scoring pass, over
+                    # the bounded pool only.
+                    _perf_t_shortlist = time.perf_counter()
+                    plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
+                        scoring_pool_df,
                         indication=indication,
                         dosage_form=dosage_form,
                         max_candidates=0,
                         target_context=transferability_target_context,
-                        progress_callback=_pre_shortlist_progress,
+                        progress_callback=_shortlist_progress,
                     )
-                    market_plants = _step5_commercial_enrichment_plants(pre_summary_df)
+                    market_plants = _step5_commercial_enrichment_plants(plant_summary_df)
                     _perf(
-                        f"pre-shortlist done plants={len(pre_summary_df)} "
+                        f"shortlist done plants={len(plant_summary_df)} "
                         f"market_enrichment_plants={len(market_plants)} "
-                        f"elapsed={time.perf_counter() - _perf_t_pre_shortlist:.3f}"
+                        f"elapsed={time.perf_counter() - _perf_t_shortlist:.3f}"
                     )
 
                     progress.progress(0.90, text="Checking commercial status for shortlisted candidates…")
@@ -1803,40 +1882,26 @@ def render_rd_candidates_step(inputs):
                         f"elapsed={time.perf_counter() - _perf_t_market:.3f}"
                     )
 
-                    # Re-score only the bounded enriched pool.  Scientific triage
-                    # for the whole raw universe was already computed above; doing
-                    # a second full-universe aggregation would throw away the
-                    # performance gain.
+                    # Fold commercial enrichment into the score by updating
+                    # ONLY the Novelty & Market component of the plants that
+                    # were enriched -- every other already-computed
+                    # scientific component (indication relevance, scientific
+                    # evidence, compound quality, mechanism support, safety/
+                    # regulatory) is reused unchanged. This is the "zero
+                    # duplicate full-scoring executions" requirement: no
+                    # second build_plant_candidate_shortlist() call happens
+                    # here regardless of how many plants were enriched.
+                    progress.progress(0.95, text="Updating scores with commercial data…")
                     if market_plants:
-                        market_keys = {p.lower() for p in market_plants}
-                        selected_raw = result_df[
-                            result_df["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(market_keys)
-                        ]
-
-                        def _rescore_progress(current=0, total=0, message=""):
-                            # UX fix (2026-08-26) -- see _pre_shortlist_progress()
-                            # above; same reasoning, mapped into the 0.90-0.97
-                            # band reserved for this smaller, bounded re-score.
-                            fraction = (float(current) / float(total)) if total else 0.0
-                            value = 0.90 + 0.07 * max(0.0, min(1.0, fraction))
-                            progress.progress(
-                                max(0.0, min(1.0, value)),
-                                text=message or "Scoring enriched candidate pool…",
-                            )
-
-                        enriched_summary_df, _ = build_plant_candidate_shortlist(
-                            selected_raw,
-                            indication=indication,
-                            dosage_form=dosage_form,
-                            max_candidates=_STEP5_FINAL_MAX_CANDIDATES,
-                            target_context=transferability_target_context,
-                            progress_callback=_rescore_progress,
+                        _perf_t_rescore = time.perf_counter()
+                        plant_summary_df = rescore_commercial_component(
+                            plant_summary_df, result_df, market_plants,
                         )
-                    else:
-                        enriched_summary_df = pd.DataFrame()
-                    plant_summary_df = _combine_step5_final_summary(
-                        pre_summary_df, enriched_summary_df
-                    )
+                        _perf(
+                            f"commercial rescore done plants={len(market_plants)} "
+                            f"elapsed={time.perf_counter() - _perf_t_rescore:.3f}"
+                        )
+                    plant_summary_df = _finalize_step5_summary(plant_summary_df)
                 else:
                     plant_summary_df, triage_audit_df = pd.DataFrame(), pd.DataFrame()
 

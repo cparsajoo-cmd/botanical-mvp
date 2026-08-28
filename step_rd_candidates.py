@@ -1405,23 +1405,40 @@ def _recommendation_block(result_df, report_ready_df=None):
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
 
+        # Keep the historical two-table Stage-6 contract while preserving the
+        # scientific distinction introduced by the direct-relevance gate.
+        # Exploratory hypotheses and weak/excluded candidates share one
+        # non-primary table, but carry an explicit Stage_6_Section label so
+        # they cannot be mistaken for one another or for recommendations.
+        non_primary_parts = []
         if not exploratory.empty:
-            st.markdown("### 🟠 Exploratory hypotheses — direct indication evidence still needed")
-            st.caption(
-                "These candidates may have mechanistic or indirect support, but they did not "
-                "pass the direct indication-relevance gate. They are retained for R&D ideation "
-                "and must not be interpreted as primary scientific recommendations."
+            _exploratory_display = exploratory.copy()
+            _exploratory_display["Stage_6_Section"] = (
+                "Exploratory hypothesis — direct indication evidence still needed"
             )
-            _explore_cols = [c for c in display_cols + ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"] if c in exploratory.columns]
-            st.dataframe(exploratory[_explore_cols].head(10), width="stretch")
+            non_primary_parts.append(_exploratory_display)
 
         if not weak.empty:
-            st.markdown("### 🔴 Weak / not recommended")
+            _weak_display = weak.copy()
+            _weak_display["Stage_6_Section"] = "Weak / not recommended"
+            non_primary_parts.append(_weak_display)
+
+        if non_primary_parts:
+            st.markdown("### 🟠 Exploratory / 🔴 weak candidates")
             st.caption(
-                "Retained here (not deleted) so the rejection reason stays visible — "
-                "see `Why_Selected_or_Rejected` / `Decision_Class_AH`."
+                "Exploratory hypotheses are retained for R&D ideation but lack the direct "
+                "indication evidence required for the primary recommendation. Weak/excluded "
+                "candidates remain visible with their rejection reason. Use `Stage_6_Section` "
+                "to distinguish the two groups."
             )
-            st.dataframe(weak[weak_display_cols].head(10), width="stretch")
+            non_primary = pd.concat(non_primary_parts, axis=0)
+            non_primary = non_primary.loc[~non_primary.index.duplicated(keep="first")]
+            _non_primary_cols = [
+                c for c in ["Stage_6_Section"] + display_cols +
+                ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
+                if c in non_primary.columns
+            ]
+            st.dataframe(non_primary[_non_primary_cols].head(20), width="stretch")
         return
 
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:

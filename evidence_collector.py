@@ -3,6 +3,8 @@ from evidence_extractor import extract_evidence_from_text
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
 
+import time
+
 
 def _clean_query_term(value):
     return " ".join(str(value or "").strip().split())
@@ -152,13 +154,67 @@ def collect_pubmed_evidence(
         dosage_form=dosage_form,
     )
 
-    # Keep total returned evidence bounded by max_results, while giving each
-    # evidence-design/recency lane a chance to contribute.  The merged set is
-    # deduplicated by PMID (falling back to URL/title when PMID is unavailable).
-    query_results = [
-        search_and_fetch_pubmed(query=query, max_results=max_results, sort=sort)
-        for query, sort in query_plan
-    ]
+    # Stage-2 runtime hotfix: preserve the full polarity-neutral query portfolio,
+    # but do NOT make the whole PubMed source all-or-nothing.  Previously all
+    # lanes were executed serially in one list-comprehension.  One slow/429 lane
+    # could therefore make the entire PubMed future miss the outer Stage-2
+    # deadline and discard evidence that earlier lanes had already found.
+    #
+    # Keep PubMed itself bounded to 30 s, leaving headroom inside the collector's
+    # 45 s per-plant budget for extraction/standardization/persistence and the
+    # other sources.  Successful lanes are retained incrementally; a failure in
+    # one lane no longer erases successful results from the others.
+    pubmed_deadline = time.monotonic() + 30.0
+    query_results = []
+    last_error = None
+    successful_lane_count = 0
+
+    for query, sort in query_plan:
+        remaining = pubmed_deadline - time.monotonic()
+        if remaining <= 1.0:
+            break
+
+        # search_and_fetch_pubmed performs two HTTP calls (esearch + efetch),
+        # both using this timeout. Split the remaining lane budget between them
+        # and never exceed the connector's historical 10 s request timeout.
+        request_timeout = max(1.0, min(10.0, remaining / 2.0))
+        try:
+            try:
+                lane_articles = search_and_fetch_pubmed(
+                    query=query,
+                    max_results=max_results,
+                    sort=sort,
+                    timeout=request_timeout,
+                )
+            except TypeError as exc:
+                # Test doubles and older compatible connector shims may not
+                # accept the timeout keyword.  Preserve compatibility without
+                # weakening production behavior, where the real connector does.
+                if "timeout" not in str(exc):
+                    raise
+                lane_articles = search_and_fetch_pubmed(
+                    query=query,
+                    max_results=max_results,
+                    sort=sort,
+                )
+            query_results.append(lane_articles or [])
+            successful_lane_count += 1
+        except Exception as exc:
+            # Lane-level isolation is intentional: broad/review/clinical/recency
+            # searches are independent retrieval opportunities.  A rate limit or
+            # timeout in one must not destroy evidence already returned by another.
+            last_error = exc
+            query_results.append([])
+
+    # If every lane failed, preserve the previous failure semantics so the
+    # multi-source collector records PubMed as an error instead of silently
+    # reporting a successful zero-result search.
+    if successful_lane_count == 0 and last_error is not None:
+        raise last_error
+
+    # Keep total returned evidence bounded by max_results, while giving every
+    # completed evidence-design/recency lane a chance to contribute.  The merged
+    # set is deduplicated by PMID (falling back to URL/title when PMID is absent).
     articles = _balanced_unique_articles(query_results, max_results=max_results)
 
     saved_records = []

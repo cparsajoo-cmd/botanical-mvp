@@ -283,9 +283,21 @@ def embed_query(
         vector_list = list(vector)
         if use_query_cache:
             _QUERY_EMBEDDING_CACHE[cache_key] = vector_list
+        usage = getattr(response, "usage", None)
+        embedding_input_tokens = 0
+        if usage is not None:
+            # Embeddings API currently exposes prompt_tokens/total_tokens.
+            # Accept input_tokens too for forward compatibility.
+            embedding_input_tokens = int(
+                getattr(usage, "prompt_tokens", 0)
+                or getattr(usage, "input_tokens", 0)
+                or getattr(usage, "total_tokens", 0)
+                or 0
+            )
         tracker.record_call(
             TASK_EMBEDDING_QUERY, cached=False, success=True,
             elapsed_seconds=time.monotonic() - _t0,
+            input_tokens=embedding_input_tokens, model=model,
         )
         return vector_list
     except Exception as exc:

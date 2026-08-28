@@ -70,6 +70,11 @@ class _TaskStats:
     elapsed_seconds: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_input_tokens: int = 0
+    # Provider-billed token usage keyed by the actual model used.  This is
+    # deliberately separate from application-level cached_hits: OpenAI prompt
+    # caching can still bill discounted cached input tokens on a real request.
+    model_usage: dict = field(default_factory=dict)
     errors_by_category: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
@@ -84,8 +89,56 @@ class _TaskStats:
             "skipped_breaker": self.skipped_breaker,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "model_usage": {k: dict(v) for k, v in self.model_usage.items()},
             "errors_by_category": dict(self.errors_by_category),
         }
+
+
+# API token prices in USD per 1M tokens, verified against OpenAI's model
+# pricing pages on 2026-08-28.  Cost is intentionally reported as an
+# *estimate*: taxes/credits/account adjustments are not represented here.
+# Unknown model overrides are never guessed; they are flagged as unpriced.
+_MODEL_PRICING_USD_PER_MILLION = {
+    "gpt-4o-mini": {"input": 0.15, "cached_input": 0.075, "output": 0.60},
+    "gpt-4o-mini-2024-07-18": {"input": 0.15, "cached_input": 0.075, "output": 0.60},
+    "gpt-4o": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
+    "gpt-4o-2024-08-06": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
+    "gpt-4o-2024-11-20": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
+    "text-embedding-3-small": {"input": 0.02, "cached_input": 0.02, "output": 0.0},
+}
+
+def _estimate_model_cost_usd(model: str, usage: dict) -> Optional[float]:
+    rates = _MODEL_PRICING_USD_PER_MILLION.get(str(model or ""))
+    if not rates:
+        return None
+    total_input = max(0, int((usage or {}).get("input_tokens", 0) or 0))
+    cached_input = min(total_input, max(0, int((usage or {}).get("cached_input_tokens", 0) or 0)))
+    uncached_input = total_input - cached_input
+    output = max(0, int((usage or {}).get("output_tokens", 0) or 0))
+    return (
+        uncached_input * rates["input"]
+        + cached_input * rates["cached_input"]
+        + output * rates["output"]
+    ) / 1_000_000.0
+
+def _task_cost_summary(stats: _TaskStats) -> dict:
+    priced = 0.0
+    unpriced_models = []
+    by_model = {}
+    for model, usage in stats.model_usage.items():
+        cost = _estimate_model_cost_usd(model, usage)
+        by_model[model] = {**dict(usage), "estimated_cost_usd": cost}
+        if cost is None:
+            unpriced_models.append(model)
+        else:
+            priced += cost
+    return {
+        "estimated_cost_usd": priced if not unpriced_models else None,
+        "priced_cost_usd": priced,
+        "unpriced_models": sorted(unpriced_models),
+        "models": by_model,
+    }
 
 
 class AIRunTracker:
@@ -147,7 +200,8 @@ class AIRunTracker:
     def record_call(self, task: str, *, cached: bool, success: bool,
                     elapsed_seconds: float = 0.0, retries: int = 0,
                     error_category: Optional[str] = None,
-                    input_tokens: int = 0, output_tokens: int = 0) -> None:
+                    input_tokens: int = 0, output_tokens: int = 0,
+                    cached_input_tokens: int = 0, model: Optional[str] = None) -> None:
         stats = self._stats(task)
         if cached:
             stats.cached_hits += 1
@@ -158,15 +212,35 @@ class AIRunTracker:
         # when provider attempts have already recorded retries.
         if retries and stats.provider_attempts == 0:
             stats.retries += retries
-        stats.input_tokens += int(input_tokens or 0)
-        stats.output_tokens += int(output_tokens or 0)
+        input_tokens = int(input_tokens or 0)
+        output_tokens = int(output_tokens or 0)
+        cached_input_tokens = min(input_tokens, max(0, int(cached_input_tokens or 0)))
+        stats.input_tokens += input_tokens
+        stats.output_tokens += output_tokens
+        stats.cached_input_tokens += cached_input_tokens
+        if model and (input_tokens or output_tokens):
+            bucket = stats.model_usage.setdefault(
+                str(model), {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+            )
+            bucket["input_tokens"] += input_tokens
+            bucket["cached_input_tokens"] += cached_input_tokens
+            bucket["output_tokens"] += output_tokens
         if not success:
             stats.failures += 1
             if error_category:
                 stats.errors_by_category[error_category] = stats.errors_by_category.get(error_category, 0) + 1
 
     def summary(self) -> dict:
-        tasks = {task: stats.as_dict() for task, stats in self._tasks.items()}
+        tasks = {}
+        priced_total = 0.0
+        unpriced_models = set()
+        for task, stats in self._tasks.items():
+            task_data = stats.as_dict()
+            cost_data = _task_cost_summary(stats)
+            task_data.update(cost_data)
+            tasks[task] = task_data
+            priced_total += float(cost_data.get("priced_cost_usd", 0.0) or 0.0)
+            unpriced_models.update(cost_data.get("unpriced_models") or [])
         logical = sum(s.calls for s in self._tasks.values())
         attempts = sum(s.provider_attempts for s in self._tasks.values())
         return {
@@ -184,7 +258,15 @@ class AIRunTracker:
             "total_skipped_budget": sum(s.skipped_budget for s in self._tasks.values()),
             "total_skipped_breaker": sum(s.skipped_breaker for s in self._tasks.values()),
             "total_input_tokens": sum(s.input_tokens for s in self._tasks.values()),
+            "total_cached_input_tokens": sum(s.cached_input_tokens for s in self._tasks.values()),
             "total_output_tokens": sum(s.output_tokens for s in self._tasks.values()),
+            "estimated_cost_usd": priced_total if not unpriced_models else None,
+            "priced_cost_usd": priced_total,
+            "unpriced_models": sorted(unpriced_models),
+            "cost_estimate_note": (
+                "Token-price estimate only; excludes taxes, credits, and account adjustments. "
+                "Unknown model overrides are not guessed."
+            ),
         }
 
     def task_status_label(self, task: str) -> str:

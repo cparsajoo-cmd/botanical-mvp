@@ -368,6 +368,7 @@ def call_structured_json(
         raise last_exc  # pragma: no cover -- unreachable, defensive only
 
     _call_started = time.monotonic()
+    used_model = model
     try:
         try:
             response = _call_with_bounded_retry(model)
@@ -376,6 +377,7 @@ def call_structured_json(
             model_error = "model_not_found" in message or "does not exist" in message
             if not model_error or model == project_model:
                 raise
+            used_model = project_model
             response = _call_with_bounded_retry(project_model, model_fallback=True)
     except Exception as exc:
         # Part 5/12/13 -- classify, record, and (for a non-transient
@@ -406,10 +408,19 @@ def call_structured_json(
     usage = getattr(response, "usage", None)
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+    cached_input_tokens = 0
+    if usage:
+        details = getattr(usage, "input_tokens_details", None)
+        if details is not None:
+            if isinstance(details, dict):
+                cached_input_tokens = int(details.get("cached_tokens", 0) or 0)
+            else:
+                cached_input_tokens = int(getattr(details, "cached_tokens", 0) or 0)
     tracker.record_call(
         task, cached=False, success=True,
         elapsed_seconds=time.monotonic() - _call_started,
         retries=_retry_count[0], input_tokens=input_tokens, output_tokens=output_tokens,
+        cached_input_tokens=cached_input_tokens, model=used_model,
     )
 
     if cache_key is not None:

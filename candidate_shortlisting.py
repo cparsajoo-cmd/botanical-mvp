@@ -3136,7 +3136,19 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Overall_Score", "Score_Breakdown", "Score_Breakdown_Display",
         "Evidence_Confidence", "Decision_Class_AH", "Go_Investigate_Hold_NoGo",
         "Scientific_Triage_Status", "Why_Selected_or_Rejected",
-        "Indication_Relevance_Score", "Evidence_Quality_Score",
+        # Stage 6 scientific-gating fields.  These are plant-level outputs
+        # from build_plant_candidate_shortlist() and must survive the merge
+        # into rd_report_ready_df; otherwise the final recommendation layer
+        # cannot distinguish direct indication evidence from exploratory
+        # mechanism-only hypotheses.  Additive pass-through only: no score
+        # or upstream triage logic is changed here.
+        "Indication_Relevance", "Indication_Relevance_Score",
+        "Indication_Evidence_Mode", "Indication_Supporting_Source_Count",
+        "Relevance_Gate_Result", "Evidence_Route",
+        "Direct_Indication_Evidence_Count", "Mechanistic_Evidence_Count",
+        "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
+        "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
+        "Evidence_Quality_Score",
         "Compound_Quality_Score", "Mechanism_Support_Score",
         "Safety_Regulatory_Score", "Novelty_Market_Score",
         "Outcome_Consistency", "Positive_Result_Count",

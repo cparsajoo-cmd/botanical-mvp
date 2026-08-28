@@ -102,6 +102,52 @@ def _resolve_report_plant_column(df):
     return None
 
 
+
+
+def _attach_ai_insights_to_report_df(report_df, ai_insights):
+    """Attach bounded AI insight outputs to the authoritative Step 5/6 frame.
+
+    Free-form AI never rewrites deterministic scores, safety/regulatory gates,
+    or Final_Decision_Status here.  Structured evidence adjudication remains
+    the only AI path allowed to cap a decision.  This adapter makes the AI
+    mechanism/synthesis/hypothesis work visible in Step 6 and exports, and
+    makes unavailable AI explicit instead of silently looking identical to a
+    non-AI run.
+    """
+    if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+        return report_df
+    out = report_df.copy()
+    plant_col = _resolve_report_plant_column(out)
+    if plant_col is None:
+        return out
+    insights = ai_insights if isinstance(ai_insights, dict) else {}
+
+    def _one(plant_name):
+        insight = insights.get(str(plant_name), {}) or {}
+        synthesis = insight.get("evidence_synthesis") or {}
+        hypotheses = insight.get("hypotheses") or []
+        edges = insight.get("mechanistic_edges") or []
+        has_ai_content = bool(edges or synthesis or hypotheses)
+        return {
+            "AI_Insight_Status": "AI_REVIEW_AVAILABLE" if has_ai_content else "AI_REVIEW_UNAVAILABLE",
+            "AI_Evidence_Items_Reviewed": int(insight.get("evidence_items_count") or 0),
+            "AI_Mechanistic_Edge_Count": len(edges),
+            "AI_Evidence_Consistency": synthesis.get("overall_consistency") if isinstance(synthesis, dict) else None,
+            "AI_Evidence_Synthesis": synthesis.get("summary") if isinstance(synthesis, dict) else None,
+            "AI_Hypothesis_Count": len(hypotheses),
+            "AI_Top_Hypothesis": (hypotheses[0].get("hypothesis") if hypotheses and isinstance(hypotheses[0], dict) else None),
+            "AI_Research_Next_Step": (hypotheses[0].get("research_next_step") if hypotheses and isinstance(hypotheses[0], dict) else None),
+        }
+
+    payloads = [_one(v) for v in out[plant_col].fillna("").astype(str)]
+    for col in (
+        "AI_Insight_Status", "AI_Evidence_Items_Reviewed", "AI_Mechanistic_Edge_Count",
+        "AI_Evidence_Consistency", "AI_Evidence_Synthesis", "AI_Hypothesis_Count",
+        "AI_Top_Hypothesis", "AI_Research_Next_Step",
+    ):
+        out[col] = [x[col] for x in payloads]
+    return out
+
 def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target_context):
     """Controlled AI evidence-adjudication post-processing pass (part 3C/14/15
     of the adjudication architecture) -- see evidence_adjudication_engine.py's
@@ -1260,14 +1306,61 @@ def _recommendation_block(result_df, report_ready_df=None):
                     lambda x: ~x.index.duplicated(keep="first")
                 ]
 
+        # Stage 6 is a presentation/decision boundary, not another scorer.
+        # Keep the authoritative Step 5 ordering, but do not label a
+        # mechanism-only / low-relevance hypothesis as "Recommended".
+        # The underlying rows remain visible in a separate exploratory
+        # bucket; nothing is deleted and no upstream score is rewritten.
+        if "Relevance_Gate_Result" in best_rows.columns:
+            _gate = best_rows["Relevance_Gate_Result"].fillna("").astype(str).str.strip()
+            _direct_idx = best_rows.index[_gate.eq("passed_direct")]
+            _exploratory_idx = best_rows.index[_gate.eq("passed_indirect_exploratory_only")]
+
+            # Direct relevance is mandatory for the primary recommendation.
+            # This closes the previous leak where every "Investigate" row,
+            # including low-relevance mechanistic hypotheses, appeared in
+            # the green Recommended table.
+            non_direct_recommended = recommended.index.difference(_direct_idx)
+            recommended = recommended.loc[recommended.index.intersection(_direct_idx)]
+
+            exploratory = best_rows.loc[best_rows.index.intersection(_exploratory_idx)]
+            # Preserve any other non-direct Investigate rows as exploratory
+            # rather than silently dropping them.
+            if len(non_direct_recommended):
+                exploratory = pd.concat([
+                    exploratory, best_rows.loc[best_rows.index.intersection(non_direct_recommended)]
+                ]).loc[lambda x: ~x.index.duplicated(keep="first")]
+        else:
+            # Backward compatibility for old session-state frames created
+            # before Relevance_Gate_Result was passed through the merge.
+            exploratory = best_rows.iloc[0:0]
+
         display_cols = [
             col for col in [
                 "Alternative_Plant",
+                "Supported_Targets_or_Mechanisms",
                 "Target_or_Mechanism",
+                "Indication_Relevance",
+                "Indication_Evidence_Mode",
+                "Direct_Indication_Evidence_Count",
+                "Preparation_Applicability_Class",
+                "Relevance_Gate_Result",
                 "R&D_Opportunity_Score",
                 "Final_Decision_Status",
                 "Decision_Class_AH",
                 "Go_Investigate_Hold_NoGo",
+                "Evidence_Adjudication_Status",
+                "Evidence_Adjudication_Fallback_Reason",
+                "Indication_Evidence_Direction",
+                "Human_Evidence_Strength",
+                "Evidence_Conflict_Level",
+                "Scientific_Evidence_Confidence",
+                "AI_Insight_Status",
+                "AI_Evidence_Items_Reviewed",
+                "AI_Evidence_Consistency",
+                "AI_Evidence_Synthesis",
+                "AI_Top_Hypothesis",
+                "AI_Research_Next_Step",
                 "Safety_Flags",
                 "Commercial_Positioning",
                 "Commercial_Novelty_Status",
@@ -1286,6 +1379,22 @@ def _recommendation_block(result_df, report_ready_df=None):
         ]
 
         st.markdown("### ✅ Recommended / worth validating")
+        if "Evidence_Adjudication_Status" in recommended.columns:
+            _displayed = recommended.head(10)
+            _adj = _displayed["Evidence_Adjudication_Status"].fillna("").astype(str)
+            _ai_ok = _adj.eq("AI_ADJUDICATION_OK")
+            if _ai_ok.any():
+                st.success(
+                    f"AI scientific adjudication completed for {int(_ai_ok.sum())} of "
+                    f"{len(_displayed)} displayed candidate(s). Structured AI fields below can "
+                    "downgrade/cap a decision, but cannot override hard safety/regulatory gates."
+                )
+            else:
+                st.warning(
+                    "AI scientific adjudication was unavailable or fell back for this run. "
+                    "The recommendation is therefore deterministic for these displayed candidates; "
+                    "the table shows the fallback status explicitly."
+                )
         st.caption(
             "\"Recommended\" means worth a human researcher's time to validate. "
             "Scientific evidence, chemical/source differentiation, and commercial "
@@ -1295,6 +1404,16 @@ def _recommendation_block(result_df, report_ready_df=None):
             "scientific decision authority."
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
+
+        if not exploratory.empty:
+            st.markdown("### 🟠 Exploratory hypotheses — direct indication evidence still needed")
+            st.caption(
+                "These candidates may have mechanistic or indirect support, but they did not "
+                "pass the direct indication-relevance gate. They are retained for R&D ideation "
+                "and must not be interpreted as primary scientific recommendations."
+            )
+            _explore_cols = [c for c in display_cols + ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"] if c in exploratory.columns]
+            st.dataframe(exploratory[_explore_cols].head(10), width="stretch")
 
         if not weak.empty:
             st.markdown("### 🔴 Weak / not recommended")
@@ -2132,6 +2251,9 @@ def render_rd_candidates_step(inputs):
                                 indication=indication,
                             )
                         st.session_state["rd_ai_insights"] = ai_insights
+                        st.session_state["rd_report_ready_df"] = _attach_ai_insights_to_report_df(
+                            st.session_state.get("rd_report_ready_df"), ai_insights
+                        )
                         _perf(
                             f"AI R&D insights done candidates={len(ai_insights)} "
                             f"elapsed={time.perf_counter() - _perf_t_ai_insights:.3f} "

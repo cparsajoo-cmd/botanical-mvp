@@ -1732,10 +1732,14 @@ def _indication_specific_mechanism_values(
 
 
 def _mechanism_support(group: pd.DataFrame, indication: str = "") -> tuple[float, str]:
-    if _norm(indication) and _group_has_authoritative_relevance(group):
-        supported = len(_indication_specific_mechanism_values(group, indication, limit=20))
-    else:
-        supported = int(group["Supported_Target_or_Mechanism"].sum())
+    # IMPORTANT: keep the calibrated Phase-5 scoring semantics unchanged.
+    # Indication-specific filtering is a reporting/traceability concern, not a
+    # retroactive score recalibration.  Changing this support count would alter
+    # Overall_Score and existing Go/Investigate thresholds for already-validated
+    # primary-tier programmes.  The final report uses
+    # _indication_specific_mechanism_values() separately to avoid displaying
+    # unrelated whole-plant bioactivities.
+    supported = int(group["Supported_Target_or_Mechanism"].sum())
     total = min(10.0, 2.0 * supported)
     tier = "Strong" if total >= 7 else "Some" if total > 0 else "None"
     return total, tier

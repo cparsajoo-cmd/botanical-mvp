@@ -195,7 +195,7 @@ def _save_records_from_connector(records, source_config, save=True):
                     source_name=source_name,
                 )
 
-            saved_records.append({
+            prepared = {
                 "row_id": row_id,
                 "pmid": record.get("PMID", ""),
                 "nct_id": record.get("NCT_ID", ""),
@@ -204,7 +204,17 @@ def _save_records_from_connector(records, source_config, save=True):
                 "category": source_config.get("category", ""),
                 "compound_records_saved": len(compound_records),
                 "record": standardized,
-            })
+            }
+            # When save=False the record may be running inside a timed worker.
+            # Keep the original connector payload privately so the parent thread
+            # can commit it *only after* the future has completed inside the
+            # collection budget.  This prevents timed-out/background workers from
+            # writing evidence after the caller has already returned a smaller
+            # saved_records list to Streamlit.  The private key is stripped before
+            # any public result leaves collect_multi_source_evidence().
+            if not save:
+                prepared["_compound_input_record"] = dict(record)
+            saved_records.append(prepared)
 
         except Exception as e:
             errors.append({
@@ -225,6 +235,7 @@ def _run_one_source(
     max_pubmed_results,
     save,
     max_results_override=None,
+    defer_persistence=False,
 ):
     source_name = source_config["name"]
     # Task 6 — pilot-scope coverage. When provided, max_results_override
@@ -250,42 +261,44 @@ def _run_one_source(
                 max_results_override if max_results_override is not None
                 else (max_pubmed_results or max_results)
             )
+            # In normal/direct use keep the historical behavior unchanged.
+            # collect_multi_source_evidence() sets defer_persistence=True for its
+            # timed worker threads so a source that outlives the collection budget
+            # cannot write to Supabase in the background after the caller returns.
+            worker_save = bool(save and not defer_persistence)
             records = collect_pubmed_evidence(
                 scientific_name=scientific_name,
                 indication=indication,
                 dosage_form=dosage_form,
                 market=market,
                 max_results=pubmed_max_results,
-                save=save,
+                save=worker_save,
             )
 
-            for item in records:
-                try:
-                    record = item.get("record", {})
-                    compound_text = " ".join([
-                        str(item.get("title", "")),
-                        str(record.get("Notes", "")),
-                        str(record.get("Source_Title", "")),
-                    ])
-
-                    compound_records = extract_plant_compounds_from_text(
-                        scientific_name=scientific_name,
-                        text=compound_text,
-                        indication=indication,
-                        dosage_form=dosage_form,
-                        market=market,
-                        reference_title=item.get("title", ""),
-                        reference_url=record.get("Source_URL", ""),
-                        source="PubMed",
-                        source_year=record.get("Source_Year", ""),
-                        save=save,
-                    )
-
-                    item["compound_records_saved"] = len(compound_records)
-
-                except Exception:
-                    item["compound_records_saved"] = 0
-
+            if worker_save:
+                for item in records:
+                    try:
+                        record = item.get("record", {})
+                        compound_text = " ".join([
+                            str(item.get("title", "")),
+                            str(record.get("Notes", "")),
+                            str(record.get("Source_Title", "")),
+                        ])
+                        compound_records = extract_plant_compounds_from_text(
+                            scientific_name=scientific_name,
+                            text=compound_text,
+                            indication=indication,
+                            dosage_form=dosage_form,
+                            market=market,
+                            reference_title=item.get("title", ""),
+                            reference_url=record.get("Source_URL", ""),
+                            source="PubMed",
+                            source_year=record.get("Source_Year", ""),
+                            save=True,
+                        )
+                        item["compound_records_saved"] = len(compound_records)
+                    except Exception:
+                        item["compound_records_saved"] = 0
             return records, []
 
         connector = CONNECTOR_MAP.get(source_name)
@@ -316,7 +329,7 @@ def _run_one_source(
         saved_records, errors = _save_records_from_connector(
             records=records,
             source_config=source_config,
-            save=save,
+            save=bool(save and not defer_persistence),
         )
 
         return saved_records, errors
@@ -327,6 +340,78 @@ def _run_one_source(
             "plant": scientific_name,
             "error": str(e),
         }]
+
+
+
+def _commit_completed_source_records(
+    prepared_records,
+    source_config,
+    scientific_name,
+    indication,
+    dosage_form,
+    market,
+    save,
+):
+    """Persist one source result only after its worker future has completed.
+
+    Network/source workers are intentionally read-only with respect to Supabase.
+    This parent-thread commit boundary keeps the public ``saved_records`` return
+    value transactionally aligned with database writes: a source that times out
+    can finish in the background, but it can no longer create late evidence rows.
+    """
+    if not save:
+        public_records = []
+        for item in prepared_records or []:
+            clean = dict(item)
+            clean.pop("_compound_input_record", None)
+            public_records.append(clean)
+        return public_records, []
+
+    source_name = source_config["name"]
+    committed = []
+    errors = []
+    for item in prepared_records or []:
+        clean = dict(item)
+        raw_record = clean.pop("_compound_input_record", None)
+        standardized = clean.get("record") or {}
+        try:
+            row_id = save_evidence_record(standardized)
+            compound_records = []
+            if source_name == "PubMed":
+                compound_text = " ".join([
+                    str(clean.get("title", "")),
+                    str(standardized.get("Notes", "")),
+                    str(standardized.get("Source_Title", "")),
+                ])
+                compound_records = extract_plant_compounds_from_text(
+                    scientific_name=scientific_name,
+                    text=compound_text,
+                    indication=indication,
+                    dosage_form=dosage_form,
+                    market=market,
+                    reference_title=clean.get("title", ""),
+                    reference_url=standardized.get("Source_URL", ""),
+                    source="PubMed",
+                    source_year=standardized.get("Source_Year", ""),
+                    save=True,
+                )
+            else:
+                compound_records = _extract_and_save_compounds(
+                    record=raw_record or standardized,
+                    source_name=source_name,
+                )
+
+            clean["row_id"] = row_id
+            clean["compound_records_saved"] = len(compound_records)
+            committed.append(clean)
+        except Exception as exc:
+            errors.append({
+                "source": source_name,
+                "plant": scientific_name,
+                "title": clean.get("title", ""),
+                "error": str(exc),
+            })
+    return committed, errors
 
 
 def collect_multi_source_evidence(
@@ -403,17 +488,29 @@ def collect_multi_source_evidence(
                 max_pubmed_results,
                 save,
                 max_results_override,
+                True,  # defer_persistence: timed source workers never write directly
             )
-            future_map[future] = source_config["name"]
+            future_map[future] = source_config
 
         try:
             for future in as_completed(future_map, timeout=TOTAL_TIME_BUDGET):
-                source_name = future_map[future]
+                source_config = future_map[future]
+                source_name = source_config["name"]
 
                 try:
-                    sr, er = future.result(timeout=1)
-                    saved_records.extend(sr)
-                    errors.extend(er)
+                    prepared_records, worker_errors = future.result(timeout=1)
+                    committed_records, commit_errors = _commit_completed_source_records(
+                        prepared_records=prepared_records,
+                        source_config=source_config,
+                        scientific_name=scientific_name,
+                        indication=indication,
+                        dosage_form=dosage_form,
+                        market=market,
+                        save=save,
+                    )
+                    saved_records.extend(committed_records)
+                    errors.extend(worker_errors)
+                    errors.extend(commit_errors)
 
                 except Exception as e:
                     errors.append({
@@ -424,13 +521,15 @@ def collect_multi_source_evidence(
         except TimeoutError:
             # Whichever sources haven't finished within the overall time
             # budget are recorded as timed-out and abandoned -- we do NOT
-            # wait for them. They keep running in the background
-            # (harmlessly) but this function returns immediately with
+            # wait for them. They may keep fetching in the background, but
+            # worker threads are persistence-free, so they cannot create late
+            # Supabase rows after this function returns. We return immediately with
             # whatever succeeded so far, instead of blocking the whole
             # Step 2 page indefinitely on one slow/rate-limited source.
             finished = {f for f in future_map if f.done()}
-            for future, source_name in future_map.items():
+            for future, source_config in future_map.items():
                 if future not in finished:
+                    source_name = source_config["name"]
                     errors.append({
                         "source": source_name,
                         "plant": scientific_name,
@@ -438,8 +537,9 @@ def collect_multi_source_evidence(
                                  f"(overall budget, not this source alone).",
                     })
     finally:
-        # wait=False is the key fix: never let a slow/stuck source hold
-        # up the entire Step 2 page. See the same fix applied in
+        # wait=False keeps a slow/stuck source from holding up the entire
+        # Step 2 page. This is now safe because source workers never persist;
+        # only completed futures are committed above. See the same pattern in
         # Bulk_Evidence.py's _fast_retry_sources for the full reasoning.
         executor.shutdown(wait=False, cancel_futures=True)
 

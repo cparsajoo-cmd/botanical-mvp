@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import uuid
 from research_engine import run_research_engine
 from connector_session_observability import build_connector_session_observability
 from telemetry_persistence import persist_connector_telemetry
@@ -34,6 +35,13 @@ def render_evidence_step(inputs):
     )
 
     if st.button("Collect evidence"):
+        # A unique token prevents an older, slower Streamlit run from
+        # overwriting the result of a newer click if the page is rerun while
+        # Stage 2 workers are still unwinding.  This is UI/session-state only;
+        # it does not change candidate selection or scientific retrieval.
+        run_token = uuid.uuid4().hex
+        st.session_state["_stage2_active_run_token"] = run_token
+
         # Part 15 (Stage 2 remediation) -- real progress reporting instead
         # of a plain spinner that shows no information for the whole
         # run. run_research_engine() calls progress_callback(stage,
@@ -81,7 +89,10 @@ def render_evidence_step(inputs):
                 "candidates may be incomplete -- see the coverage details."
             )
 
-        st.session_state["research_output"] = research_output
+        # Store only the newest run. Without this guard, overlapping Streamlit
+        # reruns can let an older partial result replace a newer completed one.
+        if st.session_state.get("_stage2_active_run_token") == run_token:
+            st.session_state["research_output"] = research_output
 
     research_output = st.session_state.get("research_output")
 

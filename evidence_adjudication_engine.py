@@ -95,6 +95,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
+import re
+
 import llm_client
 from evidence_hierarchy_classifier import classify_evidence_hierarchy
 from final_decision_policy import FinalDecisionStatus
@@ -103,9 +105,13 @@ from general_indication_relevance import (
     MATCH_EXPLICIT_FIELD_OVERLAP,
     MATCH_OUTCOME_OR_MECHANISM_SUPPORT,
     MATCH_CORPUS_DERIVED_SEMANTIC,
+    MATCH_HYBRID_SEMANTIC,
+    MATCH_EMBEDDING_SEMANTIC,
     MATCH_WEAK_LEXICAL,
     MATCH_CURATED_ASSIST_FALLBACK,
 )
+from indication_semantics import resolve_indication_semantics, normalize_indication_text
+from scientific_phrase_matcher import phrase_present
 
 # ---------------------------------------------------------------------
 # Controlled vocabularies (part 5 of the request)
@@ -247,6 +253,8 @@ _MATCH_STRENGTH_BY_TYPE = {
     MATCH_EXPLICIT_FIELD_OVERLAP: "DIRECT",
     MATCH_OUTCOME_OR_MECHANISM_SUPPORT: "SUPPORTIVE",
     MATCH_CORPUS_DERIVED_SEMANTIC: "SUPPORTIVE",
+    MATCH_HYBRID_SEMANTIC: "SUPPORTIVE",
+    MATCH_EMBEDDING_SEMANTIC: "SUPPORTIVE",
     MATCH_WEAK_LEXICAL: "WEAK",
     MATCH_CURATED_ASSIST_FALLBACK: "WEAK",
 }
@@ -289,38 +297,111 @@ def compatibility_fields_from_dimension_status(dimension_status: Optional[Mappin
 # Evidence-item construction (part 4) -- indication-relevant only, not
 # the whole flattened plant evidence history.
 # ---------------------------------------------------------------------
-def _is_indication_relevant_row(row, indication_tokens: Sequence[str]) -> bool:
+def _meaningful_indication_terms(indication: object) -> dict[str, tuple[str, ...]]:
+    """Return indication-specific direct/mechanistic terms without generic glue words.
+
+    The old fallback tokenised the literal indication label and therefore kept
+    the token ``and`` from labels such as "Sleep and relaxation".  Since
+    ``and`` appears in almost every abstract, unrelated records could enter the
+    AI evidence bundle.  Prefer the project's curated indication semantics and
+    use a conservative stop-word-filtered fallback only for free-text labels.
+    """
+    text = _clean(indication if isinstance(indication, str) else " ".join(indication or []))
+    family = resolve_indication_semantics(text) if text else None
+    if family:
+        direct = tuple(dict.fromkeys((*family.get("direct", ()), *family.get("aliases", ()))))
+        mech = tuple(dict.fromkeys(family.get("mechanistic", ())))
+        return {"direct": direct, "mechanistic": mech}
+    normalized = normalize_indication_text(text)
+    stop = {
+        "and", "the", "for", "with", "from", "into", "support", "health",
+        "wellness", "general", "other", "symptoms", "condition",
+    }
+    terms = tuple(t for t in normalized.split() if len(t) >= 4 and t not in stop)
+    return {"direct": terms, "mechanistic": ()}
+
+
+def _phrase_in(text: str, term: str) -> bool:
+    text_n = normalize_indication_text(text)
+    term_n = normalize_indication_text(term)
+    if not text_n or not term_n:
+        return False
+    try:
+        return phrase_present(text_n, term_n)
+    except Exception:
+        return bool(re.search(r"(?<![a-z0-9])" + re.escape(term_n) + r"(?![a-z0-9])", text_n))
+
+
+def indication_relevance_strength_for_row(row, indication: object) -> str:
+    """DIRECT/SUPPORTIVE/WEAK/NONE for one raw evidence row.
+
+    Structured upstream match types remain authoritative.  When they are absent
+    (legacy rows and raw evidence tables used by the AI layer), evidence must
+    contain an indication-specific phrase in an outcome/title/explicit
+    indication field to be DIRECT.  Mechanistic-only hits are SUPPORTIVE; a hit
+    only in generic notes/raw text or a positive numeric relevance score is WEAK.
+    Traceability is handled by the caller, so this function only answers semantic
+    relevance and never upgrades a record merely because it has an ID.
+    """
     match_type = _row_get(row, *_INDICATION_MATCH_TYPE_COLUMNS).lower()
     if match_type:
-        return match_type not in _NO_MATCH_TYPES
-    score = None
+        if match_type in _NO_MATCH_TYPES:
+            return "NONE"
+        # Compatibility with the adjudication module's original public/test
+        # fixture vocabulary, retained by older persisted records.
+        if match_type in {"explicit_field", "exact", "direct", "direct_indication"}:
+            return "DIRECT"
+        if match_type in {"mechanistic", "mechanism_support", "supportive"}:
+            return "SUPPORTIVE"
+        mapped = _match_strength(match_type)
+        return mapped if mapped != "UNKNOWN" else "WEAK"
+
+    semantics = _meaningful_indication_terms(indication)
+    if not semantics["direct"] and not semantics["mechanistic"]:
+        return "DIRECT" if not _clean(indication) else "NONE"
+
+    direct_text = " ".join(
+        _row_get(row, col) for col in (
+            "Target_Indication_Detected", "Primary_Outcome", "Source_Title",
+            "Abstract", "abstract", "Clinical_Rationale", "Scientific_Rationale",
+        )
+    )
+    if any(_phrase_in(direct_text, term) for term in semantics["direct"]):
+        return "DIRECT"
+
+    mechanism_text = " ".join(
+        _row_get(row, col) for col in (
+            "Mechanism", "mechanism", "Target", "target", "Target_or_Mechanism",
+        )
+    )
+    if any(_phrase_in(mechanism_text, term) for term in semantics["mechanistic"]):
+        return "SUPPORTIVE"
+
+    weak_text = " ".join(
+        _row_get(row, col) for col in ("Notes", "supporting_sentence", "Raw_Text")
+    )
+    if any(_phrase_in(weak_text, term) for term in (*semantics["direct"], *semantics["mechanistic"])):
+        return "WEAK"
+
     for col in _INDICATION_MATCH_SCORE_COLUMNS:
         try:
             score = row.get(col)
         except AttributeError:
             score = row[col] if col in row else None
         if score is not None:
-            break
-    if score is not None:
-        try:
-            return float(score) > 0
-        except (TypeError, ValueError):
-            pass
-    # Fallback: no precomputed indication-match signal on this row at
-    # all (older data / a caller that hasn't attached
-    # Indication_Match_Type). Never silently include every record for
-    # the plant regardless of use -- that is the exact bug this module
-    # exists to avoid (part 4). Do a conservative literal-token check
-    # against the record's own outcome/claim text instead.
-    if not indication_tokens:
-        return True  # no indication was requested -- nothing to filter on
-    haystack = " ".join(
-        _row_get(row, col) for col in
-        ("Primary_Outcome", "Notes", "Target_Indication_Detected", "Source_Title")
-    ).lower()
-    if not haystack:
-        return False
-    return any(token in haystack for token in indication_tokens)
+            try:
+                if float(score) > 0:
+                    return "WEAK"
+            except (TypeError, ValueError):
+                pass
+    return "NONE"
+
+
+def _is_indication_relevant_row(row, indication_tokens: Sequence[str] | str) -> bool:
+    # Historical callers passed token lists.  Re-join them so old call sites
+    # remain source-compatible while benefiting from the corrected semantics.
+    indication = indication_tokens if isinstance(indication_tokens, str) else " ".join(indication_tokens or [])
+    return indication_relevance_strength_for_row(row, indication) != "NONE"
 
 
 # Public alias -- this is the SAME indication-relevance predicate used to
@@ -338,10 +419,13 @@ def build_adjudication_evidence_items(
     indication: str,
     max_items: int = MAX_EVIDENCE_ITEMS_PER_CALL,
 ) -> list[dict]:
-    """Indication-relevant evidence items for one plant, in the field set
-    part 4 of the request enumerates. Missing metadata is represented as
-    None, never invented. Never raises -- returns [] on any structural
-    problem with evidence_df."""
+    """Build a bounded, indication-specific, traceable evidence bundle.
+
+    Records are ranked before truncation so clinical/direct evidence cannot be
+    crowded out by patents, safety pointers, or generic mechanistic records that
+    happen to appear earlier in storage order.  WEAK rows remain visible at the
+    tail for auditability but never receive DIRECT/SUPPORTIVE strength.
+    """
     if evidence_df is None:
         return []
     try:
@@ -349,81 +433,76 @@ def build_adjudication_evidence_items(
             return []
     except AttributeError:
         return []
-
     plant_key = _clean(plant_name).lower()
     if not plant_key:
         return []
-
-    name_col = None
-    for candidate_col in _PLANT_NAME_COLUMNS:
-        if candidate_col in evidence_df.columns:
-            name_col = candidate_col
-            break
+    name_col = next((c for c in _PLANT_NAME_COLUMNS if c in evidence_df.columns), None)
     if name_col is None:
         return []
-
     try:
-        matched = evidence_df[
-            evidence_df[name_col].astype(str).str.strip().str.lower() == plant_key
-        ]
+        matched = evidence_df[evidence_df[name_col].astype(str).str.strip().str.lower() == plant_key]
     except Exception:
         return []
     if matched.empty:
         return []
 
-    indication_tokens = [t for t in _clean(indication).lower().split() if len(t) > 2]
-
-    items: list[dict] = []
+    ranked: list[tuple[tuple[int, int, int, int], dict]] = []
+    strength_rank = {"DIRECT": 3, "SUPPORTIVE": 2, "WEAK": 1, "NONE": 0}
+    hierarchy_rank = {
+        "Systematic review / meta-analysis": 7, "Randomized controlled trial": 6,
+        "Controlled clinical trial": 5, "Observational human study": 4,
+        "Case report / case series": 3, "Animal study": 2, "In vitro / ex vivo": 1,
+    }
     for _, row in matched.iterrows():
-        if len(items) >= max_items:
-            break
-        if not _is_indication_relevant_row(row, indication_tokens):
+        relevance_strength = indication_relevance_strength_for_row(row, indication)
+        if relevance_strength == "NONE":
             continue
-        evidence_id = _row_get(
-            row, "Evidence_Record_ID", "evidence_record_id", "PMID", "pmid", "Record_ID",
-        )
+        evidence_id = _row_get(row, "Evidence_Record_ID", "evidence_record_id", "PMID", "pmid", "Record_ID")
         if not evidence_id:
             continue
         study_model = _row_get(row, "Study_Model", "study_model")
         study_type_design = _row_get(row, "Study_Type", "study_design")
         population = _row_get(row, "Population", "population")
+        study_context = _derive_study_context(study_model, study_type_design, population)
         match_type = _row_get(row, *_INDICATION_MATCH_TYPE_COLUMNS)
+        hierarchy = classify_evidence_hierarchy(" ".join(t for t in (study_model, study_type_design) if t))
+        result_direction = _row_get(row, "Result_Direction", "evidence_direction")
+        citation = _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID")
         item = {
             "evidence_id": evidence_id,
             "scientific_name": plant_name,
             "common_name": _row_get(row, "Common_Name", "common_name") or None,
-            "candidate_source": _row_get(row, "Source_Type", "source_type") or None,
+            "candidate_source": _row_get(row, "Source_Type", "source_type", "Evidence_Source") or None,
             "compound": _row_get(row, "Compound", "compound_name") or None,
             "target": _row_get(row, "Target", "target") or None,
-            "mechanism": _row_get(row, "Mechanism", "mechanism") or None,
-            "result_direction": _row_get(row, "Result_Direction", "evidence_direction") or None,
+            "mechanism": _row_get(row, "Mechanism", "mechanism", "Target_or_Mechanism") or None,
+            "result_direction": result_direction or None,
             "study_model": study_model or None,
             "study_type_design": study_type_design or None,
-            # Derived classification (HUMAN / ANIMAL_OR_IN_VITRO / UNKNOWN),
-            # NOT the raw Population text -- see _derive_study_context's
-            # docstring (part B9). Never requires the literal word "human"
-            # to appear in free-text population.
-            "human_animal_in_vitro": _derive_study_context(study_model, study_type_design, population),
+            "human_animal_in_vitro": study_context,
             "population": population or None,
             "endpoint_outcome": _row_get(row, "Primary_Outcome", "outcome") or None,
             "sample_size": _row_get(row, "Sample_Size", "sample_size") or None,
             "plant_part": _row_get(row, "Plant_Part", "plant_part") or None,
-            "preparation": _row_get(row, "Preparation", "preparation") or None,
+            "preparation": _row_get(row, "Evidence_Preparation", "Preparation", "preparation") or None,
             "extraction_type": _row_get(row, "Extraction_Method", "extraction_method") or None,
             "dose": _row_get(row, "Dose", "dose") or None,
-            "route_of_administration": _row_get(row, "Route", "route_of_administration") or None,
-            "dosage_form_requested_context": _row_get(row, "Dosage_Form", "dosage_form") or None,
-            "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text") or "")[:_MAX_SNIPPET_CHARS] or None,
-            "source_citation_id": _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID") or None,
-            # part B10 -- how strongly this record was matched to the
-            # requested indication (DIRECT/SUPPORTIVE/WEAK/UNKNOWN), reused
-            # from general_indication_relevance.py's production vocabulary
-            # rather than treating every non-empty match type as equal.
+            "route_of_administration": _row_get(row, "Administration_Route", "Route", "route_of_administration") or None,
+            "dosage_form_requested_context": _row_get(row, "Requested_Dosage_Form", "Dosage_Form", "dosage_form") or None,
+            "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text", "Abstract") or "")[:_MAX_SNIPPET_CHARS] or None,
+            "source_citation_id": citation or None,
             "indication_match_type": match_type or None,
-            "indication_match_strength": _match_strength(match_type),
+            "indication_match_strength": relevance_strength,
         }
-        items.append(item)
-    return items
+        rank = (
+            strength_rank[relevance_strength],
+            1 if study_context == "HUMAN" else 0,
+            hierarchy_rank.get(hierarchy or "", 0),
+            1 if (result_direction or citation) else 0,
+        )
+        ranked.append((rank, item))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in ranked[:max_items]]
 
 
 # ---------------------------------------------------------------------

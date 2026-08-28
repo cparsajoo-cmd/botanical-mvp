@@ -42,6 +42,74 @@ def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
 
 
+def _reconcile_final_decision_status(row) -> str:
+    """Produce one populated scientific decision from deterministic + AI facts.
+
+    The AI may only make the result more conservative.  Hard safety/regulatory
+    statuses are never weakened.  Missing or contradictory AI evidence cannot
+    coexist with an unqualified green recommendation.
+    """
+    def clean(key):
+        value = row.get(key, "") if hasattr(row, "get") else ""
+        text = str(value or "").strip()
+        return "" if text.lower() in {"nan", "none", "null"} else text
+
+    current = clean("Final_Decision_Status")
+    if current in {"NO GO SAFETY", "NO GO REGULATORY"}:
+        return current
+
+    decision_class = clean("Decision_Class_AH")
+    gate = clean("Relevance_Gate_Result")
+    prep = clean("Preparation_Applicability_Class")
+    adjudication = clean("Evidence_Adjudication_Status")
+    direction = clean("Indication_Evidence_Direction").upper()
+    human = clean("Human_Evidence_Strength").upper()
+    conflict = clean("Evidence_Conflict_Level").upper()
+    confidence = clean("Scientific_Evidence_Confidence").upper()
+
+    if decision_class.startswith("H"):
+        return "NO GO SAFETY"
+    if decision_class.startswith("G") or gate.startswith("failed"):
+        return "INSUFFICIENT EVIDENCE"
+    if prep == "incompatible":
+        return "EXPERT REVIEW REQUIRED"
+    if decision_class.startswith(("D", "F")) or gate == "passed_indirect_exploratory_only":
+        return "EXPERT REVIEW REQUIRED"
+
+    # A genuine AI no-evidence result means the candidate cannot be called GO,
+    # even if a broad deterministic relevance count was positive.  NOT_RUN also
+    # cannot masquerade as AI-reviewed.
+    if adjudication in {"AI_ADJUDICATION_NO_EVIDENCE", "AI_ADJUDICATION_NOT_RUN"}:
+        return "EXPERT REVIEW REQUIRED"
+
+    if adjudication == "AI_ADJUDICATION_OK":
+        if direction in {"MOSTLY_NEGATIVE", "CONSISTENT_NEGATIVE"} and human in {"MODERATE", "STRONG"}:
+            return "INSUFFICIENT EVIDENCE"
+        if (
+            direction in {"INSUFFICIENT", "UNKNOWN", "NULL", ""}
+            and human in {"NONE", "UNKNOWN", ""}
+        ) or confidence == "VERY_LOW":
+            return "EXPERT REVIEW REQUIRED"
+        if confidence == "LOW" or conflict in {"MODERATE", "HIGH"} or human == "WEAK" or direction == "MIXED":
+            return "GO WITH CAUTION"
+
+    # If the provider fell back, deterministic evidence remains usable but the
+    # absence of AI review is reflected conservatively.
+    if adjudication in {
+        "AI_ADJUDICATION_FALLBACK", "AI_ADJUDICATION_UNAVAILABLE",
+        "AI_ADJUDICATION_INVALID", "AI_ADJUDICATION_DISABLED",
+    }:
+        if decision_class.startswith(("B", "C")) and gate == "passed_direct":
+            return "GO WITH CAUTION"
+        return "EXPERT REVIEW REQUIRED"
+
+    if decision_class.startswith(("A", "B")) and gate in {"passed_direct", "not_applicable"}:
+        return "GO"
+    if decision_class.startswith(("C", "E")) and gate == "passed_direct":
+        return "GO WITH CAUTION"
+    return current or "EXPERT REVIEW REQUIRED"
+
+
 def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
     """merge_authoritative_scores() + Part 4 fix: the merged report-ready
     frame's Final_Decision_Status comes from the raw engine row (set once,
@@ -58,14 +126,22 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
     evidence_adjudication_engine.sync_final_decision_status).
     """
     merged = merge_authoritative_scores(result_df, plant_summary_df)
-    if isinstance(merged, pd.DataFrame) and not merged.empty and (
-        "Final_Decision_Status" in merged.columns and "Decision_Class_AH" in merged.columns
-    ):
+    if isinstance(merged, pd.DataFrame) and not merged.empty:
+        if "Final_Decision_Status" not in merged.columns:
+            merged["Final_Decision_Status"] = ""
+        if "Decision_Class_AH" in merged.columns:
+            merged["Final_Decision_Status"] = [
+                sync_final_decision_status(status, decision_class_ah)
+                for status, decision_class_ah in zip(
+                    merged["Final_Decision_Status"], merged["Decision_Class_AH"]
+                )
+            ]
+        # Populate blanks and reconcile structured AI evidence with the
+        # deterministic decision.  This is the final decision authority used by
+        # Stage 6; it is conservative and never relaxes hard safety/regulatory
+        # outcomes.
         merged["Final_Decision_Status"] = [
-            sync_final_decision_status(status, decision_class_ah)
-            for status, decision_class_ah in zip(
-                merged["Final_Decision_Status"], merged["Decision_Class_AH"]
-            )
+            _reconcile_final_decision_status(row) for _, row in merged.iterrows()
         ]
     # Part 10 (this session) -- ONE deterministic final rationale, built
     # from the structured facts now finalized above (adjudication, safety,
@@ -177,8 +253,16 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
     eligible_mask = plant_summary_df.get(
         "Scientific_Triage_Status", pd.Series(["Excluded"] * len(plant_summary_df))
     ).isin(["Shortlist", "Exploratory"])
+    eligible_frame = plant_summary_df.loc[eligible_mask].copy()
+    if "Overall_Score" in eligible_frame.columns:
+        eligible_frame["_adjudication_rank_score"] = pd.to_numeric(
+            eligible_frame["Overall_Score"], errors="coerce"
+        ).fillna(float("-inf"))
+        eligible_frame = eligible_frame.sort_values(
+            "_adjudication_rank_score", ascending=False, kind="stable"
+        )
     eligible_plants = (
-        plant_summary_df.loc[eligible_mask, "Alternative_Plant"]
+        eligible_frame["Alternative_Plant"]
         .dropna().astype(str).drop_duplicates().tolist()[:_ADJUDICATION_MAX_CANDIDATES]
     )
     eligible_set = set(eligible_plants)
@@ -1385,7 +1469,6 @@ def _recommendation_block(result_df, report_ready_df=None):
             col for col in [
                 "Alternative_Plant",
                 "Supported_Targets_or_Mechanisms",
-                "Target_or_Mechanism",
                 "Indication_Relevance",
                 "Indication_Evidence_Mode",
                 "Direct_Indication_Evidence_Count",
@@ -1416,6 +1499,7 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Commercial_Status_For_Indication",
                 "Indication_Market_Search_Status",
                 "Chemical_Differentiation_Status",
+                "Final_Rationale",
                 "Rationale",
             ] if col in recommended.columns
         ]
@@ -1424,7 +1508,7 @@ def _recommendation_block(result_df, report_ready_df=None):
             if col in weak.columns
         ]
 
-        st.markdown("### ✅ Recommended / worth validating")
+        st.markdown("### ✅ Priority candidates / worth validating")
         if "Evidence_Adjudication_Status" in recommended.columns:
             _displayed = recommended.head(10)
             _adj = _displayed["Evidence_Adjudication_Status"].fillna("").astype(str)
@@ -1456,7 +1540,7 @@ def _recommendation_block(result_df, report_ready_df=None):
         # rows to a different dataframe (which breaks downstream/test consumers).
         _recommended_display = recommended.copy()
         _recommended_display["Stage_6_Section"] = (
-            "Recommended — direct indication evidence"
+            "Priority validation — direct indication evidence"
         )
         if not exploratory.empty:
             _exploratory_display = exploratory.copy()
@@ -1554,7 +1638,7 @@ def _recommendation_block(result_df, report_ready_df=None):
         ] if col in recommended.columns
     ]
 
-    st.markdown("### ✅ Recommended / worth validating")
+    st.markdown("### ✅ Priority candidates / worth validating")
     st.caption(
         "\"Recommended\" means worth validation, not proof of efficacy or novelty. "
         "Chemical/source differentiation is shown separately from commercial status; "

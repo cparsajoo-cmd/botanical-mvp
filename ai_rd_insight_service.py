@@ -43,7 +43,7 @@ from typing import List, Optional
 from mechanistic_reasoning_service import reason_about_mechanisms
 from evidence_synthesis_service import synthesize_evidence
 from hypothesis_generation_service import generate_hypotheses
-from evidence_adjudication_engine import is_indication_relevant_row
+from evidence_adjudication_engine import build_adjudication_evidence_items
 
 # Cost control -- bound how many raw evidence rows are turned into
 # evidence_items for one candidate, regardless of how many the
@@ -64,69 +64,33 @@ def _row_get(row, *keys):
 
 
 def _evidence_items_from_df(evidence_df, plant_name: str, indication: str = "") -> List[dict]:
-    """Read-only adapter: raw evidence_records_df rows for one plant ->
-    the generic evidence_items contract the AI services expect. Returns
-    [] for any missing/empty dataframe or plant with no matching rows --
-    never raises.
+    """Use the exact curated evidence bundle used by scientific adjudication.
 
-    Part 7 (this session) -- filtered to INDICATION-RELEVANT rows only,
-    reusing evidence_adjudication_engine.is_indication_relevant_row (the
-    exact same predicate the adjudication layer applies), so this
-    explanatory AI stage sees the same evidence scope adjudication saw
-    rather than the plant's whole, indication-agnostic evidence history.
-    When indication is empty, every matched row is kept (nothing to
-    filter on -- matches is_indication_relevant_row's own behavior).
+    This removes a previous split-brain condition where explanatory AI could see
+    a different (and storage-order dependent) set of records from adjudication.
+    The adapter only renames fields to the compact service contract.
     """
-    if evidence_df is None:
-        return []
     try:
-        if evidence_df.empty:
-            return []
-    except AttributeError:
-        return []
-
-    plant_key = str(plant_name or "").strip().lower()
-    if not plant_key:
-        return []
-
-    try:
-        name_col = None
-        for candidate_col in ("Scientific_Name", "plant_species", "Plant_Scientific_Name"):
-            if candidate_col in evidence_df.columns:
-                name_col = candidate_col
-                break
-        if name_col is None:
-            return []
-        matched = evidence_df[
-            evidence_df[name_col].astype(str).str.strip().str.lower() == plant_key
-        ]
+        raw_items = build_adjudication_evidence_items(
+            evidence_df, plant_name, indication, max_items=MAX_EVIDENCE_ROWS_PER_CANDIDATE
+        )
     except Exception:
         return []
-
-    indication_tokens = [t for t in str(indication or "").strip().lower().split() if len(t) > 2]
-
-    items = []
-    for _, row in matched.iterrows():
-        if len(items) >= MAX_EVIDENCE_ROWS_PER_CANDIDATE:
-            break
-        try:
-            if not is_indication_relevant_row(row, indication_tokens):
-                continue
-        except Exception:
-            pass  # never let the relevance check itself block this fail-open adapter
-        evidence_id = _row_get(row, "Evidence_Record_ID", "evidence_record_id", "PMID", "pmid", "Record_ID")
-        if not evidence_id:
-            continue
-        note = _row_get(row, "Notes", "supporting_sentence", "Raw_Text")
+    items: List[dict] = []
+    for item in raw_items:
         items.append({
-            "evidence_id": evidence_id,
+            "evidence_id": item.get("evidence_id"),
             "plant": plant_name,
-            "compound": _row_get(row, "Compound", "compound_name"),
-            "target": _row_get(row, "Target", "target"),
-            "mechanism_text": _row_get(row, "Mechanism", "mechanism"),
-            "result_direction": _row_get(row, "Result_Direction", "evidence_direction"),
-            "study_model": _row_get(row, "Study_Model", "study_model"),
-            "text_snippet": note[:_MAX_NOTE_CHARS],
+            "compound": item.get("compound") or "",
+            "target": item.get("target") or "",
+            "mechanism_text": item.get("mechanism") or "",
+            "result_direction": item.get("result_direction") or "",
+            "study_model": item.get("study_model") or item.get("study_type_design") or "",
+            "text_snippet": (item.get("evidence_text_snippet") or "")[:_MAX_NOTE_CHARS],
+            "human_animal_in_vitro": item.get("human_animal_in_vitro"),
+            "indication_match_strength": item.get("indication_match_strength"),
+            "preparation": item.get("preparation"),
+            "route_of_administration": item.get("route_of_administration"),
         })
     return items
 

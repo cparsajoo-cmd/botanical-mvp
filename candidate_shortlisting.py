@@ -53,6 +53,7 @@ from phase5_scoring_config import (
     RANKING_STRONG_PRIORITY_THRESHOLD,
 )
 from ranking_score_model import reweight_score_breakdown, score_from_breakdown
+from safety_interaction_attribution import extract_structured_safety_interactions
 
 from general_indication_relevance import (
     ENGINE_VERSION as _RELEVANCE_ENGINE_VERSION,
@@ -233,6 +234,22 @@ def _has_supported_target(row: pd.Series) -> bool:
 
 
 def _has_direct_evidence(row: pd.Series) -> bool:
+    """True only for traceable, candidate-specific direct evidence.
+
+    In indication mode, a source ID alone is not evidence *for the requested
+    indication*.  The authoritative upstream match type must be direct and the
+    row must contain empirical candidate-specific support.  Legacy callers that
+    predate Indication_Match_Type retain the historical compatibility path.
+    """
+    match_type = str(row.get("Indication_Match_Type", "") or "").strip()
+    if match_type:
+        return bool(
+            match_type in _MATCH_STRONG
+            and _row_has_traceable_source(row)
+            and _row_has_candidate_specific_empirical_support(row)
+            and not _row_is_inferred_or_generic(row)
+        )
+
     combined = " | ".join(
         str(row.get(col, ""))
         for col in (
@@ -244,17 +261,13 @@ def _has_direct_evidence(row: pd.Series) -> bool:
     if not combined.strip():
         return False
     if any(term in combined for term in _NO_DIRECT_EVIDENCE_TERMS):
-        # A specific source ID or human/clinical evidence can override a broad
-        # low-information label attached elsewhere on the same row.
         specific_source = not _is_missing(row.get("Source_Record_IDs", ""))
         human_signal = any(
             term in combined
             for term in ("human", "clinical", "random", "meta-analysis", "systematic review")
         )
-        return specific_source or human_signal
-    return not _is_missing(row.get("Evidence_Source", "")) or not _is_missing(
-        row.get("Source_Record_IDs", "")
-    )
+        return specific_source and human_signal
+    return _row_has_traceable_source(row)
 
 
 def _hard_stop(row: pd.Series) -> bool:
@@ -1675,11 +1688,89 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
     return total, tier
 
 
-def _mechanism_support(group: pd.DataFrame) -> tuple[float, str]:
-    supported = int(group["Supported_Target_or_Mechanism"].sum())
+def _split_mechanism_values(value: object) -> list[str]:
+    if _is_missing(value):
+        return []
+    return [x.strip() for x in re.split(r"[;,|]", str(value)) if x.strip()]
+
+
+def _indication_specific_mechanism_values(
+    group: pd.DataFrame, indication: str, limit: int = 10
+) -> list[str]:
+    """Return only mechanism components grounded in the requested indication.
+
+    Whole-plant phytochemical databases can attach hundreds of unrelated
+    bioactivities (anticancer, pesticide, cytotoxic, etc.) to one row.  Those
+    remain available upstream but must not be presented or scored as supported
+    mechanisms for an unrelated indication.
+    """
+    family = resolve_indication_semantics(indication) if _norm(indication) else None
+    indication_terms = set()
+    if family:
+        indication_terms.update(_norm(t) for t in family.get("mechanistic", ()) if _norm(t))
+        indication_terms.update(_norm(t) for t in family.get("direct", ()) if _norm(t))
+    kept: list[str] = []
+    for _, row in group.iterrows():
+        match_type, match_terms = _row_authoritative_relevance(row)
+        if _group_has_authoritative_relevance(group) and match_type not in (*_MATCH_STRONG, *_MATCH_SUPPORTIVE):
+            continue
+        row_terms = {_norm(t) for t in match_terms if _norm(t)}
+        for component in _split_mechanism_values(row.get("Target_or_Mechanism", "")):
+            c_norm = _norm(component)
+            if not c_norm:
+                continue
+            relevant = any(
+                phrase_present(c_norm, term) or phrase_present(term, c_norm)
+                for term in indication_terms | row_terms
+                if term
+            )
+            if relevant and c_norm not in {_norm(x) for x in kept}:
+                kept.append(component)
+                if len(kept) >= limit:
+                    return kept
+    return kept
+
+
+def _mechanism_support(group: pd.DataFrame, indication: str = "") -> tuple[float, str]:
+    if _norm(indication) and _group_has_authoritative_relevance(group):
+        supported = len(_indication_specific_mechanism_values(group, indication, limit=20))
+    else:
+        supported = int(group["Supported_Target_or_Mechanism"].sum())
     total = min(10.0, 2.0 * supported)
     tier = "Strong" if total >= 7 else "Some" if total > 0 else "None"
     return total, tier
+
+
+def _latin_binomials(text: str) -> set[str]:
+    return {
+        f"{g.lower()} {sp.lower()}"
+        for g, sp in re.findall(r"\b([A-Z][a-z]{2,})\s+([a-z][a-z-]{2,})\b", str(text or ""))
+    }
+
+
+def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: int = 8) -> str:
+    """Keep only adverse signals attributable to the exact botanical species.
+
+    Protective-toxicity studies and records about a different Latin species are
+    not safety flags for the candidate being ranked.
+    """
+    target = _norm(plant_name)
+    target_binomial = " ".join(target.split()[:2]) if len(target.split()) >= 2 else target
+    adverse: list[str] = []
+    for _, row in group.iterrows():
+        value = row.get("Safety_Flags", "")
+        if _is_missing(value):
+            continue
+        interpreted = extract_structured_safety_interactions(value, None, plant_name=plant_name)
+        for flag in interpreted.get("adverse_events", []):
+            binomials = _latin_binomials(flag)
+            if binomials and target_binomial and target_binomial not in binomials:
+                continue
+            if _norm(flag) not in {_norm(x) for x in adverse}:
+                adverse.append(flag)
+                if len(adverse) >= limit:
+                    return "; ".join(adverse)
+    return "; ".join(adverse)
 
 
 def _critical_plant_stop(group: pd.DataFrame) -> bool:
@@ -2491,7 +2582,7 @@ def build_plant_candidate_shortlist(
         evq_tier = sci_evidence["Evidence_Quality_Tier"]
         evq_explain = sci_evidence["Evidence_Quality_Explain"]
         cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
-        mech_points, mech_tier = _mechanism_support(group)
+        mech_points, mech_tier = _mechanism_support(group, indication)
         safety_reg_points, safety_reg_tier = _safety_regulatory(group)
         novelty_points, novelty_tier = _novelty_market(group)
         component_source_record_ids = _component_source_record_ids(
@@ -2614,25 +2705,63 @@ def build_plant_candidate_shortlist(
         # this reporting layer cannot disagree with the gate that already
         # decided plant_status.
         if _group_has_authoritative_relevance(group):
-            row_match_types = group.apply(lambda r: _row_authoritative_relevance(r)[0], axis=1)
-            direct_evidence_count = int(row_match_types.isin(_MATCH_STRONG).sum())
-            mechanistic_evidence_count = int(row_match_types.isin(_MATCH_SUPPORTIVE).sum())
+            direct_source_ids = {
+                _norm(source_id)
+                for _, r in group.iterrows()
+                if (
+                    _row_authoritative_relevance(r)[0] in _MATCH_STRONG
+                    and _row_has_traceable_source(r)
+                    and _row_has_candidate_specific_empirical_support(r)
+                    and not _row_is_inferred_or_generic(r)
+                )
+                for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                if _norm(source_id)
+            }
+            direct_evidence_count = len(direct_source_ids)
+            mechanistic_source_ids = {
+                _norm(source_id)
+                for _, r in group.iterrows()
+                if (
+                    _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                    and _row_has_traceable_source(r)
+                    and _row_has_candidate_specific_empirical_support(r)
+                )
+                for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                if _norm(source_id)
+            }
+            mechanistic_evidence_count = len(mechanistic_source_ids)
         else:
             direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
             mechanistic_evidence_count = max(
                 0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
             )
 
-        prep_classes = group.apply(lambda r: _preparation_applicability_row(r, dosage_form), axis=1)
-        preparation_specific_evidence_count = int((prep_classes == PREP_DIRECT_MATCH).sum())
-        if PREP_DIRECT_MATCH in prep_classes.values:
+        # Preparation applicability is determined by the same PRIMARY evidence
+        # tier that drives the scientific score.  A single low-tier tea record
+        # must not upgrade a body of capsule/extract evidence to a direct
+        # infusion match.  Lower-tier rows may only provide an indirect hint
+        # when the primary tier did not report preparation at all.
+        primary_prep = str(sci_evidence.get("Dimension_Status", {}).get("preparation") or "").upper()
+        if primary_prep == "MATCH":
             preparation_applicability_class = PREP_DIRECT_MATCH
-        elif PREP_COMPATIBLE_BUT_INDIRECT in prep_classes.values:
+        elif primary_prep == "PARTIAL":
             preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
-        elif set(prep_classes.values) == {PREP_INCOMPATIBLE}:
+        elif primary_prep == "MISMATCH":
             preparation_applicability_class = PREP_INCOMPATIBLE
         else:
-            preparation_applicability_class = PREP_NOT_REPORTED
+            lower_classes = group.apply(lambda r: _preparation_applicability_row(r, dosage_form), axis=1)
+            if PREP_INCOMPATIBLE in set(lower_classes.values):
+                preparation_applicability_class = PREP_INCOMPATIBLE
+            elif PREP_DIRECT_MATCH in set(lower_classes.values) or PREP_COMPATIBLE_BUT_INDIRECT in set(lower_classes.values):
+                preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+            else:
+                preparation_applicability_class = PREP_NOT_REPORTED
+
+        primary_app = sci_evidence.get("Record_Applicability_Summary", {}) or {}
+        preparation_specific_evidence_count = sum(
+            1 for rec in primary_app.values()
+            if str((rec.get("Dimension_Status", {}) or {}).get("preparation") or "").upper() == "MATCH"
+        )
 
         if plant_hard_stop or safety_reg_points <= 0.0:
             relevance_gate_result = "failed_safety"
@@ -2836,8 +2965,8 @@ def build_plant_candidate_shortlist(
             "Supportive_Common_Compounds": "; ".join(supportive_common_compounds[:10]),
             "Supportive_Common_Compound_Count": len(supportive_common_compounds),
             "All_Shared_Compounds": _join(usable.get("Shared_or_Similar_Compound", []), 12),
-            "Supported_Targets_or_Mechanisms": _join(usable.get("Target_or_Mechanism", []), 10),
-            "Supported_Target_Count": len(targets),
+            "Supported_Targets_or_Mechanisms": "; ".join(_indication_specific_mechanism_values(group, indication, 10)),
+            "Supported_Target_Count": len(_indication_specific_mechanism_values(group, indication, 20)),
             "Evidence_Levels": _join(usable.get("Evidence_Level", []), 8),
             "Evidence_Sources": _join(usable.get("Evidence_Source", []), 8),
             "Traceable_Source_Count": len(sources),
@@ -2847,7 +2976,7 @@ def build_plant_candidate_shortlist(
             "Positive_Result_Count": outcome_profile["positive"],
             "Null_Negative_Result_Count": outcome_profile["null"] + outcome_profile["harmful"],
             "Unreported_Result_Count": outcome_profile["unreported"],
-            "Safety_Flags": _join(group.get("Safety_Flags", []), 8) or "No explicit adverse event attributable to this plant found",
+            "Safety_Flags": _clean_safety_flags_for_plant(group, plant, 8) or "No explicit adverse event attributable to this plant found",
             "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit plant-drug interaction attributable to this plant found",
             "Safety_Reassurance": _join(group.get("Safety_Reassurance", []), 8),
             "Safety_Data_Status": _join(group.get("Safety_Data_Status", []), 4) or "not_assessed",
@@ -3148,6 +3277,11 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Direct_Indication_Evidence_Count", "Mechanistic_Evidence_Count",
         "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
         "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
+        # Plant-level, attribution-cleaned safety fields must override the
+        # narrative raw row; otherwise an unrelated/protective or different-
+        # species safety sentence can leak back into the final report after
+        # being correctly filtered during aggregation.
+        "Safety_Flags", "Interaction_Flags", "Safety_Reassurance", "Safety_Data_Status",
         "Evidence_Quality_Score",
         "Compound_Quality_Score", "Mechanism_Support_Score",
         "Safety_Regulatory_Score", "Novelty_Market_Score",

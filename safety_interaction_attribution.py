@@ -52,8 +52,10 @@ _COMPARATOR_NOISE = (
     "comparator", "placebo caused", "disease itself", "patients with diabetes often",
 )
 _PROTECTIVE_OR_NEGATED = (
-    "protects against", "protected against", "prevented liver injury", "reduced liver injury",
-    "attenuated toxicity", "reduced toxicity", "anti-toxic", "not toxic", "non-toxic",
+    "protects against", "protected against", "protective impact", "protective impacts",
+    "protective effect", "protective effects", "protection against",
+    "prevented liver injury", "reduced liver injury", "attenuated toxicity", "reduced toxicity",
+    "ameliorated toxicity", "ameliorates toxicity", "anti-toxic", "not toxic", "non-toxic",
     "without toxicity", "did not increase toxicity", "no evidence of toxicity",
 )
 _LOW_QUALITY_SOURCE = (

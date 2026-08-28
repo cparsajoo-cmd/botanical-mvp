@@ -21,6 +21,7 @@ from botanical_entity_validation import (
     validate_botanical_candidate,
 )
 import query_expansion_service
+from ai_usage_telemetry import start_new_ai_run
 from ai_botanical_entity_extractor import (
     extract_botanical_entities_ai,
     candidate_strings_for_validation,
@@ -1264,6 +1265,31 @@ def run_research_engine(
     _stage2_started_at = time.monotonic()
     _stage2_total_budget = stage2_discovery_phase_budget_seconds(pilot_mode)
     _stage2_deadline_ts = _stage2_started_at + _stage2_total_budget
+
+    # Part 5/6/13 (OpenAI-usage audit, this session) -- fresh per-run AI
+    # telemetry/budget/breaker tracker for this Stage 2 execution. Budget
+    # limits mirror the mode ceilings already enforced dynamically by
+    # _max_llm_entity_extraction_records() above (that function's
+    # time-and-count-derived cap is always <= this ceiling, so this is a
+    # backstop, not a tightening of existing behavior); query expansion
+    # makes at most one AI call per Stage 2 run (see
+    # query_expansion_service.expand_query_terms, called once above).
+    _ai_tracker = start_new_ai_run()
+    _ai_tracker.set_limit("query_expansion", 1)
+    _ai_tracker.set_limit(
+        "botanical_entity_extraction",
+        _PILOT_MAX_LLM_ENTITY_EXTRACTION_RECORDS if pilot_mode
+        else _QUICK_MAX_LLM_ENTITY_EXTRACTION_RECORDS,
+    )
+    # Evidence standardization can invoke two structured extraction tasks per
+    # newly collected record. Bound both independently so interactive Stage 2
+    # can never scale OpenAI requests with the full evidence corpus.
+    _stage2_evidence_ai_cap = (
+        _PILOT_MAX_LLM_ENTITY_EXTRACTION_RECORDS if pilot_mode
+        else _QUICK_MAX_LLM_ENTITY_EXTRACTION_RECORDS
+    )
+    _ai_tracker.set_limit("evidence_extraction", _stage2_evidence_ai_cap)
+    _ai_tracker.set_limit("semantic_gate_extraction", _stage2_evidence_ai_cap)
 
     def _stage2_remaining():
         return max(0.0, _stage2_deadline_ts - time.monotonic())

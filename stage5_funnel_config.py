@@ -36,7 +36,7 @@ STAGE5_PRESCREEN_EXPLORATORY_BUDGET = {
 # indications with a modest exploratory pool, while still bounding the
 # pathological case (thousands of catalogue plants with no direct evidence)
 # that motivated this architecture change.
-STAGE5_PRESCREEN_DEFAULT_MODE = "full"
+STAGE5_PRESCREEN_DEFAULT_MODE = "quick"
 
 # Absolute ceiling on the exploratory pool regardless of ``mode``, purely as
 # a defensive backstop against a misconfigured/overridden budget value.

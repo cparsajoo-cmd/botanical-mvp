@@ -1,0 +1,41 @@
+BOTANICAL MVP — COMBINED STAGE 5 + OPENAI GOVERNANCE PATCH
+
+Apply these files at repository root using the exact filenames. Do not rename them.
+This package is designed to overlay the deployed project represented by the supplied 2026-08-28 production logs and the Claude OpenAI-audit deliverables.
+
+STAGE 5 FIXES
+- Moves authoritative catalogue prescreen BEFORE the expensive per-plant indication loop.
+- Uses cheap evidence index + deterministic indication relevance only during prescreen.
+- QUICK default exploratory budget = 90.
+- Preserves direct indication evidence (positive/negative/null alike) and Stage-2 novel candidates.
+- Guards against legacy Requested_Target_Indication being persisted as Target_Indication and making every plant mandatory.
+- Removes the redundant post-engine prescreen from the main Streamlit path.
+- Fallback/re-render shortlist uses the retained pool/audit instead of intentionally expanding the universe again.
+- Expected production log: Stage5 catalogue prescreen ... retained_total=N, followed by indication loop ... /N, NOT /2119.
+
+OPENAI GOVERNANCE FIXES
+- Context-local per-run tracker; concurrent Streamlit runs do not share breaker state.
+- Logical calls and actual provider attempts are separate telemetry counters.
+- Direct llm_extractor Responses API calls now route through governed llm_client.
+- Evidence extraction and semantic-gate extraction have bounded Stage-2 budgets.
+- scientific_intent is explicitly budgeted.
+- First insufficient-quota/auth failure trips a run-local breaker; later interactive calls skip provider.
+- Malformed JSON is tracked as malformed_model_output and is never cached.
+- Structured-result cache is bounded LRU (512 entries).
+- Deterministic engine status remains OK when optional AI is unavailable.
+- User-facing breaker metadata is sanitized to controlled categories.
+- AI run metadata can be downloaded as JSON from the Stage-5 UI.
+- Grounding caps from the Claude AI audit are preserved.
+
+VALIDATION PERFORMED HERE
+- Python syntax compilation passed for all production files in this package.
+- Synthetic 2,000-plant Stage-5 test retained 90 and screened out 1,910; 10 genuine direct candidates survived.
+- Legacy query-stamp regression test: 1,000 unrelated rows stamped with the requested indication did NOT become mandatory.
+- Stage-2 novel candidate regression test passed.
+- AI context-isolation / direct-extractor-governance / malformed-JSON tests passed (5/5).
+- Existing AI telemetry tests passed (25/25).
+- Existing llm-client governance/cache/timeout/embedding-cache tests passed in isolated runs with provider/Streamlit stubs (30/30).
+- Existing gate-assertion prompt test passed in an isolated run.
+
+ENVIRONMENT LIMITATION
+A true deployed Streamlit + Supabase + live OpenAI end-to-end run cannot be reproduced in this offline container. The production acceptance check must therefore be made from the next Streamlit log. The critical line is that the expensive indication loop denominator must equal the reduced retained pool rather than the full ~2,119 catalogue plants.

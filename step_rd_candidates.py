@@ -1,5 +1,6 @@
 import time
 import threading
+import json
 
 import pandas as pd
 import streamlit as st
@@ -14,7 +15,6 @@ from candidate_shortlisting import (
     merge_authoritative_scores,
     rescore_commercial_component,
 )
-from stage5_candidate_prescreen import prescreen_candidate_universe
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -32,6 +32,7 @@ from standard_evidence_builder import (
     get_scientific_evidence_by_ids,
     build_transferability_target_context,
 )
+from ai_usage_telemetry import start_new_ai_run, get_ai_run_tracker
 
 
 # TEMPORARY DIAGNOSTIC INSTRUMENTATION (performance audit — runtime hang
@@ -248,6 +249,47 @@ _AI_RD_INSIGHTS_MAX_CANDIDATES = 10
 _ADJUDICATION_MAX_CANDIDATES = 15
 
 
+def _configure_ai_run_budgets() -> None:
+    """Part 5/6/13 (OpenAI-usage audit, this session) -- start a fresh
+    per-run AI usage tracker and register a per-task call budget for
+    every AI task this Stage 5 run can invoke, so a bug in any ONE call
+    site cannot by itself generate an unbounded number of OpenAI
+    requests. Called once, at the top of the "Run Candidate Discovery"
+    button handler below -- never on an unrelated Streamlit rerender.
+
+    Limits mirror the existing loop-level caps already enforced at each
+    call site (kept as the single source of truth for those numbers,
+    referenced here rather than re-hardcoded) plus the new grounding
+    caps added this session (mechanistic_reasoning_service.py,
+    hypothesis_generation_service.py) -- each candidate can trigger at
+    most one mechanistic-reasoning call, one evidence-synthesis call,
+    one hypothesis-generation call, and up to MAX_EDGES_FOR_GROUNDING /
+    MAX_HYPOTHESES_FOR_GROUNDING verification calls.
+    """
+    from mechanistic_reasoning_service import MAX_EDGES_FOR_GROUNDING
+    from hypothesis_generation_service import MAX_HYPOTHESES_FOR_GROUNDING
+
+    tracker = start_new_ai_run()
+    tracker.set_limit("embedding_query", 1)
+    # Stage 5 should not normally standardize new evidence, but keep legacy
+    # extractor paths bounded if a connector/custom path does so.
+    tracker.set_limit("evidence_extraction", 8)
+    tracker.set_limit("semantic_gate_extraction", 8)
+    tracker.set_limit("scientific_intent", 2)
+    tracker.set_limit("evidence_adjudication", _ADJUDICATION_MAX_CANDIDATES)
+    tracker.set_limit("mechanistic_reasoning", _AI_RD_INSIGHTS_MAX_CANDIDATES)
+    tracker.set_limit(
+        "mechanistic_grounding_verification",
+        _AI_RD_INSIGHTS_MAX_CANDIDATES * MAX_EDGES_FOR_GROUNDING,
+    )
+    tracker.set_limit("evidence_synthesis", _AI_RD_INSIGHTS_MAX_CANDIDATES)
+    tracker.set_limit("hypothesis_generation", _AI_RD_INSIGHTS_MAX_CANDIDATES)
+    tracker.set_limit(
+        "hypothesis_grounding_verification",
+        _AI_RD_INSIGHTS_MAX_CANDIDATES * MAX_HYPOTHESES_FOR_GROUNDING,
+    )
+
+
 def _render_ai_rd_insights():
     """Render the additive AI R&D insight layer, if any was computed --
     always clearly separated from the deterministic score/evidence/
@@ -311,6 +353,96 @@ def _render_ai_rd_insights():
                     )
             st.markdown("---")
 
+
+_AI_STATUS_TASK_LABELS = (
+    ("embedding_query", "Semantic embedding"),
+    ("evidence_extraction", "Evidence structured extraction"),
+    ("semantic_gate_extraction", "Semantic safety/regulatory extraction"),
+    ("evidence_adjudication", "Evidence adjudication"),
+    ("mechanistic_reasoning", "AI R&D insights — mechanistic reasoning"),
+    ("evidence_synthesis", "AI R&D insights — evidence synthesis"),
+    ("hypothesis_generation", "AI R&D insights — hypothesis generation"),
+)
+
+_AI_STATUS_ICON = {"OK": "✅", "FALLBACK": "⚠️", "UNAVAILABLE": "❌", "NOT_RUN": "⬜"}
+
+
+def ai_status_lines(summary: dict) -> list[str]:
+    """Part 11 (OpenAI-usage audit) -- turn a tracker summary (see
+    ai_usage_telemetry.AIRunTracker.summary()/task_status_label()) into
+    the compact per-task status lines the architecture spec asks for,
+    e.g. "Evidence adjudication: UNAVAILABLE — insufficient_quota".
+    Pure function (no Streamlit dependency) so it is directly testable.
+    Never raises on a malformed/partial summary -- returns an empty list.
+    """
+    if not isinstance(summary, dict):
+        return []
+    tasks = summary.get("tasks") or {}
+    breaker_open = bool(summary.get("provider_circuit_open"))
+    breaker_reason = summary.get("provider_circuit_category") or summary.get("provider_circuit_reason") or ""
+    lines = []
+    for task_key, label in _AI_STATUS_TASK_LABELS:
+        stats = tasks.get(task_key)
+        if stats is None:
+            status = "NOT_RUN"
+        else:
+            successes = stats.get("calls", 0) - stats.get("failures", 0)
+            if successes > 0:
+                status = "OK" if stats.get("failures", 0) == 0 else "FALLBACK"
+            elif stats.get("cached_hits", 0) > 0:
+                status = "OK"
+            elif stats.get("skipped_breaker", 0) > 0 or breaker_open:
+                status = "UNAVAILABLE"
+            elif stats.get("skipped_budget", 0) > 0:
+                status = "UNAVAILABLE"
+            elif stats.get("failures", 0) > 0:
+                status = "UNAVAILABLE"
+            else:
+                status = "NOT_RUN"
+        detail = ""
+        if status == "UNAVAILABLE" and breaker_open and breaker_reason:
+            detail = f" — {breaker_reason}"
+        elif status == "FALLBACK":
+            errors = stats.get("errors_by_category") or {}
+            if errors:
+                detail = " — " + ", ".join(sorted(errors))
+        lines.append(f"{_AI_STATUS_ICON.get(status, '')} {label}: {status}{detail}")
+    # OpenAI availability never determines deterministic-engine health.
+    lines.append("✅ Deterministic engine: OK")
+    return lines
+
+
+def _render_ai_status_summary():
+    """Part 11 -- shows, in one compact place, which parts of the last
+    run used real AI output vs. a deterministic fallback vs. never ran
+    at all, so the deterministic result can never be mistaken for one
+    that AI validated when AI actually failed (the exact production
+    incident this session's audit was triggered by). Renders nothing if
+    no run has completed yet."""
+    summary = st.session_state.get("rd_ai_status_summary")
+    if not summary:
+        return
+    lines = ai_status_lines(summary)
+    if not lines:
+        return
+    with st.expander("🤖 AI status for this run", expanded=False):
+        for line in lines:
+            st.write(line)
+        totals = (
+            f"Logical AI calls: {summary.get('total_logical_calls', summary.get('total_api_calls', 0))} · "
+            f"Provider attempts: {summary.get('total_provider_attempts', 0)} · "
+            f"Cached (avoided): {summary.get('total_cached_hits', 0)} · "
+            f"Skipped (budget): {summary.get('total_skipped_budget', 0)} · "
+            f"Skipped (provider unavailable): {summary.get('total_skipped_breaker', 0)}"
+        )
+        st.caption(totals)
+        st.download_button(
+            "Download AI run metadata (JSON)",
+            data=json.dumps(summary, indent=2, sort_keys=True).encode("utf-8"),
+            file_name="ai_run_metadata.json",
+            mime="application/json",
+            key="download_ai_run_metadata_json",
+        )
 
 
 def _unique_nonempty(values):
@@ -1716,6 +1848,7 @@ def render_rd_candidates_step(inputs):
 
     _rerun_after_discovery = False
     if run_clicked:
+        _configure_ai_run_budgets()
         existing_result = st.session_state.get("rd_candidates_df")
         if (
             st.session_state.get("rd_candidate_run_key") == run_key
@@ -1742,6 +1875,8 @@ def render_rd_candidates_step(inputs):
                     value = 0.12
                 elif stage == "profile":
                     value = 0.18
+                elif stage == "catalogue_prescreen":
+                    value = 0.20
                 elif stage == "embedding":
                     value = 0.22
                 elif stage == "scoring":
@@ -1793,43 +1928,17 @@ def render_rd_candidates_step(inputs):
                         f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                     )
 
-                # Stage 5 candidate-funnel performance fix.  A cheap,
-                # high-recall pre-screen runs BEFORE any expensive per-plant
-                # scientific scoring, so build_plant_candidate_shortlist()
-                # only ever runs its expensive component functions across a
-                # bounded candidate pool instead of the entire raw catalogue
-                # universe -- and runs exactly ONCE per Stage 5 run (see
-                # rescore_commercial_component() below for how commercial
-                # enrichment updates the score without a second pass).
-                # Supabase remains the internal catalogue; nothing here
-                # replaces it with online-only discovery -- the pre-screen
-                # only narrows which already-discovered plants pay for full
-                # scoring. See STAGE5_CANDIDATE_FUNNEL_ROOT_CAUSE_REPORT.md.
+                # The authoritative Stage-5 catalogue pre-screen now runs INSIDE
+                # indication_candidate_discovery, before its expensive per-plant
+                # loop.  Do not pre-screen the already-expanded result again here.
                 if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-                    progress.progress(0.83, text="Pre-screening catalogue candidates…")
-
-                    def _prescreen_progress(current=0, total=0, message=""):
-                        fraction = (float(current) / float(total)) if total else 0.0
-                        value = 0.83 + 0.03 * max(0.0, min(1.0, fraction))
-                        progress.progress(
-                            max(0.0, min(1.0, value)),
-                            text=message or "Pre-screening catalogue candidates…",
-                        )
-
-                    _perf_t_prescreen = time.perf_counter()
-                    scoring_pool_df, prescreen_audit_df = prescreen_candidate_universe(
-                        result_df,
-                        dosage_form=dosage_form,
-                        novel_candidate_plants=novel_discovered_candidates,
-                        progress_callback=_prescreen_progress,
-                    )
-                    _perf(
-                        f"stage5 prescreen done "
-                        f"input_plants={result_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in result_df.columns else 0} "
-                        f"retained_plants={scoring_pool_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in scoring_pool_df.columns else 0} "
-                        f"elapsed={time.perf_counter() - _perf_t_prescreen:.3f}"
-                    )
+                    scoring_pool_df = result_df
+                    prescreen_audit_df = getattr(engine, "stage5_prescreen_audit_df", pd.DataFrame())
                     st.session_state["rd_candidate_prescreen_audit_df"] = prescreen_audit_df
+                    _perf(
+                        f"stage5 prescreen authoritative pool rows={len(scoring_pool_df)} "
+                        f"plants={scoring_pool_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in scoring_pool_df.columns else 0}"
+                    )
 
                     progress.progress(0.87, text="Building scientific shortlist…")
 
@@ -2033,6 +2142,16 @@ def render_rd_candidates_step(inputs):
                             f"AI R&D insights skipped ({type(_ai_insights_exc).__name__}: "
                             f"{_ai_insights_exc}) -- Stage 5 output is unaffected"
                         )
+
+                    # Part 11 (OpenAI-usage audit, this session) -- snapshot the
+                    # run's AI status NOW, at the end of the run, so the
+                    # deterministic result and the AI status shown together
+                    # never diverge: a later Streamlit rerender re-reads this
+                    # snapshot (never live tracker state, which would reset on
+                    # the next "Run Candidate Discovery" click) via
+                    # _render_ai_status_summary() below.
+                    st.session_state["rd_ai_status_summary"] = get_ai_run_tracker().summary()
+
                     progress.progress(1.0, text="Candidate Discovery complete.")
                     st.success(
                         f"✅ {len(result_df)} raw plant–compound associations generated; "
@@ -2088,9 +2207,23 @@ def render_rd_candidates_step(inputs):
         triage_audit_df = st.session_state.get("rd_candidate_triage_audit_df")
         if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
             _perf_t0_fallback = time.perf_counter()
-            _perf("fallback-path build_plant_candidate_shortlist() start (session_state was empty)")
+            _fallback_df = result_df
+            _prescreen_audit = st.session_state.get("rd_candidate_prescreen_audit_df")
+            if isinstance(_prescreen_audit, pd.DataFrame) and not _prescreen_audit.empty and "PreScreen_Status" in _prescreen_audit.columns:
+                _kept = set(
+                    _prescreen_audit.loc[
+                        _prescreen_audit["PreScreen_Status"].astype(str).eq("SENT_TO_FULL_SCORING"),
+                        "Alternative_Plant",
+                    ].dropna().astype(str)
+                )
+                if _kept and "Alternative_Plant" in result_df.columns:
+                    _fallback_df = result_df[result_df["Alternative_Plant"].astype(str).isin(_kept)].copy()
+            _perf(
+                "fallback-path build_plant_candidate_shortlist() start "
+                f"plants={_fallback_df['Alternative_Plant'].nunique() if 'Alternative_Plant' in _fallback_df.columns else 0}"
+            )
             plant_summary_df, triage_audit_df = build_plant_candidate_shortlist(
-                result_df,
+                _fallback_df,
                 indication=indication,
                 dosage_form=dosage_form,
                 max_candidates=50,
@@ -2485,3 +2618,4 @@ def render_rd_candidates_step(inputs):
         _recommendation_block(result_df, st.session_state.get("rd_report_ready_df"))
 
     _render_ai_rd_insights()
+    _render_ai_status_summary()

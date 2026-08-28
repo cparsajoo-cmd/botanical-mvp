@@ -49,6 +49,14 @@ _SCHEMA_VERSION = "v1"
 HYPOTHESIS_GROUNDING_MODEL_ENV_VAR = "OPENAI_HYPOTHESIS_GROUNDING_MODEL"
 _GROUNDING_SCHEMA_VERSION = "v1"
 
+# Part 7/10/17 -- same unbounded-fan-out risk as
+# mechanistic_reasoning_service.MAX_EDGES_FOR_GROUNDING: HYPOTHESIS_SCHEMA
+# places no maxItems bound on "hypotheses", and _apply_hypothesis_grounding
+# below makes one additional OpenAI call per hypothesis. Capped to the
+# top MAX_HYPOTHESES_FOR_GROUNDING by the model's own reported
+# ``confidence`` before any grounding call is made.
+MAX_HYPOTHESES_FOR_GROUNDING = 8
+
 EVIDENCE_LABEL_HYPOTHESIS = "rd_hypothesis"  # the only label this module ever assigns
 
 HYPOTHESIS_TYPES = (
@@ -228,7 +236,16 @@ def _apply_hypothesis_grounding(hypotheses: List[dict], items_by_id: dict) -> Li
     If a hypothesis originally claimed supporting evidence and grounding
     leaves none, the whole hypothesis is dropped (never returned as an
     unsupported hypothesis) -- per the architecture's requirement to
-    prefer dropping over returning weakly-grounded output."""
+    prefer dropping over returning weakly-grounded output.
+
+    Capped to the top MAX_HYPOTHESES_FOR_GROUNDING hypotheses by the
+    model's own reported ``confidence`` (Part 7/17, this session) before
+    any grounding call is made -- see MAX_HYPOTHESES_FOR_GROUNDING's
+    docstring for why this cap exists."""
+    if len(hypotheses) > MAX_HYPOTHESES_FOR_GROUNDING:
+        hypotheses = sorted(
+            hypotheses, key=lambda h: float(h.get("confidence") or 0), reverse=True,
+        )[:MAX_HYPOTHESES_FOR_GROUNDING]
     grounded_out = []
     for hyp in hypotheses:
         original_supporting = hyp.get("supporting_evidence_ids") or []

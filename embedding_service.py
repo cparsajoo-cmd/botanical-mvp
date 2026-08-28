@@ -27,11 +27,41 @@ this repository (database.py, supabase_data.py).
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
 
 from evidence_embedding_text import build_evidence_embedding_text, compute_content_hash
+from ai_usage_telemetry import (
+    AIProviderCircuitOpenError,
+    BREAKER_TRIPPING_CATEGORIES,
+    classify_llm_error,
+    get_ai_run_tracker,
+)
+
+TASK_EMBEDDING_QUERY = "embedding_query"
+
+# Part 4/14 -- one query embedding is reused for as long as the process
+# lives, keyed on (normalized text, model). This is what makes a
+# Streamlit rerun on the SAME indication query never re-call OpenAI: the
+# first run computes and caches the vector, every later rerun (or a
+# second indication that happens to normalize the same way) is a plain
+# dict lookup. Cleared only by clear_query_cache() (test-only) --
+# there is no size/time eviction because one process handles at most a
+# small, human-driven number of distinct queries.
+_QUERY_EMBEDDING_CACHE: dict[str, list[float]] = {}
+
+
+def _query_cache_key(text: str, model: str) -> str:
+    normalized = " ".join(text.strip().lower().split())
+    return hashlib.sha256(f"{model}|{normalized}".encode("utf-8")).hexdigest()
+
+
+def clear_query_cache() -> None:
+    """Test-only helper -- forces the next embed_query() call to hit the
+    (mocked) API again."""
+    _QUERY_EMBEDDING_CACHE.clear()
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSION = 1536
@@ -205,8 +235,31 @@ def embed_query(
     if not text:
         return None
     text = _truncate_to_token_limit(text, label="query")
+
+    cache_key = _query_cache_key(text, model)
+    if cache_key in _QUERY_EMBEDDING_CACHE:
+        get_ai_run_tracker().record_call(TASK_EMBEDDING_QUERY, cached=True, success=True)
+        return list(_QUERY_EMBEDDING_CACHE[cache_key])
+
+    tracker = get_ai_run_tracker()
+    if tracker.breaker_active():
+        # Part 13 -- a prior insufficient-quota/auth failure this run
+        # already means every further OpenAI call is doomed; skip
+        # straight to the lexical fallback without attempting one.
+        tracker.record_skipped_breaker(TASK_EMBEDDING_QUERY)
+        print(
+            "[embedding_service] embed_query skipped, provider circuit "
+            f"open this run ({tracker.breaker_category}): falling back to lexical engine"
+        )
+        return None
+    if not tracker.check_budget(TASK_EMBEDDING_QUERY):
+        print("[embedding_service] embed_query: AI_BUDGET_EXHAUSTED, falling back to lexical engine")
+        return None
+
+    _t0 = time.monotonic()
     try:
         active_client = client or get_openai_client()
+        tracker.record_provider_attempt(TASK_EMBEDDING_QUERY)
         response = active_client.embeddings.create(
             model=model, input=[text], timeout=timeout_seconds,
         )
@@ -217,9 +270,26 @@ def embed_query(
                 f"dimension {len(vector) if vector else 0}, expected "
                 f"{EMBEDDING_DIMENSION}"
             )
+            tracker.record_call(
+                TASK_EMBEDDING_QUERY, cached=False, success=False,
+                elapsed_seconds=time.monotonic() - _t0, error_category="malformed_model_output",
+            )
             return None
-        return list(vector)
+        vector_list = list(vector)
+        _QUERY_EMBEDDING_CACHE[cache_key] = vector_list
+        tracker.record_call(
+            TASK_EMBEDDING_QUERY, cached=False, success=True,
+            elapsed_seconds=time.monotonic() - _t0,
+        )
+        return vector_list
     except Exception as exc:
+        error_category = classify_llm_error(exc)
+        tracker.record_call(
+            TASK_EMBEDDING_QUERY, cached=False, success=False,
+            elapsed_seconds=time.monotonic() - _t0, error_category=error_category,
+        )
+        if error_category in BREAKER_TRIPPING_CATEGORIES:
+            tracker.trip_breaker(error_category, str(exc))
         print(f"[embedding_service] embed_query failed, falling back to lexical engine: {exc}")
         return None
 

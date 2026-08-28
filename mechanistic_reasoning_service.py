@@ -75,6 +75,20 @@ RELATIONSHIP_INFERRED = "inferred"
 MAX_EVIDENCE_ITEMS = 30
 _MAX_SNIPPET_CHARS = 400
 
+# Part 7/10/17 -- the generation call's MECHANISM_SCHEMA places no
+# maxItems bound on "edges" (a strict json_schema still allows an
+# arbitrarily long array), and _apply_semantic_grounding below makes ONE
+# additional OpenAI call per edge (second-layer semantic verification).
+# Without this cap, one evidence-rich candidate could turn into dozens of
+# extra grounding calls -- confirmed as a real unbounded fan-out during
+# the OpenAI-usage audit (root cause report, this session), not merely a
+# theoretical risk. Edges are ranked by the model's own reported
+# confidence and only the top MAX_EDGES_FOR_GROUNDING are verified;
+# excess edges are dropped deterministically (never sent for grounding,
+# never included in output) rather than silently truncated after the
+# fact.
+MAX_EDGES_FOR_GROUNDING = 8
+
 MECHANISM_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -336,7 +350,16 @@ def _apply_semantic_grounding(edges: List[dict], items_by_id: dict) -> List[dict
     support_level="direct"; anything weaker but still real
     (support_level="partial") survives only as "inferred"; anything the
     verifier cannot confirm (support_level="insufficient", or
-    verification unavailable) is dropped entirely."""
+    verification unavailable) is dropped entirely.
+
+    Capped to the top MAX_EDGES_FOR_GROUNDING edges by the model's own
+    reported ``confidence`` (Part 7/17, this session) before any
+    grounding call is made -- see MAX_EDGES_FOR_GROUNDING's docstring
+    for why this cap exists."""
+    if len(edges) > MAX_EDGES_FOR_GROUNDING:
+        edges = sorted(
+            edges, key=lambda e: float(e.get("confidence") or 0), reverse=True,
+        )[:MAX_EDGES_FOR_GROUNDING]
     grounded = []
     for edge in edges:
         cited_items = [items_by_id[eid] for eid in edge.get("supporting_evidence_ids", []) if eid in items_by_id]

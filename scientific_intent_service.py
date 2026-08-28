@@ -34,6 +34,7 @@ did before this module existed. AI unavailability never breaks Step 0.
 """
 from __future__ import annotations
 
+from ai_usage_telemetry import get_ai_run_tracker
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -212,6 +213,9 @@ def parse_scientific_intent(text: str) -> AIParsedQuestion:
         return AIParsedQuestion(**vars(fallback), ai_used=False, ai_fallback_reason="empty_input")
 
     try:
+        _tracker = get_ai_run_tracker()
+        if _tracker.get_limit("scientific_intent") is None:
+            _tracker.set_limit("scientific_intent", 2)
         raw = llm_client.call_structured_json(
             system_prompt=_SYSTEM_PROMPT,
             user_content=text,

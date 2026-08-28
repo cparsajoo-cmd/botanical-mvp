@@ -38,10 +38,19 @@ import hashlib
 import json
 import os
 import time
+from collections import OrderedDict
 from typing import Any, Optional
 
 import streamlit as st
 from openai import OpenAI
+
+from ai_usage_telemetry import (
+    AIBudgetExhaustedError,
+    AIProviderCircuitOpenError,
+    BREAKER_TRIPPING_CATEGORIES,
+    classify_llm_error,
+    get_ai_run_tracker,
+)
 
 
 DEFAULT_MODEL_ENV_VAR = "OPENAI_MODEL"
@@ -57,7 +66,8 @@ DEFAULT_MAX_RETRIES_ENV_VAR = "LLM_REQUEST_MAX_RETRIES"
 DEFAULT_MAX_RETRIES_FALLBACK = 1
 
 _client_singleton: Optional[OpenAI] = None
-_RESULT_CACHE: dict[str, Any] = {}
+_RESULT_CACHE_MAX = 512
+_RESULT_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 
 
 def resolve_timeout_seconds() -> float:
@@ -213,6 +223,7 @@ def call_structured_json(
     temperature: float = 0,
     use_cache: bool = True,
     deadline_seconds: Optional[float] = None,
+    client_factory=None,
 ) -> dict:
     """Call the Responses API with a strict json_schema output format and
     return the parsed JSON object.
@@ -253,6 +264,7 @@ def call_structured_json(
     """
     model = resolve_model(model_env_var)
     project_model = (os.getenv(DEFAULT_MODEL_ENV_VAR) or DEFAULT_MODEL_FALLBACK).strip()
+    tracker = get_ai_run_tracker()
 
     cache_key = None
     if use_cache:
@@ -261,9 +273,27 @@ def call_structured_json(
             _stable_digest(system_prompt), _stable_schema_digest(schema),
         )
         if cache_key in _RESULT_CACHE:
-            return _RESULT_CACHE[cache_key]
+            tracker.record_call(task, cached=True, success=True)
+            result = _RESULT_CACHE.pop(cache_key)
+            _RESULT_CACHE[cache_key] = result
+            return result
 
-    client = get_openai_client()
+    # Part 13 -- run-scoped provider circuit breaker: once a prior call in
+    # THIS run has already observed a non-transient condition (insufficient
+    # quota / invalid auth), no further request is attempted for the rest
+    # of the run, for any task. A retry cannot fix an empty credit balance.
+    if tracker.breaker_active():
+        tracker.record_skipped_breaker(task)
+        raise AIProviderCircuitOpenError(tracker.breaker_category, tracker.breaker_reason)
+
+    # Part 6 -- centrally-enforced per-run, per-task call budget. Callers
+    # configure limits via tracker.set_limit(task, n); a task with no
+    # configured limit is unbounded here (enforcement then rests entirely
+    # on that call site's own loop cap, same as before this module existed).
+    if not tracker.check_budget(task):
+        raise AIBudgetExhaustedError(task, tracker.get_limit(task))
+
+    client = (client_factory or get_openai_client)()
     request_kwargs = {
         "input": [
             {"role": "system", "content": system_prompt},
@@ -291,12 +321,15 @@ def call_structured_json(
         time.monotonic() + deadline_seconds if deadline_seconds is not None else None
     )
 
-    def _call(target_model: str, call_timeout: float):
+    def _call(target_model: str, call_timeout: float, *, retry: bool = False, model_fallback: bool = False):
+        tracker.record_provider_attempt(task, retry=retry, model_fallback=model_fallback)
         return client.responses.create(
             model=target_model, timeout=call_timeout, **request_kwargs
         )
 
-    def _call_with_bounded_retry(target_model: str):
+    _retry_count = [0]
+
+    def _call_with_bounded_retry(target_model: str, *, model_fallback: bool = False):
         # Small, bounded retry (never unbounded) for transient failures
         # only (part F4) -- an auth/schema/bad-request error is retried
         # zero times since it would just fail identically.
@@ -319,23 +352,63 @@ def call_structured_json(
             else:
                 call_timeout = timeout_seconds
             try:
-                return _call(target_model, call_timeout)
+                return _call(target_model, call_timeout, retry=(attempt > 0), model_fallback=model_fallback)
             except Exception as exc:
                 last_exc = exc
                 if attempt >= attempts - 1 or not _is_transient_error(exc):
                     raise
+                _retry_count[0] += 1
         raise last_exc  # pragma: no cover -- unreachable, defensive only
 
+    _call_started = time.monotonic()
     try:
-        response = _call_with_bounded_retry(model)
+        try:
+            response = _call_with_bounded_retry(model)
+        except Exception as exc:
+            message = str(exc).lower()
+            model_error = "model_not_found" in message or "does not exist" in message
+            if not model_error or model == project_model:
+                raise
+            response = _call_with_bounded_retry(project_model, model_fallback=True)
     except Exception as exc:
-        message = str(exc).lower()
-        model_error = "model_not_found" in message or "does not exist" in message
-        if not model_error or model == project_model:
-            raise
-        response = _call_with_bounded_retry(project_model)
+        # Part 5/12/13 -- classify, record, and (for a non-transient
+        # provider-level condition) trip the run-scoped circuit breaker
+        # BEFORE re-raising, so every later call in this run -- for any
+        # task -- sees the breaker already open instead of also making
+        # (and also failing) its own doomed request.
+        error_category = classify_llm_error(exc)
+        tracker.record_call(
+            task, cached=False, success=False,
+            elapsed_seconds=time.monotonic() - _call_started,
+            retries=_retry_count[0], error_category=error_category,
+        )
+        if error_category in BREAKER_TRIPPING_CATEGORIES:
+            tracker.trip_breaker(error_category, str(exc))
+        raise
 
-    result = json.loads(response.output_text)
+    try:
+        result = json.loads(response.output_text)
+    except Exception as exc:
+        tracker.record_call(
+            task, cached=False, success=False,
+            elapsed_seconds=time.monotonic() - _call_started,
+            error_category="malformed_model_output",
+        )
+        raise
+
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+    tracker.record_call(
+        task, cached=False, success=True,
+        elapsed_seconds=time.monotonic() - _call_started,
+        retries=_retry_count[0], input_tokens=input_tokens, output_tokens=output_tokens,
+    )
+
     if cache_key is not None:
+        if cache_key in _RESULT_CACHE:
+            _RESULT_CACHE.pop(cache_key, None)
         _RESULT_CACHE[cache_key] = result
+        while len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
+            _RESULT_CACHE.popitem(last=False)
     return result

@@ -37,8 +37,10 @@ from general_indication_relevance import (
     MATCH_CURATED_ASSIST_FALLBACK,
     build_indication_profile,
     corpus_texts_from_records,
+    score_record_relevance,
     score_record_relevance_hybrid,
 )
+from stage5_funnel_config import resolve_exploratory_budget, STAGE5_PRESCREEN_DEFAULT_MODE
 
 # Embedding/vector-search infrastructure is optional at import time. Step 5
 # must never crash because the `openai` package is missing, misconfigured,
@@ -543,6 +545,12 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                     "Detected_Indications", "detected_indications",
                     "Indication", "indication", "Disease", "disease", "Condition", "condition",
                 ]),
+                # Keep the user's requested context separate so the Stage-5
+                # pre-screen can detect legacy rows where a requested query was
+                # persisted as if it were a source-reported study indication.
+                "requested_target_indication": _pick_from_row(engine, row, [
+                    "Requested_Target_Indication", "requested_target_indication",
+                ]),
                 # Direct vs indirect evidence fix: the record's OWN reported
                 # outcome (what the study actually found/measured) is kept
                 # separate from its mechanism/target ANNOTATION (what
@@ -753,6 +761,147 @@ def _preparation_applicability(record: dict | None, selected_dosage_form: str) -
         return "Mismatch", [f"Selected dosage form '{selected_dosage_form}' differs from reported preparation '{record.get('preparation')}'"]
     return "Unknown", ["Reported preparation could not be mapped to selected dosage form"]
 
+
+def _catalogue_prescreen_before_expensive_loop(
+    engine,
+    candidates: pd.DataFrame,
+    evidence_index: dict[str, list[dict]],
+    relevance_profile,
+    indication: str,
+    *,
+    exploratory_budget: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Cheap, high-recall catalogue funnel executed BEFORE per-plant work.
+
+    It uses only the already-built evidence index plus the deterministic
+    indication relevance engine.  It deliberately does not call safety
+    extraction, normalization, validation, applicability, scientific scoring,
+    market enrichment, or any LLM.  Strong direct positive *or negative/null*
+    indication evidence is mandatory because direction does not affect the
+    directness predicate.  Stage-2 novel candidates are also mandatory.
+    """
+    if not isinstance(candidates, pd.DataFrame) or candidates.empty:
+        return candidates, pd.DataFrame()
+
+    budget = resolve_exploratory_budget(
+        STAGE5_PRESCREEN_DEFAULT_MODE, override=exploratory_budget
+    )
+    assist_family = _resolve_indication_terms(indication)
+    assist_terms = tuple(dict.fromkeys((*assist_family[0], *assist_family[1]))) if assist_family else ()
+
+    direct_types = {MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP}
+    rows = []
+    for idx, item in candidates.iterrows():
+        plant = _pick_from_row(engine, item, ["Scientific_Name", "Alternative_Plant", "Plant"])
+        key = _norm(plant)
+        records = evidence_index.get(key, []) if key else []
+        best_score = 0.0
+        has_direct = False
+        direct_count = 0
+        matched_count = 0
+        for rec in records:
+            match = score_record_relevance(
+                relevance_profile,
+                rec.get("tier1_text", ""),
+                rec.get("tier2_text", ""),
+                rec.get("tier3_text", ""),
+                assist_terms,
+                outcome_text=rec.get("outcome_text", ""),
+            )
+            # Legacy ingestion could persist the user's requested indication
+            # into Target_Indication.  Such a context stamp must not make every
+            # catalogue plant "mandatory".  Require independent source-text /
+            # outcome/mechanism corroboration when the tier-1 value is exactly
+            # the requested context.
+            source_match = score_record_relevance(
+                relevance_profile,
+                "",
+                rec.get("tier2_text", ""),
+                rec.get("tier3_text", ""),
+                assist_terms,
+                outcome_text=rec.get("outcome_text", ""),
+            )
+            requested = _norm(rec.get("requested_target_indication", ""))
+            tier1 = _norm(rec.get("tier1_text", ""))
+            suspect_context_stamp = bool(
+                requested and tier1 and requested == tier1
+                and float(getattr(source_match, "score", 0.0) or 0.0) <= 0.0
+            )
+            effective_match = source_match if suspect_context_stamp else match
+            effective_score = float(getattr(effective_match, "score", 0.0) or 0.0)
+            best_score = max(best_score, effective_score)
+            if (not suspect_context_stamp) and getattr(match, "match_type", None) in direct_types:
+                has_direct = True
+                direct_count += 1
+            if effective_score > 0:
+                matched_count += 1
+
+        origin = str(item.get("candidate_origin", "") or "").strip().lower()
+        already_in_supabase = item.get("already_in_supabase", True)
+        is_stage2_novel = (already_in_supabase is False) or any(
+            token in origin for token in ("literature", "stage2", "discovered", "novel", "external")
+        )
+        rows.append({
+            "_index": idx,
+            "Alternative_Plant": str(plant or ""),
+            "has_direct": has_direct,
+            "direct_count": direct_count,
+            "matched_count": matched_count,
+            "record_count": len(records),
+            "best_relevance": best_score,
+            "is_stage2_novel": bool(is_stage2_novel),
+        })
+
+    mandatory = [r for r in rows if r["has_direct"] or r["is_stage2_novel"]]
+    exploratory = [r for r in rows if not (r["has_direct"] or r["is_stage2_novel"]) and r["best_relevance"] > 0]
+    exploratory.sort(
+        key=lambda r: (r["best_relevance"], r["matched_count"], r["record_count"], r["Alternative_Plant"]),
+        reverse=True,
+    )
+    kept_exploratory = exploratory[:budget]
+    retained_indexes = {r["_index"] for r in mandatory + kept_exploratory}
+
+    # Defensive high-recall floor: if the corpus/profile is exceptionally
+    # sparse and produced fewer than the configured pool, retain the best
+    # evidence-bearing candidates by record count rather than returning an
+    # implausibly tiny universe.  This is deterministic and order-independent.
+    if len(retained_indexes) < min(budget, len(rows)):
+        remaining = [r for r in rows if r["_index"] not in retained_indexes and r["record_count"] > 0]
+        remaining.sort(key=lambda r: (r["record_count"], r["Alternative_Plant"]), reverse=True)
+        for r in remaining[: max(0, budget - len(retained_indexes))]:
+            retained_indexes.add(r["_index"])
+
+    retained = candidates.loc[candidates.index.isin(retained_indexes)].copy()
+    audit = pd.DataFrame([
+        {
+            "Alternative_Plant": r["Alternative_Plant"],
+            "PreScreen_Status": "SENT_TO_FULL_SCORING" if r["_index"] in retained_indexes else "PRESCREENED_OUT",
+            "PreScreen_Reason": (
+                "STAGE2_NOVEL" if r["is_stage2_novel"] else
+                "DIRECT_INDICATION_EVIDENCE" if r["has_direct"] else
+                "EXPLORATORY_RELEVANCE" if r["_index"] in retained_indexes else
+                "NO_OR_LOW_INDICATION_SIGNAL"
+            ),
+            "Best_Indication_Relevance": r["best_relevance"],
+            "Direct_Evidence_Record_Count": r["direct_count"],
+            "Evidence_Record_Count": r["record_count"],
+        }
+        for r in rows
+    ])
+
+    mandatory_count = len(mandatory)
+    if rows and mandatory_count > len(rows) * 0.5:
+        _perf(
+            "WARNING: catalogue prescreen mandatory classification is unexpectedly broad "
+            f"mandatory={mandatory_count}/{len(rows)}"
+        )
+    _perf(
+        "Stage5 catalogue prescreen done "
+        f"catalogue_plants={len(rows)} mandatory_direct_or_novel={mandatory_count} "
+        f"exploratory_selected={len(kept_exploratory)} retained_total={len(retained)} budget={budget}"
+    )
+    return retained, audit
+
 def discover_indication_candidates(
     engine, indication: str, dosage_form: str = "", market: str = "",
     product_type: str = "", progress_callback=None, target_context=None,
@@ -831,6 +980,29 @@ def discover_indication_candidates(
     assist_terms: tuple[str, ...] = tuple(dict.fromkeys(
         (*assist_family[0], *assist_family[1])
     )) if assist_family else ()
+
+    # TRUE Stage-5 catalogue funnel: reduce the candidate plant set before
+    # any expensive per-plant safety/normalization/validation/scientific work.
+    _t_prescreen = time.perf_counter()
+    original_candidate_count = len(candidates)
+    candidates, prescreen_audit = _catalogue_prescreen_before_expensive_loop(
+        engine, candidates, evidence_index, relevance_profile, indication,
+    )
+    try:
+        engine.stage5_prescreen_audit_df = prescreen_audit
+        engine.stage5_prescreen_retained_plants = list(candidates.get("Scientific_Name", []))
+    except Exception:
+        pass
+    _perf(
+        f"Stage5 catalogue prescreen start input_plants={original_candidate_count}; "
+        f"done retained_plants={len(candidates)} elapsed={time.perf_counter() - _t_prescreen:.3f}"
+    )
+    _progress(
+        "catalogue_prescreen", len(candidates), original_candidate_count,
+        f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
+    )
+    if candidates.empty:
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
 
     # --- Embedding: query embedded ONCE per run, vector search called ONCE
     # per run (never once per plant, never once per record). Both steps are

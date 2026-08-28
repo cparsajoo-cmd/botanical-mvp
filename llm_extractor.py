@@ -9,6 +9,7 @@ import json
 # ``llm_extractor.get_openai_client`` by attribute assignment; keeping the
 # name bound at module level here preserves that exact pattern unchanged.
 from llm_client import get_openai_client  # noqa: F401
+import llm_client
 
 
 
@@ -182,7 +183,6 @@ EVIDENCE_SCHEMA = {
 
 
 def extract_evidence_with_llm(record, selected_dosage_form="", selected_indication=""):
-    client = get_openai_client()
 
     text = (
         f"Title: {record.get('Source_Title', '')}\n\n"
@@ -255,23 +255,16 @@ Yes only if the text clearly mentions EMA, HMPC, WHO monograph, or ESCOP.
 Otherwise No.
 """
 
-    response = client.responses.create(
-        model=(os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip(),
-        input=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "botanical_evidence_extraction",
-                "schema": EVIDENCE_SCHEMA,
-                "strict": True,
-            }
-        },
+    extracted = llm_client.call_structured_json(
+        system_prompt=system_prompt,
+        user_content=text,
+        schema=EVIDENCE_SCHEMA,
+        schema_name="botanical_evidence_extraction",
+        task="evidence_extraction",
+        schema_version="evidence-extraction-v2",
+        temperature=0,
+        client_factory=get_openai_client,
     )
-
-    extracted = json.loads(response.output_text)
     return _normalize_transferability_extraction(extracted, text)
 
 # ---------------------------------------------------------------------------
@@ -401,7 +394,6 @@ def extract_gate_assertions_with_llm(record, candidate_context=""):
     policy.  This separation prevents prompt/model changes from directly
     redefining NO-GO policy.
     """
-    client = get_openai_client()
     title = str(record.get("Source_Title") or record.get("title") or "")
     body = str(record.get("Notes") or record.get("text") or record.get("assertion_text") or "")
     source_text = body
@@ -478,38 +470,14 @@ Critical rules:
     the record genuinely contains both.
 """
 
-    # Use the project's already-working evidence model as the safe default.
-    # OPENAI_GATE_MODEL is optional; if it is stale/invalid, retry exactly once
-    # with OPENAI_MODEL (or the legacy project default). This keeps a bad gate
-    # model secret from breaking a bounded shadow/backfill run.
-    project_model = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
-    gate_model = (os.getenv("OPENAI_GATE_MODEL") or "").strip() or project_model
-
-    request_kwargs = {
-        "input": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": source_text},
-        ],
-        "temperature": 0,
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "botanical_gate_assertions",
-                "schema": GATE_ASSERTION_SCHEMA,
-                "strict": True,
-            }
-        },
-    }
-
-    try:
-        response = client.responses.create(model=gate_model, **request_kwargs)
-    except Exception as exc:
-        # Only fall back for a model-name/access failure. Schema/prompt/auth/rate
-        # errors must remain visible rather than being disguised by a retry.
-        message = str(exc).lower()
-        model_error = "model_not_found" in message or "does not exist" in message
-        if not model_error or gate_model == project_model:
-            raise
-        response = client.responses.create(model=project_model, **request_kwargs)
-
-    return json.loads(response.output_text)
+    return llm_client.call_structured_json(
+        system_prompt=system_prompt,
+        user_content=source_text,
+        schema=GATE_ASSERTION_SCHEMA,
+        schema_name="botanical_gate_assertions",
+        task="semantic_gate_extraction",
+        model_env_var="OPENAI_GATE_MODEL",
+        schema_version="gate-assertions-v2",
+        temperature=0,
+        client_factory=get_openai_client,
+    )

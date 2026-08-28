@@ -89,8 +89,13 @@ class _TaskStats:
 
 
 class AIRunTracker:
-    def __init__(self, run_id: Optional[str] = None):
+    def __init__(self, run_id: Optional[str] = None, *, managed_run: bool = False):
         self.run_id = run_id or uuid.uuid4().hex[:12]
+        # True only for an explicitly started Stage 2/Stage 5 (or other
+        # governed) run.  Implicit trackers keep direct library/test calls
+        # observable without leaking a circuit-breaker failure into unrelated
+        # later calls that happen to share the same Python context.
+        self.managed_run = bool(managed_run)
         self._tasks: dict[str, _TaskStats] = {}
         self._limits: dict[str, int] = {}
         self.breaker_tripped = False
@@ -202,12 +207,24 @@ _tracker_var: contextvars.ContextVar[Optional[AIRunTracker]] = contextvars.Conte
 def get_ai_run_tracker() -> AIRunTracker:
     tracker = _tracker_var.get()
     if tracker is None:
-        tracker = AIRunTracker()
+        tracker = AIRunTracker(managed_run=False)
         _tracker_var.set(tracker)
     return tracker
 
 
 def start_new_ai_run(run_id: Optional[str] = None) -> AIRunTracker:
-    tracker = AIRunTracker(run_id)
+    tracker = AIRunTracker(run_id, managed_run=True)
+    _tracker_var.set(tracker)
+    return tracker
+
+
+def reset_ai_run_context() -> AIRunTracker:
+    """Reset the current context to an *implicit*, unmanaged tracker.
+
+    Intended for test/library boundaries that deliberately clear LLM caches.
+    Interactive Stage 2/Stage 5 code should use :func:`start_new_ai_run` so
+    quota/auth failures trip a circuit breaker for that explicit run.
+    """
+    tracker = AIRunTracker(managed_run=False)
     _tracker_var.set(tracker)
     return tracker

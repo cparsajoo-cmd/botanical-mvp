@@ -1921,6 +1921,7 @@ def render_rd_candidates_step(inputs):
                         retrieval_coverage_by_plant=_get_step2_retrieval_coverage(
                             indication=indication, market=market
                         ),
+                        enable_stage5_prescreen=(discovery_mode == "indication"),
                     )
                     _perf(
                         f"engine.run() done rows={0 if result_df is None else len(result_df)} "

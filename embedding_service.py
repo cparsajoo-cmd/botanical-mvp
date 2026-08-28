@@ -236,8 +236,13 @@ def embed_query(
         return None
     text = _truncate_to_token_limit(text, label="query")
 
+    # Cache only calls using the production-owned client.  An explicitly
+    # injected client is a test/admin boundary and must exercise that client
+    # on every invocation; otherwise a prior production/test cache entry can
+    # mask failures, wrong dimensions, or timeout plumbing.
+    use_query_cache = client is None
     cache_key = _query_cache_key(text, model)
-    if cache_key in _QUERY_EMBEDDING_CACHE:
+    if use_query_cache and cache_key in _QUERY_EMBEDDING_CACHE:
         get_ai_run_tracker().record_call(TASK_EMBEDDING_QUERY, cached=True, success=True)
         return list(_QUERY_EMBEDDING_CACHE[cache_key])
 
@@ -276,7 +281,8 @@ def embed_query(
             )
             return None
         vector_list = list(vector)
-        _QUERY_EMBEDDING_CACHE[cache_key] = vector_list
+        if use_query_cache:
+            _QUERY_EMBEDDING_CACHE[cache_key] = vector_list
         tracker.record_call(
             TASK_EMBEDDING_QUERY, cached=False, success=True,
             elapsed_seconds=time.monotonic() - _t0,
@@ -288,7 +294,7 @@ def embed_query(
             TASK_EMBEDDING_QUERY, cached=False, success=False,
             elapsed_seconds=time.monotonic() - _t0, error_category=error_category,
         )
-        if error_category in BREAKER_TRIPPING_CATEGORIES:
+        if tracker.managed_run and error_category in BREAKER_TRIPPING_CATEGORIES:
             tracker.trip_breaker(error_category, str(exc))
         print(f"[embedding_service] embed_query failed, falling back to lexical engine: {exc}")
         return None

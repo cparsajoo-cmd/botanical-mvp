@@ -905,6 +905,7 @@ def _catalogue_prescreen_before_expensive_loop(
 def discover_indication_candidates(
     engine, indication: str, dosage_form: str = "", market: str = "",
     product_type: str = "", progress_callback=None, target_context=None,
+    enable_catalogue_prescreen: bool = False,
 ) -> pd.DataFrame:
     """Return OUTPUT_COLUMNS-compatible rows using plant-specific evidence.
 
@@ -983,26 +984,30 @@ def discover_indication_candidates(
 
     # TRUE Stage-5 catalogue funnel: reduce the candidate plant set before
     # any expensive per-plant safety/normalization/validation/scientific work.
-    _t_prescreen = time.perf_counter()
-    original_candidate_count = len(candidates)
-    candidates, prescreen_audit = _catalogue_prescreen_before_expensive_loop(
-        engine, candidates, evidence_index, relevance_profile, indication,
-    )
-    try:
-        engine.stage5_prescreen_audit_df = prescreen_audit
-        engine.stage5_prescreen_retained_plants = list(candidates.get("Scientific_Name", []))
-    except Exception:
-        pass
-    _perf(
-        f"Stage5 catalogue prescreen start input_plants={original_candidate_count}; "
-        f"done retained_plants={len(candidates)} elapsed={time.perf_counter() - _t_prescreen:.3f}"
-    )
-    _progress(
-        "catalogue_prescreen", len(candidates), original_candidate_count,
-        f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
-    )
-    if candidates.empty:
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
+    # This is deliberately opt-in so the public discovery helper retains its
+    # historical full-universe semantics for direct/library callers and tests;
+    # the interactive Stage 5 engine enables it explicitly.
+    if enable_catalogue_prescreen:
+        _t_prescreen = time.perf_counter()
+        original_candidate_count = len(candidates)
+        candidates, prescreen_audit = _catalogue_prescreen_before_expensive_loop(
+            engine, candidates, evidence_index, relevance_profile, indication,
+        )
+        try:
+            engine.stage5_prescreen_audit_df = prescreen_audit
+            engine.stage5_prescreen_retained_plants = list(candidates.get("Scientific_Name", []))
+        except Exception:
+            pass
+        _perf(
+            f"Stage5 catalogue prescreen start input_plants={original_candidate_count}; "
+            f"done retained_plants={len(candidates)} elapsed={time.perf_counter() - _t_prescreen:.3f}"
+        )
+        _progress(
+            "catalogue_prescreen", len(candidates), original_candidate_count,
+            f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
+        )
+        if candidates.empty:
+            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
 
     # --- Embedding: query embedded ONCE per run, vector search called ONCE
     # per run (never once per plant, never once per record). Both steps are

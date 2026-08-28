@@ -50,6 +50,7 @@ from ai_usage_telemetry import (
     BREAKER_TRIPPING_CATEGORIES,
     classify_llm_error,
     get_ai_run_tracker,
+    reset_ai_run_context,
 )
 
 
@@ -209,6 +210,12 @@ def clear_cache() -> None:
     (see call_structured_json) is the normal way to invalidate a cache
     entry."""
     _RESULT_CACHE.clear()
+    # clear_cache() is primarily a test/library-boundary helper. Reset to an
+    # implicit unmanaged tracker as well so an auth/quota failure deliberately
+    # triggered by one isolated test/call cannot poison a later unrelated call
+    # in the same Python context. Real Stage 2/Stage 5 runs explicitly call
+    # start_new_ai_run(), so their circuit breaker semantics are unchanged.
+    reset_ai_run_context()
 
 
 def call_structured_json(
@@ -382,7 +389,7 @@ def call_structured_json(
             elapsed_seconds=time.monotonic() - _call_started,
             retries=_retry_count[0], error_category=error_category,
         )
-        if error_category in BREAKER_TRIPPING_CATEGORIES:
+        if tracker.managed_run and error_category in BREAKER_TRIPPING_CATEGORIES:
             tracker.trip_breaker(error_category, str(exc))
         raise
 

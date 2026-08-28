@@ -146,7 +146,8 @@ def collect_pubmed_evidence(
     dosage_form,
     market="European Union",
     max_results=10,
-    save=True
+    save=True,
+    allow_llm=True,
 ):
     query_plan = build_pubmed_query_plan(
         scientific_name=scientific_name,
@@ -251,7 +252,8 @@ def collect_pubmed_evidence(
                 "source_url": article["Source_URL"],
                 "source_organization": "NCBI PubMed",
                 "source_year": article.get("Year", ""),
-            }
+            },
+            allow_llm=allow_llm,
         )
 
         row_id = None

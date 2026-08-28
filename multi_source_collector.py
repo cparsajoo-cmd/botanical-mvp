@@ -182,6 +182,7 @@ def _save_records_from_connector(records, source_config, save=True):
                     "source_organization": record.get("Source_Organization", source_name),
                     "source_year": record.get("Source_Year", ""),
                 },
+                allow_llm=False,  # Stage 2 retrieval must not block on AI enrichment
             )
 
             row_id = None
@@ -273,6 +274,7 @@ def _run_one_source_impl(
                 market=market,
                 max_results=pubmed_max_results,
                 save=worker_save,
+                allow_llm=False,  # Stage 2 retrieval stays deterministic and bounded
             )
 
             if worker_save:

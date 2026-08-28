@@ -12,7 +12,7 @@ except Exception:
     extract_gate_assertions_with_llm = None
 
 
-def standardize_extracted_record(extracted, source_metadata):
+def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
     record = extracted.copy()
 
     record["Source_Type"] = source_metadata.get("source_type", record.get("Source_Type", ""))
@@ -99,7 +99,7 @@ def standardize_extracted_record(extracted, source_metadata):
         for field in ("Preparation", "Administration_Route", "Dose", "Plant_Part")
     )
 
-    if extract_evidence_with_llm is not None and (
+    if allow_llm and extract_evidence_with_llm is not None and (
         not already_has_reliable_evidence_level
         or needs_structured_assertion
         or needs_transferability_context
@@ -239,7 +239,7 @@ def standardize_extracted_record(extracted, source_metadata):
     _semantic_gate_enabled = str(os.getenv("ENABLE_SEMANTIC_GATE_EXTRACTION", "true")).strip().lower() in {
         "1", "true", "yes", "on"
     }
-    if _semantic_gate_enabled and extract_gate_assertions_with_llm is not None:
+    if allow_llm and _semantic_gate_enabled and extract_gate_assertions_with_llm is not None:
         try:
             _gate_payload = extract_gate_assertions_with_llm(
                 normalized,

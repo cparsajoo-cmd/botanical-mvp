@@ -226,7 +226,7 @@ def _save_records_from_connector(records, source_config, save=True):
     return saved_records, errors
 
 
-def _run_one_source(
+def _run_one_source_impl(
     source_config,
     scientific_name,
     indication,
@@ -340,6 +340,67 @@ def _run_one_source(
             "plant": scientific_name,
             "error": str(e),
         }]
+
+
+
+def _run_one_source(
+    source_config,
+    scientific_name,
+    indication,
+    dosage_form,
+    market,
+    max_pubmed_results,
+    save,
+    max_results_override=None,
+    defer_persistence=False,
+):
+    """Thin observability wrapper around the existing source worker.
+
+    IMPORTANT: this wrapper does not change retrieval, filtering, persistence,
+    retry, timeout, or scoring behavior.  It only emits one production log line
+    per source so Stage 2 failures can be attributed to a concrete connector.
+    """
+    source_name = source_config.get("name", "unknown")
+    started = time.monotonic()
+    try:
+        records, errors = _run_one_source_impl(
+            source_config=source_config,
+            scientific_name=scientific_name,
+            indication=indication,
+            dosage_form=dosage_form,
+            market=market,
+            max_pubmed_results=max_pubmed_results,
+            save=save,
+            max_results_override=max_results_override,
+            defer_persistence=defer_persistence,
+        )
+        elapsed = time.monotonic() - started
+        records = records or []
+        errors = errors or []
+        status = "completed_with_errors" if errors else "completed"
+        print(
+            f"[STAGE2_SOURCE] plant={scientific_name!r} source={source_name!r} "
+            f"status={status} elapsed={elapsed:.3f}s "
+            f"records_prepared={len(records)} worker_errors={len(errors)}",
+            flush=True,
+        )
+        if errors:
+            first_error = str(errors[0].get("error", ""))[:300]
+            print(
+                f"[STAGE2_SOURCE_ERROR] plant={scientific_name!r} "
+                f"source={source_name!r} error={first_error!r}",
+                flush=True,
+            )
+        return records, errors
+    except Exception as exc:
+        elapsed = time.monotonic() - started
+        print(
+            f"[STAGE2_SOURCE] plant={scientific_name!r} source={source_name!r} "
+            f"status=wrapper_exception elapsed={elapsed:.3f}s "
+            f"error={type(exc).__name__ + ': ' + str(exc)!r}",
+            flush=True,
+        )
+        raise
 
 
 
@@ -458,6 +519,8 @@ def collect_multi_source_evidence(
     executor = ThreadPoolExecutor(max_workers=max(1, len(enabled_sources)))
     try:
         future_map = {}
+        future_started_at = {}
+        collection_started_at = time.monotonic()
 
         # Small stagger between submissions: launching all N sources in the
         # exact same instant (0.15s apart here, so ~2s to launch 15) sends a
@@ -491,6 +554,13 @@ def collect_multi_source_evidence(
                 True,  # defer_persistence: timed source workers never write directly
             )
             future_map[future] = source_config
+            future_started_at[future] = time.monotonic()
+
+        print(
+            f"[STAGE2_PLANT] plant={scientific_name!r} status=sources_submitted "
+            f"source_count={len(enabled_sources)} budget={TOTAL_TIME_BUDGET}s",
+            flush=True,
+        )
 
         try:
             for future in as_completed(future_map, timeout=TOTAL_TIME_BUDGET):
@@ -511,6 +581,14 @@ def collect_multi_source_evidence(
                     saved_records.extend(committed_records)
                     errors.extend(worker_errors)
                     errors.extend(commit_errors)
+                    elapsed_since_submit = time.monotonic() - future_started_at.get(future, collection_started_at)
+                    print(
+                        f"[STAGE2_SOURCE_COMMIT] plant={scientific_name!r} source={source_name!r} "
+                        f"elapsed_since_submit={elapsed_since_submit:.3f}s "
+                        f"prepared={len(prepared_records or [])} committed={len(committed_records)} "
+                        f"worker_errors={len(worker_errors or [])} commit_errors={len(commit_errors or [])}",
+                        flush=True,
+                    )
 
                 except Exception as e:
                     errors.append({
@@ -527,9 +605,26 @@ def collect_multi_source_evidence(
             # whatever succeeded so far, instead of blocking the whole
             # Step 2 page indefinitely on one slow/rate-limited source.
             finished = {f for f in future_map if f.done()}
+            plant_elapsed = time.monotonic() - collection_started_at
+            pending_names = [
+                source_config["name"]
+                for future, source_config in future_map.items()
+                if future not in finished
+            ]
+            print(
+                f"[STAGE2_PLANT_TIMEOUT] plant={scientific_name!r} elapsed={plant_elapsed:.3f}s "
+                f"finished={len(finished)}/{len(future_map)} pending_sources={pending_names!r}",
+                flush=True,
+            )
             for future, source_config in future_map.items():
                 if future not in finished:
                     source_name = source_config["name"]
+                    elapsed_since_submit = time.monotonic() - future_started_at.get(future, collection_started_at)
+                    print(
+                        f"[STAGE2_SOURCE_TIMEOUT] plant={scientific_name!r} source={source_name!r} "
+                        f"elapsed_since_submit={elapsed_since_submit:.3f}s overall_budget={TOTAL_TIME_BUDGET}s",
+                        flush=True,
+                    )
                     errors.append({
                         "source": source_name,
                         "plant": scientific_name,
@@ -542,6 +637,14 @@ def collect_multi_source_evidence(
         # only completed futures are committed above. See the same pattern in
         # Bulk_Evidence.py's _fast_retry_sources for the full reasoning.
         executor.shutdown(wait=False, cancel_futures=True)
+
+    total_elapsed = time.monotonic() - collection_started_at
+    print(
+        f"[STAGE2_PLANT_DONE] plant={scientific_name!r} elapsed={total_elapsed:.3f}s "
+        f"saved_records={len(saved_records)} errors={len(errors)} "
+        f"source_count={len(sources_checked)}",
+        flush=True,
+    )
 
     return {
         "saved_records": saved_records,

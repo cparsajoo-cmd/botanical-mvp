@@ -67,6 +67,7 @@ def _reconcile_final_decision_status(row) -> str:
     conflict = clean("Evidence_Conflict_Level").upper()
     confidence = clean("Scientific_Evidence_Confidence").upper()
     indication_mode = clean("Indication_Evidence_Mode")
+    safety_text = clean("Safety_Flags").lower()
     direct_count_text = clean("Direct_Indication_Evidence_Count")
     adjudication_count_text = clean("Evidence_Adjudication_Evidence_Count")
     try:
@@ -82,6 +83,15 @@ def _reconcile_final_decision_status(row) -> str:
         return "NO GO SAFETY"
     if decision_class.startswith("G") or gate.startswith("failed"):
         return "INSUFFICIENT EVIDENCE"
+    # A serious but non-hard-stop safety signal may remain a viable research
+    # question, but it must not be rendered as GO/GO WITH CAUTION.  Hard stops
+    # are handled above; these signals require explicit expert safety review.
+    severe_safety_terms = (
+        "hepatotoxic", "liver injury", "nephrotoxic", "kidney injury",
+        "teratogenic", "fatal", "seizure", "major bleeding", "anaphylaxis",
+    )
+    if any(term in safety_text for term in severe_safety_terms):
+        return "EXPERT REVIEW REQUIRED"
     if prep == "incompatible":
         return "EXPERT REVIEW REQUIRED"
     if decision_class.startswith(("D", "F")) or gate == "passed_indirect_exploratory_only":

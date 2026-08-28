@@ -738,6 +738,65 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
     return out
 
 
+def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_items: Sequence[dict]) -> dict:
+    """Conservatively calibrate AI strength/confidence to the supplied body.
+
+    The model may summarize direction, but labels such as STRONG/HIGH are
+    claims about the *body of evidence*.  They therefore require a minimum
+    amount of independent, direct human evidence and more than one high-level
+    clinical source.  This rule is indication-, species-, and dosage-form-
+    agnostic and only caps overconfident labels; it never upgrades them.
+    """
+    out = dict(structured)
+    human_items = [i for i in evidence_items if i.get("human_animal_in_vitro") == "HUMAN"]
+    direct_human = [i for i in human_items if i.get("indication_match_strength") == "DIRECT"]
+
+    def hierarchy(item: Mapping[str, Any]) -> str:
+        text = " ".join(str(item.get(k) or "") for k in ("study_model", "study_type_design"))
+        return classify_evidence_hierarchy(text) or ""
+
+    high_level = [
+        i for i in direct_human
+        if hierarchy(i) in {"Systematic review / meta-analysis", "Clinical trial"}
+    ]
+    direct_n = len({_clean(i.get("evidence_id")) for i in direct_human if _clean(i.get("evidence_id"))})
+    high_n = len({_clean(i.get("evidence_id")) for i in high_level if _clean(i.get("evidence_id"))})
+
+    strength = str(out.get("Human_Evidence_Strength") or "UNKNOWN").upper()
+    rank = {"NONE": 0, "WEAK": 1, "MODERATE": 2, "STRONG": 3, "UNKNOWN": -1}
+    # One direct human record is a signal, not a strong evidence body. Two or
+    # three independent records can support MODERATE; STRONG requires at least
+    # four direct human records including at least two clinical-trial/meta-
+    # analytic records.  A single systematic review is still represented by
+    # its own record rather than being silently expanded into unseen studies.
+    if direct_n == 0:
+        cap = "NONE"
+    elif direct_n == 1:
+        cap = "WEAK"
+    elif direct_n < 4 or high_n < 2:
+        cap = "MODERATE"
+    else:
+        cap = "STRONG"
+    if strength == "UNKNOWN" or rank.get(strength, -1) > rank[cap]:
+        out["Human_Evidence_Strength"] = cap
+
+    conflict = str(out.get("Evidence_Conflict_Level") or "UNKNOWN").upper()
+    confidence = str(out.get("Scientific_Evidence_Confidence") or "UNKNOWN").upper()
+    calibrated_strength = str(out.get("Human_Evidence_Strength") or "UNKNOWN").upper()
+    # HIGH confidence is reserved for a genuinely strong, internally coherent
+    # human body.  Otherwise cap it at MODERATE (or LOW where evidence is weak).
+    if calibrated_strength in {"NONE", "WEAK", "UNKNOWN"}:
+        conf_cap = "LOW"
+    elif calibrated_strength == "MODERATE" or conflict in {"MODERATE", "HIGH", "UNKNOWN"}:
+        conf_cap = "MODERATE"
+    else:
+        conf_cap = "HIGH"
+    conf_rank = {"VERY_LOW": 0, "LOW": 1, "MODERATE": 2, "HIGH": 3, "UNKNOWN": -1}
+    if confidence == "UNKNOWN" or conf_rank.get(confidence, -1) > conf_rank[conf_cap]:
+        out["Scientific_Evidence_Confidence"] = conf_cap
+    return out
+
+
 def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
     """Used whenever the AI path is disabled, unavailable, or returns
     something invalid (part 16). A simple, transparent tally over the
@@ -980,6 +1039,7 @@ def adjudicate_candidate(
                 fallback_reason = "INVALID_SCHEMA"
             else:
                 structured = _enforce_bundle_consistency(validated, evidence_items)
+                structured = _calibrate_ai_evidence_strength(structured, evidence_items)
                 status = ADJUDICATION_STATUS_OK
 
     if status in (ADJUDICATION_STATUS_UNAVAILABLE, ADJUDICATION_STATUS_INVALID):

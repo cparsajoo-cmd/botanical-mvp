@@ -24,7 +24,8 @@ _ADVERSE_PATTERNS = (
     r"\bcontraindicat(?:ed|ion|ions)\b", r"\bseizure(?:s)?\b", r"\bhyphema\b",
 )
 _REASSURANCE_PATTERNS = (
-    r"\bwell tolerated\b", r"\bno serious adverse (?:event|events|reaction|reactions)\b",
+    r"\bwell tolerated\b", r"\bno adverse (?:event|events|reaction|reactions|effect|effects)\b",
+    r"\bno serious adverse (?:event|events|reaction|reactions)\b",
     r"\bno severe adverse (?:event|events|reaction|reactions)\b",
     r"\bno treatment-related adverse (?:event|events)\b",
     r"\bno clinically significant adverse (?:event|events|effect|effects)\b",
@@ -53,6 +54,8 @@ _COMPARATOR_NOISE = (
 )
 _PROTECTIVE_OR_NEGATED = (
     "protects against", "protected against", "protective impact", "protective impacts",
+    "therapeutic effects against", "effects against many ailments",
+    "used to treat", "used for treatment", "traditionally used for",
     "protective effect", "protective effects", "protection against",
     "prevented liver injury", "reduced liver injury", "attenuated toxicity", "reduced toxicity",
     "ameliorated toxicity", "ameliorates toxicity", "anti-toxic", "not toxic", "non-toxic",

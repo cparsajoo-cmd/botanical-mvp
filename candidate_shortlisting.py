@@ -461,6 +461,46 @@ def _preparation_applicability_row(row: pd.Series, dosage_form: str) -> str:
 
     return PREP_COMPATIBLE_BUT_INDIRECT
 
+def _explicit_preparation_applicability_row(row: Mapping[str, Any], dosage_form: str) -> str:
+    """Preparation transferability from explicitly reported preparation only.
+
+    Unlike the legacy compatibility adapter used by calibrated scoring, this
+    reporting helper never converts a generic ``Compatible`` flag into a direct
+    preparation match.  It requires an actual Evidence_Preparation/Preparation/
+    Extraction_Method value.  This preserves historical scoring while keeping
+    Stage-6 preparation claims scientifically literal.
+    """
+    selected = _norm(dosage_form)
+    if not selected:
+        return PREP_NOT_REPORTED
+    evidence_preparation = _norm(row.get("Evidence_Preparation", ""))
+    if not evidence_preparation:
+        evidence_preparation = _norm(row.get("Preparation", ""))
+    if not evidence_preparation:
+        evidence_preparation = _norm(row.get("Extraction_Method", ""))
+    if not evidence_preparation:
+        return PREP_NOT_REPORTED
+    target_preparation = preparation_from_product_form(dosage_form)
+    if not target_preparation:
+        return PREP_NOT_REPORTED
+    target_norm = _norm(target_preparation)
+    if target_norm == evidence_preparation:
+        return PREP_DIRECT_MATCH
+    target_identity = canonical_preparation_identity(target_preparation)
+    evidence_identity = canonical_preparation_identity(evidence_preparation)
+    if target_identity and evidence_identity and target_identity == evidence_identity:
+        return PREP_DIRECT_MATCH
+    target_family = _preparation_family(target_norm)
+    evidence_family = _preparation_family(evidence_preparation)
+    if target_family and evidence_family:
+        # Different preparation families require translation/formulation work;
+        # they are not automatically biologically incompatible.  Reserve the
+        # hard INCOMPATIBLE label for the authoritative applicability engine's
+        # explicit MISMATCH result above.
+        return PREP_COMPATIBLE_BUT_INDIRECT
+    return PREP_COMPATIBLE_BUT_INDIRECT
+
+
 def _row_classification(row: pd.Series, dosage_form: str) -> tuple[str, list[str], dict[str, bool | str]]:
     direct = _has_direct_evidence(row)
     target = _has_supported_target(row)
@@ -2721,7 +2761,21 @@ def build_plant_candidate_shortlist(
                 for source_id in _split_values([r.get("Source_Record_IDs", "")])
                 if _norm(source_id)
             }
-            direct_evidence_count = len(direct_source_ids)
+            # Report DIRECT evidence from the same primary evidence tier that
+            # actually drives Scientific_Evidence_Score.  The old diagnostic
+            # counted every direct-looking record across all evidence tiers,
+            # including lower-tier projections that were deliberately excluded
+            # from scoring.  That could produce misleading counts such as
+            # dozens of "direct" records while the authoritative evidence body
+            # was much smaller.  This remains indication-agnostic: it is an
+            # evidence-lineage rule, not a disease-specific heuristic.
+            primary_source_ids = {
+                _norm(source_id)
+                for value in (sci_evidence.get("Scientific_Evidence_Source_Record_IDs") or [])
+                for source_id in _split_values([value])
+                if _norm(source_id)
+            }
+            direct_evidence_count = len(direct_source_ids & primary_source_ids)
             mechanistic_source_ids = {
                 _norm(source_id)
                 for _, r in group.iterrows()
@@ -2746,14 +2800,39 @@ def build_plant_candidate_shortlist(
         # infusion match.  Lower-tier rows may only provide an indirect hint
         # when the primary tier did not report preparation at all.
         primary_prep = str(sci_evidence.get("Dimension_Status", {}).get("preparation") or "").upper()
+        primary_source_ids_for_prep = {
+            _norm(source_id)
+            for value in (sci_evidence.get("Scientific_Evidence_Source_Record_IDs") or [])
+            for source_id in _split_values([value])
+            if _norm(source_id)
+        }
+        primary_rows_for_prep = []
+        for _, r in group.iterrows():
+            row_ids = {_norm(x) for x in _split_values([r.get("Source_Record_IDs", "")]) if _norm(x)}
+            if row_ids & primary_source_ids_for_prep:
+                primary_rows_for_prep.append(r)
+        explicit_primary_classes = {
+            _explicit_preparation_applicability_row(r, dosage_form)
+            for r in primary_rows_for_prep
+        }
+        # Scoring retains the calibrated legacy adapter, but the Stage-6 label
+        # "direct_match" is stricter: it requires an explicitly reported
+        # preparation in a primary-tier evidence record.  A generic legacy
+        # "Compatible" flag is transferability support, not proof that the
+        # studied preparation equals the requested product form.
         if primary_prep == "MATCH":
-            preparation_applicability_class = PREP_DIRECT_MATCH
+            if PREP_DIRECT_MATCH in explicit_primary_classes:
+                preparation_applicability_class = PREP_DIRECT_MATCH
+            elif PREP_INCOMPATIBLE in explicit_primary_classes:
+                preparation_applicability_class = PREP_INCOMPATIBLE
+            else:
+                preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
         elif primary_prep == "PARTIAL":
             preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
         elif primary_prep == "MISMATCH":
             preparation_applicability_class = PREP_INCOMPATIBLE
         else:
-            lower_classes = group.apply(lambda r: _preparation_applicability_row(r, dosage_form), axis=1)
+            lower_classes = group.apply(lambda r: _explicit_preparation_applicability_row(r, dosage_form), axis=1)
             if PREP_INCOMPATIBLE in set(lower_classes.values):
                 preparation_applicability_class = PREP_INCOMPATIBLE
             elif PREP_DIRECT_MATCH in set(lower_classes.values) or PREP_COMPATIBLE_BUT_INDIRECT in set(lower_classes.values):

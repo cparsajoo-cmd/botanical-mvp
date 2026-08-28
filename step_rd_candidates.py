@@ -1307,36 +1307,32 @@ def _recommendation_block(result_df, report_ready_df=None):
                 ]
 
         # Stage 6 is a presentation/decision boundary, not another scorer.
-        # Keep the authoritative Step 5 ordering, but do not label a
-        # mechanism-only / low-relevance hypothesis as "Recommended".
-        # The underlying rows remain visible in a separate exploratory
-        # bucket; nothing is deleted and no upstream score is rewritten.
-        if "Relevance_Gate_Result" in best_rows.columns:
-            _gate = best_rows["Relevance_Gate_Result"].fillna("").astype(str).str.strip()
-            _direct_idx = best_rows.index[_gate.eq("passed_direct")]
-            _exploratory_idx = best_rows.index[_gate.eq("passed_indirect_exploratory_only")]
-
-            # Direct relevance is mandatory for the primary recommendation.
-            # This closes the previous leak where every "Investigate" row,
-            # including low-relevance mechanistic hypotheses, appeared in
-            # the green Recommended table.
-            non_direct_recommended = recommended.index.difference(_direct_idx)
-            recommended = recommended.loc[recommended.index.intersection(_direct_idx)]
-
-            exploratory = best_rows.loc[best_rows.index.intersection(_exploratory_idx)]
-            # Preserve any other non-direct Investigate rows as exploratory
-            # rather than silently dropping them.
-            if len(non_direct_recommended):
-                exploratory = pd.concat([
-                    exploratory, best_rows.loc[best_rows.index.intersection(non_direct_recommended)]
-                ]).loc[lambda x: ~x.index.duplicated(keep="first")]
+        # Preserve the long-standing contract that both direct Shortlist rows
+        # and exploratory Investigate rows remain in the first
+        # "Recommended / worth validating" table.  The scientific distinction
+        # is explicit in Stage_6_Section instead of silently dropping the
+        # exploratory plant or moving it to a third dataframe.  This keeps the
+        # Phase-3 no-plant-disappears invariant while making it impossible to
+        # mistake indirect/mechanistic evidence for direct indication support.
+        recommended = recommended.copy()
+        if "Relevance_Gate_Result" in recommended.columns:
+            _gate = recommended["Relevance_Gate_Result"].fillna("").astype(str).str.strip()
+            recommended["Stage_6_Section"] = "Recommended — direct indication evidence"
+            recommended.loc[
+                _gate.eq("passed_indirect_exploratory_only"), "Stage_6_Section"
+            ] = "Exploratory — indirect/mechanistic evidence; direct validation needed"
+            recommended.loc[
+                ~_gate.isin(("passed_direct", "passed_indirect_exploratory_only")),
+                "Stage_6_Section",
+            ] = "Worth validating — relevance gate not explicitly classified"
         else:
             # Backward compatibility for old session-state frames created
             # before Relevance_Gate_Result was passed through the merge.
-            exploratory = best_rows.iloc[0:0]
+            recommended["Stage_6_Section"] = "Worth validating — legacy relevance status"
 
         display_cols = [
             col for col in [
+                "Stage_6_Section",
                 "Alternative_Plant",
                 "Supported_Targets_or_Mechanisms",
                 "Target_or_Mechanism",
@@ -1405,40 +1401,24 @@ def _recommendation_block(result_df, report_ready_df=None):
         )
         st.dataframe(recommended[display_cols].head(10), width="stretch")
 
-        # Keep the historical two-table Stage-6 contract while preserving the
-        # scientific distinction introduced by the direct-relevance gate.
-        # Exploratory hypotheses and weak/excluded candidates share one
-        # non-primary table, but carry an explicit Stage_6_Section label so
-        # they cannot be mistaken for one another or for recommendations.
-        non_primary_parts = []
-        if not exploratory.empty:
-            _exploratory_display = exploratory.copy()
-            _exploratory_display["Stage_6_Section"] = (
-                "Exploratory hypothesis — direct indication evidence still needed"
-            )
-            non_primary_parts.append(_exploratory_display)
-
+        # Historical Stage-6 contract: exactly two dataframes.  Exploratory
+        # Investigate rows stay in the first table with an explicit
+        # Stage_6_Section label; only Hold/No-Go / authoritative non-go rows
+        # appear here.
         if not weak.empty:
             _weak_display = weak.copy()
             _weak_display["Stage_6_Section"] = "Weak / not recommended"
-            non_primary_parts.append(_weak_display)
-
-        if non_primary_parts:
-            st.markdown("### 🟠 Exploratory / 🔴 weak candidates")
+            st.markdown("### 🔴 Weak / not recommended")
             st.caption(
-                "Exploratory hypotheses are retained for R&D ideation but lack the direct "
-                "indication evidence required for the primary recommendation. Weak/excluded "
-                "candidates remain visible with their rejection reason. Use `Stage_6_Section` "
-                "to distinguish the two groups."
+                "These candidates remain visible for auditability, with their rejection or "
+                "hold reason. They are not part of the worth-validating set above."
             )
-            non_primary = pd.concat(non_primary_parts, axis=0)
-            non_primary = non_primary.loc[~non_primary.index.duplicated(keep="first")]
-            _non_primary_cols = [
+            _weak_cols = [
                 c for c in ["Stage_6_Section"] + display_cols +
                 ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
-                if c in non_primary.columns
+                if c in _weak_display.columns
             ]
-            st.dataframe(non_primary[_non_primary_cols].head(20), width="stretch")
+            st.dataframe(_weak_display[_weak_cols].head(20), width="stretch")
         return
 
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:

@@ -2537,6 +2537,34 @@ def build_plant_candidate_shortlist(
     audit["Dosage_Form_Compatibility"] = dosage_values
     audit["Hard_Stop_Present"] = hard_values
     audit["Negative_Evidence_Present"] = negative_values
+
+    # Canonical row-level scientific context shared with downstream AI.
+    # These fields are deliberately derived with the *same* deterministic
+    # helpers used by the plant-level shortlist/count logic, so adjudication
+    # cannot silently reinterpret a row's human/non-human status or whether
+    # it actually measures an indication-specific outcome.
+    canonical_context = []
+    outcome_specific_direct = []
+    outcome_specific_human = []
+    for _, _row in audit.iterrows():
+        _human, _preclinical = _evidence_context_row(_row)
+        _ctx = "HUMAN" if _human else ("ANIMAL_OR_IN_VITRO" if _preclinical else "UNKNOWN")
+        canonical_context.append(_ctx)
+        if _group_has_authoritative_relevance(pd.DataFrame([_row])):
+            _is_direct = (
+                _row_authoritative_relevance(_row)[0] in _MATCH_STRONG
+                and _row_has_traceable_source(_row)
+                and _row_has_candidate_specific_empirical_support(_row)
+                and _row_has_indication_specific_outcome(_row, indication)
+                and not _row_is_inferred_or_generic(_row)
+            )
+        else:
+            _is_direct = bool(_row.get("Direct_Evidence_Present", False)) and _row_has_indication_specific_outcome(_row, indication)
+        outcome_specific_direct.append(bool(_is_direct))
+        outcome_specific_human.append(bool(_is_direct and _ctx == "HUMAN"))
+    audit["Canonical_Study_Context"] = canonical_context
+    audit["Outcome_Specific_Direct_Evidence"] = outcome_specific_direct
+    audit["Outcome_Specific_Human_Evidence"] = outcome_specific_human
     _perf(f"column_assign done elapsed={time.perf_counter() - _t:.3f} (cumulative={time.perf_counter() - _t0:.3f})")
 
     rows: list[dict[str, object]] = []

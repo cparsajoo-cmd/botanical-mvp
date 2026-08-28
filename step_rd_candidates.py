@@ -1499,28 +1499,53 @@ def _recommendation_block(result_df, report_ready_df=None):
         recommended = recommended[_eligible_mask(recommended)]
 
         # Phase 7 — ranking score/order must never overrule the validated
-        # scientific final-decision layer. When Final_Decision_Status is
-        # present, only GO / GO WITH CAUTION may remain in the recommended
-        # bucket. The score-based Go_Investigate_Hold_NoGo field is a ranking
-        # prioritization call, not a substitute for scientific eligibility.
+        # scientific final-decision layer. Crucially, an unresolved candidate
+        # is NOT the same thing as a scientifically weak/rejected candidate.
+        # Keep three semantic states distinct in the modern Stage-6 view:
+        #   1) GO / GO WITH CAUTION -> actionable validation priority,
+        #   2) EXPERT REVIEW REQUIRED -> unresolved / needs human adjudication,
+        #   3) INSUFFICIENT EVIDENCE / NO-GO -> weak or not recommended.
+        # This is presentation-only: no score, gate, rank, or final decision is
+        # modified here.
+        expert_review = best_rows.iloc[0:0]
         if "Final_Decision_Status" in best_rows.columns:
             final_status = best_rows["Final_Decision_Status"].fillna("").astype(str).str.strip()
-            # Apply the Phase 7 authority only where an authoritative final
-            # status is actually present. Blank status means the structured
-            # final-decision layer did not produce a decision for that row;
-            # in that case keep the already validated Phase 3/4
-            # Go/Investigate/Hold/No-Go classification instead of silently
-            # demoting every blank-status candidate into the weak bucket.
             has_final_status = final_status.ne("")
             actionable_status = final_status.isin(("GO", "GO WITH CAUTION"))
-            authoritative_non_go = has_final_status & ~actionable_status
+            expert_review_status = final_status.eq("EXPERT REVIEW REQUIRED")
+            weak_final_status = final_status.isin((
+                "INSUFFICIENT EVIDENCE",
+                "NO GO SAFETY",
+                "NO GO REGULATORY",
+                "NO-GO SAFETY",
+                "NO-GO REGULATORY",
+            ))
+            # Any future explicit final status that is neither actionable nor
+            # expert-review is conservatively treated as a non-recommendation.
+            other_non_actionable = (
+                has_final_status
+                & ~actionable_status
+                & ~expert_review_status
+                & ~weak_final_status
+            )
 
-            if authoritative_non_go.any():
+            if expert_review_status.any():
+                expert_review = best_rows.loc[expert_review_status].copy()
+                # Remove unresolved rows from both green and red buckets. They
+                # receive their own amber section below, so an AI/data-coherence
+                # uncertainty can never be miscommunicated as "not recommended".
                 recommended = recommended.loc[
-                    ~recommended.index.isin(best_rows.index[authoritative_non_go])
+                    ~recommended.index.isin(expert_review.index)
                 ]
-                scientific_non_go = best_rows.loc[authoritative_non_go]
-                weak = pd.concat([weak, scientific_non_go]).loc[
+                weak = weak.loc[~weak.index.isin(expert_review.index)]
+
+            authoritative_weak = weak_final_status | other_non_actionable
+            if authoritative_weak.any():
+                _scientific_weak = best_rows.loc[authoritative_weak]
+                recommended = recommended.loc[
+                    ~recommended.index.isin(_scientific_weak.index)
+                ]
+                weak = pd.concat([weak, _scientific_weak]).loc[
                     lambda x: ~x.index.duplicated(keep="first")
                 ]
 
@@ -1548,6 +1573,13 @@ def _recommendation_block(result_df, report_ready_df=None):
                 exploratory = pd.concat([
                     exploratory, best_rows.loc[best_rows.index.intersection(non_direct_recommended)]
                 ]).loc[lambda x: ~x.index.duplicated(keep="first")]
+            # If an authoritative final decision says EXPERT REVIEW REQUIRED,
+            # the amber review bucket is the single presentation authority.
+            # Do not duplicate the same unresolved candidate in exploratory.
+            if not expert_review.empty:
+                exploratory = exploratory.loc[
+                    ~exploratory.index.isin(expert_review.index)
+                ]
         else:
             # Backward compatibility for old session-state frames created
             # before Relevance_Gate_Result was passed through the merge.
@@ -1650,14 +1682,41 @@ def _recommendation_block(result_df, report_ready_df=None):
         ]
         st.dataframe(_recommended_display[_primary_cols].head(10), width="stretch")
 
-        # The second table remains reserved for Hold / No-Go / excluded rows.
+        # Unresolved candidates get their own amber section.  They are not
+        # labelled weak/rejected because EXPERT REVIEW REQUIRED means the
+        # evidence or pipeline state is unresolved, not that the scientific
+        # evidence is necessarily poor.  Direct candidates with coherence,
+        # preparation, safety-review, or AI-adjudication uncertainty therefore
+        # remain visible without a false negative label.
+        if not expert_review.empty:
+            _review_display = expert_review.copy()
+            _review_display["Stage_6_Section"] = (
+                "Requires expert review — unresolved scientific decision"
+            )
+            st.markdown("### 🟠 Requires expert review / unresolved")
+            st.caption(
+                "These candidates are not classified as weak or rejected. "
+                "They require human review because the final scientific decision "
+                "is unresolved (for example evidence-coherence, preparation, "
+                "safety/regulatory review, or incomplete adjudication)."
+            )
+            _review_cols = [
+                c for c in ["Stage_6_Section"] + display_cols +
+                ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
+                if c in _review_display.columns
+            ]
+            st.dataframe(_review_display[_review_cols].head(20), width="stretch")
+
+        # The red section is reserved for genuinely non-actionable scientific
+        # outcomes (insufficient evidence / Hold / hard No-Go / excluded), not
+        # for unresolved expert-review cases.
         if not weak.empty:
             _weak_display = weak.copy()
             _weak_display["Stage_6_Section"] = "Weak / not recommended"
             st.markdown("### 🔴 Weak / not recommended")
             st.caption(
-                "Hold, No-Go and excluded candidates remain visible with the "
-                "authoritative rejection reason."
+                "Insufficient-evidence, Hold, No-Go and excluded candidates remain "
+                "visible with the authoritative rejection reason."
             )
             _weak_cols = [
                 c for c in ["Stage_6_Section"] + display_cols +

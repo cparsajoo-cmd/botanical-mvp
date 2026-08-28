@@ -1,18 +1,19 @@
-General scientific outcome-specificity + human-evidence coherence patch v4
+Stage 5/6 general scientific fix v6 (cumulative over v5)
 
 Production files to overwrite:
-- evidence_adjudication_engine.py
 - candidate_shortlisting.py
+- evidence_adjudication_engine.py
 - step_rd_candidates.py
 
-What it fixes generically:
-1. Human-study classification recognizes explicit clinical/RCT/review design descriptors even when Population is blank.
-2. A human record can be indication-relevant without being an indication-specific efficacy outcome. AI evidence-strength calibration now counts only DIRECT + HUMAN + outcome-specific records.
-3. Direct_Indication_Evidence_Count now requires an indication-specific reported outcome in the primary scientific evidence tier.
-4. A row labelled Direct human/clinical with zero outcome-specific direct evidence cannot remain GO/GO WITH CAUTION; it is routed to EXPERT REVIEW REQUIRED and marked with CONTRADICTION_NO_OUTCOME_SPECIFIC_DIRECT_EVIDENCE.
-5. No indication-, plant-, or dosage-form-specific rules were added.
+Scientific/presentation changes:
+- carries v5 canonical human/outcome context alignment
+- separates EXPERT REVIEW REQUIRED from Weak / not recommended
+- unresolved candidates render in an amber Requires expert review / unresolved section
+- insufficient evidence / Hold / hard No-Go / excluded remain in red Weak / not recommended
+- prevents unresolved exploratory candidates from being duplicated across sections
+- no scoring/ranking/gate values are changed by this presentation separation
+- general: no sleep-, infusion-, or plant-specific rules
 
-Validation in local dependency-stubbed test environment:
-- py_compile passed for modified production files.
-- 84 focused regression tests passed, including existing adjudication, calibration, shortlist, Stage-6 gate, scientific-integrity tests and 4 new generic tests.
-- Full GitHub CI remains authoritative because the local runtime lacks the production Streamlit/OpenAI/Supabase dependencies.
+Validation in local dependency-stubbed environment:
+- targeted regression bundle: 22 passed
+- full suite progressed through 44% with no failures before sandbox timeout

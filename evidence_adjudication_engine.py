@@ -493,7 +493,15 @@ def build_adjudication_evidence_items(
         study_model = _row_get(row, "Study_Model", "study_model", "Evidence_Level")
         study_type_design = _row_get(row, "Study_Type", "study_design", "Study_Design", "Evidence_Hierarchy_Detail")
         population = _row_get(row, "Population", "population")
-        study_context = _derive_study_context(study_model, study_type_design, population)
+        # Prefer the deterministic row-level context emitted by Stage 5.
+        # This guarantees the AI and shortlist use one scientific definition
+        # of HUMAN vs non-human evidence. Legacy/external callers still fall
+        # back to local derivation.
+        canonical_context = _row_get(row, "Canonical_Study_Context")
+        if canonical_context in {"HUMAN", "ANIMAL_OR_IN_VITRO", "UNKNOWN"}:
+            study_context = canonical_context
+        else:
+            study_context = _derive_study_context(study_model, study_type_design, population)
         match_type = _row_get(row, *_INDICATION_MATCH_TYPE_COLUMNS)
         hierarchy = classify_evidence_hierarchy(" ".join(t for t in (study_model, study_type_design) if t))
         result_direction = _row_get(row, "Result_Direction", "evidence_direction", "Evidence_Direction")
@@ -505,9 +513,13 @@ def build_adjudication_evidence_items(
         # evidence rather than from topical proximity alone.
         outcome_text = _row_get(row, "Primary_Outcome", "outcome", "Endpoint", "endpoint")
         semantics = _meaningful_indication_terms(indication)
-        outcome_specific = bool(
-            outcome_text and any(_phrase_in(outcome_text, term) for term in semantics["direct"])
-        )
+        canonical_outcome_specific = row.get("Outcome_Specific_Direct_Evidence") if hasattr(row, "get") else None
+        if canonical_outcome_specific is not None and str(canonical_outcome_specific).strip().lower() not in {"", "nan", "none"}:
+            outcome_specific = str(canonical_outcome_specific).strip().lower() in {"true", "1", "yes"}
+        else:
+            outcome_specific = bool(
+                outcome_text and any(_phrase_in(outcome_text, term) for term in semantics["direct"])
+            )
         match_reason = _row_get(row, "Indication_Match_Reason")
         if not outcome_specific and "record's own reported outcome" in match_reason.lower():
             outcome_specific = True

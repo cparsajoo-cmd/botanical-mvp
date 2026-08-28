@@ -140,6 +140,30 @@ def _balanced_unique_articles(query_results, max_results):
     return merged
 
 
+def _standardize_with_llm_control(extracted, source_metadata, allow_llm):
+    """Call the standardizer with Stage-2 LLM control while preserving old/test call signatures.
+
+    The production standardizer accepts ``allow_llm``. Some legacy-compatible
+    shims and unit-test doubles intentionally expose the historical two-argument
+    signature. Retry without the new keyword only when the TypeError is clearly
+    about that keyword; all other TypeErrors still propagate.
+    """
+    try:
+        return standardize_extracted_record(
+            extracted=extracted,
+            source_metadata=source_metadata,
+            allow_llm=allow_llm,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "allow_llm" not in message or "unexpected keyword argument" not in message:
+            raise
+        return standardize_extracted_record(
+            extracted=extracted,
+            source_metadata=source_metadata,
+        )
+
+
 def collect_pubmed_evidence(
     scientific_name,
     indication,
@@ -244,7 +268,7 @@ def collect_pubmed_evidence(
         extracted["PMID"] = article.get("PMID", "")
         extracted["Source_Year"] = article.get("Year", "")
 
-        standardized = standardize_extracted_record(
+        standardized = _standardize_with_llm_control(
             extracted=extracted,
             source_metadata={
                 "source_type": "PubMed",

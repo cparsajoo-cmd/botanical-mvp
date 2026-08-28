@@ -66,6 +66,17 @@ def _reconcile_final_decision_status(row) -> str:
     human = clean("Human_Evidence_Strength").upper()
     conflict = clean("Evidence_Conflict_Level").upper()
     confidence = clean("Scientific_Evidence_Confidence").upper()
+    indication_mode = clean("Indication_Evidence_Mode")
+    direct_count_text = clean("Direct_Indication_Evidence_Count")
+    adjudication_count_text = clean("Evidence_Adjudication_Evidence_Count")
+    try:
+        direct_count = int(float(direct_count_text or 0))
+    except (TypeError, ValueError):
+        direct_count = 0
+    try:
+        adjudication_count = int(float(adjudication_count_text or 0))
+    except (TypeError, ValueError):
+        adjudication_count = 0
 
     if decision_class.startswith("H"):
         return "NO GO SAFETY"
@@ -83,6 +94,16 @@ def _reconcile_final_decision_status(row) -> str:
         return "EXPERT REVIEW REQUIRED"
 
     if adjudication == "AI_ADJUDICATION_OK":
+        # Cross-layer coherence gate.  A deterministic row cannot claim
+        # direct HUMAN evidence while the structured review of the very same
+        # Stage-5 evidence records finds no classifiable human evidence.
+        # Likewise a positive direct-evidence count with an empty adjudication
+        # bundle is an internal evidence-lineage contradiction.  In either
+        # case the safe scientific state is expert review, not a green call.
+        if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
+            return "EXPERT REVIEW REQUIRED"
+        if direct_count > 0 and adjudication_count <= 0:
+            return "EXPERT REVIEW REQUIRED"
         if direction in {"MOSTLY_NEGATIVE", "CONSISTENT_NEGATIVE"} and human in {"MODERATE", "STRONG"}:
             return "INSUFFICIENT EVIDENCE"
         if (
@@ -108,6 +129,50 @@ def _reconcile_final_decision_status(row) -> str:
     if decision_class.startswith(("C", "E")) and gate == "passed_direct":
         return "GO WITH CAUTION"
     return current or "EXPERT REVIEW REQUIRED"
+
+
+def _evidence_coherence_status(row) -> str:
+    """Deterministic cross-layer consistency diagnostic for the final report.
+
+    This does not change scores. It exposes whether the deterministic evidence
+    classification and structured adjudication describe the same evidence base.
+    The vocabulary is disease- and product-form-agnostic.
+    """
+    def clean(key):
+        value = row.get(key, "") if hasattr(row, "get") else ""
+        text = str(value or "").strip()
+        return "" if text.lower() in {"nan", "none", "null"} else text
+
+    status = clean("Evidence_Adjudication_Status")
+    if status == "AI_ADJUDICATION_NOT_RUN":
+        return "NOT_REVIEWED"
+    if status in {"AI_ADJUDICATION_FALLBACK", "AI_ADJUDICATION_UNAVAILABLE", "AI_ADJUDICATION_INVALID", "AI_ADJUDICATION_DISABLED"}:
+        return "AI_FALLBACK"
+    if status == "AI_ADJUDICATION_NO_EVIDENCE":
+        try:
+            direct_count = int(float(clean("Direct_Indication_Evidence_Count") or 0))
+        except (TypeError, ValueError):
+            direct_count = 0
+        return "CONTRADICTION_NO_REVIEW_EVIDENCE" if direct_count > 0 else "COHERENT_NO_DIRECT_EVIDENCE"
+    if status != "AI_ADJUDICATION_OK":
+        return "UNKNOWN"
+
+    indication_mode = clean("Indication_Evidence_Mode")
+    human = clean("Human_Evidence_Strength").upper()
+    try:
+        direct_count = int(float(clean("Direct_Indication_Evidence_Count") or 0))
+    except (TypeError, ValueError):
+        direct_count = 0
+    try:
+        reviewed_count = int(float(clean("Evidence_Adjudication_Evidence_Count") or 0))
+    except (TypeError, ValueError):
+        reviewed_count = 0
+
+    if direct_count > 0 and reviewed_count <= 0:
+        return "CONTRADICTION_EMPTY_REVIEW_BUNDLE"
+    if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
+        return "CONTRADICTION_HUMAN_CLASSIFICATION"
+    return "COHERENT"
 
 
 def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
@@ -142,6 +207,9 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
         # outcomes.
         merged["Final_Decision_Status"] = [
             _reconcile_final_decision_status(row) for _, row in merged.iterrows()
+        ]
+        merged["Evidence_Coherence_Status"] = [
+            _evidence_coherence_status(row) for _, row in merged.iterrows()
         ]
     # Part 10 (this session) -- ONE deterministic final rationale, built
     # from the structured facts now finalized above (adjudication, safety,
@@ -1479,6 +1547,8 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Decision_Class_AH",
                 "Go_Investigate_Hold_NoGo",
                 "Evidence_Adjudication_Status",
+                "Evidence_Adjudication_Evidence_Count",
+                "Evidence_Coherence_Status",
                 "Evidence_Adjudication_Fallback_Reason",
                 "Indication_Evidence_Direction",
                 "Human_Evidence_Strength",
@@ -2305,8 +2375,15 @@ def render_rd_candidates_step(inputs):
                     # same reason the AI R&D insight block below does not need
                     # one around generate_candidate_insights() per-plant.
                     _perf_t_adjudication = time.perf_counter()
+                    # Use the processed Stage-5 evidence rows themselves as
+                    # the adjudication evidence source.  They carry the same
+                    # authoritative Indication_Match_Type/score, traceability,
+                    # study-design and preparation decisions that created the
+                    # shortlist.  Feeding the raw evidence store here used to
+                    # make deterministic relevance and AI relevance disagree.
+                    # This is generic for every indication and product form.
                     plant_summary_df = _run_evidence_adjudication(
-                        plant_summary_df, evidence_df_for_run, indication,
+                        plant_summary_df, result_df, indication,
                         transferability_target_context,
                     )
                     _perf(
@@ -2400,7 +2477,7 @@ def render_rd_candidates_step(inputs):
                                     "evidence_status": _first_row.get("Evidence_Status", ""),
                                 }
                             ai_insights[_plant_name] = generate_candidate_insights(
-                                _plant_name, evidence_df_for_run, score_summary=_score_summary,
+                                _plant_name, result_df, score_summary=_score_summary,
                                 indication=indication,
                             )
                         st.session_state["rd_ai_insights"] = ai_insights

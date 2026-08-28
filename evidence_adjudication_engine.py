@@ -141,7 +141,7 @@ _MAX_SNIPPET_CHARS = 400
 ADJUDICATION_MODEL_ENV_VAR = "OPENAI_ADJUDICATION_MODEL"
 _SCHEMA_VERSION = "v1"
 
-_PLANT_NAME_COLUMNS = ("Scientific_Name", "plant_species", "Plant_Scientific_Name")
+_PLANT_NAME_COLUMNS = ("Alternative_Plant", "Scientific_Name", "plant_species", "Plant_Scientific_Name")
 _INDICATION_MATCH_TYPE_COLUMNS = ("Indication_Match_Type",)
 _INDICATION_MATCH_SCORE_COLUMNS = ("Indication_Match_Score",)
 _NO_MATCH_TYPES = {"", "none", "no_match", "unmatched", "nan"}
@@ -448,26 +448,34 @@ def build_adjudication_evidence_items(
 
     ranked: list[tuple[tuple[int, int, int, int], dict]] = []
     strength_rank = {"DIRECT": 3, "SUPPORTIVE": 2, "WEAK": 1, "NONE": 0}
+    # Keys intentionally match evidence_hierarchy_classifier.py's canonical
+    # output vocabulary.  The previous map used labels that classifier never
+    # returned (e.g. "Randomized controlled trial"), silently flattening the
+    # study-design rank for all indications.
     hierarchy_rank = {
-        "Systematic review / meta-analysis": 7, "Randomized controlled trial": 6,
-        "Controlled clinical trial": 5, "Observational human study": 4,
-        "Case report / case series": 3, "Animal study": 2, "In vitro / ex vivo": 1,
+        "Systematic review / meta-analysis": 7,
+        "Clinical trial": 6,
+        "Observational human evidence": 5,
+        "Validated ex vivo / in vivo": 3,
+        "In vitro / mechanistic": 2,
+        "Traditional-use / regulatory monograph": 1,
+        "Occurrence / analytical chemistry only": 0,
     }
     for _, row in matched.iterrows():
         relevance_strength = indication_relevance_strength_for_row(row, indication)
         if relevance_strength == "NONE":
             continue
-        evidence_id = _row_get(row, "Evidence_Record_ID", "evidence_record_id", "PMID", "pmid", "Record_ID")
+        evidence_id = _row_get(row, "Evidence_Record_ID", "evidence_record_id", "Source_Record_IDs", "PMID", "pmid", "Record_ID")
         if not evidence_id:
             continue
-        study_model = _row_get(row, "Study_Model", "study_model")
-        study_type_design = _row_get(row, "Study_Type", "study_design")
+        study_model = _row_get(row, "Study_Model", "study_model", "Evidence_Level")
+        study_type_design = _row_get(row, "Study_Type", "study_design", "Study_Design", "Evidence_Hierarchy_Detail")
         population = _row_get(row, "Population", "population")
         study_context = _derive_study_context(study_model, study_type_design, population)
         match_type = _row_get(row, *_INDICATION_MATCH_TYPE_COLUMNS)
         hierarchy = classify_evidence_hierarchy(" ".join(t for t in (study_model, study_type_design) if t))
-        result_direction = _row_get(row, "Result_Direction", "evidence_direction")
-        citation = _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID")
+        result_direction = _row_get(row, "Result_Direction", "evidence_direction", "Evidence_Direction")
+        citation = _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID", "Source_Record_IDs")
         item = {
             "evidence_id": evidence_id,
             "scientific_name": plant_name,
@@ -475,13 +483,13 @@ def build_adjudication_evidence_items(
             "candidate_source": _row_get(row, "Source_Type", "source_type", "Evidence_Source") or None,
             "compound": _row_get(row, "Compound", "compound_name") or None,
             "target": _row_get(row, "Target", "target") or None,
-            "mechanism": _row_get(row, "Mechanism", "mechanism", "Target_or_Mechanism") or None,
+            "mechanism": _row_get(row, "Mechanism", "mechanism", "Target_or_Mechanism", "Supported_Targets_or_Mechanisms") or None,
             "result_direction": result_direction or None,
             "study_model": study_model or None,
             "study_type_design": study_type_design or None,
             "human_animal_in_vitro": study_context,
             "population": population or None,
-            "endpoint_outcome": _row_get(row, "Primary_Outcome", "outcome") or None,
+            "endpoint_outcome": _row_get(row, "Primary_Outcome", "outcome", "Indication_Match_Reason") or None,
             "sample_size": _row_get(row, "Sample_Size", "sample_size") or None,
             "plant_part": _row_get(row, "Plant_Part", "plant_part") or None,
             "preparation": _row_get(row, "Evidence_Preparation", "Preparation", "preparation") or None,
@@ -489,7 +497,7 @@ def build_adjudication_evidence_items(
             "dose": _row_get(row, "Dose", "dose") or None,
             "route_of_administration": _row_get(row, "Administration_Route", "Route", "route_of_administration") or None,
             "dosage_form_requested_context": _row_get(row, "Requested_Dosage_Form", "Dosage_Form", "dosage_form") or None,
-            "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text", "Abstract") or "")[:_MAX_SNIPPET_CHARS] or None,
+            "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text", "Abstract", "Scientific_Rationale", "Clinical_Rationale", "Rationale") or "")[:_MAX_SNIPPET_CHARS] or None,
             "source_citation_id": citation or None,
             "indication_match_type": match_type or None,
             "indication_match_strength": relevance_strength,
@@ -501,8 +509,24 @@ def build_adjudication_evidence_items(
             1 if (result_direction or citation) else 0,
         )
         ranked.append((rank, item))
-    ranked.sort(key=lambda x: x[0], reverse=True)
-    return [item for _, item in ranked[:max_items]]
+
+    # A Stage-5 plant/evidence row can be repeated across compounds, targets,
+    # or report projections while still pointing to the same underlying
+    # evidence record.  Adjudication must review evidence RECORDS, not row
+    # multiplicity.  Keep the strongest representation of each traceable ID
+    # before applying the per-call cap.  This is indication-agnostic and
+    # prevents one paper/record from being counted repeatedly for any disease.
+    best_by_id: dict[str, tuple[tuple[int, int, int, int], dict]] = {}
+    for rank, item in ranked:
+        evidence_key = _clean(item.get("evidence_id"))
+        if not evidence_key:
+            continue
+        current = best_by_id.get(evidence_key)
+        if current is None or rank > current[0]:
+            best_by_id[evidence_key] = (rank, item)
+    deduped = list(best_by_id.values())
+    deduped.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in deduped[:max_items]]
 
 
 # ---------------------------------------------------------------------
@@ -661,6 +685,57 @@ def _validate_ai_result(raw: dict, allowed_evidence_ids: set) -> Optional[dict]:
         "Preparation_Mismatch_Evidence_IDs": _clean_id_list(mismatch_ids),
         "_summary_note": str(summary_note or "").strip(),
     }
+
+
+def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]) -> dict:
+    """Apply logical invariants that follow directly from the supplied bundle.
+
+    This is not a second scientific opinion and does not infer efficacy.  It
+    only prevents schema-valid but logically impossible AI outputs, such as
+    ``Human_Evidence_Strength=NONE`` when the exact evidence bundle contains a
+    human clinical record, or HIGH confidence when every retained match is only
+    a weak lexical fallback.  The rules are generic across indications.
+    """
+    out = dict(structured or {})
+    substantive = [
+        item for item in evidence_items
+        if item.get("indication_match_strength") in {"DIRECT", "SUPPORTIVE"}
+    ]
+    human_items = [
+        item for item in substantive
+        if item.get("human_animal_in_vitro") == "HUMAN"
+    ]
+    classified_nonhuman = [
+        item for item in substantive
+        if item.get("human_animal_in_vitro") == "ANIMAL_OR_IN_VITRO"
+    ]
+
+    human_strength = out.get("Human_Evidence_Strength", "UNKNOWN")
+    if human_items and human_strength == "NONE":
+        # NONE has a strict semantic meaning: no human evidence was supplied.
+        # When that is factually false, use the weakest non-zero category
+        # rather than inventing a stronger study-quality judgment.
+        out["Human_Evidence_Strength"] = "WEAK"
+    elif not human_items and classified_nonhuman and human_strength in {"WEAK", "MODERATE", "STRONG"}:
+        out["Human_Evidence_Strength"] = "NONE"
+
+    if not substantive:
+        out["Indication_Evidence_Direction"] = "INSUFFICIENT"
+        out["Scientific_Evidence_Confidence"] = "VERY_LOW"
+        out["Positive_Evidence_IDs"] = []
+        out["Negative_Evidence_IDs"] = []
+        out["Key_Human_Evidence_IDs"] = []
+    elif all(item.get("indication_match_strength") == "WEAK" for item in evidence_items):
+        if out.get("Scientific_Evidence_Confidence") in {"HIGH", "MODERATE"}:
+            out["Scientific_Evidence_Confidence"] = "LOW"
+
+    allowed_human_ids = {item.get("evidence_id") for item in human_items}
+    if "Key_Human_Evidence_IDs" in out:
+        out["Key_Human_Evidence_IDs"] = [
+            eid for eid in (out.get("Key_Human_Evidence_IDs") or [])
+            if eid in allowed_human_ids
+        ]
+    return out
 
 
 def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
@@ -904,7 +979,7 @@ def adjudicate_candidate(
                 status = ADJUDICATION_STATUS_INVALID
                 fallback_reason = "INVALID_SCHEMA"
             else:
-                structured = validated
+                structured = _enforce_bundle_consistency(validated, evidence_items)
                 status = ADJUDICATION_STATUS_OK
 
     if status in (ADJUDICATION_STATUS_UNAVAILABLE, ADJUDICATION_STATUS_INVALID):

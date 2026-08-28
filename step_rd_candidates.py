@@ -112,6 +112,14 @@ def _reconcile_final_decision_status(row) -> str:
         # case the safe scientific state is expert review, not a green call.
         if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
             return "EXPERT REVIEW REQUIRED"
+        # A topical/direct relevance label is not enough to support a green
+        # human-efficacy call when none of the primary records actually reports
+        # an indication-specific outcome.  This generic outcome-specificity
+        # guard prevents adjacent outcomes (fatigue, stress, cognition, etc.)
+        # from being promoted as direct efficacy for whatever indication was
+        # requested.
+        if indication_mode.startswith("Direct human/clinical") and direct_count <= 0:
+            return "EXPERT REVIEW REQUIRED"
         if direct_count > 0 and adjudication_count <= 0:
             return "EXPERT REVIEW REQUIRED"
         if direction in {"MOSTLY_NEGATIVE", "CONSISTENT_NEGATIVE"} and human in {"MODERATE", "STRONG"}:
@@ -180,6 +188,8 @@ def _evidence_coherence_status(row) -> str:
 
     if direct_count > 0 and reviewed_count <= 0:
         return "CONTRADICTION_EMPTY_REVIEW_BUNDLE"
+    if indication_mode.startswith("Direct human/clinical") and direct_count <= 0:
+        return "CONTRADICTION_NO_OUTCOME_SPECIFIC_DIRECT_EVIDENCE"
     if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
         return "CONTRADICTION_HUMAN_CLASSIFICATION"
     return "COHERENT"

@@ -830,6 +830,43 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
 
 
 
+
+
+def _row_has_indication_specific_outcome(row: pd.Series, indication: str) -> bool:
+    """Whether this empirical row actually reports an outcome for the query.
+
+    Relevance in a title/abstract is not by itself an efficacy outcome.  This
+    generic guard uses the same indication semantic family as discovery and
+    only promotes a record to *direct outcome evidence* when its own outcome
+    field contains the requested indication (or one of its direct aliases).
+    It does not change the calibrated Phase-5 score; it tightens the exported
+    direct-evidence diagnostic and downstream scientific interpretation.
+    """
+    outcome = " | ".join(
+        str(row.get(col, "") or "")
+        for col in ("Primary_Outcome", "outcome", "Endpoint", "endpoint")
+    ).strip()
+    if not outcome:
+        reason = str(row.get("Indication_Match_Reason", "") or "").lower()
+        return "record's own reported outcome" in reason
+    family = _concept_family(indication) or {}
+    terms = list(dict.fromkeys([
+        str(indication or "").strip(),
+        *(family.get("direct", ()) or ()),
+        *(family.get("aliases", ()) or ()),
+    ]))
+    for term in terms:
+        term = str(term or "").strip()
+        if not term:
+            continue
+        try:
+            if phrase_present(outcome, term):
+                return True
+        except Exception:
+            if re.search(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", outcome, flags=re.I):
+                return True
+    return False
+
 def _result_category(row: pd.Series) -> str:
     """Classify a record's reported outcome without inventing missing results."""
     direction = _norm(row.get("Result_Direction", ""))
@@ -2756,6 +2793,7 @@ def build_plant_candidate_shortlist(
                     _row_authoritative_relevance(r)[0] in _MATCH_STRONG
                     and _row_has_traceable_source(r)
                     and _row_has_candidate_specific_empirical_support(r)
+                    and _row_has_indication_specific_outcome(r, indication)
                     and not _row_is_inferred_or_generic(r)
                 )
                 for source_id in _split_values([r.get("Source_Record_IDs", "")])

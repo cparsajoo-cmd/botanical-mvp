@@ -233,6 +233,28 @@ def _derive_study_context(study_model: str, study_type_design: str, population: 
         return "HUMAN"
     if tier in _NONHUMAN_HIERARCHY_TIERS:
         return "ANIMAL_OR_IN_VITRO"
+    # Production evidence often carries a normalized-but-not-canonical design
+    # label (for example "randomized clinical study" or "human clinical
+    # evidence") while Population is blank.  Treat explicit human-study
+    # descriptors as HUMAN before falling back to Population.  This is a
+    # study-design vocabulary rule, not an indication-specific heuristic.
+    design_lower = design_text.lower()
+    nonhuman_design_terms = (
+        "animal", "in vivo", "in vitro", "ex vivo", "cell line", "cell culture",
+        "murine", "mouse", "mice", "rat ", "rats", "zebrafish",
+    )
+    human_design_terms = (
+        "human", "clinical trial", "clinical study", "randomized", "randomised",
+        "placebo", "double blind", "double-blind", "single blind", "single-blind",
+        "systematic review", "meta-analysis", "meta analysis", "cohort",
+        "case-control", "case control", "observational", "cross-sectional",
+        "participants", "patients", "volunteers",
+    )
+    if any(term in design_lower for term in nonhuman_design_terms):
+        return "ANIMAL_OR_IN_VITRO"
+    if any(term in design_lower for term in human_design_terms):
+        return "HUMAN"
+
     population_lower = (population or "").lower()
     if population_lower:
         if any(term in population_lower for term in _POPULATION_NONHUMAN_TERMS):
@@ -476,6 +498,26 @@ def build_adjudication_evidence_items(
         hierarchy = classify_evidence_hierarchy(" ".join(t for t in (study_model, study_type_design) if t))
         result_direction = _row_get(row, "Result_Direction", "evidence_direction", "Evidence_Direction")
         citation = _row_get(row, "DOI", "doi", "PMID", "pmid", "NCT_ID", "Source_Record_IDs")
+        # A record can be relevant to an indication without measuring an
+        # indication-specific outcome (e.g. a fatigue/stress trial retrieved
+        # for a broader wellbeing query).  Preserve that distinction explicitly
+        # so human-evidence strength is calibrated from outcome-specific human
+        # evidence rather than from topical proximity alone.
+        outcome_text = _row_get(row, "Primary_Outcome", "outcome", "Endpoint", "endpoint")
+        semantics = _meaningful_indication_terms(indication)
+        outcome_specific = bool(
+            outcome_text and any(_phrase_in(outcome_text, term) for term in semantics["direct"])
+        )
+        match_reason = _row_get(row, "Indication_Match_Reason")
+        if not outcome_specific and "record's own reported outcome" in match_reason.lower():
+            outcome_specific = True
+        # Backward compatibility for persisted pre-authoritative rows whose
+        # legacy EXPLICIT_FIELD label itself meant a verified direct field.
+        # Current production match types are the lowercase constants above and
+        # still require the explicit outcome check.
+        if not outcome_specific and match_type.strip().upper() == "EXPLICIT_FIELD":
+            outcome_specific = True
+
         item = {
             "evidence_id": evidence_id,
             "scientific_name": plant_name,
@@ -489,7 +531,8 @@ def build_adjudication_evidence_items(
             "study_type_design": study_type_design or None,
             "human_animal_in_vitro": study_context,
             "population": population or None,
-            "endpoint_outcome": _row_get(row, "Primary_Outcome", "outcome", "Indication_Match_Reason") or None,
+            "endpoint_outcome": outcome_text or _row_get(row, "Indication_Match_Reason") or None,
+            "outcome_specific": outcome_specific,
             "sample_size": _row_get(row, "Sample_Size", "sample_size") or None,
             "plant_part": _row_get(row, "Plant_Part", "plant_part") or None,
             "preparation": _row_get(row, "Evidence_Preparation", "Preparation", "preparation") or None,
@@ -749,7 +792,10 @@ def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_item
     """
     out = dict(structured)
     human_items = [i for i in evidence_items if i.get("human_animal_in_vitro") == "HUMAN"]
-    direct_human = [i for i in human_items if i.get("indication_match_strength") == "DIRECT"]
+    direct_human = [
+        i for i in human_items
+        if i.get("indication_match_strength") == "DIRECT" and bool(i.get("outcome_specific", True))
+    ]
 
     def hierarchy(item: Mapping[str, Any]) -> str:
         # ``study_type_design`` can already contain the project's canonical

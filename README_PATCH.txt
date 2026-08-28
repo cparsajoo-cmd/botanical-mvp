@@ -1,24 +1,18 @@
-Stage 5/6 cumulative scientific + AI wiring fix
+General scientific outcome-specificity + human-evidence coherence patch v4
 
 Production files to overwrite:
+- evidence_adjudication_engine.py
 - candidate_shortlisting.py
 - step_rd_candidates.py
 
-What is preserved:
-- Stage 2 collection path
-- deterministic scoring formulas/weights
-- safety and regulatory hard gates
-- existing AI services and budgets
+What it fixes generically:
+1. Human-study classification recognizes explicit clinical/RCT/review design descriptors even when Population is blank.
+2. A human record can be indication-relevant without being an indication-specific efficacy outcome. AI evidence-strength calibration now counts only DIRECT + HUMAN + outcome-specific records.
+3. Direct_Indication_Evidence_Count now requires an indication-specific reported outcome in the primary scientific evidence tier.
+4. A row labelled Direct human/clinical with zero outcome-specific direct evidence cannot remain GO/GO WITH CAUTION; it is routed to EXPERT REVIEW REQUIRED and marked with CONTRADICTION_NO_OUTCOME_SPECIFIC_DIRECT_EVIDENCE.
+5. No indication-, plant-, or dosage-form-specific rules were added.
 
-What is fixed:
-1) Stage 6 receives plant-level indication relevance/direct-evidence fields from the authoritative shortlist merge.
-2) Mechanistic/indirect-only candidates are separated from the primary Recommended bucket into Exploratory hypotheses.
-3) Existing structured AI evidence adjudication fields are visible in Stage 6.
-4) Existing AI R&D insight outputs (mechanism/synthesis/hypothesis) are attached to rd_report_ready_df and therefore visible/exportable.
-5) If AI is unavailable/fallback, Stage 6 says so explicitly instead of appearing AI-reviewed.
-6) AI narrative cannot overwrite deterministic scores or hard safety/regulatory gates.
-
-Validation in local dependency-light environment:
-- py_compile: PASS for both production files
-- test_stage6_direct_relevance_gate_regression.py: PASS
-- test_stage6_ai_wiring_regression.py: PASS
+Validation in local dependency-stubbed test environment:
+- py_compile passed for modified production files.
+- 84 focused regression tests passed, including existing adjudication, calibration, shortlist, Stage-6 gate, scientific-integrity tests and 4 new generic tests.
+- Full GitHub CI remains authoritative because the local runtime lacks the production Streamlit/OpenAI/Supabase dependencies.

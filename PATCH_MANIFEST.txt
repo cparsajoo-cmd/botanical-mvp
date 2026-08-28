@@ -1,77 +1,39 @@
-STAGE 5 + AI COMBINED PATCH — CI HOTFIX
-=======================================
+CI SCHEMA HOTFIX — botanical_rd_candidate_engine.py
+====================================================
 
-Apply this package INSTEAD OF the previous combined patch.
+Replace ONLY botanical_rd_candidate_engine.py with the file in this package.
 
-Why this revision exists
-------------------------
-The GitHub Actions run after the first combined patch reported 8 failures.
-This revision fixes the compatibility/regression causes without reverting the
-Stage-5 pre-engine funnel or the AI governance architecture.
+Root cause
+----------
+The previous CI hotfix accidentally used an older snapshot of
+botanical_rd_candidate_engine.py. That snapshot preserved the new Stage-5
+pre-screen flag, but lost the four structured safety output fields added later:
 
-CI failures addressed
----------------------
-1) embedding_service.py
-   - Query embedding cache is used only with the production-owned client.
-   - Explicitly injected clients always execute their mocked/provider path.
-   - Fixes stale-cache masking of:
-       * provider failure
-       * wrong embedding dimension
-       * timeout propagation
-   - Production query caching remains enabled.
+- Safety_Assertion_Status
+- Safety_Concern_Level
+- Safety_Evidence_IDs
+- Safety_Status_Rationale
 
-2) indication_candidate_discovery.py + botanical_rd_candidate_engine.py
-   - The new catalogue pre-screen is now explicitly opt-in.
-   - Direct/library callers of discover_indication_candidates retain historical
-     full-universe semantics.
-   - Interactive Stage 5 explicitly enables the pre-screen BEFORE expensive
-     per-plant processing.
-   - This preserves the performance fix while restoring the existing
-     performance-test contract (200 direct candidates -> 200 outputs).
+That changed OUTPUT_COLUMNS from the expected 91 columns back to 87 and caused:
+- three 87 == 91 contract failures
+- two Safety_Assertion_Status KeyError failures
 
-3) ai_usage_telemetry.py + llm_client.py
-   - Distinguishes explicit governed runs from implicit library/test contexts.
-   - Quota/auth circuit breakers persist only inside an explicitly started
-     Stage-2/Stage-5 AI run.
-   - clear_cache() resets to an implicit isolated tracker at test/library
-     boundaries, preventing one deliberate auth-error test from poisoning
-     unrelated later tests.
-   - Production Stage 2/Stage 5 still call start_new_ai_run(), so their
-     circuit-breaker behavior is unchanged.
+What this file contains
+-----------------------
+This file is based on the newer 91-column engine and preserves all structured
+safety-status logic. The Stage-5 performance hotfix is merged into that newer
+file with only two additive changes:
+- enable_stage5_prescreen=False parameter on engine.run()
+- forwarding enable_catalogue_prescreen=True when the interactive Stage-5 caller
+  explicitly enables the pre-screen
 
-Verification performed here
-----------------------------
-- Python syntax compilation: PASS for all corrected production files.
-- Exact four previously failing embedding/prescreen tests: 4/4 PASS.
-- LLM timeout/retry + gate prompt + AI hotfix tests under dependency stubs:
-  9/9 PASS.
-- Stage-5 pre-engine prescreen regression tests: 2/2 PASS.
-- A separate vector-search test could not execute fully in this local runtime
-  because the Supabase Python dependency is absent; that was unrelated to the
-  uploaded GitHub failures.
-
-Expected production Stage-5 log
--------------------------------
-For interactive indication discovery, expect:
-  Stage5 catalogue prescreen ... input_plants≈2119 ... retained_total=N
-followed by:
-  indication loop ... /N
-NOT:
-  indication loop ... /2119
-
-Files in this package
----------------------
-- ai_usage_telemetry.py
-- botanical_rd_candidate_engine.py
-- embedding_service.py
-- hypothesis_generation_service.py
-- indication_candidate_discovery.py
-- llm_client.py
-- llm_extractor.py
-- mechanistic_reasoning_service.py
-- research_engine.py
-- scientific_intent_service.py
-- stage5_funnel_config.py
-- step_rd_candidates.py
-- test_ai_governance_hotfix.py
-- test_stage5_pre_engine_prescreen.py
+Verification
+------------
+- Python syntax compilation: PASS
+- test_gate_layer.py::test_deterministic_output_contract_locked_engineering_regression: PASS
+- test_step5_market_intelligence_performance.py::test_output_columns_contract_unchanged: PASS
+- Static verification:
+    OUTPUT_COLUMNS includes all four structured safety fields
+    enable_stage5_prescreen is present and opt-in
+- The remaining three failures shown in the GitHub screenshot are exactly the
+  same missing-four-column regression and are restored by this newer engine.

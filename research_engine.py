@@ -1254,17 +1254,23 @@ def run_research_engine(
     progress_callback: Optional[Callable] = None,
 ):
     # Part 13 (Stage 2 remediation) -- the TRUE whole-stage wall-clock
-    # deadline starts HERE, before anything else (query expansion,
-    # candidate seeding, PubMed/Europe PMC discovery, botanical entity
-    # extraction, taxonomy validation, candidate-specific validation, and
-    # the final multi-source collection all share this ONE deadline --
-    # see stage2_total_budget_seconds()). This replaces the prior
-    # arrangement where a timer only started right before the final
-    # collection step, so a "3 minute" budget for that one step could
-    # still be preceded by several unbounded minutes of earlier work.
+    # Keep end-to-end Stage 2 timing from function entry.  The bounded
+    # literature-discovery deadline itself begins immediately after reference
+    # seed preparation (see below), before query expansion and every remote
+    # discovery/extraction step.  This prevents catalogue-loading latency from
+    # starving PubMed/Europe PMC discovery while retaining a real bounded
+    # deadline for the expensive online phase.
+    # Keep a wall-clock timestamp for end-to-end Stage 2 telemetry, but do
+    # NOT start the discovery deadline until reference/database seed
+    # preparation has finished.  Reference preparation can legitimately load
+    # the full local/Supabase catalogue; charging that I/O against the 90 s
+    # literature-discovery budget can leave <=2 s before the first PubMed /
+    # Europe PMC query is attempted.  In production that manifested exactly as
+    # progress reaching ``searching_pubmed_europepmc 0/4`` and then skipping
+    # all four searches with zero external botanical mentions.
     _stage2_started_at = time.monotonic()
     _stage2_total_budget = stage2_discovery_phase_budget_seconds(pilot_mode)
-    _stage2_deadline_ts = _stage2_started_at + _stage2_total_budget
+    _stage2_deadline_ts = None
 
     # Part 5/6/13 (OpenAI-usage audit, this session) -- fresh per-run AI
     # telemetry/budget/breaker tracker for this Stage 2 execution. Budget
@@ -1291,9 +1297,6 @@ def run_research_engine(
     _ai_tracker.set_limit("evidence_extraction", _stage2_evidence_ai_cap)
     _ai_tracker.set_limit("semantic_gate_extraction", _stage2_evidence_ai_cap)
 
-    def _stage2_remaining():
-        return max(0.0, _stage2_deadline_ts - time.monotonic())
-
     requested_count = max(1, int(global_candidate_count))
 
     # --- Staged candidate selection (general architecture) -----------------
@@ -1307,6 +1310,14 @@ def run_research_engine(
         target_count=requested_count,
     ) or []
     reference_seed_plants = list(dict.fromkeys(reference_seed_plants))[:requested_count]
+
+    # The bounded discovery clock begins here: immediately before query
+    # expansion, and therefore before every remote discovery/extraction step
+    # it is intended to constrain.  Seed preparation above is deterministic
+    # catalogue setup and has its own finite database/network behavior; it must
+    # not be allowed to consume the entire literature-discovery allowance.
+    _stage2_discovery_started_at = time.monotonic()
+    _stage2_deadline_ts = _stage2_discovery_started_at + _stage2_total_budget
 
     # B + C. Generic literature discovery, plus focused plant+indication
     # validation of candidate hypotheses (both already implemented by

@@ -768,6 +768,11 @@ def _evidence_context_row(row: Mapping[str, Any]) -> tuple[bool, bool]:
         for col in (
             "Evidence_Level", "Evidence_Hierarchy_Detail",
             "Candidate_Evidence_Strength_Tier", "GRADE_Certainty",
+            # Source-derived study context transported from discovery.  These
+            # are additive evidence facts, not generated narrative, and close
+            # the previous gap where a genuine clinical record could become
+            # UNKNOWN downstream merely because Evidence_Level was sparse.
+            "Study_Type", "Study_Model", "Population",
         )
         if not pd.isna(row.get(col))
     )
@@ -833,38 +838,78 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
 
 
 def _row_has_indication_specific_outcome(row: pd.Series, indication: str) -> bool:
-    """Whether this empirical row actually reports an outcome for the query.
+    """Whether a direct-relevance record is genuinely indication-specific.
 
-    Relevance in a title/abstract is not by itself an efficacy outcome.  This
-    generic guard uses the same indication semantic family as discovery and
-    only promotes a record to *direct outcome evidence* when its own outcome
-    field contains the requested indication (or one of its direct aliases).
-    It does not change the calibrated Phase-5 score; it tightens the exported
-    direct-evidence diagnostic and downstream scientific interpretation.
+    The earlier v4-v6 guard looked only at ``Primary_Outcome``/``Endpoint``.
+    Production discovery, however, had already computed authoritative direct
+    relevance from three source-derived channels (explicit indication fields,
+    the record's own outcome, and title/abstract/source text) and historically
+    did not transport those source fields downstream.  Requiring a structured
+    outcome therefore converted every valid direct record lacking that optional
+    field into ``False``.
+
+    This generic implementation mirrors the upstream evidence provenance: an
+    outcome-specific observation is accepted only when the requested
+    indication (or a curated *direct* alias) is present in the record's own
+    reported outcome, or in source evidence text that also carries a reported
+    result direction. A bare explicit-indication/title mention alone is not
+    enough. Generated R&D rationale is intentionally excluded. The authoritative
+    match reason is used only as a legacy fallback when older rows do not carry
+    the new source-transport columns.
     """
-    outcome = " | ".join(
-        str(row.get(col, "") or "")
-        for col in ("Primary_Outcome", "outcome", "Endpoint", "endpoint")
-    ).strip()
-    if not outcome:
-        reason = str(row.get("Indication_Match_Reason", "") or "").lower()
-        return "record's own reported outcome" in reason
     family = _concept_family(indication) or {}
     terms = list(dict.fromkeys([
         str(indication or "").strip(),
         *(family.get("direct", ()) or ()),
         *(family.get("aliases", ()) or ()),
     ]))
-    for term in terms:
-        term = str(term or "").strip()
-        if not term:
-            continue
-        try:
-            if phrase_present(outcome, term):
-                return True
-        except Exception:
-            if re.search(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", outcome, flags=re.I):
-                return True
+
+    def _contains_direct(value: object) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        for term in terms:
+            term = str(term or "").strip()
+            if not term:
+                continue
+            try:
+                if phrase_present(text, term):
+                    return True
+            except Exception:
+                if re.search(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", text, flags=re.I):
+                    return True
+        return False
+
+    # Source-derived fields transported by indication_candidate_discovery.
+    # Source_Outcome_Text includes Primary_Outcome + Result_Direction; the
+    # explicit-indication and evidence-text fields preserve the other two
+    # authoritative relevance channels.
+    for col in (
+        "Primary_Outcome", "outcome", "Endpoint", "endpoint",
+        "Source_Outcome_Text",
+    ):
+        if _contains_direct(row.get(col, "")):
+            return True
+
+    # Some literature connectors preserve the result in title/abstract text
+    # but do not populate a structured Primary_Outcome.  Treat that source
+    # text as outcome-specific only when the record also carries an observed
+    # result direction; a bare indication mention in an abstract/title is not
+    # enough. This keeps adjacent-outcome studies from becoming direct efficacy
+    # merely because the study population/indication mentions the query.
+    result_direction = _norm(row.get("Result_Direction", ""))
+    has_reported_direction = result_direction not in _MISSING_MARKERS and result_direction not in {
+        "unknown", "unreported", "not reported", "unclear",
+    }
+    if has_reported_direction and _contains_direct(row.get("Source_Evidence_Text", "")):
+        return True
+
+    reason = str(row.get("Indication_Match_Reason", "") or "").lower()
+    # Legacy rows created before source-field transport may still carry the
+    # exact provenance sentence from the relevance engine.  Only the
+    # record-own-outcome case is safe to infer without the missing source text.
+    if "record's own reported outcome" in reason:
+        return True
     return False
 
 def _result_category(row: pd.Series) -> str:
@@ -1721,6 +1766,10 @@ def _scientific_evidence_components(
         "Supporting_Evidence_Tiers_Present": supporting_tiers_present,
         "Supporting_Evidence_Record_Count": supporting_record_count,
         "Scientific_Evidence_Source_Record_IDs": scientific_source_record_ids,
+        # Exact row identities of the deduplicated primary evidence records.
+        # This avoids re-joining by compound/projection rows or by composite
+        # identifier strings when computing downstream diagnostic counts.
+        "Primary_Evidence_Row_IDs": [r["row_id"] for r in primary_records],
         "Scientific_Evidence_Contributions": scientific_evidence_contributions,
         "Authoritative_Narrative_Source_Record_ID": authoritative_narrative_source_record_id,
         "Authoritative_Narrative_Provenance": authoritative_narrative_provenance,
@@ -2827,21 +2876,38 @@ def build_plant_candidate_shortlist(
                 for source_id in _split_values([r.get("Source_Record_IDs", "")])
                 if _norm(source_id)
             }
-            # Report DIRECT evidence from the same primary evidence tier that
-            # actually drives Scientific_Evidence_Score.  The old diagnostic
-            # counted every direct-looking record across all evidence tiers,
-            # including lower-tier projections that were deliberately excluded
-            # from scoring.  That could produce misleading counts such as
-            # dozens of "direct" records while the authoritative evidence body
-            # was much smaller.  This remains indication-agnostic: it is an
-            # evidence-lineage rule, not a disease-specific heuristic.
-            primary_source_ids = {
-                _norm(source_id)
-                for value in (sci_evidence.get("Scientific_Evidence_Source_Record_IDs") or [])
-                for source_id in _split_values([value])
-                if _norm(source_id)
-            }
-            direct_evidence_count = len(direct_source_ids & primary_source_ids)
+            # Report DIRECT evidence from the exact deduplicated primary-tier
+            # records that drive Scientific_Evidence_Score.  Use row identity
+            # rather than an identifier intersection: one evidence record can
+            # carry multiple aliases (PMID/DOI/NCT/etc.) and many raw rows can
+            # project the same record across compounds/targets.  Counting the
+            # primary record once preserves the scientific meaning "independent
+            # evidence records", without alias inflation or projection
+            # duplication.
+            _primary_row_ids = set(sci_evidence.get("Primary_Evidence_Row_IDs") or [])
+            _primary_direct_records = []
+            _primary_outcome_direct_records = []
+            _primary_outcome_human_records = []
+            for _idx, _r in group.iterrows():
+                if _idx not in _primary_row_ids:
+                    continue
+                _is_direct = (
+                    _row_authoritative_relevance(_r)[0] in _MATCH_STRONG
+                    and _row_has_traceable_source(_r)
+                    and _row_has_candidate_specific_empirical_support(_r)
+                    and not _row_is_inferred_or_generic(_r)
+                )
+                if not _is_direct:
+                    continue
+                _primary_direct_records.append(_idx)
+                if _row_has_indication_specific_outcome(_r, indication):
+                    _primary_outcome_direct_records.append(_idx)
+                    _is_human, _ = _evidence_context_row(_r)
+                    if _is_human:
+                        _primary_outcome_human_records.append(_idx)
+            direct_evidence_count = len(_primary_direct_records)
+            outcome_specific_direct_evidence_count = len(_primary_outcome_direct_records)
+            outcome_specific_human_evidence_count = len(_primary_outcome_human_records)
             mechanistic_source_ids = {
                 _norm(source_id)
                 for _, r in group.iterrows()
@@ -2856,6 +2922,21 @@ def build_plant_candidate_shortlist(
             mechanistic_evidence_count = len(mechanistic_source_ids)
         else:
             direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
+            outcome_specific_direct_evidence_count = int(
+                sum(
+                    bool(r.get("Direct_Evidence_Present", False))
+                    and _row_has_indication_specific_outcome(r, indication)
+                    for _, r in group.iterrows()
+                )
+            )
+            outcome_specific_human_evidence_count = int(
+                sum(
+                    bool(r.get("Direct_Evidence_Present", False))
+                    and _row_has_indication_specific_outcome(r, indication)
+                    and _evidence_context_row(r)[0]
+                    for _, r in group.iterrows()
+                )
+            )
             mechanistic_evidence_count = max(
                 0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
             )
@@ -3142,6 +3223,8 @@ def build_plant_candidate_shortlist(
             "Relevance_Gate_Result": relevance_gate_result,
             "Evidence_Route": evidence_route,
             "Direct_Indication_Evidence_Count": direct_evidence_count,
+            "Outcome_Specific_Direct_Evidence_Count": outcome_specific_direct_evidence_count,
+            "Outcome_Specific_Human_Evidence_Count": outcome_specific_human_evidence_count,
             "Mechanistic_Evidence_Count": mechanistic_evidence_count,
             "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
             "Preparation_Applicability_Class": preparation_applicability_class,
@@ -3423,7 +3506,7 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Indication_Relevance", "Indication_Relevance_Score",
         "Indication_Evidence_Mode", "Indication_Supporting_Source_Count",
         "Relevance_Gate_Result", "Evidence_Route",
-        "Direct_Indication_Evidence_Count", "Mechanistic_Evidence_Count",
+        "Direct_Indication_Evidence_Count", "Outcome_Specific_Direct_Evidence_Count", "Outcome_Specific_Human_Evidence_Count", "Mechanistic_Evidence_Count",
         "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
         "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
         # Plant-level, attribution-cleaned safety fields must override the

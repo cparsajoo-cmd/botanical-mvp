@@ -106,6 +106,20 @@ _RELEVANCE_ENGINE_COLUMNS = (
     "Embedding_Model", "Embedding_Version",
 )
 
+# Scientific evidence transport contract.  These are source-derived fields
+# already available in the per-record evidence index and used to determine
+# relevance, but historically they were not carried into the Stage-5 output.
+# That made downstream adjudication re-interpret a relevance label without
+# seeing the outcome/study/source text that created it.  Keep these fields
+# additive and non-scoring: they preserve evidence provenance for every
+# indication/product form and are never shown unless a downstream diagnostic
+# explicitly requests them.
+_EVIDENCE_TRANSPORT_COLUMNS = (
+    "Primary_Outcome", "Study_Type", "Study_Model", "Population",
+    "Source_Explicit_Indication_Text", "Source_Outcome_Text",
+    "Source_Mechanism_Text", "Source_Evidence_Text",
+)
+
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 SCORING_CONFIG_VERSION = "2.2-indication-record-level-evidence"
@@ -498,6 +512,7 @@ def _build_plant_evidence_index(engine) -> dict[str, list[dict]]:
                 # review plus several preclinical studies.
                 "study_type": _pick_from_row(engine, row, ["Study_Type", "study_type"]),
                 "study_model": _pick_from_row(engine, row, ["Study_Model", "study_model"]),
+                "population": _structured_text(_pick_from_row(engine, row, ["Population", "population", "Participants", "participants"])),
                 "evidence_level": _pick_from_row(engine, row, ["Evidence_Level", "evidence_level"]),
                 "evidence_hierarchy": _pick_from_row(engine, row, ["Evidence_Hierarchy_Detail", "evidence_hierarchy_detail"]),
                 "primary_outcome": _structured_text(_pick_from_row(engine, row, ["Primary_Outcome", "primary_outcome", "Outcome", "outcome"])),
@@ -951,7 +966,7 @@ def discover_indication_candidates(
     )
     if candidates.empty:
         _perf(f"discover_indication_candidates done (empty candidates) elapsed={time.perf_counter() - _t0:.3f}")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
 
     # Build ONE corpus-adaptive relevance profile for this query from the
     # full evidence corpus (every plant's records), and reuse it for every
@@ -1007,7 +1022,7 @@ def discover_indication_candidates(
             f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
         )
         if candidates.empty:
-            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
+            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
 
     # --- Embedding: query embedded ONCE per run, vector search called ONCE
     # per run (never once per plant, never once per record). Both steps are
@@ -1534,6 +1549,18 @@ def discover_indication_candidates(
                 "Embedding_Version": EMBEDDING_VERSION,
                 "Evidence_Source": source,
                 "Source_Record_IDs": record_id,
+                # Preserve the exact source-derived scientific context that
+                # produced record_relevance.  These fields are diagnostic /
+                # adjudication inputs only; they do not alter the deterministic
+                # score computed above.
+                "Primary_Outcome": (record or {}).get("primary_outcome", ""),
+                "Study_Type": (record or {}).get("study_type", ""),
+                "Study_Model": (record or {}).get("study_model", ""),
+                "Population": (record or {}).get("population", ""),
+                "Source_Explicit_Indication_Text": (record or {}).get("tier1_text", ""),
+                "Source_Outcome_Text": (record or {}).get("outcome_text", ""),
+                "Source_Mechanism_Text": (record or {}).get("tier2_text", ""),
+                "Source_Evidence_Text": (record or {}).get("tier3_text", "") or (record or {}).get("text", ""),
                 "Occurrence_Corroboration": "1 traceable plant-specific source" if source or record_id else "0 traceable plant-specific sources",
                 "Candidate_Evidence_Strength_Tier": tier,
                 "Evidence_Level": level,
@@ -1681,11 +1708,11 @@ def discover_indication_candidates(
 
     if not rows:
         _progress("discovery_done", 0, 0, "Candidate discovery finished — no candidates found.")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
     _progress(
         "discovery_done", len(out), len(out),
         f"Record-level discovery complete: {len(out)} candidate evidence rows.",
     )
-    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS)).reset_index(drop=True)
+    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS)).reset_index(drop=True)

@@ -498,7 +498,10 @@ def build_adjudication_evidence_items(
         # of HUMAN vs non-human evidence. Legacy/external callers still fall
         # back to local derivation.
         canonical_context = _row_get(row, "Canonical_Study_Context")
-        if canonical_context in {"HUMAN", "ANIMAL_OR_IN_VITRO", "UNKNOWN"}:
+        canonical_human = row.get("Outcome_Specific_Human_Evidence") if hasattr(row, "get") else None
+        if str(canonical_human).strip().lower() in {"true", "1", "yes"}:
+            study_context = "HUMAN"
+        elif canonical_context in {"HUMAN", "ANIMAL_OR_IN_VITRO", "UNKNOWN"}:
             study_context = canonical_context
         else:
             study_context = _derive_study_context(study_model, study_type_design, population)
@@ -511,7 +514,9 @@ def build_adjudication_evidence_items(
         # for a broader wellbeing query).  Preserve that distinction explicitly
         # so human-evidence strength is calibrated from outcome-specific human
         # evidence rather than from topical proximity alone.
-        outcome_text = _row_get(row, "Primary_Outcome", "outcome", "Endpoint", "endpoint")
+        outcome_text = _row_get(
+            row, "Primary_Outcome", "Source_Outcome_Text", "outcome", "Endpoint", "endpoint"
+        )
         semantics = _meaningful_indication_terms(indication)
         canonical_outcome_specific = row.get("Outcome_Specific_Direct_Evidence") if hasattr(row, "get") else None
         if canonical_outcome_specific is not None and str(canonical_outcome_specific).strip().lower() not in {"", "nan", "none"}:
@@ -552,7 +557,11 @@ def build_adjudication_evidence_items(
             "dose": _row_get(row, "Dose", "dose") or None,
             "route_of_administration": _row_get(row, "Administration_Route", "Route", "route_of_administration") or None,
             "dosage_form_requested_context": _row_get(row, "Requested_Dosage_Form", "Dosage_Form", "dosage_form") or None,
-            "evidence_text_snippet": (_row_get(row, "Notes", "supporting_sentence", "Raw_Text", "Abstract", "Scientific_Rationale", "Clinical_Rationale", "Rationale") or "")[:_MAX_SNIPPET_CHARS] or None,
+            "evidence_text_snippet": (_row_get(
+                row, "Source_Evidence_Text", "Source_Outcome_Text", "Notes",
+                "supporting_sentence", "Raw_Text", "Abstract",
+                "Scientific_Rationale", "Clinical_Rationale", "Rationale"
+            ) or "")[:_MAX_SNIPPET_CHARS] or None,
             "source_citation_id": citation or None,
             "indication_match_type": match_type or None,
             "indication_match_strength": relevance_strength,

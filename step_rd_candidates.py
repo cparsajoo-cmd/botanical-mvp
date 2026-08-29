@@ -69,11 +69,21 @@ def _reconcile_final_decision_status(row) -> str:
     indication_mode = clean("Indication_Evidence_Mode")
     safety_text = clean("Safety_Flags").lower()
     direct_count_text = clean("Direct_Indication_Evidence_Count")
+    outcome_direct_count_text = clean("Outcome_Specific_Direct_Evidence_Count")
+    outcome_human_count_text = clean("Outcome_Specific_Human_Evidence_Count")
     adjudication_count_text = clean("Evidence_Adjudication_Evidence_Count")
     try:
         direct_count = int(float(direct_count_text or 0))
     except (TypeError, ValueError):
         direct_count = 0
+    try:
+        outcome_direct_count = int(float(outcome_direct_count_text or 0))
+    except (TypeError, ValueError):
+        outcome_direct_count = 0
+    try:
+        outcome_human_count = int(float(outcome_human_count_text or 0))
+    except (TypeError, ValueError):
+        outcome_human_count = 0
     try:
         adjudication_count = int(float(adjudication_count_text or 0))
     except (TypeError, ValueError):
@@ -112,13 +122,20 @@ def _reconcile_final_decision_status(row) -> str:
         # case the safe scientific state is expert review, not a green call.
         if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
             return "EXPERT REVIEW REQUIRED"
-        # A topical/direct relevance label is not enough to support a green
-        # human-efficacy call when none of the primary records actually reports
-        # an indication-specific outcome.  This generic outcome-specificity
-        # guard prevents adjacent outcomes (fatigue, stress, cognition, etc.)
-        # from being promoted as direct efficacy for whatever indication was
-        # requested.
+        # Keep two concepts separate: Direct_Indication_Evidence_Count counts
+        # independent primary-tier records directly about the indication, while
+        # Outcome_Specific_Human_Evidence_Count records the stricter subset for
+        # which source-derived human/outcome context is preserved.  A direct
+        # human claim with no direct record is an internal lineage failure. A
+        # direct record whose outcome context is unavailable is not called weak;
+        # it remains an expert-review question until the evidence can be verified.
         if indication_mode.startswith("Direct human/clinical") and direct_count <= 0:
+            return "EXPERT REVIEW REQUIRED"
+        if (
+            indication_mode.startswith("Direct human/clinical")
+            and outcome_human_count <= 0
+            and human in {"NONE", "UNKNOWN", ""}
+        ):
             return "EXPERT REVIEW REQUIRED"
         if direct_count > 0 and adjudication_count <= 0:
             return "EXPERT REVIEW REQUIRED"
@@ -182,6 +199,14 @@ def _evidence_coherence_status(row) -> str:
     except (TypeError, ValueError):
         direct_count = 0
     try:
+        outcome_direct_count = int(float(clean("Outcome_Specific_Direct_Evidence_Count") or 0))
+    except (TypeError, ValueError):
+        outcome_direct_count = 0
+    try:
+        outcome_human_count = int(float(clean("Outcome_Specific_Human_Evidence_Count") or 0))
+    except (TypeError, ValueError):
+        outcome_human_count = 0
+    try:
         reviewed_count = int(float(clean("Evidence_Adjudication_Evidence_Count") or 0))
     except (TypeError, ValueError):
         reviewed_count = 0
@@ -190,8 +215,10 @@ def _evidence_coherence_status(row) -> str:
         return "CONTRADICTION_EMPTY_REVIEW_BUNDLE"
     if indication_mode.startswith("Direct human/clinical") and direct_count <= 0:
         return "CONTRADICTION_NO_OUTCOME_SPECIFIC_DIRECT_EVIDENCE"
-    if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
+    if outcome_human_count > 0 and human in {"NONE", "UNKNOWN", ""}:
         return "CONTRADICTION_HUMAN_CLASSIFICATION"
+    if indication_mode.startswith("Direct human/clinical") and outcome_direct_count <= 0:
+        return "DIRECT_EVIDENCE_OUTCOME_CONTEXT_UNVERIFIED"
     return "COHERENT"
 
 
@@ -311,6 +338,21 @@ def _attach_ai_insights_to_report_df(report_df, ai_insights):
     ):
         out[col] = [x[col] for x in payloads]
     return out
+
+def _authoritative_ai_evidence_df(result_df, triage_audit_df):
+    """Return the processed evidence frame shared by all downstream AI.
+
+    ``triage_audit_df`` is the Stage-5 row-level frame after canonical study
+    context and outcome-specific evidence flags have been attached.  Raw
+    ``result_df`` is retained only as a backwards-compatible fallback for old
+    sessions/callers. Keeping this choice in one helper prevents adjudication
+    and explanatory AI from accidentally drifting onto different evidence
+    representations again.
+    """
+    if isinstance(triage_audit_df, pd.DataFrame) and not triage_audit_df.empty:
+        return triage_audit_df
+    return result_df
+
 
 def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target_context):
     """Controlled AI evidence-adjudication post-processing pass (part 3C/14/15
@@ -1592,6 +1634,8 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Indication_Relevance",
                 "Indication_Evidence_Mode",
                 "Direct_Indication_Evidence_Count",
+                "Outcome_Specific_Direct_Evidence_Count",
+                "Outcome_Specific_Human_Evidence_Count",
                 "Preparation_Applicability_Class",
                 "Relevance_Gate_Result",
                 "R&D_Opportunity_Score",
@@ -1633,19 +1677,24 @@ def _recommendation_block(result_df, report_ready_df=None):
         st.markdown("### ✅ Priority candidates / worth validating")
         if "Evidence_Adjudication_Status" in recommended.columns:
             _displayed = recommended.head(10)
-            _adj = _displayed["Evidence_Adjudication_Status"].fillna("").astype(str)
-            _ai_ok = _adj.eq("AI_ADJUDICATION_OK")
-            if _ai_ok.any():
-                st.success(
-                    f"AI scientific adjudication completed for {int(_ai_ok.sum())} of "
-                    f"{len(_displayed)} displayed candidate(s). Structured AI fields below can "
-                    "downgrade/cap a decision, but cannot override hard safety/regulatory gates."
-                )
-            else:
-                st.warning(
-                    "AI scientific adjudication was unavailable or fell back for this run. "
-                    "The recommendation is therefore deterministic for these displayed candidates; "
-                    "the table shows the fallback status explicitly."
+            if not _displayed.empty:
+                _adj = _displayed["Evidence_Adjudication_Status"].fillna("").astype(str)
+                _ai_ok = _adj.eq("AI_ADJUDICATION_OK")
+                if _ai_ok.any():
+                    st.success(
+                        f"AI scientific adjudication completed for {int(_ai_ok.sum())} of "
+                        f"{len(_displayed)} displayed candidate(s). Structured AI fields below can "
+                        "downgrade/cap a decision, but cannot override hard safety/regulatory gates."
+                    )
+                else:
+                    st.warning(
+                        "AI scientific adjudication was unavailable or fell back for the displayed "
+                        "priority candidates. The table shows the fallback status explicitly."
+                    )
+            elif not expert_review.empty:
+                st.info(
+                    "No candidate currently has an actionable final scientific status. "
+                    "Candidates requiring evidence/coherence review are shown separately below."
                 )
         st.caption(
             "\"Recommended\" means worth a human researcher's time to validate. "
@@ -2461,8 +2510,18 @@ def render_rd_candidates_step(inputs):
                     # shortlist.  Feeding the raw evidence store here used to
                     # make deterministic relevance and AI relevance disagree.
                     # This is generic for every indication and product form.
+                    # IMPORTANT: adjudication must consume triage_audit_df,
+                    # not the pre-shortlist result_df.  triage_audit_df is the
+                    # processed Stage-5 evidence frame carrying canonical human
+                    # context and outcome-specific flags derived by the same
+                    # deterministic helpers as the shortlist.  Passing result_df
+                    # here was the v5/v6 wiring defect that made the canonical
+                    # fields exist but never reach AI.
+                    _adjudication_evidence_df = _authoritative_ai_evidence_df(
+                        result_df, triage_audit_df
+                    )
                     plant_summary_df = _run_evidence_adjudication(
-                        plant_summary_df, result_df, indication,
+                        plant_summary_df, _adjudication_evidence_df, indication,
                         transferability_target_context,
                     )
                     _perf(
@@ -2555,8 +2614,11 @@ def render_rd_candidates_step(inputs):
                                     "deterministic_score": _first_row.get("Overall_Score"),
                                     "evidence_status": _first_row.get("Evidence_Status", ""),
                                 }
+                            _ai_evidence_df = _authoritative_ai_evidence_df(
+                                result_df, triage_audit_df
+                            )
                             ai_insights[_plant_name] = generate_candidate_insights(
-                                _plant_name, result_df, score_summary=_score_summary,
+                                _plant_name, _ai_evidence_df, score_summary=_score_summary,
                                 indication=indication,
                             )
                         st.session_state["rd_ai_insights"] = ai_insights

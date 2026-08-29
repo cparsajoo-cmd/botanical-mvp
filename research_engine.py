@@ -21,7 +21,7 @@ from botanical_entity_validation import (
     validate_botanical_candidate,
 )
 import query_expansion_service
-from ai_usage_telemetry import start_new_ai_run
+from ai_usage_telemetry import start_new_ai_run, resolve_run_cost_ceiling_usd
 from ai_botanical_entity_extractor import (
     extract_botanical_entities_ai,
     candidate_strings_for_validation,
@@ -1275,6 +1275,7 @@ def run_research_engine(
     # makes at most one AI call per Stage 2 run (see
     # query_expansion_service.expand_query_terms, called once above).
     _ai_tracker = start_new_ai_run()
+    _ai_tracker.set_run_cost_ceiling_usd(resolve_run_cost_ceiling_usd())
     _ai_tracker.set_limit("query_expansion", 1)
     _ai_tracker.set_limit(
         "botanical_entity_extraction",

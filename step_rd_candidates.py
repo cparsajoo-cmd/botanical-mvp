@@ -32,7 +32,7 @@ from standard_evidence_builder import (
     get_scientific_evidence_by_ids,
     build_transferability_target_context,
 )
-from ai_usage_telemetry import start_new_ai_run, get_ai_run_tracker
+from ai_usage_telemetry import start_new_ai_run, get_ai_run_tracker, resolve_run_cost_ceiling_usd
 
 
 # TEMPORARY DIAGNOSTIC INSTRUMENTATION (performance audit — runtime hang
@@ -668,6 +668,7 @@ def _configure_ai_run_budgets() -> None:
     from hypothesis_generation_service import MAX_HYPOTHESES_FOR_GROUNDING
 
     tracker = start_new_ai_run()
+    tracker.set_run_cost_ceiling_usd(resolve_run_cost_ceiling_usd())
     tracker.set_limit("embedding_query", 1)
     # Stage 5 should not normally standardize new evidence, but keep legacy
     # extractor paths bounded if a connector/custom path does so.
@@ -824,6 +825,17 @@ def _render_ai_status_summary():
     if not lines:
         return
     with st.expander("🤖 AI status for this run", expanded=False):
+        if summary.get("provider_circuit_category") == "run_cost_ceiling_exceeded":
+            ceiling = summary.get("run_cost_ceiling_usd")
+            st.warning(
+                "This run stopped calling OpenAI early on purpose: the estimated cost "
+                f"crossed its self-imposed per-run ceiling"
+                + (f" (${float(ceiling):.2f})" if ceiling is not None else "")
+                + ". Remaining candidates fell back to the deterministic engine only "
+                "(never AI-validated, but also never mistaken for AI-reviewed -- see the "
+                "per-task status below). Raise AI_RUN_COST_CEILING_USD to allow more spend "
+                "on a future run."
+            )
         for line in lines:
             st.write(line)
         totals = (

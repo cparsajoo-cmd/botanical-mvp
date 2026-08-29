@@ -8,6 +8,7 @@ be reconciled with provider dashboard request counts.
 from __future__ import annotations
 
 import contextvars
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
@@ -20,6 +21,13 @@ ERROR_CONNECTION = "connection_failure"
 ERROR_INVALID_OUTPUT = "malformed_model_output"
 ERROR_OTHER = "other"
 BREAKER_TRIPPING_CATEGORIES = frozenset({ERROR_INSUFFICIENT_QUOTA, ERROR_AUTH})
+
+# Self-imposed spend cap (distinct from the provider-error categories above):
+# the run stops itself, on purpose, once its OWN running cost estimate
+# crosses a configurable ceiling -- this does not wait for OpenAI to return
+# an insufficient_quota error, which only happens after the account balance
+# is already at (or near) zero. See AIRunTracker.set_run_cost_ceiling_usd().
+ERROR_RUN_COST_CEILING = "run_cost_ceiling_exceeded"
 
 
 def classify_llm_error(exc: BaseException) -> str:
@@ -46,6 +54,33 @@ class AIBudgetExhaustedError(Exception):
     def __init__(self, task: str, limit: int):
         self.task, self.limit = task, limit
         super().__init__(f"AI_BUDGET_EXHAUSTED: task '{task}' reached its per-run limit of {limit} call(s); using deterministic fallback.")
+
+
+RUN_COST_CEILING_ENV_VAR = "AI_RUN_COST_CEILING_USD"
+# A single Stage 5 "Generate Final Recommendation" run can reach on the
+# order of 200 logical LLM calls across every governed task (adjudication,
+# synthesis, hypothesis generation, and their bounded grounding-verification
+# follow-ups). At the default gpt-4o-mini pricing that is well under this
+# ceiling; it exists to catch an unexpectedly expensive model override or a
+# runaway loop before it can spend an unbounded amount in one run, not to
+# constrain normal usage.
+DEFAULT_RUN_COST_CEILING_USD_FALLBACK = 1.00
+
+
+def resolve_run_cost_ceiling_usd() -> Optional[float]:
+    """Centralized self-imposed per-run spend cap, overridable via
+    AI_RUN_COST_CEILING_USD. An empty/invalid env value falls back to the
+    hardcoded default rather than raising; a value of "0" or a negative
+    number disables the cap entirely (per-task call-count limits, set via
+    AIRunTracker.set_limit(), still apply either way)."""
+    raw = (os.getenv(RUN_COST_CEILING_ENV_VAR) or "").strip()
+    if not raw:
+        return DEFAULT_RUN_COST_CEILING_USD_FALLBACK
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_RUN_COST_CEILING_USD_FALLBACK
+    return value if value > 0 else None
 
 
 class AIProviderCircuitOpenError(Exception):
@@ -155,6 +190,39 @@ class AIRunTracker:
         self.breaker_category: Optional[str] = None
         # Raw reason is internal-only; summary() deliberately sanitizes it.
         self.breaker_reason: Optional[str] = None
+        # Self-imposed total spend cap for this run (None = no cap enforced
+        # here; per-task call-count limits, set via set_limit(), are the
+        # only enforcement in that case). See set_run_cost_ceiling_usd().
+        self._run_cost_ceiling_usd: Optional[float] = None
+        self._running_priced_cost_usd = 0.0
+
+    def set_run_cost_ceiling_usd(self, ceiling_usd: Optional[float]) -> None:
+        """Cap total ESTIMATED spend for this run, across every task.
+
+        Per-task call-count limits (set_limit) bound how many times one
+        task can call the model, but a run combining many tasks (Stage 5
+        alone can reach on the order of 200 logical calls across
+        adjudication/synthesis/hypothesis-generation/grounding-verification)
+        has no single number that says "this is too much money" -- only
+        this does. Checked after every successfully priced call in
+        record_call(); once crossed, the run's circuit breaker trips (same
+        mechanism as insufficient_quota/auth failures) so every further
+        call, for any task, is skipped for the rest of the run rather than
+        actually sent to the provider. A None/non-positive ceiling disables
+        this check entirely (call-count limits still apply as before).
+        """
+        if ceiling_usd is None or float(ceiling_usd) <= 0:
+            self._run_cost_ceiling_usd = None
+        else:
+            self._run_cost_ceiling_usd = float(ceiling_usd)
+
+    def get_run_cost_ceiling_usd(self) -> Optional[float]:
+        return self._run_cost_ceiling_usd
+
+    def running_cost_usd(self) -> float:
+        """Estimated spend so far this run, priced calls only (an unpriced
+        model override is not guessed here -- see _task_cost_summary)."""
+        return self._running_priced_cost_usd
 
     def _stats(self, task: str) -> _TaskStats:
         return self._tasks.setdefault(task, _TaskStats())
@@ -225,6 +293,33 @@ class AIRunTracker:
             bucket["input_tokens"] += input_tokens
             bucket["cached_input_tokens"] += cached_input_tokens
             bucket["output_tokens"] += output_tokens
+            # Self-imposed run cost ceiling (see set_run_cost_ceiling_usd).
+            # Only a PRICED call (a known model in _MODEL_PRICING_USD_PER_
+            # MILLION) can move the running total or trip this -- an
+            # unpriced/overridden model is never guessed at, so it also
+            # never silently trips a cost breaker it cannot actually
+            # measure. Checked here (not in summary()) so the very next
+            # call in this run, for any task, is the one that gets stopped.
+            this_call_cost = _estimate_model_cost_usd(
+                str(model),
+                {
+                    "input_tokens": input_tokens,
+                    "cached_input_tokens": cached_input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            )
+            if this_call_cost is not None:
+                self._running_priced_cost_usd += this_call_cost
+                if (
+                    self._run_cost_ceiling_usd is not None
+                    and not self.breaker_tripped
+                    and self._running_priced_cost_usd >= self._run_cost_ceiling_usd
+                ):
+                    self.trip_breaker(
+                        ERROR_RUN_COST_CEILING,
+                        f"Estimated run cost ${self._running_priced_cost_usd:.4f} reached the "
+                        f"${self._run_cost_ceiling_usd:.2f} per-run ceiling after task '{task}'.",
+                    )
         if not success:
             stats.failures += 1
             if error_category:
@@ -248,6 +343,7 @@ class AIRunTracker:
             "provider_circuit_open": self.breaker_tripped,
             "provider_circuit_category": self.breaker_category,
             "provider_circuit_reason": self.breaker_category if self.breaker_tripped else None,
+            "run_cost_ceiling_usd": self._run_cost_ceiling_usd,
             "tasks": tasks,
             # Backward-compatible alias; new code should prefer total_logical_calls.
             "total_api_calls": logical,

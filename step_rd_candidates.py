@@ -120,7 +120,27 @@ def _reconcile_final_decision_status(row) -> str:
         # Likewise a positive direct-evidence count with an empty adjudication
         # bundle is an internal evidence-lineage contradiction.  In either
         # case the safe scientific state is expert review, not a green call.
-        if indication_mode.startswith("Direct human/clinical") and human in {"NONE", "UNKNOWN", ""}:
+        # Missing source-derived outcome context is uncertainty, not proof of
+        # absent efficacy.  When the authoritative primary-tier body contains
+        # multiple direct records, the structured adjudicator reviewed evidence,
+        # direction is consistently positive, and no conflict is present, keep
+        # the candidate actionable but cautious even if human/outcome metadata
+        # could not be reconstructed.  This is indication-agnostic and never
+        # relaxes safety/regulatory/preparation gates handled above.
+        outcome_context_unverified_but_supported = (
+            indication_mode.startswith("Direct human/clinical")
+            and direct_count >= 2
+            and outcome_human_count <= 0
+            and adjudication_count > 0
+            and direction == "CONSISTENT_POSITIVE"
+            and conflict in {"NONE", "LOW", ""}
+            and confidence in {"LOW", "MODERATE", "HIGH"}
+        )
+        if (
+            indication_mode.startswith("Direct human/clinical")
+            and human in {"NONE", "UNKNOWN", ""}
+            and not outcome_context_unverified_but_supported
+        ):
             return "EXPERT REVIEW REQUIRED"
         # Keep two concepts separate: Direct_Indication_Evidence_Count counts
         # independent primary-tier records directly about the indication, while
@@ -338,6 +358,52 @@ def _attach_ai_insights_to_report_df(report_df, ai_insights):
     ):
         out[col] = [x[col] for x in payloads]
     return out
+
+
+def _reconcile_after_ai_insights(report_df):
+    """Apply downgrade-only decision checks that depend on explanatory AI.
+
+    ``AI_Evidence_Consistency`` does not exist when the first deterministic /
+    structured-adjudication reconciliation runs.  Therefore any rule that uses
+    it MUST run after ``_attach_ai_insights_to_report_df``.  This function is a
+    second, downgrade-only synchronization point; it never promotes a candidate
+    and never weakens safety/regulatory decisions.
+    """
+    if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+        return report_df
+    out = report_df.copy()
+
+    def _clean(v):
+        t = str(v or "").strip()
+        return "" if t.lower() in {"nan", "none", "null"} else t
+
+    for idx, row in out.iterrows():
+        current = _clean(row.get("Final_Decision_Status"))
+        if current not in {"GO", "GO WITH CAUTION"}:
+            continue
+        consistency = _clean(row.get("AI_Evidence_Consistency")).lower()
+        human = _clean(row.get("Human_Evidence_Strength")).upper()
+        confidence = _clean(row.get("Scientific_Evidence_Confidence")).upper()
+        ai_status = _clean(row.get("AI_Insight_Status"))
+
+        # Explanatory AI is not decision authority by itself.  It can only
+        # trigger this conservative cap when three independent signals agree:
+        # the synthesis explicitly says evidence is insufficient, structured
+        # human evidence is weak/absent, and confidence is low/very-low.
+        if (
+            ai_status == "AI_REVIEW_AVAILABLE"
+            and consistency == "insufficient_evidence"
+            and human in {"NONE", "UNKNOWN", "WEAK", ""}
+            and confidence in {"LOW", "VERY_LOW", "UNKNOWN", ""}
+        ):
+            out.at[idx, "Final_Decision_Status"] = "EXPERT REVIEW REQUIRED"
+            if "Evidence_Coherence_Status" in out.columns:
+                out.at[idx, "Evidence_Coherence_Status"] = "AI_SYNTHESIS_INSUFFICIENT_LOW_CONFIDENCE"
+
+    if "Final_Rationale" in out.columns:
+        out["Final_Rationale"] = [build_final_rationale(row) for _, row in out.iterrows()]
+    return out
+
 
 def _authoritative_ai_evidence_df(result_df, triage_audit_df):
     """Return the processed evidence frame shared by all downstream AI.
@@ -2624,6 +2690,12 @@ def render_rd_candidates_step(inputs):
                         st.session_state["rd_ai_insights"] = ai_insights
                         st.session_state["rd_report_ready_df"] = _attach_ai_insights_to_report_df(
                             st.session_state.get("rd_report_ready_df"), ai_insights
+                        )
+                        # AI synthesis fields are attached only above, so the
+                        # downgrade rule that depends on them must run here --
+                        # not in the earlier pre-insight reconciliation.
+                        st.session_state["rd_report_ready_df"] = _reconcile_after_ai_insights(
+                            st.session_state.get("rd_report_ready_df")
                         )
                         _perf(
                             f"AI R&D insights done candidates={len(ai_insights)} "

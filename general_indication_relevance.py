@@ -107,6 +107,17 @@ class RelevanceMatch:
     matched_terms: tuple[str, ...]
     reason: str
     confidence: float = 0.0
+    # Additive diagnostic only (does not affect score/match_type/tier
+    # membership or any existing caller/test): True when a non-literal
+    # ("supportive"-tier) match was contributed by the record's own
+    # reported-outcome text (outcome_text), not only by mechanism/target
+    # annotation text (tier2_text). Rule 4 below intentionally still scores
+    # and buckets both cases identically (a documented, deliberate scoping
+    # choice -- see score_record_relevance()'s outcome_text docstring); this
+    # flag exists purely so a human reviewer or downstream consumer can see
+    # WHICH kind of "supportive" evidence a record actually is, without
+    # silently changing any score, ranking, or existing test expectation.
+    outcome_semantic_support: bool = False
 
 
 @dataclass(frozen=True)
@@ -424,10 +435,22 @@ def score_record_relevance(
             if match_type == MATCH_OUTCOME_OR_MECHANISM_SUPPORT
             else "Corpus-learned terms co-occurring with the query matched in outcome/mechanism fields"
         )
+        # Additive diagnostic only -- does not change score/match_type/tier
+        # membership. True only when the record's OWN reported-outcome text
+        # (not just mechanism/target annotation text) actually contains the
+        # matched terms, so a reviewer can tell "this record reports a real
+        # (non-literally-worded) outcome" from "this record only shares a
+        # mechanism/target mention" even though both land in this same
+        # supportive-tier bucket for scoring purposes.
+        _outcome_contributed = bool(
+            outcome_text_provided and outcome_text
+            and profile.match(outcome_text).score > 0
+        )
         return RelevanceMatch(
             score, match_type, m2_for_semantic.matched_terms,
             f"{reason}; matched={', '.join(m2_for_semantic.matched_terms)}",
             _CONFIDENCE_BY_TYPE[match_type],
+            outcome_semantic_support=_outcome_contributed,
         )
 
     # 5. Corpus-learned (non-literal) terms found only in Tier 3 source text.
@@ -535,6 +558,12 @@ class HybridScore:
     outcome_mechanism_score: float
     lexical_fallback_score: float
     fallback_mode: bool  # True when embedding_similarity was unavailable
+    # Additive diagnostic only -- see RelevanceMatch.outcome_semantic_support
+    # above for the full rationale. Forwarded from the deterministic engine's
+    # own answer wherever that answer contributes to this HybridScore; never
+    # computed independently and never affects final_relevance_score/
+    # match_type/confidence.
+    outcome_semantic_support: bool = False
 
 
 def score_record_relevance_hybrid(
@@ -610,6 +639,7 @@ def score_record_relevance_hybrid(
             deterministic.reason, _HYBRID_CONFIDENCE_BY_TYPE[deterministic.match_type],
             explicit_score, embedding_similarity, outcome_score, lexical_score,
             fallback_mode=embedding_similarity is None,
+            outcome_semantic_support=deterministic.outcome_semantic_support,
         )
 
     # From here, no literal explicit-field match exists. Embedding
@@ -639,6 +669,7 @@ def score_record_relevance_hybrid(
                 _HYBRID_CONFIDENCE_BY_TYPE[MATCH_EMBEDDING_SEMANTIC],
                 explicit_score, embedding_similarity, outcome_score, lexical_score,
                 fallback_mode=False,
+                outcome_semantic_support=deterministic.outcome_semantic_support,
             )
         if effective_embedding >= HYBRID_SEMANTIC_THRESHOLD and has_deterministic_support:
             combined = (
@@ -655,6 +686,7 @@ def score_record_relevance_hybrid(
                 _HYBRID_CONFIDENCE_BY_TYPE[MATCH_HYBRID_SEMANTIC],
                 explicit_score, embedding_similarity, outcome_score, lexical_score,
                 fallback_mode=False,
+                outcome_semantic_support=deterministic.outcome_semantic_support,
             )
 
     # No embedding contribution (unavailable, below threshold, or did not
@@ -668,4 +700,5 @@ def score_record_relevance_hybrid(
         deterministic.reason, _HYBRID_CONFIDENCE_BY_TYPE.get(deterministic.match_type, deterministic.confidence),
         explicit_score, embedding_similarity, outcome_score, lexical_score,
         fallback_mode=embedding_similarity is None,
+        outcome_semantic_support=deterministic.outcome_semantic_support,
     )

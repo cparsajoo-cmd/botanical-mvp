@@ -17,6 +17,10 @@ from safety_interaction_attribution import (
     extract_attributed_safety_interactions,
     extract_structured_safety_interactions,
 )
+from safety_assertion_engine import (
+    classify_safety_assertions as _classify_safety_assertions,
+    derive_structured_safety_status as _derive_structured_safety_status,
+)
 from indication_semantics import indication_terms as _resolve_indication_terms
 from standard_evidence_builder import (
     evaluate_applicability,
@@ -104,6 +108,13 @@ _RELEVANCE_ENGINE_COLUMNS = (
     "Explicit_Indication_Score", "Embedding_Similarity",
     "Outcome_Mechanism_Score", "Lexical_Fallback_Score",
     "Embedding_Model", "Embedding_Version",
+    # Additive diagnostic (see general_indication_relevance.py's
+    # RelevanceMatch/HybridScore.outcome_semantic_support docstrings):
+    # distinguishes, within the single supportive/mechanistic-tier bucket,
+    # a record whose own reported-outcome text (not just mechanism/target
+    # annotation text) actually contributed to a non-literal match. Never
+    # changes score, match type, or Shortlist/Exploratory classification.
+    "Outcome_Semantic_Support",
 )
 
 # Scientific evidence transport contract.  These are source-derived fields
@@ -330,11 +341,27 @@ def _aggregate_plant_safety(records: list[dict], plant_name: str) -> dict:
     must not disappear merely because the safety source was indexed under a
     different indication. Structured fields are preferred; conservative raw
     text attribution is used only as fallback for each record.
+
+    Also derives the same controlled-vocabulary, candidate-level safety
+    STATUS (Safety_Assertion_Status / Safety_Concern_Level /
+    Safety_Evidence_IDs / Safety_Status_Rationale) that
+    botanical_rd_candidate_engine.py's compound-substitution run() path
+    already computes via safety_assertion_engine.classify_safety_assertions()
+    + derive_structured_safety_status() (Part 9). That computation was
+    previously wired ONLY into the compound-substitution path -- indication-
+    mode discovery (this function) never called it, so every indication-mode
+    candidate silently reported these four fields as blank regardless of how
+    much real adverse-event evidence existed for the plant. Reusing the
+    exact same classifier here, pooled across every evidence record already
+    being iterated below for the whole plant (not a single narrative-
+    selected row), fixes that gap generically for every plant and every
+    indication -- no per-plant/per-case hardcoding.
     """
     adverse_values: list[str] = []
     interaction_values: list[str] = []
     reassurance_values: list[str] = []
     statuses: list[str] = []
+    structured_assertions: list = []
 
     for record in records:
         structured_safety = str(record.get("safety_findings") or "").strip()
@@ -353,8 +380,9 @@ def _aggregate_plant_safety(records: list[dict], plant_name: str) -> dict:
             if status and status != "not_assessed":
                 statuses.append(status)
 
+        raw_text = " ".join(str(record.get(k) or "") for k in ("text", "notes"))
         raw = extract_attributed_safety_interactions(
-            " ".join(str(record.get(k) or "") for k in ("text", "notes")),
+            raw_text,
             plant_name=plant_name,
             structurally_linked=True,
         )
@@ -364,6 +392,25 @@ def _aggregate_plant_safety(records: list[dict], plant_name: str) -> dict:
         status = raw.get("safety_data_status")
         if status and status != "not_assessed":
             statuses.append(status)
+
+        # Same free-text safety classification the compound-substitution
+        # engine path uses (safety_findings + interactions + raw text/
+        # notes), scoped per record so evidence attribution (record id,
+        # source, preparation, dose, route) is preserved for
+        # Safety_Evidence_IDs.
+        _assertion_input = " ".join(
+            part.strip() for part in (structured_safety, structured_interactions, raw_text)
+            if str(part or "").strip()
+        )
+        if _assertion_input:
+            structured_assertions.extend(_classify_safety_assertions(
+                _assertion_input,
+                evidence_record_id=str(record.get("record_id") or ""),
+                authority=str(record.get("source") or "Unknown Source") or "Unknown Source",
+                preparation=str(record.get("preparation") or ""),
+                dose_dependency=(str(record.get("dose") or "unknown") if record.get("dose") else "unknown"),
+                route=str(record.get("route") or ""),
+            ))
 
     adverse = _merge_unique_text(adverse_values)
     interactions = _merge_unique_text(interaction_values)
@@ -382,10 +429,19 @@ def _aggregate_plant_safety(records: list[dict], plant_name: str) -> dict:
         else:
             status_parts.append("not_assessed")
 
+    _structured_status = _derive_structured_safety_status(tuple(structured_assertions))
+
     return {
         "adverse_events": adverse,
         "interactions": interactions,
         "safety_reassurance": reassurance,
+        # Part 9 parity fields (see docstring above) -- additive only, does
+        # not change adverse_events/interactions/safety_reassurance/
+        # safety_data_status or any score/gate logic derived from them.
+        "Safety_Assertion_Status": _structured_status["Safety_Assertion_Status"],
+        "Safety_Concern_Level": _structured_status["Safety_Concern_Level"],
+        "Safety_Evidence_IDs": "; ".join(_structured_status["Safety_Evidence_IDs"]),
+        "Safety_Status_Rationale": _structured_status["Safety_Rationale"],
         "safety_data_status": "; ".join(status_parts),
     }
 
@@ -1559,6 +1615,13 @@ def discover_indication_candidates(
                 "Interaction_Flags": interactions,
                 "Safety_Reassurance": safety_reassurance,
                 "Safety_Data_Status": safety_data_status,
+                # Part 9 parity (see _aggregate_plant_safety docstring) --
+                # plant-wide structured safety status, previously computed
+                # only in the compound-substitution engine path.
+                "Safety_Assertion_Status": plant_safety.get("Safety_Assertion_Status", ""),
+                "Safety_Concern_Level": plant_safety.get("Safety_Concern_Level", ""),
+                "Safety_Evidence_IDs": plant_safety.get("Safety_Evidence_IDs", ""),
+                "Safety_Status_Rationale": plant_safety.get("Safety_Status_Rationale", ""),
                 "Indication_Match_Score": record_relevance.final_relevance_score,
                 "Indication_Match_Type": record_relevance.match_type,
                 "Indication_Match_Terms": "; ".join(record_relevance.matched_terms),
@@ -1569,6 +1632,7 @@ def discover_indication_candidates(
                 "Embedding_Similarity": record_relevance.embedding_similarity,
                 "Outcome_Mechanism_Score": record_relevance.outcome_mechanism_score,
                 "Lexical_Fallback_Score": record_relevance.lexical_fallback_score,
+                "Outcome_Semantic_Support": record_relevance.outcome_semantic_support,
                 "Embedding_Model": EMBEDDING_MODEL if not record_relevance.fallback_mode else f"{EMBEDDING_MODEL} (fallback: {embedding_fallback_reason or 'unavailable for this record'})",
                 "Embedding_Version": EMBEDDING_VERSION,
                 "Evidence_Source": source,

@@ -488,13 +488,40 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
         "Scientific_Triage_Status", pd.Series(["Excluded"] * len(plant_summary_df))
     ).isin(["Shortlist", "Exploratory"])
     eligible_frame = plant_summary_df.loc[eligible_mask].copy()
+    # Adjudication budget priority: evidence depth first, Overall_Score only
+    # as a tie-breaker. Sorting purely by Overall_Score (a composite that
+    # also folds in commercial/novelty factors) let candidates with the
+    # MOST direct scientific evidence be silently skipped
+    # (Evidence_Adjudication_Status=AI_ADJUDICATION_NOT_RUN) whenever a
+    # commercially-stronger but evidence-thin candidate outranked them --
+    # backwards for a step whose whole purpose is scientific evidence
+    # review. Generic for every indication/plant: no candidate name or
+    # indication is referenced here, only the evidence-count columns every
+    # candidate already has.
+    _evidence_cols = [
+        c for c in (
+            "Direct_Indication_Evidence_Count",
+            "Outcome_Specific_Direct_Evidence_Count",
+            "Outcome_Specific_Human_Evidence_Count",
+        )
+        if c in eligible_frame.columns
+    ]
+    if _evidence_cols:
+        eligible_frame["_adjudication_evidence_depth"] = sum(
+            pd.to_numeric(eligible_frame[c], errors="coerce").fillna(0) for c in _evidence_cols
+        )
+    else:
+        eligible_frame["_adjudication_evidence_depth"] = 0.0
     if "Overall_Score" in eligible_frame.columns:
         eligible_frame["_adjudication_rank_score"] = pd.to_numeric(
             eligible_frame["Overall_Score"], errors="coerce"
         ).fillna(float("-inf"))
-        eligible_frame = eligible_frame.sort_values(
-            "_adjudication_rank_score", ascending=False, kind="stable"
-        )
+    else:
+        eligible_frame["_adjudication_rank_score"] = float("-inf")
+    eligible_frame = eligible_frame.sort_values(
+        ["_adjudication_evidence_depth", "_adjudication_rank_score"],
+        ascending=[False, False], kind="stable",
+    )
     eligible_plants = (
         eligible_frame["Alternative_Plant"]
         .dropna().astype(str).drop_duplicates().tolist()[:_ADJUDICATION_MAX_CANDIDATES]
@@ -1772,16 +1799,18 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Safety_Flags",
                 # Structured, candidate-level safety STATUS (Part 9,
                 # safety_assertion_engine.derive_structured_safety_status).
-                # These columns already exist on every raw engine row and
-                # already survive merge_authoritative_scores() untouched
-                # (they are not in candidate_shortlisting.authoritative_
-                # fields because they are not plant_summary-level
-                # aggregates -- they pass through from the selected raw
-                # row like Safety_Flags does). They were simply never
-                # added to this display list, so Stage 6 only ever showed
-                # the free-text Safety_Flags snippet and never the
-                # classified severity computed alongside it. Additive
-                # only: no score, gate, or decision logic changes here.
+                # Computed per-row in BOTH discovery paths (compound-
+                # substitution run() and, since the indication-mode wiring
+                # fix, indication_candidate_discovery.py's
+                # _aggregate_plant_safety), then pooled across every raw
+                # row for the plant by candidate_shortlisting.py's
+                # _pooled_safety_status_for_plant() -- a genuine
+                # plant_summary-level aggregate, listed in
+                # candidate_shortlisting.authoritative_fields like every
+                # other plant-level safety field, so it is never silently
+                # narrowed to whichever single raw row happens to be
+                # selected as the narrative source. Additive only: no
+                # score, gate, or decision logic changes here.
                 "Safety_Assertion_Status",
                 "Safety_Concern_Level",
                 "Safety_Evidence_IDs",

@@ -31,6 +31,14 @@ from evidence_authority import (
     DIRECTION_UNCLEAR,
 )
 from scientific_phrase_matcher import phrase_present
+from safety_assertion_engine import (
+    SAFETY_STATUS_NO_EVIDENCE,
+    SAFETY_STATUS_REASSURANCE_ONLY,
+    SAFETY_STATUS_CONCERN,
+    SAFETY_STATUS_INTERACTION,
+    SAFETY_STATUS_CONFLICTING,
+    SAFETY_STATUS_INSUFFICIENT,
+)
 from standard_evidence_builder import (
     evaluate_applicability, preparation_from_product_form, canonical_preparation_identity,
 )
@@ -1903,6 +1911,92 @@ def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: i
     return "; ".join(adverse)
 
 
+_SAFETY_STATUS_PRECEDENCE = (
+    SAFETY_STATUS_CONFLICTING,
+    SAFETY_STATUS_CONCERN,
+    SAFETY_STATUS_INTERACTION,
+    SAFETY_STATUS_REASSURANCE_ONLY,
+    SAFETY_STATUS_INSUFFICIENT,
+    SAFETY_STATUS_NO_EVIDENCE,
+)
+_SAFETY_RISK_STATUSES = {SAFETY_STATUS_CONCERN, SAFETY_STATUS_INTERACTION}
+_SAFETY_CONCERN_LEVEL_RANK = {"SERIOUS": 3, "MODERATE": 2, "MINOR": 1, "NONE": 0, "UNKNOWN": 0}
+
+
+def _pooled_safety_status_for_plant(group: pd.DataFrame) -> dict:
+    """Pool each raw evidence row's OWN Safety_Assertion_Status (etc.) into
+    one plant-level value, the same way Safety_Flags is already pooled
+    across the whole evidence group (see _clean_safety_flags_for_plant)
+    rather than borrowed from a single narrative-selected row.
+
+    Both discovery paths (indication_candidate_discovery.py's
+    _aggregate_plant_safety, and botanical_rd_candidate_engine.py's
+    compound-substitution run()) already write a per-row Safety_Assertion_
+    Status using safety_assertion_engine's controlled vocabulary. This
+    function is the single place that reconciles those per-row values for
+    the report-ready plant-level frame, generically -- no plant/indication
+    is special-cased. A row reporting a risk status (concern/interaction)
+    together with another row reporting reassurance-only is escalated to
+    CONFLICTING, mirroring derive_structured_safety_status()'s own
+    risk-present + risk-absent rule, just applied across rows instead of
+    within one.
+    """
+    if "Safety_Assertion_Status" not in group.columns:
+        return {}
+    statuses = [str(v).strip() for v in group["Safety_Assertion_Status"].dropna().tolist() if str(v).strip()]
+    if not statuses:
+        return {}
+
+    has_risk = any(s in _SAFETY_RISK_STATUSES for s in statuses)
+    has_reassurance_only = any(s == SAFETY_STATUS_REASSURANCE_ONLY for s in statuses)
+    if SAFETY_STATUS_CONFLICTING in statuses or (has_risk and has_reassurance_only):
+        final_status = SAFETY_STATUS_CONFLICTING
+    else:
+        final_status = min(
+            statuses,
+            key=lambda s: _SAFETY_STATUS_PRECEDENCE.index(s) if s in _SAFETY_STATUS_PRECEDENCE else len(_SAFETY_STATUS_PRECEDENCE),
+        )
+
+    concern_levels = [
+        str(v).strip().upper()
+        for v in group.get("Safety_Concern_Level", pd.Series(dtype=object)).dropna().tolist()
+        if str(v).strip()
+    ]
+    final_concern_level = (
+        max(concern_levels, key=lambda c: _SAFETY_CONCERN_LEVEL_RANK.get(c, 0))
+        if concern_levels else "UNKNOWN"
+    )
+
+    evidence_ids: list[str] = []
+    for value in group.get("Safety_Evidence_IDs", pd.Series(dtype=object)).dropna().tolist():
+        for part in str(value).split(";"):
+            clean = part.strip()
+            if clean and clean not in evidence_ids:
+                evidence_ids.append(clean)
+
+    rationale_by_status = {
+        SAFETY_STATUS_CONFLICTING: (
+            "Both risk-present and risk-absent safety assertions were retrieved across this "
+            "plant's evidence; this is an unresolved conflict, not evidence of safety."
+        ),
+        SAFETY_STATUS_CONCERN: "A safety concern (e.g. contraindication, adverse event, organ toxicity) was retrieved from the evidence.",
+        SAFETY_STATUS_INTERACTION: "An interaction-type safety signal (drug interaction / CYP / P-gp / narrow-therapeutic-index) was retrieved.",
+        SAFETY_STATUS_REASSURANCE_ONLY: (
+            "Only study-specific reassurance (e.g. \"no adverse events reported\" in a specific "
+            "study) was found. This does NOT establish general safety."
+        ),
+        SAFETY_STATUS_INSUFFICIENT: "Safety-relevant evidence exists but could not be classified as a concern or as reassurance.",
+        SAFETY_STATUS_NO_EVIDENCE: "No safety-relevant evidence was retrieved for this candidate.",
+    }
+
+    return {
+        "Safety_Assertion_Status": final_status,
+        "Safety_Concern_Level": final_concern_level,
+        "Safety_Evidence_IDs": "; ".join(evidence_ids),
+        "Safety_Status_Rationale": rationale_by_status.get(final_status, ""),
+    }
+
+
 def _critical_plant_stop(group: pd.DataFrame) -> bool:
     """Return True only for a plant-level stop supported across the group.
 
@@ -3210,6 +3304,7 @@ def build_plant_candidate_shortlist(
             "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit plant-drug interaction attributable to this plant found",
             "Safety_Reassurance": _join(group.get("Safety_Reassurance", []), 8),
             "Safety_Data_Status": _join(group.get("Safety_Data_Status", []), 4) or "not_assessed",
+            **_pooled_safety_status_for_plant(group),
             "Negative_Evidence": _join(group.get("Negative_Evidence_Types", []), 8),
             "Best_Existing_R&D_Score": round(float(pd.to_numeric(group.get("R&D_Opportunity_Score", pd.Series([0])), errors="coerce").fillna(0).max()), 1),
             "Raw_Association_Row_Count": len(group),
@@ -3514,6 +3609,14 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         # species safety sentence can leak back into the final report after
         # being correctly filtered during aggregation.
         "Safety_Flags", "Interaction_Flags", "Safety_Reassurance", "Safety_Data_Status",
+        # Plant-level pooled structured safety status (_pooled_safety_status_
+        # for_plant, computed above from every raw row's own per-row status,
+        # not a single narrative-selected row) -- same reasoning as
+        # Safety_Flags immediately above: must override the narrative raw
+        # row so a safety signal correctly attributed to ANY of this
+        # plant's evidence rows survives into the final report.
+        "Safety_Assertion_Status", "Safety_Concern_Level", "Safety_Evidence_IDs",
+        "Safety_Status_Rationale",
         "Evidence_Quality_Score",
         "Compound_Quality_Score", "Mechanism_Support_Score",
         "Safety_Regulatory_Score", "Novelty_Market_Score",

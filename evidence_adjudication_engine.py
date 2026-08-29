@@ -794,15 +794,19 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
 
     by_id = {str(item.get("evidence_id")): item for item in evidence_items}
     raw_direct_outcome_ids = out.get("Direct_Outcome_Evidence_IDs")
+    legacy_schema = raw_direct_outcome_ids is None and out.get("Direct_Human_Outcome_Evidence_IDs") is None
     if raw_direct_outcome_ids is None:
-        # Backward-compatible path for old cached/mocked schema responses. The
-        # new production schema always supplies these fields; older responses
-        # may only be interpreted from deterministic row facts already present
-        # in the exact evidence bundle.
+        # Backward-compatible path for pre-v11 cached/mocked adjudication
+        # responses.  Those responses had no explicit direct-outcome ID fields,
+        # so a DIRECT record was the historical efficacy contract.  Preserve
+        # that contract only when the *schema fields themselves are absent*.
+        # In the v11 production schema an explicit empty list means the AI
+        # reviewed the bundle and verified no direct outcome evidence; that
+        # must remain authoritative and must not be upgraded here.
         direct_outcome_ids = [
             str(item.get("evidence_id")) for item in evidence_items
             if item.get("indication_match_strength") == "DIRECT"
-            and bool(item.get("outcome_specific"))
+            and (legacy_schema or bool(item.get("outcome_specific")))
             and str(item.get("evidence_id") or "")
         ]
     else:

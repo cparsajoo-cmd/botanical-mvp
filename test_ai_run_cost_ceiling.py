@@ -113,6 +113,34 @@ def test_resolve_run_cost_ceiling_usd_default_when_unset(monkeypatch):
     assert resolve_run_cost_ceiling_usd() == DEFAULT_RUN_COST_CEILING_USD_FALLBACK
 
 
+# ---------------------------------------------------------------------------
+# Stage 5 AI-insights whole-phase wall-clock budget (step_rd_candidates.py)
+# ---------------------------------------------------------------------------
+
+def test_ai_rd_insights_phase_budget_default_and_override(monkeypatch):
+    from step_rd_candidates import (
+        resolve_ai_rd_insights_phase_budget_seconds,
+        AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR,
+        _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK,
+    )
+    monkeypatch.delenv(AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR, raising=False)
+    assert resolve_ai_rd_insights_phase_budget_seconds() == _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+    monkeypatch.setenv(AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR, "45")
+    assert resolve_ai_rd_insights_phase_budget_seconds() == 45.0
+
+
+def test_ai_rd_insights_phase_budget_invalid_value_falls_back(monkeypatch):
+    from step_rd_candidates import (
+        resolve_ai_rd_insights_phase_budget_seconds,
+        AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR,
+        _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK,
+    )
+    monkeypatch.setenv(AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR, "not-a-number")
+    assert resolve_ai_rd_insights_phase_budget_seconds() == _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+    monkeypatch.setenv(AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR, "-5")
+    assert resolve_ai_rd_insights_phase_budget_seconds() == _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

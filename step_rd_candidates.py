@@ -1,6 +1,7 @@
 import time
 import threading
 import json
+import os
 
 import pandas as pd
 import streamlit as st
@@ -639,6 +640,37 @@ _STEP5_COMMERCIAL_MAX_PLANTS = 120
 # hypotheses) cost control -- bounds how many shortlisted candidates get
 # AI insight generation per run, independent of _STEP5_FINAL_MAX_CANDIDATES.
 _AI_RD_INSIGHTS_MAX_CANDIDATES = 10
+# ONE true whole-phase wall-clock budget for the AI R&D insight loop
+# below (mechanistic reasoning + evidence synthesis + hypothesis
+# generation + their grounding-verification follow-ups, across up to
+# _AI_RD_INSIGHTS_MAX_CANDIDATES candidates). Mirrors research_engine.py's
+# Part 13 Stage 2 discovery-phase deadline: a per-call timeout (see
+# llm_client.resolve_timeout_seconds) bounds ONE call, but nothing
+# previously bounded the WHOLE sequential loop -- with up to ~19 calls
+# per candidate (1 mechanistic + up to MAX_EDGES_FOR_GROUNDING grounding
+# + 1 synthesis + 1 hypothesis-generation + up to MAX_HYPOTHESES_FOR_
+# GROUNDING grounding) across 10 candidates, a slow-but-not-erroring
+# provider could keep Stage 5 "running" for a very long time with no
+# cap. Checked once BEFORE starting each candidate (not mid-candidate):
+# once the deadline is reached, remaining candidates are skipped
+# entirely (never attempted) rather than cut off partway, so a
+# candidate's insight is always either complete or absent, never a
+# truncated partial result. Overridable via AI_RD_INSIGHTS_PHASE_BUDGET_
+# SECONDS; falls back to the hardcoded default on a missing/invalid value.
+AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR = "AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS"
+_AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK = 90.0
+
+
+def resolve_ai_rd_insights_phase_budget_seconds() -> float:
+    raw = (os.getenv(AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR) or "").strip()
+    if not raw:
+        return _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+    try:
+        value = float(raw)
+        return value if value > 0 else _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+    except ValueError:
+        return _AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_FALLBACK
+
 # Same cost-control rationale as _AI_RD_INSIGHTS_MAX_CANDIDATES -- part 19
 # of the adjudication request (minimal, bounded change). Applied to
 # plant_summary_df's Shortlist/Exploratory rows only (see
@@ -700,7 +732,8 @@ def _render_ai_rd_insights():
     yet -- so this is always safe to call unconditionally.
     """
     insights = st.session_state.get("rd_ai_insights")
-    if not insights:
+    _skipped_for_time = int(st.session_state.get("rd_ai_insights_skipped_for_time", 0) or 0)
+    if not insights and not _skipped_for_time:
         return
 
     with st.expander("🧬 AI R&D Insights (mechanistic reasoning, evidence synthesis & hypotheses)", expanded=False):
@@ -710,7 +743,16 @@ def _render_ai_rd_insights():
             "regulatory status shown elsewhere -- it is a separate, clearly-labeled "
             "analytical layer. Hypotheses are explicitly hypotheses, not established evidence."
         )
-        for plant_name, insight in insights.items():
+        if _skipped_for_time:
+            st.info(
+                f"{_skipped_for_time} candidate(s) were not AI-reviewed this run: the AI "
+                "insight phase reached its wall-clock time budget before reaching them. "
+                "This never affects their deterministic score, safety gates, or decision "
+                "status -- only this AI narrative section. Raise "
+                f"{AI_RD_INSIGHTS_PHASE_BUDGET_SECONDS_ENV_VAR} to allow more time on a "
+                "future run."
+            )
+        for plant_name, insight in (insights or {}).items():
             has_content = (
                 insight.get("mechanistic_edges")
                 or insight.get("evidence_synthesis")
@@ -2781,7 +2823,19 @@ def render_rd_candidates_step(inputs):
                                 .drop_duplicates().tolist()[:_AI_RD_INSIGHTS_MAX_CANDIDATES]
                             )
                         ai_insights = {}
+                        _ai_insights_deadline_ts = time.monotonic() + resolve_ai_rd_insights_phase_budget_seconds()
+                        _ai_insights_candidates_skipped = 0
                         for _plant_name in _insight_plants:
+                            if time.monotonic() >= _ai_insights_deadline_ts:
+                                # Whole-phase wall-clock budget reached (see
+                                # resolve_ai_rd_insights_phase_budget_seconds
+                                # docstring above) -- remaining candidates are
+                                # skipped entirely, never attempted, so every
+                                # candidate that DOES appear in ai_insights
+                                # below is a complete result, never a
+                                # truncated partial one.
+                                _ai_insights_candidates_skipped += 1
+                                continue
                             _score_summary = None
                             _plant_rows = _report_df[_report_df[_insight_plant_col] == _plant_name]
                             if not _plant_rows.empty:
@@ -2809,11 +2863,14 @@ def render_rd_candidates_step(inputs):
                         )
                         _perf(
                             f"AI R&D insights done candidates={len(ai_insights)} "
+                            f"skipped_for_time={_ai_insights_candidates_skipped} "
                             f"elapsed={time.perf_counter() - _perf_t_ai_insights:.3f} "
                             f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
                         )
+                        st.session_state["rd_ai_insights_skipped_for_time"] = _ai_insights_candidates_skipped
                     except Exception as _ai_insights_exc:
                         st.session_state["rd_ai_insights"] = {}
+                        st.session_state["rd_ai_insights_skipped_for_time"] = 0
                         _perf(
                             f"AI R&D insights skipped ({type(_ai_insights_exc).__name__}: "
                             f"{_ai_insights_exc}) -- Stage 5 output is unaffected"

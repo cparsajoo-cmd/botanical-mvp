@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from multi_source_collector import collect_multi_source_evidence, _run_one_source
 from bulk_collection_progress import progress_status, is_complete_progress_row
+from plant_indication_ranking import rank_plant_indications
 
 # Most errors during the first bulk pass came from only 2-3 sources
 # (OpenAlex, Semantic Scholar, occasionally CrossRef) hitting rate
@@ -105,13 +106,16 @@ def _all_plants_with_indications():
         name = str(name).strip()
         if not name:
             continue
-        indications = sorted(set(
-            d.strip()
-            for text in group.get("indication", pd.Series(dtype=str)).dropna().astype(str)
-            for d in text.split(";")
-            if d.strip()
-        ))
-        plant_indications[name] = "; ".join(indications[:MAX_INDICATIONS_PER_PLANT])
+        # Ranked by how often each indication is actually cited for THIS
+        # plant's own compound records (see plant_indication_ranking.py's
+        # module docstring for why alphabetical-of-a-deduped-set produced
+        # the same arbitrary, often irrelevant indication list across many
+        # unrelated plants that merely share a common phytochemical).
+        indications = rank_plant_indications(
+            group.get("indication", pd.Series(dtype=str)).dropna().astype(str),
+            MAX_INDICATIONS_PER_PLANT,
+        )
+        plant_indications[name] = "; ".join(indications)
 
     return plant_indications
 

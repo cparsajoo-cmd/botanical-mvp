@@ -1724,6 +1724,22 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "AI_Top_Hypothesis",
                 "AI_Research_Next_Step",
                 "Safety_Flags",
+                # Structured, candidate-level safety STATUS (Part 9,
+                # safety_assertion_engine.derive_structured_safety_status).
+                # These columns already exist on every raw engine row and
+                # already survive merge_authoritative_scores() untouched
+                # (they are not in candidate_shortlisting.authoritative_
+                # fields because they are not plant_summary-level
+                # aggregates -- they pass through from the selected raw
+                # row like Safety_Flags does). They were simply never
+                # added to this display list, so Stage 6 only ever showed
+                # the free-text Safety_Flags snippet and never the
+                # classified severity computed alongside it. Additive
+                # only: no score, gate, or decision logic changes here.
+                "Safety_Assertion_Status",
+                "Safety_Concern_Level",
+                "Safety_Evidence_IDs",
+                "Safety_Status_Rationale",
                 "Commercial_Positioning",
                 "Commercial_Novelty_Status",
                 "Overall_Product_Hits",
@@ -1891,6 +1907,12 @@ def _recommendation_block(result_df, report_ready_df=None):
             "R&D_Opportunity_Score",
             "Decision_Class",
             "Safety_Flags",
+            # Same additive fix as the modern display_cols above, kept
+            # consistent for this legacy/backward-compatibility branch.
+            "Safety_Assertion_Status",
+            "Safety_Concern_Level",
+            "Safety_Evidence_IDs",
+            "Safety_Status_Rationale",
             "Commercial_Positioning",
             "Commercial_Novelty_Status",
             "Overall_Product_Hits",

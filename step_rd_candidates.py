@@ -89,6 +89,28 @@ def _reconcile_final_decision_status(row) -> str:
     except (TypeError, ValueError):
         adjudication_count = 0
 
+    def _id_count(key):
+        value = row.get(key, None) if hasattr(row, "get") else None
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple, set)):
+            return len({str(v).strip() for v in value if str(v).strip()})
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null", "[]", "()"}:
+            return 0
+        # Exported list-like strings are accepted conservatively for old
+        # dataframe serialization paths; no scientific inference is made here.
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return len({str(v).strip() for v in parsed if str(v).strip()})
+        except Exception:
+            pass
+        return len({part.strip(" \'\"[]()") for part in text.split(",") if part.strip(" \'\"[]()")})
+
+    ai_direct_outcome_count = _id_count("Direct_Outcome_Evidence_IDs")
+    ai_direct_human_outcome_count = _id_count("Direct_Human_Outcome_Evidence_IDs")
+
     if decision_class.startswith("H"):
         return "NO GO SAFETY"
     if decision_class.startswith("G") or gate.startswith("failed"):
@@ -114,6 +136,21 @@ def _reconcile_final_decision_status(row) -> str:
         return "EXPERT REVIEW REQUIRED"
 
     if adjudication == "AI_ADJUDICATION_OK":
+        # v11 scientific-directness authority: structured adjudication now
+        # explicitly identifies which supplied records truly measure the
+        # requested indication outcome. A topical/mechanistic/background match
+        # may remain relevant, but it cannot by itself support a Priority call.
+        # The check is applied only when the new schema fields are present so
+        # legacy fixtures/sessions retain their historical compatibility path.
+        if ai_direct_outcome_count is not None and ai_direct_outcome_count <= 0:
+            return "EXPERT REVIEW REQUIRED"
+        if (
+            indication_mode.startswith("Direct human/clinical")
+            and ai_direct_human_outcome_count is not None
+            and ai_direct_human_outcome_count <= 0
+        ):
+            return "EXPERT REVIEW REQUIRED"
+
         # Cross-layer coherence gate.  A deterministic row cannot claim
         # direct HUMAN evidence while the structured review of the very same
         # Stage-5 evidence records finds no classifiable human evidence.
@@ -477,7 +514,8 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
         "Preparation_Compatibility": "UNKNOWN", "Plant_Part_Compatibility": "UNKNOWN",
         "Route_Compatibility": "UNKNOWN", "Scientific_Evidence_Confidence": "UNKNOWN",
         "Positive_Evidence_IDs": (), "Negative_Evidence_IDs": (),
-        "Key_Human_Evidence_IDs": (), "Preparation_Mismatch_Evidence_IDs": (),
+        "Key_Human_Evidence_IDs": (), "Direct_Outcome_Evidence_IDs": (),
+        "Direct_Human_Outcome_Evidence_IDs": (), "Preparation_Mismatch_Evidence_IDs": (),
         "Evidence_Adjudication_Evidence_Count": 0,
         "Evidence_Adjudication_Rationale": None,
         "Evidence_Adjudication_Fallback_Reason": None,
@@ -524,11 +562,17 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
             "Indication_Evidence_Direction", "Human_Evidence_Strength", "Evidence_Conflict_Level",
             "Negative_Evidence_Severity", "Preparation_Compatibility", "Plant_Part_Compatibility",
             "Route_Compatibility", "Scientific_Evidence_Confidence", "Positive_Evidence_IDs",
-            "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
+            "Negative_Evidence_IDs", "Key_Human_Evidence_IDs", "Direct_Outcome_Evidence_IDs",
+            "Direct_Human_Outcome_Evidence_IDs", "Preparation_Mismatch_Evidence_IDs",
             "Evidence_Adjudication_Status", "Evidence_Adjudication_Evidence_Count",
             "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Fallback_Reason",
         ):
             new_columns[key][idx] = adjudication.get(key)
+        new_columns.setdefault("AI_Direct_Outcome_Evidence_Count", [0] * len(plant_summary_df))
+        new_columns.setdefault("AI_Direct_Human_Outcome_Evidence_Count", [0] * len(plant_summary_df))
+        new_columns["AI_Direct_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Outcome_Evidence_IDs") or [])
+        new_columns["AI_Direct_Human_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Human_Outcome_Evidence_IDs") or [])
+
         for key in (
             "Evidence_Adjudication_Adjustment", "Negative_Human_Evidence_Adjustment",
             "Preparation_Adjustment", "Plant_Part_Adjustment",
@@ -1711,6 +1755,8 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Go_Investigate_Hold_NoGo",
                 "Evidence_Adjudication_Status",
                 "Evidence_Adjudication_Evidence_Count",
+                "AI_Direct_Outcome_Evidence_Count",
+                "AI_Direct_Human_Outcome_Evidence_Count",
                 "Evidence_Coherence_Status",
                 "Evidence_Adjudication_Fallback_Reason",
                 "Indication_Evidence_Direction",

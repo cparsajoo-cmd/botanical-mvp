@@ -139,7 +139,7 @@ ADJUDICATION_STATUS_NO_EVIDENCE = "AI_ADJUDICATION_NO_EVIDENCE"
 MAX_EVIDENCE_ITEMS_PER_CALL = 25
 _MAX_SNIPPET_CHARS = 400
 ADJUDICATION_MODEL_ENV_VAR = "OPENAI_ADJUDICATION_MODEL"
-_SCHEMA_VERSION = "v1"
+_SCHEMA_VERSION = "v2"
 
 _PLANT_NAME_COLUMNS = ("Alternative_Plant", "Scientific_Name", "plant_species", "Plant_Scientific_Name")
 _INDICATION_MATCH_TYPE_COLUMNS = ("Indication_Match_Type",)
@@ -611,6 +611,8 @@ def _build_schema(evidence_ids: Sequence[str]) -> dict:
             "positive_evidence_ids": id_list_schema,
             "negative_evidence_ids": id_list_schema,
             "key_human_evidence_ids": id_list_schema,
+            "direct_outcome_evidence_ids": id_list_schema,
+            "direct_human_outcome_evidence_ids": id_list_schema,
             "preparation_mismatch_evidence_ids": id_list_schema,
             "summary_note": {"type": "string"},
         },
@@ -619,6 +621,7 @@ def _build_schema(evidence_ids: Sequence[str]) -> dict:
             "evidence_conflict_level", "negative_evidence_severity",
             "scientific_evidence_confidence", "positive_evidence_ids",
             "negative_evidence_ids", "key_human_evidence_ids",
+            "direct_outcome_evidence_ids", "direct_human_outcome_evidence_ids",
             "preparation_mismatch_evidence_ids", "summary_note",
         ],
     }
@@ -642,9 +645,20 @@ Guidance:
   records. If evidence is present but too sparse/heterogeneous to
   characterize, use INSUFFICIENT. If no relevant evidence was supplied,
   use UNKNOWN.
-- human_evidence_strength: based only on records whose human_animal_in_vitro
-  field is HUMAN. NONE if no human evidence was supplied; UNKNOWN if no
-  candidate record could be classified as human or non-human.
+- direct_outcome_evidence_ids: ONLY evidence records that directly measure or
+  report an outcome for the requested indication. Do NOT include a record merely
+  because the indication appears in the population/background, or because a
+  mechanism/target is biologically related to the indication.
+- direct_human_outcome_evidence_ids: the HUMAN subset of
+  direct_outcome_evidence_ids. A mechanistic paper, chemistry paper, safety
+  record, patent, disease-context mention, or adjacent outcome must not appear
+  here.
+- human_evidence_strength: judge ONLY the direct HUMAN outcome evidence above.
+  NONE if no direct human outcome evidence was supplied/identified.
+- indication_evidence_direction: judge efficacy direction primarily from
+  direct_outcome_evidence_ids. SUPPORTIVE mechanistic/context records may explain
+  plausibility but may not create a positive efficacy direction by themselves.
+  If no direct outcome evidence can be identified, use INSUFFICIENT.
 - indication_match_strength: WEAK-matched records are lexical/fallback
   matches, not confirmed direct evidence for the requested indication --
   do not treat them as equivalent to DIRECT/SUPPORTIVE records when
@@ -713,6 +727,8 @@ def _validate_ai_result(raw: dict, allowed_evidence_ids: set) -> Optional[dict]:
         positive_ids = raw["positive_evidence_ids"]
         negative_ids = raw["negative_evidence_ids"]
         key_human_ids = raw["key_human_evidence_ids"]
+        direct_outcome_ids = raw.get("direct_outcome_evidence_ids")
+        direct_human_outcome_ids = raw.get("direct_human_outcome_evidence_ids")
         mismatch_ids = raw["preparation_mismatch_evidence_ids"]
         summary_note = raw["summary_note"]
     except KeyError:
@@ -746,6 +762,8 @@ def _validate_ai_result(raw: dict, allowed_evidence_ids: set) -> Optional[dict]:
         "Positive_Evidence_IDs": _clean_id_list(positive_ids),
         "Negative_Evidence_IDs": _clean_id_list(negative_ids),
         "Key_Human_Evidence_IDs": _clean_id_list(key_human_ids),
+        "Direct_Outcome_Evidence_IDs": (_clean_id_list(direct_outcome_ids) if direct_outcome_ids is not None else None),
+        "Direct_Human_Outcome_Evidence_IDs": (_clean_id_list(direct_human_outcome_ids) if direct_human_outcome_ids is not None else None),
         "Preparation_Mismatch_Evidence_IDs": _clean_id_list(mismatch_ids),
         "_summary_note": str(summary_note or "").strip(),
     }
@@ -774,13 +792,61 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
         if item.get("human_animal_in_vitro") == "ANIMAL_OR_IN_VITRO"
     ]
 
+    by_id = {str(item.get("evidence_id")): item for item in evidence_items}
+    raw_direct_outcome_ids = out.get("Direct_Outcome_Evidence_IDs")
+    if raw_direct_outcome_ids is None:
+        # Backward-compatible path for old cached/mocked schema responses. The
+        # new production schema always supplies these fields; older responses
+        # may only be interpreted from deterministic row facts already present
+        # in the exact evidence bundle.
+        direct_outcome_ids = [
+            str(item.get("evidence_id")) for item in evidence_items
+            if item.get("indication_match_strength") == "DIRECT"
+            and bool(item.get("outcome_specific"))
+            and str(item.get("evidence_id") or "")
+        ]
+    else:
+        direct_outcome_ids = [eid for eid in raw_direct_outcome_ids if eid in by_id]
+    direct_outcome_set = set(direct_outcome_ids)
+
+    raw_direct_human_ids = out.get("Direct_Human_Outcome_Evidence_IDs")
+    if raw_direct_human_ids is None:
+        direct_human_outcome_ids = [
+            eid for eid in direct_outcome_ids
+            if eid in by_id and by_id[eid].get("human_animal_in_vitro") == "HUMAN"
+        ]
+    else:
+        direct_human_outcome_ids = [
+            eid for eid in raw_direct_human_ids
+            if eid in by_id
+            and eid in direct_outcome_set
+            and by_id[eid].get("human_animal_in_vitro") == "HUMAN"
+        ]
+    out["Direct_Outcome_Evidence_IDs"] = direct_outcome_ids
+    out["Direct_Human_Outcome_Evidence_IDs"] = direct_human_outcome_ids
+
+    # Topical/mechanistic relevance is not efficacy. If no supplied record can
+    # be identified as directly measuring the requested indication outcome,
+    # supportive records cannot manufacture a positive efficacy direction.
+    if not direct_outcome_ids:
+        out["Indication_Evidence_Direction"] = "INSUFFICIENT"
+        out["Scientific_Evidence_Confidence"] = "LOW"
+        out["Human_Evidence_Strength"] = "NONE"
+        out["Positive_Evidence_IDs"] = []
+        out["Negative_Evidence_IDs"] = []
+        out["Key_Human_Evidence_IDs"] = []
+    elif not direct_human_outcome_ids:
+        out["Human_Evidence_Strength"] = "NONE"
+        out["Key_Human_Evidence_IDs"] = []
+
+    direct_human_items = [by_id[eid] for eid in direct_human_outcome_ids if eid in by_id]
     human_strength = out.get("Human_Evidence_Strength", "UNKNOWN")
-    if human_items and human_strength == "NONE":
-        # NONE has a strict semantic meaning: no human evidence was supplied.
-        # When that is factually false, use the weakest non-zero category
-        # rather than inventing a stronger study-quality judgment.
+    if direct_human_items and human_strength == "NONE":
+        # NONE means no DIRECT human outcome evidence. If the adjudicator has
+        # explicitly identified such a record, the weakest non-zero label is
+        # the logically minimal correction; strength is calibrated below.
         out["Human_Evidence_Strength"] = "WEAK"
-    elif not human_items and classified_nonhuman and human_strength in {"WEAK", "MODERATE", "STRONG"}:
+    elif not direct_human_items and human_strength in {"WEAK", "MODERATE", "STRONG"}:
         out["Human_Evidence_Strength"] = "NONE"
 
     if not substantive:
@@ -793,7 +859,12 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
         if out.get("Scientific_Evidence_Confidence") in {"HIGH", "MODERATE"}:
             out["Scientific_Evidence_Confidence"] = "LOW"
 
-    allowed_human_ids = {item.get("evidence_id") for item in human_items}
+    allowed_direct_ids = set(out.get("Direct_Outcome_Evidence_IDs") or [])
+    for key in ("Positive_Evidence_IDs", "Negative_Evidence_IDs"):
+        if key in out:
+            out[key] = [eid for eid in (out.get(key) or []) if eid in allowed_direct_ids]
+
+    allowed_human_ids = set(out.get("Direct_Human_Outcome_Evidence_IDs") or [])
     if "Key_Human_Evidence_IDs" in out:
         out["Key_Human_Evidence_IDs"] = [
             eid for eid in (out.get("Key_Human_Evidence_IDs") or [])
@@ -813,10 +884,20 @@ def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_item
     """
     out = dict(structured)
     human_items = [i for i in evidence_items if i.get("human_animal_in_vitro") == "HUMAN"]
-    direct_human = [
-        i for i in human_items
-        if i.get("indication_match_strength") == "DIRECT" and bool(i.get("outcome_specific", True))
-    ]
+    if "Direct_Human_Outcome_Evidence_IDs" in structured:
+        verified_direct_human_ids = set(structured.get("Direct_Human_Outcome_Evidence_IDs") or [])
+        direct_human = [
+            i for i in human_items if i.get("evidence_id") in verified_direct_human_ids
+        ]
+    else:
+        # Legacy direct-call compatibility: before schema v2, DIRECT human
+        # fixtures did not carry an outcome_specific field because directness
+        # itself was the historical contract. Production adjudication v2 always
+        # carries the explicit verified-ID field above.
+        direct_human = [
+            i for i in human_items
+            if i.get("indication_match_strength") == "DIRECT" and bool(i.get("outcome_specific", True))
+        ]
 
     def hierarchy(item: Mapping[str, Any]) -> str:
         # ``study_type_design`` can already contain the project's canonical
@@ -898,6 +979,8 @@ def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
             "Positive_Evidence_IDs": [],
             "Negative_Evidence_IDs": [],
             "Key_Human_Evidence_IDs": [],
+            "Direct_Outcome_Evidence_IDs": [],
+            "Direct_Human_Outcome_Evidence_IDs": [],
             "Preparation_Mismatch_Evidence_IDs": [],
             "_summary_note": "",
         }
@@ -905,11 +988,15 @@ def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
     positive_ids, negative_ids, human_ids = [], [], []
     pos_count = neg_count = 0
     for item in evidence_items:
-        # part B10: a WEAK (lexical/fallback) indication match is not
-        # confirmed direct/supportive evidence for the requested
-        # indication -- it is not tallied into direction/severity, though
-        # it is still visible to the AI path via indication_match_strength.
-        if item.get("indication_match_strength") == "WEAK":
+        # Fallback efficacy direction is intentionally precision-first: only
+        # records already deterministically verified as DIRECT and
+        # outcome-specific may create an efficacy direction. Mechanistic or
+        # contextual relevance remains visible to reviewers but cannot become
+        # clinical efficacy when AI is unavailable.
+        if not (
+            item.get("indication_match_strength") == "DIRECT"
+            and bool(item.get("outcome_specific"))
+        ):
             continue
         direction = (item.get("result_direction") or "").lower()
         is_human = item.get("human_animal_in_vitro") == "HUMAN"
@@ -921,6 +1008,17 @@ def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
             negative_ids.append(item["evidence_id"])
         if is_human:
             human_ids.append(item["evidence_id"])
+
+    direct_outcome_ids = [
+        item["evidence_id"] for item in evidence_items
+        if item.get("indication_match_strength") == "DIRECT" and bool(item.get("outcome_specific"))
+    ]
+    direct_human_outcome_ids = [
+        item["evidence_id"] for item in evidence_items
+        if item.get("indication_match_strength") == "DIRECT"
+        and bool(item.get("outcome_specific"))
+        and item.get("human_animal_in_vitro") == "HUMAN"
+    ]
 
     total = pos_count + neg_count
     if total == 0:
@@ -948,7 +1046,9 @@ def _deterministic_fallback(evidence_items: Sequence[dict]) -> dict:
         "Scientific_Evidence_Confidence": "UNKNOWN",
         "Positive_Evidence_IDs": positive_ids,
         "Negative_Evidence_IDs": negative_ids,
-        "Key_Human_Evidence_IDs": human_ids,
+        "Key_Human_Evidence_IDs": direct_human_outcome_ids,
+        "Direct_Outcome_Evidence_IDs": direct_outcome_ids,
+        "Direct_Human_Outcome_Evidence_IDs": direct_human_outcome_ids,
         "Preparation_Mismatch_Evidence_IDs": [],
         "_summary_note": "",
     }

@@ -1069,11 +1069,35 @@ def discover_indication_candidates(
             embedding_by_record_id.get(str(record.get("record_id"))) if record else None
         )
         outcome_text = record.get("outcome_text", "") if record else ""
-        return score_record_relevance_hybrid(
+        match = score_record_relevance_hybrid(
             relevance_profile, tier1, tier2, tier3, assist_terms,
             embedding_similarity=embedding_similarity,
             outcome_text=outcome_text,
         )
+
+        # Requested-context leakage guard. Some legacy/connector rows persist
+        # the user's requested indication into Target_Indication. That field is
+        # run context, not source evidence. The prescreen already guarded this
+        # case, but the main Stage-5 scoring loop previously did not, allowing a
+        # context stamp to re-enter as strong direct evidence after prescreen.
+        # Re-score from source-derived outcome/mechanism/title/abstract only
+        # whenever tier1 is exactly the requested context. This is completely
+        # indication-agnostic and preserves genuine corroborating source text.
+        if record:
+            requested = _norm(record.get("requested_target_indication", ""))
+            tier1_norm = _norm(tier1)
+            if requested and tier1_norm and requested == tier1_norm:
+                source_match = score_record_relevance_hybrid(
+                    relevance_profile, "", tier2, tier3, assist_terms,
+                    embedding_similarity=embedding_similarity,
+                    outcome_text=outcome_text,
+                )
+                # Do not let the persisted request create or strengthen a
+                # direct match. Independent source evidence is authoritative.
+                if source_match.match_type not in (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP):
+                    return source_match
+                return source_match
+        return match
 
     _MATCH_STRONG = (MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP)
     _MATCH_SUPPORTIVE = (

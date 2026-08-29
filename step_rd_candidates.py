@@ -155,6 +155,7 @@ def _reconcile_final_decision_status(row) -> str:
             indication_mode.startswith("Direct human/clinical")
             and outcome_human_count <= 0
             and human in {"NONE", "UNKNOWN", ""}
+            and not outcome_context_unverified_but_supported
         ):
             return "EXPERT REVIEW REQUIRED"
         if direct_count > 0 and adjudication_count <= 0:

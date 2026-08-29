@@ -1,3 +1,3 @@
-V9 final execution-order fix.
-Production file changed: step_rd_candidates.py only.
-Root cause: AI insight fields were attached after final decision reconciliation, so rules depending on AI_Evidence_Consistency could never execute. Also outcome-context-unverified direct evidence was capped before the supported uncertainty exception could be applied.
+Final CI hotfix v10
+Root cause: v9 correctly computed outcome_context_unverified_but_supported, but a later unconditional human/outcome guard ignored that exception and returned EXPERT REVIEW REQUIRED anyway. The later guard now respects the same conservative exception. No scoring, evidence lineage, safety, ranking, or AI logic changed.
+Overwrite only step_rd_candidates.py.

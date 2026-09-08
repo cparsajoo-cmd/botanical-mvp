@@ -69,6 +69,7 @@ def test_find_plants_for_compound_returns_structured_records_with_provenance():
     assert record["target"] == "GABA-A receptor"
     assert record["origin"] == SOURCE_PLANT_COMPOUNDS_DATABASE
     assert record["source"] == "Dr. Duke"
+    assert record["compound_match_type"] == "EXACT_IDENTITY"
 
 
 def test_find_plants_for_compound_case_insensitive():
@@ -77,15 +78,32 @@ def test_find_plants_for_compound_case_insensitive():
     assert len(find_plants_for_compound("novelol", index)) == 1
 
 
-def test_find_plants_for_compound_substring_fallback_within_real_index():
+def test_parent_derivative_is_not_treated_as_verified_occurrence_identity():
     index = build_compound_plant_index(_plant_compounds_df())
-    # "quercetin 3-o-glucoside" isn't in the index verbatim, but contains
-    # "quercetin" -- must still surface the real database records, not
-    # nothing and not the legacy map.
-    records = find_plants_for_compound("Quercetin 3-O-glucoside", index)
-    names = {r["scientific_name"] for r in records}
-    assert names == {"Quercus ubiquitum", "Alia planta"}
-    assert all(r["origin"] == SOURCE_PLANT_COMPOUNDS_DATABASE for r in records)
+    # Parent compound occurrence is NOT evidence that a specific glycoside is
+    # present. The old substring fallback incorrectly returned quercetin plants.
+    assert find_plants_for_compound("Quercetin 3-O-glucoside", index) == []
+
+
+def test_generic_token_does_not_fan_out_across_unrelated_compounds():
+    df = pd.DataFrame([
+        {"scientific_name": "Plant A", "compound_name": "Rosmarinic acid"},
+        {"scientific_name": "Plant B", "compound_name": "Caffeic acid"},
+        {"scientific_name": "Plant C", "compound_name": "Gallic acid"},
+    ])
+    index = build_compound_plant_index(df)
+    assert find_plants_for_compound("acid", index) == []
+
+
+def test_explicit_curated_alias_can_resolve_without_substring_inference():
+    index = build_compound_plant_index(_plant_compounds_df())
+    records = find_plants_for_compound(
+        "QCT", index, curated_alias_map={"QCT": "quercetin"}
+    )
+    assert {r["scientific_name"] for r in records} == {
+        "Quercus ubiquitum", "Alia planta"
+    }
+    assert all(r["compound_match_type"] == "CURATED_ALIAS" for r in records)
 
 
 def test_find_plants_for_compound_unknown_with_no_fallback_is_empty():

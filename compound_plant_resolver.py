@@ -33,12 +33,13 @@ WHAT THIS MODULE DOES NOT DO:
     module only supplies the compound-occurrence facts and a specificity
     signal that prescreen (or any other caller) can use.
   - It does not attempt identifier-level (ChEMBL ID / PubChem CID /
-    InChIKey) canonicalization. Matching here is a normalized-text lookup
-    (case/whitespace-insensitive, plus a conservative substring fallback
-    for compound-derivative names like "quercetin 3-O-glucoside" vs
-    "quercetin"). Identifier-based canonicalization would need a compound
-    identity service this platform does not yet have; documented here as a
-    known limitation rather than silently pretended away.
+    InChIKey) canonicalization. Production occurrence matching is deliberately
+    identity-safe: exact normalized names first, then ONLY aliases supplied in
+    an explicit curated alias map. Unrestricted substring matching is forbidden
+    because parent compounds, glycosides, esters, salts, and other derivatives
+    are not interchangeable occurrence facts. Identifier-based canonicalization
+    would need a compound identity service this platform does not yet have;
+    documented here as a known limitation rather than silently pretended away.
 
 Legacy hard-coded maps (botanical_brain_engine.COMPOUND_PLANT_MAP,
 compound_occurrence_map.COMPOUND_PLANT_MAP) are NOT deleted by this module.
@@ -120,27 +121,67 @@ def build_compound_plant_index(
     return dict(index)
 
 
+def _resolve_curated_alias(
+    compound_norm: str,
+    alias_map: Mapping[str, str] | None,
+) -> str:
+    """Resolve one explicitly curated alias to its canonical normalized name.
+
+    The mapping is intentionally one-hop and explicit. We do not infer parent/
+    derivative relationships from token overlap. Both alias keys and canonical
+    values are normalized here so callers may keep a human-readable alias table.
+    """
+    if not alias_map:
+        return ""
+    normalized = {
+        normalize_compound_name(alias): normalize_compound_name(canonical)
+        for alias, canonical in alias_map.items()
+        if normalize_compound_name(alias) and normalize_compound_name(canonical)
+    }
+    canonical = normalized.get(compound_norm, "")
+    return canonical if canonical and canonical != compound_norm else ""
+
+
+def _annotate_match(
+    records: list[dict[str, Any]],
+    *,
+    query_compound: Any,
+    match_type: str,
+    matched_compound: str,
+) -> list[dict[str, Any]]:
+    """Return copies annotated with transparent compound-identity provenance."""
+    out: list[dict[str, Any]] = []
+    for record in records:
+        copied = dict(record)
+        copied["compound_match_type"] = match_type
+        copied["query_compound"] = str(query_compound or "").strip()
+        copied["matched_compound"] = matched_compound
+        out.append(copied)
+    return out
+
+
 def find_plants_for_compound(
     compound: Any,
     index: Mapping[str, list[dict[str, Any]]],
     *,
     legacy_fallback_map: Mapping[str, list[str]] | None = None,
+    curated_alias_map: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return every known occurrence record for ``compound``.
+    """Return verified occurrence records for one compound identity.
 
-    Lookup order (first non-empty result wins -- never blended, so a
-    caller can always tell which tier answered):
+    Lookup order (first non-empty result wins -- never blended):
       1. Exact normalized-name match against the real index.
-      2. Conservative substring match against the real index (handles a
-         compound derivative name, e.g. a specific glycoside, against its
-         parent compound entry, or vice versa) -- still real,
-         database-backed records, just matched more loosely.
-      3. ``legacy_fallback_map`` (if supplied), producing minimal records
-         with no provenance beyond "legacy curated MVP occurrence map" and
-         origin=SOURCE_LEGACY_FALLBACK_MAP -- explicitly the lowest-trust
-         tier, never silently equated with a real database record.
+      2. Explicit curated alias -> canonical exact match against the real index.
+      3. Exact normalized-name match against ``legacy_fallback_map`` (if
+         supplied), producing explicitly low-trust fallback records.
 
-    Returns an empty list (never raises) if nothing matches at any tier.
+    IMPORTANT: unrestricted substring matching is intentionally NOT used. A
+    parent compound is not occurrence evidence for its glycoside/ester/salt or
+    vice versa. Queries such as ``acid`` must never fan out across unrelated
+    compounds. Related-compound inference belongs in a separate chemistry
+    relationship layer, not in an occurrence resolver.
+
+    Returns an empty list (never raises) if no identity-safe match exists.
     """
     compound_norm = normalize_compound_name(compound)
     if not compound_norm:
@@ -148,38 +189,43 @@ def find_plants_for_compound(
 
     exact = list(index.get(compound_norm, []))
     if exact:
-        return exact
+        return _annotate_match(
+            exact, query_compound=compound, match_type="EXACT_IDENTITY",
+            matched_compound=compound_norm,
+        )
 
-    substring_matches: list[dict[str, Any]] = []
-    for key, records in index.items():
-        if key == compound_norm:
-            continue
-        if compound_norm in key or key in compound_norm:
-            substring_matches.extend(records)
-    if substring_matches:
-        return substring_matches
+    canonical_norm = _resolve_curated_alias(compound_norm, curated_alias_map)
+    if canonical_norm:
+        alias_records = list(index.get(canonical_norm, []))
+        if alias_records:
+            return _annotate_match(
+                alias_records, query_compound=compound, match_type="CURATED_ALIAS",
+                matched_compound=canonical_norm,
+            )
 
     if legacy_fallback_map:
         legacy_records: list[dict[str, Any]] = []
         for key, plants in legacy_fallback_map.items():
             key_norm = normalize_compound_name(key)
-            if not key_norm:
+            if not key_norm or compound_norm != key_norm:
                 continue
-            if compound_norm == key_norm or compound_norm in key_norm or key_norm in compound_norm:
-                for plant in plants or []:
-                    plant_name = str(plant).strip()
-                    if not plant_name:
-                        continue
-                    legacy_records.append({
-                        "scientific_name": plant_name,
-                        "compound": str(compound).strip(),
-                        "common_name": "", "compound_class": "", "plant_part": "",
-                        "target": "", "mechanism": "", "evidence_level": "",
-                        "confidence_score": None,
-                        "source": "legacy curated MVP occurrence map (not database-verified)",
-                        "source_year": "", "reference_title": "", "reference_url": "",
-                        "origin": SOURCE_LEGACY_FALLBACK_MAP,
-                    })
+            for plant in plants or []:
+                plant_name = str(plant).strip()
+                if not plant_name:
+                    continue
+                legacy_records.append({
+                    "scientific_name": plant_name,
+                    "compound": str(key).strip(),
+                    "common_name": "", "compound_class": "", "plant_part": "",
+                    "target": "", "mechanism": "", "evidence_level": "",
+                    "confidence_score": None,
+                    "source": "legacy curated MVP occurrence map (not database-verified)",
+                    "source_year": "", "reference_title": "", "reference_url": "",
+                    "origin": SOURCE_LEGACY_FALLBACK_MAP,
+                    "compound_match_type": "LEGACY_EXACT_IDENTITY",
+                    "query_compound": str(compound).strip(),
+                    "matched_compound": key_norm,
+                })
         if legacy_records:
             return legacy_records
 
@@ -190,8 +236,8 @@ def compound_plant_count(compound: Any, index: Mapping[str, list[dict[str, Any]]
     """Distinct plant count for ``compound`` in the real index only (never
     the legacy fallback -- the fallback map's own coverage is not a
     meaningful specificity signal). 0 if the compound has no real-index
-    entry at all, including when it would only be found via
-    find_plants_for_compound()'s substring or legacy tiers.
+    entry at all, including when it would only be found via an explicit
+    curated alias or the legacy fallback tier.
     """
     records = index.get(normalize_compound_name(compound), [])
     return len({r["scientific_name"] for r in records if r.get("scientific_name")})

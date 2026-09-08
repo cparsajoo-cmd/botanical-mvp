@@ -224,3 +224,69 @@ def test_mechanistic_budget_caps_the_pool_and_prioritizes_rarer_compounds():
         mechanistic_budget=1,
     )
     assert list(retained["Scientific_Name"]) == ["Rare compound plant"]
+
+
+def test_specificity_uses_only_compounds_linked_to_relevant_target():
+    """An unrelated rare compound must not donate a discovery boost.
+
+    Plant A has a relevant GABA link through VERY COMMON Commonol, plus a rare
+    RareUnrelated compound tied only to an unrelated target. Plant B has the
+    same GABA relevance through Moderatol. With mechanistic_budget=1, B should
+    win on relevant-link specificity; the old independent aggregation would
+    incorrectly let A borrow RareUnrelated's rarity and win.
+    """
+    candidates = pd.DataFrame([
+        {
+            "Scientific_Name": "Plant A",
+            "Known_Targets": ["GABA-A receptor", "Unrelated enzyme"],
+            "Known_Active_Compounds": ["Commonol", "RareUnrelated"],
+            "Mechanistic_Links": [
+                {"compound_name": "Commonol", "target": "GABA-A receptor", "mechanism": "GABAergic modulation"},
+                {"compound_name": "RareUnrelated", "target": "Unrelated enzyme", "mechanism": "unrelated activity"},
+            ],
+            "Indications_Text": "",
+            "candidate_origin": "internal_catalogue",
+            "already_in_supabase": True,
+        },
+        {
+            "Scientific_Name": "Plant B",
+            "Known_Targets": ["GABA-A receptor"],
+            "Known_Active_Compounds": ["Moderatol"],
+            "Mechanistic_Links": [
+                {"compound_name": "Moderatol", "target": "GABA-A receptor", "mechanism": "GABAergic modulation"},
+            ],
+            "Indications_Text": "",
+            "candidate_origin": "internal_catalogue",
+            "already_in_supabase": True,
+        },
+    ])
+    plant_compounds_df = pd.DataFrame(
+        [
+            {"scientific_name": "Plant A", "compound_name": "Commonol", "target": "GABA-A receptor", "mechanism": "GABAergic modulation"},
+            {"scientific_name": "Plant A", "compound_name": "RareUnrelated", "target": "Unrelated enzyme", "mechanism": "unrelated activity"},
+            {"scientific_name": "Plant B", "compound_name": "Moderatol", "target": "GABA-A receptor", "mechanism": "GABAergic modulation"},
+        ]
+        + [
+            {"scientific_name": f"Common carrier {i}", "compound_name": "Commonol", "target": ""}
+            for i in range(60)
+        ]
+        + [
+            {"scientific_name": f"Moderate carrier {i}", "compound_name": "Moderatol", "target": ""}
+            for i in range(5)
+        ]
+    )
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=1,
+    )
+
+    assert set(retained["Scientific_Name"]) == {"Plant B"}
+    row_a = audit.loc[audit["Alternative_Plant"] == "Plant A"].iloc[0]
+    row_b = audit.loc[audit["Alternative_Plant"] == "Plant B"].iloc[0]
+    assert row_a["Mechanistic_Linked_Compounds"] == "Commonol"
+    assert row_b["Mechanistic_Linked_Compounds"] == "Moderatol"
+    assert row_b["Mechanistic_Compound_Specificity"] > row_a["Mechanistic_Compound_Specificity"]

@@ -879,6 +879,110 @@ def _known_compound_terms(item) -> list[str]:
     return [t.strip() for t in re.split(r"[;,]", text) if t.strip()]
 
 
+def _mechanistic_links_from_item(item) -> list[dict]:
+    """Best-effort structured compound<->target/mechanism links from a candidate.
+
+    New Supabase-backed candidates carry ``Mechanistic_Links`` as a list of
+    row-level dictionaries. Older/serialized callers may provide a JSON/Python
+    literal string; malformed values degrade safely to an empty list.
+    """
+    value = item.get("Mechanistic_Links") if hasattr(item, "get") else None
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, list):
+        return [dict(v) for v in value if isinstance(v, dict)]
+    if isinstance(value, tuple):
+        return [dict(v) for v in value if isinstance(v, dict)]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in ("nan", "none", "null"):
+            return []
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(text)
+            except Exception:
+                continue
+            if isinstance(parsed, list):
+                return [dict(v) for v in parsed if isinstance(v, dict)]
+    return []
+
+
+def _mechanistic_links_from_database(plant_compounds_df, plant: str) -> list[dict]:
+    """Recover row-level links for legacy/custom candidate fixtures.
+
+    Production candidate construction already embeds ``Mechanistic_Links``.
+    This fallback keeps older callers/tests backward-compatible without
+    recreating the unsafe independent compound/target aggregation.
+    """
+    if (
+        not isinstance(plant_compounds_df, pd.DataFrame)
+        or plant_compounds_df.empty
+        or "scientific_name" not in plant_compounds_df.columns
+    ):
+        return []
+    plant_norm = _norm(plant)
+    if not plant_norm:
+        return []
+    mask = plant_compounds_df["scientific_name"].fillna("").map(_norm) == plant_norm
+    group = plant_compounds_df.loc[mask]
+    if group.empty:
+        return []
+    fields = (
+        "compound_name", "target", "mechanism", "plant_part",
+        "evidence_level", "confidence_score", "source", "source_year",
+        "reference_title", "reference_url",
+    )
+    links = []
+    for _, row in group.iterrows():
+        def _clean_cell(field):
+            value = row.get(field) if field in group.columns else None
+            try:
+                missing = value is None or bool(pd.isna(value))
+            except Exception:
+                missing = value is None
+            return "" if missing else value
+
+        target = str(_clean_cell("target")).strip()
+        mechanism = str(_clean_cell("mechanism")).strip()
+        if not (target or mechanism):
+            continue
+        link = {}
+        for field in fields:
+            link[field] = _clean_cell(field)
+        links.append(link)
+    return links
+
+
+def _score_mechanistic_links(
+    links: list[dict], relevance_profile, assist_terms, profile_relevant_types,
+) -> tuple[bool, float, list[str], list[str]]:
+    """Return relevance and only the compounds on indication-relevant links."""
+    relevant = False
+    best_score = 0.0
+    compounds: list[str] = []
+    targets: list[str] = []
+    for link in links or []:
+        target = str(link.get("target") or "").strip()
+        mechanism = str(link.get("mechanism") or "").strip()
+        link_text = " ; ".join(v for v in (target, mechanism) if v)
+        if not link_text:
+            continue
+        match = score_record_relevance(
+            relevance_profile, "", link_text, "", assist_terms,
+        )
+        score = float(getattr(match, "score", 0.0) or 0.0)
+        if getattr(match, "match_type", None) not in profile_relevant_types:
+            continue
+        relevant = True
+        best_score = max(best_score, score)
+        compound = str(link.get("compound_name") or link.get("compound") or "").strip()
+        if compound and compound not in compounds:
+            compounds.append(compound)
+        if target and target not in targets:
+            targets.append(target)
+    return relevant, best_score, compounds, targets
+
+
 def _catalogue_prescreen_before_expensive_loop(
     engine,
     candidates: pd.DataFrame,
@@ -1022,27 +1126,51 @@ def _catalogue_prescreen_before_expensive_loop(
             token in origin for token in ("literature", "stage2", "discovered", "novel", "external")
         )
 
-        # --- Stage-5 Mechanistic Hypothesis Entry Path: profile-only check,
-        # never touching evidence_index -- see function docstring.
+        # --- Stage-5 Mechanistic Hypothesis Entry Path. Preserve the actual
+        # compound<->target/mechanism edge wherever row-level data exists.
+        # This prevents an unrelated rare compound from donating a specificity
+        # boost merely because some OTHER compound/row in the same plant has an
+        # indication-relevant target.
         known_targets_text = _pick_from_row(engine, item, ["Known_Targets", "target", "mechanism"])
         profile_relevant = False
         profile_match_score = 0.0
         specificity_score = 0.0
-        if known_targets_text:
+        linked_compounds: list[str] = []
+        linked_targets: list[str] = []
+
+        mechanistic_links = _mechanistic_links_from_item(item)
+        if not mechanistic_links:
+            mechanistic_links = _mechanistic_links_from_database(
+                _plant_compounds_df, plant
+            )
+
+        if mechanistic_links:
+            (
+                profile_relevant, profile_match_score,
+                linked_compounds, linked_targets,
+            ) = _score_mechanistic_links(
+                mechanistic_links, relevance_profile, assist_terms,
+                profile_relevant_types,
+            )
+        elif known_targets_text:
+            # Backward-compatible fallback for old/custom candidate rows that
+            # have no row-level provenance available at all. Such rows may still
+            # enter on target/mechanism relevance, but receive NO compound
+            # specificity boost because compound-target linkage is unverified.
             indications_text = _pick_from_row(engine, item, ["Indications_Text", "Indications", "indication"])
             profile_match = score_record_relevance(
                 relevance_profile, indications_text, known_targets_text, "", assist_terms,
             )
             profile_match_score = float(getattr(profile_match, "score", 0.0) or 0.0)
             profile_relevant = getattr(profile_match, "match_type", None) in profile_relevant_types
-            if profile_relevant and compound_index:
-                compound_terms = _known_compound_terms(item)
-                plant_counts = [
-                    compound_plant_count(term, compound_index) for term in compound_terms
-                ]
-                plant_counts = [c for c in plant_counts if c > 0]
-                if plant_counts:
-                    specificity_score = compound_specificity_score(min(plant_counts))
+
+        if profile_relevant and compound_index and linked_compounds:
+            plant_counts = [
+                compound_plant_count(term, compound_index) for term in linked_compounds
+            ]
+            plant_counts = [c for c in plant_counts if c > 0]
+            if plant_counts:
+                specificity_score = compound_specificity_score(min(plant_counts))
 
         rows.append({
             "_index": idx,
@@ -1056,6 +1184,8 @@ def _catalogue_prescreen_before_expensive_loop(
             "profile_relevant": profile_relevant,
             "profile_match_score": profile_match_score,
             "specificity_score": specificity_score,
+            "linked_mechanistic_compounds": linked_compounds,
+            "linked_mechanistic_targets": linked_targets,
         })
 
     mandatory = [r for r in rows if r["has_direct"] or r["is_stage2_novel"]]
@@ -1075,7 +1205,9 @@ def _catalogue_prescreen_before_expensive_loop(
         if r["profile_relevant"] and r["_index"] not in evidence_based_indexes
     ]
     mechanistic_pool.sort(
-        key=lambda r: (r["specificity_score"], r["profile_match_score"], r["Alternative_Plant"]),
+        # Relevance is the primary criterion; compound rarity is only a
+        # tie-break among mechanistically comparable candidates.
+        key=lambda r: (r["profile_match_score"], r["specificity_score"], r["Alternative_Plant"]),
         reverse=True,
     )
     kept_mechanistic = mechanistic_pool[:mech_budget]
@@ -1108,6 +1240,9 @@ def _catalogue_prescreen_before_expensive_loop(
             "Best_Indication_Relevance": r["best_relevance"],
             "Direct_Evidence_Record_Count": r["direct_count"],
             "Evidence_Record_Count": r["record_count"],
+            "Mechanistic_Linked_Compounds": "; ".join(r.get("linked_mechanistic_compounds", [])),
+            "Mechanistic_Linked_Targets": "; ".join(r.get("linked_mechanistic_targets", [])),
+            "Mechanistic_Compound_Specificity": r.get("specificity_score", 0.0),
         }
         for r in rows
     ])

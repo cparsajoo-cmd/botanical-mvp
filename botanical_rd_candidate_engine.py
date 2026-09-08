@@ -3847,6 +3847,13 @@ class BotanicalRDCandidateEngine:
                 "Known_Targets": self._unique_clean_list(
                     self._split_series_terms(group.get("target"))
                 ),
+                # Preserve row-level compound -> target/mechanism provenance.
+                # Aggregated Known_Active_Compounds / Known_Targets remain for
+                # backward compatibility and display, but discovery specificity
+                # must never pair an unrelated rare compound with a separately
+                # aggregated relevant target. See indication_candidate_discovery
+                # ._catalogue_prescreen_before_expensive_loop().
+                "Mechanistic_Links": self._mechanistic_links_from_group(group),
                 "Plant_Part": self._first_non_empty(group.get("plant_part")),
                 "Extraction_Method": self._first_non_empty(
                     group.get("extraction_method")
@@ -3901,6 +3908,51 @@ class BotanicalRDCandidateEngine:
 
         self.discovered_candidates_merged_count = added
         return merged
+
+    @staticmethod
+    def _mechanistic_links_from_group(group):
+        """Preserve compound-target-mechanism associations from raw rows.
+
+        The previous candidate profile independently aggregated compounds and
+        targets. That loses the causal/provenance edge: a plant could qualify
+        because Compound A links to a relevant target, then receive a rarity
+        boost from unrelated Compound B. This structured field keeps each raw
+        association together so discovery ranking can use only the compound(s)
+        that actually support an indication-relevant target/mechanism.
+        """
+        if group is None or not isinstance(group, pd.DataFrame) or group.empty:
+            return []
+
+        fields = (
+            "compound_name", "target", "mechanism", "plant_part",
+            "evidence_level", "confidence_score", "source", "source_year",
+            "reference_title", "reference_url",
+        )
+        links = []
+        seen = set()
+        for _, row in group.iterrows():
+            def _clean_cell(field):
+                value = row.get(field) if field in group.columns else None
+                try:
+                    missing = value is None or bool(pd.isna(value))
+                except Exception:
+                    missing = value is None
+                return "" if missing else value
+
+            compound = str(_clean_cell("compound_name")).strip()
+            target = str(_clean_cell("target")).strip()
+            mechanism = str(_clean_cell("mechanism")).strip()
+            if not (target or mechanism):
+                continue
+            link = {}
+            for field in fields:
+                link[field] = _clean_cell(field)
+            key = tuple(str(link.get(field, "")).strip() for field in fields)
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append(link)
+        return links
 
     @staticmethod
     def _unique_clean_list(values):
@@ -3972,6 +4024,22 @@ class BotanicalRDCandidateEngine:
                 "Indications": [],
                 "Known_Active_Compounds": compound_names,
                 "Known_Targets": targets,
+                "Mechanistic_Links": [
+                    {
+                        "compound_name": name,
+                        "target": target,
+                        "mechanism": "",
+                        "plant_part": "",
+                        "evidence_level": "Local seed mapping",
+                        "confidence_score": "",
+                        "source": "Local seed COMPOUND_TARGETS",
+                        "source_year": "",
+                        "reference_title": "",
+                        "reference_url": "",
+                    }
+                    for name in compound_names
+                    for target in COMPOUND_TARGETS.get(name, [])
+                ],
                 "Plant_Part": "",
                 "Extraction_Method": extraction,
                 "EMA_Status": "",

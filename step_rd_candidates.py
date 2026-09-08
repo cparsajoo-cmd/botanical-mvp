@@ -2020,9 +2020,13 @@ def _recommendation_block(result_df, report_ready_df=None):
         if not _discovery_view.empty:
             st.markdown("### 🔬 R&D Discovery Hypotheses")
             st.caption(
-                "Candidates with little or no direct/clinical evidence today, "
-                "but an explicit mechanistic rationale -- ranked by Discovery "
-                "Potential, independent of Overall_Score. These are research "
+                "Mechanism-led research hypotheses ranked by Discovery Potential, "
+                "independent of Overall_Score. `R&D Discovery Hypothesis` is reserved "
+                "for novel/market-supported discovery signals; catalogue plants with "
+                "unassessed market novelty are labelled explicitly as `Catalogue R&D "
+                "Hypothesis — Market Novelty Unassessed`, and catalogue plants with "
+                "direct indication evidence are routed to an evidence-gap lane rather "
+                "than presented as novel discoveries. These are research "
                 "leads, not development-ready candidates; see Evidence_Maturity_"
                 "Score for how far each one still has to go. Rows labelled "
                 "'Not Currently Developable (Safety)' have a genuine safety "
@@ -2034,7 +2038,9 @@ def _recommendation_block(result_df, report_ready_df=None):
             _discovery_cols = [
                 c for c in (
                     ["Alternative_Plant", "RD_Discovery_Lane",
-                     "Discovery_Potential_Score", "Evidence_Maturity_Score"]
+                     "Discovery_Potential_Score", "Evidence_Maturity_Score",
+                     "Discovery_Linked_Targets", "Discovery_Linked_Compounds",
+                     "Discovery_Compound_Specificity"]
                     + display_cols + ["Why_Selected_or_Rejected"]
                 )
                 if c in _discovery_view.columns

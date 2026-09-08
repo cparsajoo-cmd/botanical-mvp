@@ -246,3 +246,25 @@ def test_safety_hard_stop_candidate_now_appears_in_discovery_section():
         discovery_frame["Alternative_Plant"] == "Toxic-but-interesting plant"
     ].iloc[0]
     assert shown_row["RD_Discovery_Lane"] == "Not Currently Developable (Safety)"
+
+
+def test_catalogue_unassessed_hypothesis_is_visible_but_catalogue_evidence_gap_is_not_discovery():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _discovery_report_ready_row(
+            "Catalogue mechanistic lead",
+            "Catalogue R&D Hypothesis — Market Novelty Unassessed", 72.0,
+        ),
+        _discovery_report_ready_row(
+            "Catalogue direct-evidence plant",
+            "Catalogue Plant — Evidence Gap for This Indication", 92.0,
+        ),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    discovery_frame = dataframe_calls[-1]
+    names = list(discovery_frame["Alternative_Plant"])
+    assert "Catalogue mechanistic lead" in names
+    assert "Catalogue direct-evidence plant" not in names

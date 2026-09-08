@@ -156,6 +156,18 @@ _RD_ORIGIN_COLUMNS = (
     "Candidate_Origin", "Already_In_Internal_Catalogue",
 )
 
+# Stage-5 mechanistic-entry provenance that must survive into plant-level
+# shortlisting. These fields are computed during the cheap catalogue prescreen
+# from row-level compound<->target/mechanism links. Keeping them on the output
+# row prevents Stage 6 from falling back to unrelated whole-plant target and
+# compound aggregates when ranking R&D hypotheses.
+_MECHANISTIC_DISCOVERY_COLUMNS = (
+    "Mechanistic_Linked_Compounds",
+    "Mechanistic_Linked_Targets",
+    "Mechanistic_Compound_Specificity",
+    "Mechanistic_Profile_Match_Score",
+)
+
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 SCORING_CONFIG_VERSION = "2.2-indication-record-level-evidence"
@@ -1243,6 +1255,7 @@ def _catalogue_prescreen_before_expensive_loop(
             "Mechanistic_Linked_Compounds": "; ".join(r.get("linked_mechanistic_compounds", [])),
             "Mechanistic_Linked_Targets": "; ".join(r.get("linked_mechanistic_targets", [])),
             "Mechanistic_Compound_Specificity": r.get("specificity_score", 0.0),
+            "Mechanistic_Profile_Match_Score": r.get("profile_match_score", 0.0),
         }
         for r in rows
     ])
@@ -1309,7 +1322,7 @@ def discover_indication_candidates(
     )
     if candidates.empty:
         _perf(f"discover_indication_candidates done (empty candidates) elapsed={time.perf_counter() - _t0:.3f}")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS) + list(_MECHANISTIC_DISCOVERY_COLUMNS))
 
     # Build ONE corpus-adaptive relevance profile for this query from the
     # full evidence corpus (every plant's records), and reuse it for every
@@ -1340,6 +1353,11 @@ def discover_indication_candidates(
         (*assist_family[0], *assist_family[1])
     )) if assist_family else ()
 
+    # Mechanistic prescreen metadata is threaded into each emitted row so the
+    # later Discovery_Potential score can use the exact indication-linked
+    # compound/target path rather than independent whole-plant aggregates.
+    prescreen_mechanistic_meta: dict[str, dict] = {}
+
     # TRUE Stage-5 catalogue funnel: reduce the candidate plant set before
     # any expensive per-plant safety/normalization/validation/scientific work.
     # This is deliberately opt-in so the public discovery helper retains its
@@ -1356,6 +1374,21 @@ def discover_indication_candidates(
             engine.stage5_prescreen_retained_plants = list(candidates.get("Scientific_Name", []))
         except Exception:
             pass
+        if isinstance(prescreen_audit, pd.DataFrame) and not prescreen_audit.empty:
+            for _, _audit_row in prescreen_audit.iterrows():
+                _plant_key = _norm(_audit_row.get("Alternative_Plant", ""))
+                if not _plant_key:
+                    continue
+                def _audit_float(column: str) -> float:
+                    value = pd.to_numeric(_audit_row.get(column, 0.0), errors="coerce")
+                    return 0.0 if pd.isna(value) else float(value)
+
+                prescreen_mechanistic_meta[_plant_key] = {
+                    "Mechanistic_Linked_Compounds": str(_audit_row.get("Mechanistic_Linked_Compounds", "") or ""),
+                    "Mechanistic_Linked_Targets": str(_audit_row.get("Mechanistic_Linked_Targets", "") or ""),
+                    "Mechanistic_Compound_Specificity": _audit_float("Mechanistic_Compound_Specificity"),
+                    "Mechanistic_Profile_Match_Score": _audit_float("Mechanistic_Profile_Match_Score"),
+                }
         _perf(
             f"Stage5 catalogue prescreen start input_plants={original_candidate_count}; "
             f"done retained_plants={len(candidates)} elapsed={time.perf_counter() - _t_prescreen:.3f}"
@@ -1365,7 +1398,7 @@ def discover_indication_candidates(
             f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
         )
         if candidates.empty:
-            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
+            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS) + list(_MECHANISTIC_DISCOVERY_COLUMNS))
 
     # --- Embedding: query embedded ONCE per run, vector search called ONCE
     # per run (never once per plant, never once per record). Both steps are
@@ -1883,6 +1916,8 @@ def discover_indication_candidates(
                 f"{plant} is retained only as a profile-derived hypothesis; no plant-specific empirical record linked to the requested indication was found."
             )
 
+            _mech_discovery_meta = prescreen_mechanistic_meta.get(_norm(plant), {})
+
             _t = time.perf_counter()
             row = {col: "" for col in OUTPUT_COLUMNS}
             row.update({
@@ -1962,6 +1997,13 @@ def discover_indication_candidates(
                 # candidate's own item dict, never re-derived here.
                 "Candidate_Origin": item.get("candidate_origin", "internal_catalogue"),
                 "Already_In_Internal_Catalogue": bool(item.get("already_in_supabase", True)),
+                # Exact Stage-5 mechanistic-entry provenance. Empty when the
+                # candidate entered through direct/other evidence and no
+                # indication-linked profile path was established.
+                "Mechanistic_Linked_Compounds": _mech_discovery_meta.get("Mechanistic_Linked_Compounds", ""),
+                "Mechanistic_Linked_Targets": _mech_discovery_meta.get("Mechanistic_Linked_Targets", ""),
+                "Mechanistic_Compound_Specificity": _mech_discovery_meta.get("Mechanistic_Compound_Specificity", 0.0),
+                "Mechanistic_Profile_Match_Score": _mech_discovery_meta.get("Mechanistic_Profile_Match_Score", 0.0),
                 "Normalization_Summary": normalization_summary,
                 "Validation_Status": validation_status,
                 "Validation_Summary": validation_summary,
@@ -2088,11 +2130,11 @@ def discover_indication_candidates(
 
     if not rows:
         _progress("discovery_done", 0, 0, "Candidate discovery finished — no candidates found.")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS) + list(_MECHANISTIC_DISCOVERY_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
     _progress(
         "discovery_done", len(out), len(out),
         f"Record-level discovery complete: {len(out)} candidate evidence rows.",
     )
-    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS)).reset_index(drop=True)
+    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS) + list(_MECHANISTIC_DISCOVERY_COLUMNS)).reset_index(drop=True)

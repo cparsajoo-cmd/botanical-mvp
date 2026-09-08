@@ -46,6 +46,8 @@ against it; they mirror that tree, they do not own it.
 
 from __future__ import annotations
 
+import math
+
 # --- RD_Discovery_Lane vocabulary -------------------------------------
 DISCOVERY_LANE_EVIDENCE_BACKED = "Evidence-Backed Candidate"
 DISCOVERY_LANE_HYPOTHESIS = "R&D Discovery Hypothesis"
@@ -53,6 +55,8 @@ DISCOVERY_LANE_REGULATORY_STOP = "Regulatory Prohibition"
 DISCOVERY_LANE_SAFETY_STOP = "Not Currently Developable (Safety)"
 DISCOVERY_LANE_INSUFFICIENT = "Insufficient Signal"
 DISCOVERY_LANE_EVIDENCE_GAP = "Established Plant — Evidence Gap for This Indication"
+DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP = "Catalogue Plant — Evidence Gap for This Indication"
+DISCOVERY_LANE_CATALOGUE_HYPOTHESIS = "Catalogue R&D Hypothesis — Market Novelty Unassessed"
 
 ALL_DISCOVERY_LANES = (
     DISCOVERY_LANE_EVIDENCE_BACKED,
@@ -61,6 +65,8 @@ ALL_DISCOVERY_LANES = (
     DISCOVERY_LANE_SAFETY_STOP,
     DISCOVERY_LANE_INSUFFICIENT,
     DISCOVERY_LANE_EVIDENCE_GAP,
+    DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP,
+    DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
 )
 
 # Novelty-market tiers (candidate_shortlisting.py::_novelty_market()) that
@@ -89,6 +95,7 @@ def classify_discovery_lane(
     dosage_mismatch: bool,
     already_in_catalogue: bool | None = None,
     novelty_tier: str = "",
+    direct_evidence_count: int = 0,
 ) -> str:
     """Return the additive RD_Discovery_Lane label for one plant-level row.
 
@@ -98,12 +105,16 @@ def classify_discovery_lane(
       Shortlist                                -> Evidence-Backed Candidate
       Exploratory / mechanism-only-Excluded,
         candidate genuinely novel-to-catalogue
-        OR catalogue status unknown              -> R&D Discovery Hypothesis
+        or has assessed white-space/repurposing   -> R&D Discovery Hypothesis
       Exploratory / mechanism-only-Excluded,
-        candidate is KNOWN already-catalogued
-        AND has an established/saturated market   -> Established Plant —
-                                                       Evidence Gap for This
-                                                       Indication
+        catalogue plant + direct evidence         -> Catalogue Plant — Evidence
+                                                       Gap for This Indication
+      Exploratory / mechanism-only-Excluded,
+        catalogue plant + market unassessed       -> Catalogue R&D Hypothesis —
+                                                       Market Novelty Unassessed
+      Exploratory / mechanism-only-Excluded,
+        catalogue plant + established market      -> Established Plant — Evidence
+                                                       Gap for This Indication
       Excluded, hard stop, regulatory ban text   -> Regulatory Prohibition
       Excluded, hard stop, no regulatory ban     -> Not Currently
                                                      Developable (Safety)
@@ -137,11 +148,33 @@ def classify_discovery_lane(
     _known_established_catalogue_plant = (
         already_in_catalogue is True and novelty_tier in _MARKET_ESTABLISHED_NOVELTY_TIERS
     )
+    _catalogue_with_direct_evidence = (
+        already_in_catalogue is True and max(0, int(direct_evidence_count or 0)) > 0
+    )
+    _catalogue_market_unassessed = (
+        already_in_catalogue is True and novelty_tier == _NOVELTY_MARKET_UNASSESSED_TIER
+    )
 
-    if plant_status == "Exploratory":
+    def _research_lane_for_non_shortlist() -> str:
+        # Direct evidence on a plant already present in the internal catalogue is
+        # an evidence-maturity/repositioning question, not a novel botanical
+        # discovery claim. Market verification may refine that to the stronger
+        # "Established" label, but missing market search must never silently turn
+        # a known catalogue plant with direct evidence into "R&D Discovery".
         if _known_established_catalogue_plant:
             return DISCOVERY_LANE_EVIDENCE_GAP
+        if _catalogue_with_direct_evidence:
+            return DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP
+        # A catalogue entry can still be genuinely under-explored (the Dr Duke
+        # import contains thousands of plants), so do not hide it. When market
+        # novelty was never assessed, surface it with a deliberately non-claiming
+        # catalogue-hypothesis label instead of pretending it is novel.
+        if _catalogue_market_unassessed:
+            return DISCOVERY_LANE_CATALOGUE_HYPOTHESIS
         return DISCOVERY_LANE_HYPOTHESIS
+
+    if plant_status == "Exploratory":
+        return _research_lane_for_non_shortlist()
     # plant_status == "Excluded" from here -- distinguish WHY, since the
     # existing gate collapses several different reasons into one label.
     if plant_hard_stop:
@@ -152,9 +185,7 @@ def classify_discovery_lane(
     if dosage_mismatch:
         return DISCOVERY_LANE_INSUFFICIENT
     if explicit_mechanistic_rationale:
-        if _known_established_catalogue_plant:
-            return DISCOVERY_LANE_EVIDENCE_GAP
-        return DISCOVERY_LANE_HYPOTHESIS
+        return _research_lane_for_non_shortlist()
     if indication_points == 0.0:
         return DISCOVERY_LANE_INSUFFICIENT
     return DISCOVERY_LANE_INSUFFICIENT
@@ -176,62 +207,75 @@ def discovery_potential_score(
     mechanistic_evidence_count: int,
     novelty_points: float,
     novelty_tier: str = "",
+    linked_target_count: int | None = None,
+    linked_compound_count: int = 0,
+    compound_specificity: float = 0.0,
 ) -> float:
-    """0-100 measure of scientific/R&D interest, deliberately INDEPENDENT
-    of clinical evidence maturity.
+    """Return a 0-100 R&D-interest score that avoids hard-cap saturation.
 
-    A plant with zero human trials but a strong, explicit mechanistic
-    rationale must score HIGH here -- that independence from clinical
-    evidence is the entire point of separating this from
-    evidence_maturity_score() below. Commercial under-exposure
-    (novelty_points, from candidate_shortlisting.py::_novelty_market(),
-    scale ~0-5) ADDS to this score rather than being penalised, the
-    deliberate inverse of research_engine.py's open-world
-    novelty-confidence penalty, which subtracts for exactly the same
-    signal on the evidence-backed axis.
+    This score is deliberately independent of clinical evidence maturity. The
+    previous implementation used four linear components with low hard caps
+    (e.g. 10 mechanism points -> 40/40; four targets -> 20/20). In real Stage-6
+    output many unrelated candidates therefore collapsed to the exact same 70
+    points and alphabetical ordering became the effective ranking.
 
-    EXCEPTION (external review, 2026-09-08): _novelty_market() returns a
-    flat 2.5-point NEUTRAL PRIOR, tier "Commercial novelty not assessed",
-    when no market data exists at all -- an "unknown" answer, not a
-    "probably novel" one. Left alone, that neutral prior silently added
-    7.5 points (2.5 x 3) to Discovery_Potential_Score for every candidate
-    whose market was simply never searched, which is not evidence of
-    anything. When ``novelty_tier`` equals that exact tier string, the
-    novelty component is zeroed instead. Every other tier's
-    ``novelty_points`` value (including the low ones, e.g. "Competitive /
-    saturated market") is used exactly as before -- this narrowly targets
-    the one unassessed case review identified, nothing else. A caller
-    that does not pass ``novelty_tier`` at all keeps the pre-existing
-    behavior unchanged (the empty default never matches the unassessed
-    tier string).
+    The revised model keeps the same scientific intent but uses smooth,
+    diminishing-return curves and, when the Stage-5 mechanistic entry path
+    provides row-level provenance, rewards compound specificity ONLY for the
+    compound(s) actually linked to an indication-relevant target/mechanism.
 
-    All inputs are pre-computed elsewhere (mech_points/mech_tier from
-    _mechanism_support(), target_count from the same `targets` list used
-    by the existing gate, mechanistic_evidence_count from the same
-    per-row supportive-tier count already computed for
-    Mechanistic_Evidence_Count) -- nothing is re-derived here.
+    Components (PROVISIONAL engineering heuristic, not clinically calibrated):
+      * mechanistic support strength .......... 30 points
+      * indication-linked target breadth ...... 20 points
+      * mechanistic evidence depth ............ 20 points
+      * linked-compound specificity ........... 15 points
+      * assessed commercial novelty ........... 15 points
 
-    PROVISIONAL bucket weights, matching the rest of this scoring layer
-    (see _scientific_evidence_components()'s own "PROVISIONAL. NOT
-    CLINICALLY VALIDATED." caveat) -- not a calibrated instrument.
+    ``linked_target_count`` is authoritative when supplied, including zero.
+    Older callers that do not have row-level linkage may omit it and retain the
+    historical ``target_count`` fallback. ``compound_specificity`` is expected
+    on a 0-1 scale from compound_plant_resolver.compound_specificity_score();
+    unknown/unavailable specificity contributes zero rather than a neutral prior.
+
+    As before, the special market tier ``Commercial novelty not assessed``
+    contributes zero novelty points: unknown market status is not evidence of
+    novelty.
     """
-    mechanism_component = min(40.0, max(0.0, mech_points) * 4.0)
-    target_component = min(20.0, max(0, target_count) * 5.0)
-    preclinical_component = min(25.0, max(0, mechanistic_evidence_count) * 5.0)
+    def _sat(value: float, scale: float, cap: float) -> float:
+        value = max(0.0, float(value or 0.0))
+        if value <= 0.0:
+            return 0.0
+        return cap * (1.0 - math.exp(-value / scale))
+
+    mechanism_component = _sat(mech_points, 5.0, 30.0)
+
+    effective_target_count = (
+        max(0, int(linked_target_count))
+        if linked_target_count is not None
+        else max(0, int(target_count or 0))
+    )
+    target_component = _sat(effective_target_count, 2.5, 20.0)
+    preclinical_component = _sat(max(0, int(mechanistic_evidence_count or 0)), 3.0, 20.0)
+
+    specificity = min(1.0, max(0.0, float(compound_specificity or 0.0)))
+    # A specificity value without any linked compound is not actionable
+    # provenance and must not contribute.
+    specificity_component = 15.0 * specificity if max(0, int(linked_compound_count or 0)) > 0 else 0.0
+
     effective_novelty_points = (
         0.0 if novelty_tier == _NOVELTY_MARKET_UNASSESSED_TIER
-        else max(0.0, novelty_points)
+        else max(0.0, float(novelty_points or 0.0))
     )
     novelty_component = min(15.0, effective_novelty_points * 3.0)
+
     return round(
         min(
             100.0,
-            mechanism_component + target_component
-            + preclinical_component + novelty_component,
+            mechanism_component + target_component + preclinical_component
+            + specificity_component + novelty_component,
         ),
         1,
     )
-
 
 def evidence_maturity_score(
     *,

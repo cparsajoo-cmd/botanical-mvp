@@ -49,6 +49,7 @@ from rd_discovery_classification import (
     evidence_maturity_score,
     DISCOVERY_LANE_HYPOTHESIS,
     DISCOVERY_LANE_SAFETY_STOP,
+    DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
 )
 from phase5_scoring_config import (
     SCORING_MODEL_VERSION,
@@ -3077,6 +3078,29 @@ def build_plant_candidate_shortlist(
                 0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
             )
 
+        # Discovery ranking must use the exact indication-linked mechanistic
+        # path when Stage 5 supplied it. Whole-plant Known_Targets and compound
+        # lists can contain many unrelated bioactivities; using those aggregates
+        # here was one cause of the Stage-6 70/70/70 score saturation and could
+        # reward a rare compound unrelated to the matched indication target.
+        _has_linked_target_diagnostic = "Mechanistic_Linked_Targets" in group.columns
+        discovery_linked_targets = _split_values(
+            group.get("Mechanistic_Linked_Targets", pd.Series(dtype=object))
+        )
+        discovery_linked_compounds = _split_values(
+            group.get("Mechanistic_Linked_Compounds", pd.Series(dtype=object))
+        )
+        _specificity_values = pd.to_numeric(
+            group.get("Mechanistic_Compound_Specificity", pd.Series(dtype=float)),
+            errors="coerce",
+        ).dropna()
+        discovery_compound_specificity = (
+            float(_specificity_values.max()) if not _specificity_values.empty else 0.0
+        )
+        discovery_linked_target_count = (
+            len(discovery_linked_targets) if _has_linked_target_diagnostic else None
+        )
+
         # --- Additive R&D Discovery Lane classification --------------------
         # Separates two questions this gate's plant_status conflates:
         # "good enough to develop on today's evidence?" (plant_status
@@ -3101,6 +3125,7 @@ def build_plant_candidate_shortlist(
             dosage_mismatch=(dosage_summary == "Mismatch"),
             already_in_catalogue=already_in_catalogue,
             novelty_tier=novelty_tier,
+            direct_evidence_count=direct_evidence_count,
         )
         discovery_potential = discovery_potential_score(
             mech_points=mech_points,
@@ -3108,6 +3133,9 @@ def build_plant_candidate_shortlist(
             mechanistic_evidence_count=mechanistic_evidence_count,
             novelty_points=novelty_points,
             novelty_tier=novelty_tier,
+            linked_target_count=discovery_linked_target_count,
+            linked_compound_count=len(discovery_linked_compounds),
+            compound_specificity=discovery_compound_specificity,
         )
         evidence_maturity = evidence_maturity_score(
             evq_points=evq_points,
@@ -3366,6 +3394,11 @@ def build_plant_candidate_shortlist(
             "RD_Discovery_Lane": rd_discovery_lane,
             "Discovery_Potential_Score": discovery_potential,
             "Evidence_Maturity_Score": evidence_maturity,
+            "Discovery_Linked_Targets": "; ".join(discovery_linked_targets),
+            "Discovery_Linked_Target_Count": len(discovery_linked_targets),
+            "Discovery_Linked_Compounds": "; ".join(discovery_linked_compounds),
+            "Discovery_Linked_Compound_Count": len(discovery_linked_compounds),
+            "Discovery_Compound_Specificity": round(discovery_compound_specificity, 4),
             # Stage 5 candidate-funnel performance fix -- tiny additive,
             # backward-compatible fields (no existing field renamed or
             # removed). These let rescore_commercial_component() below
@@ -3766,6 +3799,9 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         # Verified with a direct before/after merge_authoritative_scores()
         # call before this fix, not assumed.
         "RD_Discovery_Lane", "Discovery_Potential_Score", "Evidence_Maturity_Score",
+        "Discovery_Linked_Targets", "Discovery_Linked_Target_Count",
+        "Discovery_Linked_Compounds", "Discovery_Linked_Compound_Count",
+        "Discovery_Compound_Specificity",
     )
 
     merged_rows = []
@@ -3827,9 +3863,9 @@ def build_rd_discovery_hypothesis_view(
     FILTERED by them -- a plant with Discovery_Potential_Score=90 was
     still just wherever Overall_Score/Scientific_Triage_Status happened to
     place it in the one existing table. This function is the independent
-    second output that review asked for: filter down to the plants that
-    are genuinely R&D discovery hypotheses (RD_Discovery_Lane ==
-    "R&D Discovery Hypothesis" by default), then sort by
+    second output that review asked for: filter down to the true discovery
+    hypotheses plus explicitly-labelled catalogue mechanistic hypotheses whose
+    market novelty is still unassessed, then sort by
     Discovery_Potential_Score descending -- the opposite ranking key from
     the primary evidence-backed table, which sorts by Evidence_Maturity/
     Overall_Score. A plant can appear in BOTH this view and the primary
@@ -3858,7 +3894,7 @@ def build_rd_discovery_hypothesis_view(
     if "RD_Discovery_Lane" not in report_ready_df.columns:
         return pd.DataFrame()
 
-    included_lanes = [DISCOVERY_LANE_HYPOTHESIS]
+    included_lanes = [DISCOVERY_LANE_HYPOTHESIS, DISCOVERY_LANE_CATALOGUE_HYPOTHESIS]
     if include_not_currently_developable:
         included_lanes.append(DISCOVERY_LANE_SAFETY_STOP)
 
@@ -3881,6 +3917,15 @@ def build_rd_discovery_hypothesis_view(
 
     sort_columns = ["Discovery_Potential_Score"]
     ascending = [False]
+    for _col in (
+        "Discovery_Compound_Specificity",
+        "Discovery_Linked_Target_Count",
+        "Discovery_Linked_Compound_Count",
+    ):
+        if _col in view.columns:
+            view[_col] = pd.to_numeric(view[_col], errors="coerce").fillna(0.0)
+            sort_columns.append(_col)
+            ascending.append(False)
     if "Alternative_Plant" in view.columns:
         sort_columns.append("Alternative_Plant")
         ascending.append(True)

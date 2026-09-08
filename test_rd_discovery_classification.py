@@ -28,6 +28,8 @@ from rd_discovery_classification import (
     DISCOVERY_LANE_SAFETY_STOP,
     DISCOVERY_LANE_INSUFFICIENT,
     DISCOVERY_LANE_EVIDENCE_GAP,
+    DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP,
+    DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
 )
 
 
@@ -182,7 +184,32 @@ def test_discovery_potential_score_is_bounded():
         mech_points=999.0, target_count=999,
         mechanistic_evidence_count=999, novelty_points=999.0,
     )
+    assert 0.0 <= score <= 100.0
+
+
+def test_discovery_potential_can_reach_100_with_verified_specificity_signal():
+    score = discovery_potential_score(
+        mech_points=999.0, target_count=999,
+        mechanistic_evidence_count=999, novelty_points=999.0,
+        linked_target_count=999, linked_compound_count=1,
+        compound_specificity=1.0,
+    )
     assert score == 100.0
+
+
+def test_discovery_potential_breaks_old_70_point_saturation_with_link_specificity():
+    common = discovery_potential_score(
+        mech_points=10.0, target_count=8, mechanistic_evidence_count=2,
+        novelty_points=2.5, novelty_tier="Commercial novelty not assessed",
+        linked_target_count=1, linked_compound_count=1, compound_specificity=0.15,
+    )
+    rare = discovery_potential_score(
+        mech_points=10.0, target_count=8, mechanistic_evidence_count=2,
+        novelty_points=2.5, novelty_tier="Commercial novelty not assessed",
+        linked_target_count=2, linked_compound_count=1, compound_specificity=1.0,
+    )
+    assert rare > common
+    assert rare != 70.0 or common != 70.0
 
 
 def test_evidence_maturity_score_is_bounded():
@@ -381,6 +408,36 @@ def test_saturated_market_catalogue_plant_also_becomes_evidence_gap():
         novelty_tier="Competitive / saturated market",
     )
     assert lane == DISCOVERY_LANE_EVIDENCE_GAP
+
+
+def test_catalogue_plant_with_direct_evidence_and_unassessed_market_is_evidence_gap_not_discovery():
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=20.0,
+        dosage_mismatch=False,
+        already_in_catalogue=True,
+        novelty_tier="Commercial novelty not assessed",
+        direct_evidence_count=2,
+    )
+    assert lane == DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP
+
+
+def test_catalogue_mechanistic_lead_with_unassessed_market_is_nonclaiming_catalogue_hypothesis():
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=True,
+        novelty_tier="Commercial novelty not assessed",
+        direct_evidence_count=0,
+    )
+    assert lane == DISCOVERY_LANE_CATALOGUE_HYPOTHESIS
 
 
 def test_unknown_catalogue_status_falls_back_to_discovery_hypothesis():
@@ -598,3 +655,61 @@ def test_discovery_hypothesis_view_excludes_regulatory_prohibition_always():
     merged = merge_authoritative_scores(df, summary)
     view = build_rd_discovery_hypothesis_view(merged, include_not_currently_developable=True)
     assert view.empty
+
+
+def test_shortlisting_discovery_score_uses_linked_compound_specificity_to_break_ties():
+    def mechanistic_row(plant, specificity):
+        return _row(
+            Alternative_Plant=plant,
+            Target_or_Mechanism="AMPK",
+            Scientific_Rationale=(
+                "Shares a validated biological target with the reference compound "
+                "(mechanistic hypothesis; no direct indication evidence)."
+            ),
+            Evidence_Level="General literature signal",
+            Evidence_Hierarchy_Detail="Unclassified",
+            Source_Record_IDs="",
+            Already_In_Internal_Catalogue=True,
+            Market_Status="Search not performed",
+            Mechanistic_Linked_Targets="AMPK",
+            Mechanistic_Linked_Compounds="Compound X",
+            Mechanistic_Compound_Specificity=specificity,
+        )
+
+    df = pd.DataFrame([
+        mechanistic_row("Rare-linked plant", 1.0),
+        mechanistic_row("Common-linked plant", 0.1),
+    ])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion",
+    )
+    scores = summary.set_index("Alternative_Plant")["Discovery_Potential_Score"]
+    assert scores["Rare-linked plant"] > scores["Common-linked plant"]
+    assert set(summary["RD_Discovery_Lane"]) == {DISCOVERY_LANE_CATALOGUE_HYPOTHESIS}
+
+
+def test_catalogue_direct_evidence_gap_does_not_pollute_discovery_view():
+    frame = pd.DataFrame([
+        {
+            "Alternative_Plant": "True discovery lead",
+            "RD_Discovery_Lane": DISCOVERY_LANE_HYPOTHESIS,
+            "Discovery_Potential_Score": 75.0,
+            "Evidence_Maturity_Score": 10.0,
+        },
+        {
+            "Alternative_Plant": "Catalogue evidence-gap plant",
+            "RD_Discovery_Lane": DISCOVERY_LANE_CATALOGUE_EVIDENCE_GAP,
+            "Discovery_Potential_Score": 90.0,
+            "Evidence_Maturity_Score": 40.0,
+        },
+        {
+            "Alternative_Plant": "Catalogue mechanistic lead",
+            "RD_Discovery_Lane": DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
+            "Discovery_Potential_Score": 65.0,
+            "Evidence_Maturity_Score": 5.0,
+        },
+    ])
+    view = build_rd_discovery_hypothesis_view(frame)
+    names = list(view["Alternative_Plant"])
+    assert "Catalogue evidence-gap plant" not in names
+    assert names == ["True discovery lead", "Catalogue mechanistic lead"]

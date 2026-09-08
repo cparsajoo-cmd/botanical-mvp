@@ -9,7 +9,7 @@ chance to recognise it as a profile-derived hypothesis.
 import pandas as pd
 
 from general_indication_relevance import build_indication_profile, corpus_texts_from_records
-from indication_candidate_discovery import _catalogue_prescreen_before_expensive_loop
+from indication_candidate_discovery import _catalogue_prescreen_before_expensive_loop, discover_indication_candidates
 
 
 class _Engine:
@@ -290,3 +290,53 @@ def test_specificity_uses_only_compounds_linked_to_relevant_target():
     assert row_a["Mechanistic_Linked_Compounds"] == "Commonol"
     assert row_b["Mechanistic_Linked_Compounds"] == "Moderatol"
     assert row_b["Mechanistic_Compound_Specificity"] > row_a["Mechanistic_Compound_Specificity"]
+
+
+
+def test_full_discovery_output_preserves_mechanistic_link_metrics_for_stage6():
+    class _FullEngine(_Engine):
+        def __init__(self):
+            self.evidence_df = pd.DataFrame()
+            self.scientific_evidence_df = pd.DataFrame()
+            self.evidence_records_df = pd.DataFrame()
+            self.plant_compounds_df = pd.DataFrame([{
+                "scientific_name": "Obscura testii",
+                "compound_name": "Novelol",
+                "target": "GABA-A receptor",
+                "mechanism": "GABAergic modulation",
+                "source": "Dr Duke",
+            }])
+
+        def _candidate_frame(self):
+            return pd.DataFrame([{
+                "Scientific_Name": "Obscura testii",
+                "Known_Targets": ["GABA-A receptor"],
+                "Known_Active_Compounds": ["Novelol"],
+                "Mechanistic_Links": [{
+                    "compound_name": "Novelol",
+                    "target": "GABA-A receptor",
+                    "mechanism": "GABAergic modulation",
+                }],
+                "Indications_Text": "",
+                "candidate_origin": "internal_catalogue",
+                "already_in_supabase": True,
+            }])
+
+        def _split_compound_terms(self, value):
+            if isinstance(value, list):
+                return value
+            return [x.strip() for x in str(value).split(";") if x.strip()]
+
+        def _evidence_level(self, text):
+            return "Unknown"
+
+    out = discover_indication_candidates(
+        _FullEngine(), "Sleep and relaxation", dosage_form="Infusion",
+        enable_catalogue_prescreen=True,
+    )
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert row["Mechanistic_Linked_Compounds"] == "Novelol"
+    assert row["Mechanistic_Linked_Targets"] == "GABA-A receptor"
+    assert float(row["Mechanistic_Compound_Specificity"]) == 1.0
+    assert float(row["Mechanistic_Profile_Match_Score"]) > 0.0

@@ -131,6 +131,25 @@ _EVIDENCE_TRANSPORT_COLUMNS = (
     "Source_Mechanism_Text", "Source_Evidence_Text",
 )
 
+# RD Discovery Lane origin signal (candidate_shortlisting.py's
+# rd_discovery_classification.py, external review 2026-09-08). Same
+# reindex-guard requirement as the three tuples above: this candidate
+# item's own "candidate_origin"/"already_in_supabase" tags (set by
+# botanical_rd_candidate_engine.py's _candidates_from_plant_compounds()/
+# local-fallback/_merge_discovered_candidates() -- see those functions'
+# docstrings) are read straight through here, per output row, so
+# candidate_shortlisting.py can tell a genuinely novel-to-catalogue,
+# literature-discovered candidate apart from an already-catalogued,
+# well-known plant that merely lacks evidence for THIS indication. Never
+# re-derived or guessed here -- these two values are copied verbatim from
+# `item`, with the same conservative defaults
+# (candidate_origin="internal_catalogue", already_in_supabase=True) used
+# elsewhere in botanical_rd_candidate_engine.py (see its local_fallback
+# candidate-tagging block) whenever `item` does not carry them at all.
+_RD_ORIGIN_COLUMNS = (
+    "Candidate_Origin", "Already_In_Internal_Catalogue",
+)
+
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
 COMPOUND_NOT_GATING_LABEL = "Not used as candidate gate"
 SCORING_CONFIG_VERSION = "2.2-indication-record-level-evidence"
@@ -1022,7 +1041,7 @@ def discover_indication_candidates(
     )
     if candidates.empty:
         _perf(f"discover_indication_candidates done (empty candidates) elapsed={time.perf_counter() - _t0:.3f}")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
 
     # Build ONE corpus-adaptive relevance profile for this query from the
     # full evidence corpus (every plant's records), and reuse it for every
@@ -1078,7 +1097,7 @@ def discover_indication_candidates(
             f"Pre-screen selected {len(candidates)} of {original_candidate_count} plants for full evaluation.",
         )
         if candidates.empty:
-            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
+            return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
 
     # --- Embedding: query embedded ONCE per run, vector search called ONCE
     # per run (never once per plant, never once per record). Both steps are
@@ -1670,6 +1689,11 @@ def discover_indication_candidates(
                 "Market_Status": "Search not performed",
                 "Regulatory_Barriers": "Not assessed",
                 "Novelty_Status": "Indication-derived candidate",
+                # RD Discovery Lane origin signal (see _RD_ORIGIN_COLUMNS
+                # module-level comment above) -- copied verbatim from this
+                # candidate's own item dict, never re-derived here.
+                "Candidate_Origin": item.get("candidate_origin", "internal_catalogue"),
+                "Already_In_Internal_Catalogue": bool(item.get("already_in_supabase", True)),
                 "Normalization_Summary": normalization_summary,
                 "Validation_Status": validation_status,
                 "Validation_Summary": validation_summary,
@@ -1796,11 +1820,11 @@ def discover_indication_candidates(
 
     if not rows:
         _progress("discovery_done", 0, 0, "Candidate discovery finished — no candidates found.")
-        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS))
+        return pd.DataFrame(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS))
     out = pd.DataFrame(rows)
     out = out.sort_values(["R&D_Opportunity_Score", "Evidence_Confidence"], ascending=False)
     _progress(
         "discovery_done", len(out), len(out),
         f"Record-level discovery complete: {len(out)} candidate evidence rows.",
     )
-    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS)).reset_index(drop=True)
+    return out.reindex(columns=list(OUTPUT_COLUMNS) + list(_PHASE5_DIAGNOSTIC_COLUMNS) + list(_RELEVANCE_ENGINE_COLUMNS) + list(_EVIDENCE_TRANSPORT_COLUMNS) + list(_RD_ORIGIN_COLUMNS)).reset_index(drop=True)

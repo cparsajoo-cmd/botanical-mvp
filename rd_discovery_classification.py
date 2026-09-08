@@ -52,6 +52,7 @@ DISCOVERY_LANE_HYPOTHESIS = "R&D Discovery Hypothesis"
 DISCOVERY_LANE_REGULATORY_STOP = "Regulatory Prohibition"
 DISCOVERY_LANE_SAFETY_STOP = "Not Currently Developable (Safety)"
 DISCOVERY_LANE_INSUFFICIENT = "Insufficient Signal"
+DISCOVERY_LANE_EVIDENCE_GAP = "Established Plant — Evidence Gap for This Indication"
 
 ALL_DISCOVERY_LANES = (
     DISCOVERY_LANE_EVIDENCE_BACKED,
@@ -59,6 +60,22 @@ ALL_DISCOVERY_LANES = (
     DISCOVERY_LANE_REGULATORY_STOP,
     DISCOVERY_LANE_SAFETY_STOP,
     DISCOVERY_LANE_INSUFFICIENT,
+    DISCOVERY_LANE_EVIDENCE_GAP,
+)
+
+# Novelty-market tiers (candidate_shortlisting.py::_novelty_market()) that
+# indicate a plant already has real commercial/market presence -- i.e. it
+# is not merely "in the catalogue" as a data-entry, it is a known,
+# marketed botanical. Used only to route an Exploratory/mechanism-only
+# candidate to DISCOVERY_LANE_EVIDENCE_GAP instead of
+# DISCOVERY_LANE_HYPOTHESIS (see classify_discovery_lane() docstring).
+# Intentionally NOT "Commercial white-space" / "Emerging commercial
+# opportunity" / "Indication-repurposing opportunity" -- those describe a
+# plant with LITTLE current market presence, which is exactly the
+# discovery-hypothesis case, not the evidence-gap case.
+_MARKET_ESTABLISHED_NOVELTY_TIERS = (
+    "Established / commercially active",
+    "Competitive / saturated market",
 )
 
 
@@ -70,6 +87,8 @@ def classify_discovery_lane(
     explicit_mechanistic_rationale: bool,
     indication_points: float,
     dosage_mismatch: bool,
+    already_in_catalogue: bool | None = None,
+    novelty_tier: str = "",
 ) -> str:
     """Return the additive RD_Discovery_Lane label for one plant-level row.
 
@@ -77,20 +96,51 @@ def classify_discovery_lane(
     exactly (see module docstring); does not alter it.
 
       Shortlist                                -> Evidence-Backed Candidate
-      Exploratory (any reason)                  -> R&D Discovery Hypothesis
+      Exploratory / mechanism-only-Excluded,
+        candidate genuinely novel-to-catalogue
+        OR catalogue status unknown              -> R&D Discovery Hypothesis
+      Exploratory / mechanism-only-Excluded,
+        candidate is KNOWN already-catalogued
+        AND has an established/saturated market   -> Established Plant —
+                                                       Evidence Gap for This
+                                                       Indication
       Excluded, hard stop, regulatory ban text   -> Regulatory Prohibition
       Excluded, hard stop, no regulatory ban     -> Not Currently
                                                      Developable (Safety)
       Excluded, dosage/preparation mismatch      -> Insufficient Signal
       Excluded, no evidence AND no mechanism     -> Insufficient Signal
-      Excluded, but an explicit mechanistic
-        rationale exists (the "no direct
-        evidence, no explicit mechanism" branch
-        was not the reason for exclusion)        -> R&D Discovery Hypothesis
+
+    ``already_in_catalogue`` (external review, 2026-09-08): True/False when
+    known (from candidate_shortlisting.py's Candidate_Origin/
+    Already_In_Internal_Catalogue columns -- see
+    indication_candidate_discovery.py's _RD_ORIGIN_COLUMNS), None when
+    unknown (e.g. an older raw_df that predates those columns, or the
+    compound-substitution discovery path, which does not tag origin at
+    all). ``novelty_tier`` is candidate_shortlisting.py::_novelty_market()'s
+    own tier string, read verbatim, never re-derived.
+
+    WHY THIS DISTINCTION EXISTS: a plant with 500 marketed products and
+    merely-insufficient evidence for a NEW indication is a genuinely
+    different situation from an unfamiliar, under-studied species with an
+    interesting mechanism -- both could previously only ever reach
+    "R&D Discovery Hypothesis" once their status was Exploratory or
+    mechanism-only-Excluded, collapsing two different R&D questions
+    ("should we investigate repositioning an established plant?" vs.
+    "should we investigate an unknown one at all?") into one label. When
+    the catalogue/market signal is unavailable (None / unrecognised tier),
+    this function falls back to the original, broader "R&D Discovery
+    Hypothesis" behavior -- it never invents novelty it cannot confirm.
     """
     if plant_status == "Shortlist":
         return DISCOVERY_LANE_EVIDENCE_BACKED
+
+    _known_established_catalogue_plant = (
+        already_in_catalogue is True and novelty_tier in _MARKET_ESTABLISHED_NOVELTY_TIERS
+    )
+
     if plant_status == "Exploratory":
+        if _known_established_catalogue_plant:
+            return DISCOVERY_LANE_EVIDENCE_GAP
         return DISCOVERY_LANE_HYPOTHESIS
     # plant_status == "Excluded" from here -- distinguish WHY, since the
     # existing gate collapses several different reasons into one label.
@@ -102,6 +152,8 @@ def classify_discovery_lane(
     if dosage_mismatch:
         return DISCOVERY_LANE_INSUFFICIENT
     if explicit_mechanistic_rationale:
+        if _known_established_catalogue_plant:
+            return DISCOVERY_LANE_EVIDENCE_GAP
         return DISCOVERY_LANE_HYPOTHESIS
     if indication_points == 0.0:
         return DISCOVERY_LANE_INSUFFICIENT

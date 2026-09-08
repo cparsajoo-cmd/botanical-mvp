@@ -47,6 +47,8 @@ from rd_discovery_classification import (
     classify_discovery_lane,
     discovery_potential_score,
     evidence_maturity_score,
+    DISCOVERY_LANE_HYPOTHESIS,
+    DISCOVERY_LANE_SAFETY_STOP,
 )
 from phase5_scoring_config import (
     SCORING_MODEL_VERSION,
@@ -2026,6 +2028,24 @@ def _critical_plant_stop(group: pd.DataFrame) -> bool:
     return hard_count >= 2 and (hard_count / row_count) >= 0.5
 
 
+def _already_in_catalogue_for_group(group: pd.DataFrame) -> bool | None:
+    """True/False when this plant's own-origin signal is known, None when
+    it is not available at all (e.g. an older raw_df/compound-substitution
+    row that predates Already_In_Internal_Catalogue -- see
+    indication_candidate_discovery.py's _RD_ORIGIN_COLUMNS). Any row
+    confirming catalogue membership is authoritative: the same taxon can
+    appear on multiple raw rows from different evidence-collection passes,
+    and a single True is enough to know this is not a novel-to-catalogue
+    candidate. Never invents a value the upstream data does not carry.
+    """
+    if "Already_In_Internal_Catalogue" not in group.columns:
+        return None
+    values = group["Already_In_Internal_Catalogue"].dropna()
+    if values.empty:
+        return None
+    return bool(values.astype(bool).any())
+
+
 def _regulatory_prohibition_text_present(group: pd.DataFrame) -> bool:
     """Same regulatory-ban term check _critical_plant_stop() already uses,
     exposed standalone so the additive RD Discovery Lane classification
@@ -3071,6 +3091,7 @@ def build_plant_candidate_shortlist(
         # value, not only the ones that pass through that branch.
         explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
         regulatory_prohibition_present = _regulatory_prohibition_text_present(group)
+        already_in_catalogue = _already_in_catalogue_for_group(group)
         rd_discovery_lane = classify_discovery_lane(
             plant_status=plant_status,
             plant_hard_stop=plant_hard_stop,
@@ -3078,6 +3099,8 @@ def build_plant_candidate_shortlist(
             explicit_mechanistic_rationale=explicit_mechanistic_rationale,
             indication_points=indication_points,
             dosage_mismatch=(dosage_summary == "Mismatch"),
+            already_in_catalogue=already_in_catalogue,
+            novelty_tier=novelty_tier,
         )
         discovery_potential = discovery_potential_score(
             mech_points=mech_points,
@@ -3732,6 +3755,16 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Evidence_Adjudication_Adjustment",
         "Negative_Human_Evidence_Adjustment", "Preparation_Adjustment", "Plant_Part_Adjustment",
         "Base_R&D_Opportunity_Score", "Final_R&D_Opportunity_Score", "Decision_Cap_Reason",
+        # RD Discovery Lane (rd_discovery_classification.py). Confirmed
+        # missing from this tuple by external review (2026-09-08): these
+        # three fields were correctly computed onto plant_summary by
+        # build_plant_candidate_shortlist() but, because they were absent
+        # here, silently disappeared from rd_report_ready_df -- the exact
+        # frame step_rd_candidates.py actually renders/exports -- making
+        # them invisible everywhere except the raw plant_summary_df.
+        # Verified with a direct before/after merge_authoritative_scores()
+        # call before this fix, not assumed.
+        "RD_Discovery_Lane", "Discovery_Potential_Score", "Evidence_Maturity_Score",
     )
 
     merged_rows = []
@@ -3775,3 +3808,80 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
     result = pd.DataFrame(merged_rows)
     result = result.sort_values("Overall_Score", ascending=False).reset_index(drop=True)
     return result
+
+
+def build_rd_discovery_hypothesis_view(
+    report_ready_df: pd.DataFrame,
+    include_not_currently_developable: bool = False,
+) -> pd.DataFrame:
+    """A SECOND, independently-ranked view over the SAME report-ready
+    frame merge_authoritative_scores() already produced -- never a second
+    scoring pass, never a change to Overall_Score/Scientific_Triage_Status,
+    and never a change to the existing Shortlist > Exploratory > Excluded /
+    Overall_Score ordering that view still uses.
+
+    WHY THIS EXISTS (external review, 2026-09-08): RD_Discovery_Lane and
+    Discovery_Potential_Score were added to the report-ready frame, but
+    nothing in this module or step_rd_candidates.py actually SORTED or
+    FILTERED by them -- a plant with Discovery_Potential_Score=90 was
+    still just wherever Overall_Score/Scientific_Triage_Status happened to
+    place it in the one existing table. This function is the independent
+    second output that review asked for: filter down to the plants that
+    are genuinely R&D discovery hypotheses (RD_Discovery_Lane ==
+    "R&D Discovery Hypothesis" by default), then sort by
+    Discovery_Potential_Score descending -- the opposite ranking key from
+    the primary evidence-backed table, which sorts by Evidence_Maturity/
+    Overall_Score. A plant can appear in BOTH this view and the primary
+    table's Excluded/Exploratory rows; that is intentional, not a
+    duplicate bug -- they answer two different questions over the same
+    underlying data (see rd_discovery_classification.py module docstring).
+
+    ``include_not_currently_developable``: when True, also includes
+    "Not Currently Developable (Safety)" rows (a genuine safety hard-stop
+    for productization can still be a legitimate pharmacological R&D
+    question -- toxicity/pathway characterisation, not supplement
+    development). Defaults to False: surfacing safety-flagged plants in a
+    discovery-hypothesis list is a product/UX decision, not one this
+    function should make unilaterally. "Regulatory Prohibition" rows are
+    NEVER included regardless of this flag -- a regulatory ban is not an
+    R&D discovery opportunity in any framing this module makes on its own.
+
+    Returns an empty DataFrame (with no error) if ``report_ready_df`` is
+    empty, not a DataFrame, or lacks RD_Discovery_Lane (e.g. it was built
+    by an older caller that never merged that field in) -- callers should
+    treat an empty result as "no discovery-hypothesis view available",
+    not as "there are zero discovery candidates".
+    """
+    if not isinstance(report_ready_df, pd.DataFrame) or report_ready_df.empty:
+        return pd.DataFrame()
+    if "RD_Discovery_Lane" not in report_ready_df.columns:
+        return pd.DataFrame()
+
+    included_lanes = [DISCOVERY_LANE_HYPOTHESIS]
+    if include_not_currently_developable:
+        included_lanes.append(DISCOVERY_LANE_SAFETY_STOP)
+
+    view = report_ready_df[report_ready_df["RD_Discovery_Lane"].isin(included_lanes)].copy()
+    if view.empty:
+        return view
+
+    if "Discovery_Potential_Score" in view.columns:
+        view["Discovery_Potential_Score"] = pd.to_numeric(
+            view["Discovery_Potential_Score"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        view["Discovery_Potential_Score"] = 0.0
+    if "Evidence_Maturity_Score" in view.columns:
+        view["Evidence_Maturity_Score"] = pd.to_numeric(
+            view["Evidence_Maturity_Score"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        view["Evidence_Maturity_Score"] = 0.0
+
+    sort_columns = ["Discovery_Potential_Score"]
+    ascending = [False]
+    if "Alternative_Plant" in view.columns:
+        sort_columns.append("Alternative_Plant")
+        ascending.append(True)
+    view = view.sort_values(sort_columns, ascending=ascending).reset_index(drop=True)
+    return view

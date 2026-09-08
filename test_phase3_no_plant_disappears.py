@@ -113,8 +113,17 @@ def test_no_plant_disappears_between_shortlist_and_recommendation_block():
         src._recommendation_block(raw_df, report_ready_df)
 
     dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
-    assert len(dataframe_calls) == 2, "expected both a recommended and a weak section"
-    recommended_frame, weak_frame = dataframe_calls
+    # A third call (the new "R&D Discovery Hypotheses" section -- see
+    # candidate_shortlisting.build_rd_discovery_hypothesis_view(), external
+    # review 2026-09-08) is now expected in addition to recommended/weak:
+    # "Exploratory plant" has an explicit mechanistic rationale (AMPK
+    # activation) with no catalogue-origin/market signal available in this
+    # fixture, so it also surfaces there. The two-section invariant this
+    # test actually cares about (recommended first, weak second, nobody
+    # missing) is unchanged -- only asserted more precisely below instead
+    # of via a bare call count.
+    assert len(dataframe_calls) >= 2, "expected at least a recommended and a weak section"
+    recommended_frame, weak_frame = dataframe_calls[0], dataframe_calls[1]
 
     # (1) The shortlisted Go/Investigate plant is recommended.
     assert "Shortlisted plant" in list(recommended_frame["Alternative_Plant"])

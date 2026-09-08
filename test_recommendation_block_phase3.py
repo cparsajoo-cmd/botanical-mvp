@@ -147,3 +147,77 @@ def test_all_go_investigate_variants_are_present_somewhere_none_vanish():
     assert all_shown_plants == {
         "Go plant", "Plain investigate plant", "Verify plant", "Hold plant", "No-go plant",
     }
+
+
+# --- RD Discovery Hypotheses section (external review, 2026-09-08) -------
+# candidate_shortlisting.build_rd_discovery_hypothesis_view() is called
+# inside _recommendation_block() to give discovery-hypothesis candidates a
+# third, positively-framed section, ranked by Discovery_Potential_Score,
+# instead of leaving them undifferentiated inside "Weak / not recommended".
+
+def _discovery_report_ready_row(plant, lane, discovery_potential, call="Hold"):
+    row = _report_ready_row(plant, call, 20.0)
+    row["RD_Discovery_Lane"] = lane
+    row["Discovery_Potential_Score"] = discovery_potential
+    row["Evidence_Maturity_Score"] = 10.0
+    return row
+
+
+def test_discovery_hypothesis_section_renders_as_a_third_table():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _discovery_report_ready_row("Hypothesis plant", "R&D Discovery Hypothesis", 70.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    assert len(dataframe_calls) == 3
+    _recommended, _weak, discovery_frame = dataframe_calls
+    assert "Hypothesis plant" in list(discovery_frame["Alternative_Plant"])
+
+
+def test_discovery_hypothesis_section_absent_when_no_lane_data():
+    # No RD_Discovery_Lane column at all -- must not add a third, empty
+    # section (matches the pre-existing two-section tests above).
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _report_ready_row("Weak plant", "Hold", 20.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    assert len(dataframe_calls) == 2
+
+
+def test_discovery_hypothesis_section_ranks_by_discovery_potential():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _discovery_report_ready_row("Weak hypothesis", "R&D Discovery Hypothesis", 40.0),
+        _discovery_report_ready_row("Strong hypothesis", "R&D Discovery Hypothesis", 85.0),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    discovery_frame = dataframe_calls[-1]
+    assert list(discovery_frame["Alternative_Plant"]) == [
+        "Strong hypothesis", "Weak hypothesis",
+    ]
+
+
+def test_regulatory_prohibition_never_appears_in_discovery_section():
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _discovery_report_ready_row("Banned plant", "Regulatory Prohibition", 95.0, call="No-Go"),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    # Only recommended + weak -- the high Discovery_Potential_Score on the
+    # banned plant must not earn it a discovery-section appearance.
+    assert len(dataframe_calls) == 2
+    _recommended, weak_frame = dataframe_calls
+    assert "Banned plant" in list(weak_frame["Alternative_Plant"])

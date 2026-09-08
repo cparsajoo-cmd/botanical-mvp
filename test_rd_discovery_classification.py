@@ -13,7 +13,11 @@ Two levels are covered:
 """
 import pandas as pd
 
-from candidate_shortlisting import build_plant_candidate_shortlist
+from candidate_shortlisting import (
+    build_plant_candidate_shortlist,
+    merge_authoritative_scores,
+    build_rd_discovery_hypothesis_view,
+)
 from rd_discovery_classification import (
     classify_discovery_lane,
     discovery_potential_score,
@@ -23,6 +27,7 @@ from rd_discovery_classification import (
     DISCOVERY_LANE_REGULATORY_STOP,
     DISCOVERY_LANE_SAFETY_STOP,
     DISCOVERY_LANE_INSUFFICIENT,
+    DISCOVERY_LANE_EVIDENCE_GAP,
 )
 
 
@@ -316,3 +321,248 @@ def test_no_relevance_no_mechanism_is_insufficient_signal_not_hypothesis():
     assert result["Scientific_Triage_Status"] == "Excluded"
     assert result["RD_Discovery_Lane"] == DISCOVERY_LANE_INSUFFICIENT
     _assert_common_shape(result)
+
+
+def test_known_established_catalogue_plant_becomes_evidence_gap():
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=True,
+        novelty_tier="Established / commercially active",
+    )
+    assert lane == DISCOVERY_LANE_EVIDENCE_GAP
+
+
+def test_saturated_market_catalogue_plant_also_becomes_evidence_gap():
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=True,
+        novelty_tier="Competitive / saturated market",
+    )
+    assert lane == DISCOVERY_LANE_EVIDENCE_GAP
+
+
+def test_unknown_catalogue_status_falls_back_to_discovery_hypothesis():
+    # already_in_catalogue=None (unknown) must never be treated as
+    # "known established" -- it must fall back to the original, broader
+    # behavior rather than invent novelty it cannot confirm.
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=None,
+        novelty_tier="Established / commercially active",
+    )
+    assert lane == DISCOVERY_LANE_HYPOTHESIS
+
+
+def test_genuinely_novel_candidate_with_thin_market_stays_discovery_hypothesis():
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=False,
+        novelty_tier="Commercial white-space",
+    )
+    assert lane == DISCOVERY_LANE_HYPOTHESIS
+
+
+def test_established_catalogue_plant_but_thin_market_for_this_use_stays_hypothesis():
+    # already_in_catalogue=True alone is not sufficient -- an established
+    # plant with a genuine commercial white-space/repurposing opportunity
+    # for THIS indication is still a real discovery lead, not merely an
+    # "evidence gap" on a saturated product.
+    lane = classify_discovery_lane(
+        plant_status="Exploratory",
+        plant_hard_stop=False,
+        regulatory_prohibition_present=False,
+        explicit_mechanistic_rationale=True,
+        indication_points=5.0,
+        dosage_mismatch=False,
+        already_in_catalogue=True,
+        novelty_tier="Indication-repurposing opportunity",
+    )
+    assert lane == DISCOVERY_LANE_HYPOTHESIS
+
+
+def test_shortlisting_integration_routes_established_catalogue_plant_to_evidence_gap():
+    row = _row(
+        Target_or_Mechanism="Aldose-Reductase-Inhibitor; AMPK",
+        Scientific_Rationale=(
+            "Shares a validated biological target with the reference compound "
+            "(seed_data.COMPOUND_TARGETS hardcoded knowledge base, not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:999",
+        Already_In_Internal_Catalogue=True,
+        Commercial_Novelty_Status="established commercial use",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    result = summary.iloc[0]
+    assert result["Scientific_Triage_Status"] == "Exploratory"
+    assert result["RD_Discovery_Lane"] == "Established Plant — Evidence Gap for This Indication"
+    _assert_common_shape(result)
+
+
+def test_shortlisting_integration_routes_unmarked_candidate_to_discovery_hypothesis():
+    # Same fixture as above, minus the catalogue/market tags -- confirms
+    # the default behavior (no origin signal available) is unchanged.
+    row = _row(
+        Target_or_Mechanism="Aldose-Reductase-Inhibitor; AMPK",
+        Scientific_Rationale=(
+            "Shares a validated biological target with the reference compound "
+            "(seed_data.COMPOUND_TARGETS hardcoded knowledge base, not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:998",
+    )
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame([row]),
+        indication="Metabolic & blood sugar support",
+        dosage_form="Infusion",
+    )
+    result = summary.iloc[0]
+    assert result["Scientific_Triage_Status"] == "Exploratory"
+    assert result["RD_Discovery_Lane"] == DISCOVERY_LANE_HYPOTHESIS
+
+
+# --------------------------------------------------------------------------
+# merge_authoritative_scores() integration -- confirmed-bug regression
+# (external review, 2026-09-08: RD_Discovery_Lane / Discovery_Potential_
+# Score / Evidence_Maturity_Score were computed onto plant_summary but
+# silently dropped by merge_authoritative_scores(), the function that
+# actually produces rd_report_ready_df -- the frame step_rd_candidates.py
+# renders/exports. Verified directly before writing this fix.)
+# --------------------------------------------------------------------------
+
+def test_rd_discovery_lane_fields_survive_merge_authoritative_scores():
+    row = _row(
+        Target_or_Mechanism="Aldose-Reductase-Inhibitor; AMPK",
+        Scientific_Rationale=(
+            "Shares a validated biological target with the reference compound "
+            "(seed_data.COMPOUND_TARGETS hardcoded knowledge base, not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:999",
+    )
+    df = pd.DataFrame([row])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion",
+    )
+    merged = merge_authoritative_scores(df, summary)
+    assert "RD_Discovery_Lane" in merged.columns
+    assert "Discovery_Potential_Score" in merged.columns
+    assert "Evidence_Maturity_Score" in merged.columns
+    assert merged.iloc[0]["RD_Discovery_Lane"] == summary.iloc[0]["RD_Discovery_Lane"]
+    assert merged.iloc[0]["Discovery_Potential_Score"] == summary.iloc[0]["Discovery_Potential_Score"]
+    assert merged.iloc[0]["Evidence_Maturity_Score"] == summary.iloc[0]["Evidence_Maturity_Score"]
+
+
+# --------------------------------------------------------------------------
+# build_rd_discovery_hypothesis_view() -- independent second ranking axis
+# (external review, 2026-09-08: Discovery_Potential_Score existed but
+# nothing sorted or filtered by it -- the primary table still sorts by
+# Scientific_Triage_Status/Overall_Score only.)
+# --------------------------------------------------------------------------
+
+def test_discovery_hypothesis_view_ranks_by_discovery_potential_not_overall_score():
+    # Plant A: catalogue-safe evidence-backed candidate, high Overall_Score,
+    # not a discovery hypothesis at all -- must be excluded from this view.
+    plant_a = _row(
+        Alternative_Plant="Plant A",
+        Scientific_Rationale="clinical evidence of reduced fasting glucose",
+        Clinical_Rationale="human clinical trial reported improved HbA1c",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Clinical trial",
+        Source_Record_IDs="PMID:501",
+    )
+    # Plant B: weak mechanistic hypothesis, low Discovery_Potential.
+    plant_b = _row(
+        Alternative_Plant="Plant B",
+        Target_or_Mechanism="AMPK",
+        Scientific_Rationale=(
+            "Shares a validated biological target with the reference compound "
+            "(seed_data.COMPOUND_TARGETS hardcoded knowledge base, not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:502",
+    )
+    # Plant C: strong mechanistic hypothesis (multiple targets), high
+    # Discovery_Potential -- must rank ABOVE Plant B in this view even
+    # though both are Exploratory / R&D Discovery Hypothesis.
+    plant_c = _row(
+        Alternative_Plant="Plant C",
+        Target_or_Mechanism="Aldose-Reductase-Inhibitor; AMPK; GLUT4; PPAR-gamma",
+        Scientific_Rationale=(
+            "Shares multiple validated biological targets with the reference "
+            "compound (seed_data.COMPOUND_TARGETS hardcoded knowledge base, "
+            "not a specific study)."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="PMID:503",
+    )
+    df = pd.DataFrame([plant_a, plant_b, plant_c])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion",
+    )
+    merged = merge_authoritative_scores(df, summary)
+    view = build_rd_discovery_hypothesis_view(merged)
+
+    assert "Plant A" not in set(view["Alternative_Plant"])
+    assert list(view["Alternative_Plant"]) == ["Plant C", "Plant B"]
+    assert (
+        view.iloc[0]["Discovery_Potential_Score"]
+        >= view.iloc[1]["Discovery_Potential_Score"]
+    )
+
+
+def test_discovery_hypothesis_view_empty_when_no_lane_column():
+    view = build_rd_discovery_hypothesis_view(pd.DataFrame([{"Alternative_Plant": "X"}]))
+    assert view.empty
+
+
+def test_discovery_hypothesis_view_empty_on_empty_input():
+    assert build_rd_discovery_hypothesis_view(pd.DataFrame()).empty
+    assert build_rd_discovery_hypothesis_view(None).empty
+
+
+def test_discovery_hypothesis_view_excludes_regulatory_prohibition_always():
+    row = _row(
+        Scientific_Rationale="clinical evidence of reduced fasting glucose",
+        Clinical_Rationale="human clinical trial reported improved HbA1c",
+        Evidence_Level="Clinical / human evidence",
+        Evidence_Hierarchy_Detail="Clinical trial",
+        Source_Record_IDs="PMID:601",
+        Regulatory_Barriers="Prohibited for oral use in the EU",
+    )
+    df = pd.DataFrame([row])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Metabolic & blood sugar support", dosage_form="Infusion",
+    )
+    merged = merge_authoritative_scores(df, summary)
+    view = build_rd_discovery_hypothesis_view(merged, include_not_currently_developable=True)
+    assert view.empty

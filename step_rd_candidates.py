@@ -15,6 +15,7 @@ from candidate_shortlisting import (
     build_plant_candidate_shortlist,
     merge_authoritative_scores,
     rescore_commercial_component,
+    build_rd_discovery_hypothesis_view,
 )
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
@@ -1985,6 +1986,44 @@ def _recommendation_block(result_df, report_ready_df=None):
                 if c in _weak_display.columns
             ]
             st.dataframe(_weak_display[_weak_cols].head(20), width="stretch")
+
+        # RD Discovery Hypotheses -- a THIRD, positively-framed lane
+        # (external review, 2026-09-08): a mechanism-only, under-studied
+        # candidate previously only ever appeared, undifferentiated, inside
+        # the red "Weak / not recommended" bucket above -- the same bucket
+        # used for genuine dead-ends (regulatory prohibition, no evidence
+        # at all). RD_Discovery_Lane / Discovery_Potential_Score
+        # (rd_discovery_classification.py) let this module give a real
+        # scientific hypothesis its own section, ranked by
+        # Discovery_Potential_Score (NOT Overall_Score) -- see
+        # candidate_shortlisting.build_rd_discovery_hypothesis_view()'s own
+        # docstring. Purely additive: a plant shown here may ALSO appear in
+        # the red section above (same underlying row, two different
+        # lenses); nothing is removed from any existing section and no
+        # score/decision changes.
+        _discovery_view = build_rd_discovery_hypothesis_view(df)
+        if not _discovery_view.empty:
+            st.markdown("### 🔬 R&D Discovery Hypotheses")
+            st.caption(
+                "Candidates with little or no direct/clinical evidence today, "
+                "but an explicit mechanistic rationale -- ranked by Discovery "
+                "Potential, independent of Overall_Score. These are research "
+                "leads, not development-ready candidates; see Evidence_Maturity_"
+                "Score for how far each one still has to go."
+            )
+            _discovery_cols = [
+                c for c in (
+                    ["Alternative_Plant", "RD_Discovery_Lane",
+                     "Discovery_Potential_Score", "Evidence_Maturity_Score"]
+                    + display_cols + ["Why_Selected_or_Rejected"]
+                )
+                if c in _discovery_view.columns
+            ]
+            # De-duplicate while preserving the Discovery_Potential_Score
+            # ordering build_rd_discovery_hypothesis_view() already applied.
+            _discovery_cols = list(dict.fromkeys(_discovery_cols))
+            st.dataframe(_discovery_view[_discovery_cols].head(20), width="stretch")
+
         return
 
     if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:

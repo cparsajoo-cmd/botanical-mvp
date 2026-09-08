@@ -160,12 +160,22 @@ def classify_discovery_lane(
     return DISCOVERY_LANE_INSUFFICIENT
 
 
+# Novelty-market tier (candidate_shortlisting.py::_novelty_market()) that
+# means "the market was never actually checked" -- as opposed to every
+# other tier, which reflects a real (even if weak) market assessment.
+# discovery_potential_score() below must not let this specific neutral
+# prior read as evidence of novelty (external review, 2026-09-08: "we
+# don't know" is not "this looks unclaimed").
+_NOVELTY_MARKET_UNASSESSED_TIER = "Commercial novelty not assessed"
+
+
 def discovery_potential_score(
     *,
     mech_points: float,
     target_count: int,
     mechanistic_evidence_count: int,
     novelty_points: float,
+    novelty_tier: str = "",
 ) -> float:
     """0-100 measure of scientific/R&D interest, deliberately INDEPENDENT
     of clinical evidence maturity.
@@ -180,6 +190,21 @@ def discovery_potential_score(
     novelty-confidence penalty, which subtracts for exactly the same
     signal on the evidence-backed axis.
 
+    EXCEPTION (external review, 2026-09-08): _novelty_market() returns a
+    flat 2.5-point NEUTRAL PRIOR, tier "Commercial novelty not assessed",
+    when no market data exists at all -- an "unknown" answer, not a
+    "probably novel" one. Left alone, that neutral prior silently added
+    7.5 points (2.5 x 3) to Discovery_Potential_Score for every candidate
+    whose market was simply never searched, which is not evidence of
+    anything. When ``novelty_tier`` equals that exact tier string, the
+    novelty component is zeroed instead. Every other tier's
+    ``novelty_points`` value (including the low ones, e.g. "Competitive /
+    saturated market") is used exactly as before -- this narrowly targets
+    the one unassessed case review identified, nothing else. A caller
+    that does not pass ``novelty_tier`` at all keeps the pre-existing
+    behavior unchanged (the empty default never matches the unassessed
+    tier string).
+
     All inputs are pre-computed elsewhere (mech_points/mech_tier from
     _mechanism_support(), target_count from the same `targets` list used
     by the existing gate, mechanistic_evidence_count from the same
@@ -193,7 +218,11 @@ def discovery_potential_score(
     mechanism_component = min(40.0, max(0.0, mech_points) * 4.0)
     target_component = min(20.0, max(0, target_count) * 5.0)
     preclinical_component = min(25.0, max(0, mechanistic_evidence_count) * 5.0)
-    novelty_component = min(15.0, max(0.0, novelty_points) * 3.0)
+    effective_novelty_points = (
+        0.0 if novelty_tier == _NOVELTY_MARKET_UNASSESSED_TIER
+        else max(0.0, novelty_points)
+    )
+    novelty_component = min(15.0, effective_novelty_points * 3.0)
     return round(
         min(
             100.0,

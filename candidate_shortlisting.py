@@ -3107,6 +3107,7 @@ def build_plant_candidate_shortlist(
             target_count=len(targets),
             mechanistic_evidence_count=mechanistic_evidence_count,
             novelty_points=novelty_points,
+            novelty_tier=novelty_tier,
         )
         evidence_maturity = evidence_maturity_score(
             evq_points=evq_points,

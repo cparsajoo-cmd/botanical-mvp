@@ -2001,7 +2001,22 @@ def _recommendation_block(result_df, report_ready_df=None):
         # the red section above (same underlying row, two different
         # lenses); nothing is removed from any existing section and no
         # score/decision changes.
-        _discovery_view = build_rd_discovery_hypothesis_view(df)
+        #
+        # include_not_currently_developable=True (external review,
+        # 2026-09-08, second pass): a plant with a genuine safety hard-stop
+        # can still be a legitimate pharmacological R&D question -- the
+        # earlier default (False) hid it from this table entirely, which is
+        # the opposite of what was asked for ("show it as an R&D candidate,
+        # but write very clearly that it has a safety problem"). The row's
+        # own RD_Discovery_Lane value ("Not Currently Developable (Safety)")
+        # and the Safety_Flags/Safety_Concern_Level columns already in
+        # display_cols below ARE that explicit warning -- nothing here
+        # softens or omits the safety signal, it only stops hiding the row.
+        # "Regulatory Prohibition" rows are still never included, by
+        # build_rd_discovery_hypothesis_view()'s own unconditional rule.
+        _discovery_view = build_rd_discovery_hypothesis_view(
+            df, include_not_currently_developable=True,
+        )
         if not _discovery_view.empty:
             st.markdown("### 🔬 R&D Discovery Hypotheses")
             st.caption(
@@ -2009,7 +2024,12 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "but an explicit mechanistic rationale -- ranked by Discovery "
                 "Potential, independent of Overall_Score. These are research "
                 "leads, not development-ready candidates; see Evidence_Maturity_"
-                "Score for how far each one still has to go."
+                "Score for how far each one still has to go. Rows labelled "
+                "'Not Currently Developable (Safety)' have a genuine safety "
+                "hard-stop for productization today -- they remain listed "
+                "because the underlying pharmacology can still be a valid "
+                "research question, not because the safety concern is "
+                "resolved; see Safety_Flags / Safety_Concern_Level."
             )
             _discovery_cols = [
                 c for c in (

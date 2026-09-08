@@ -145,6 +145,38 @@ def test_discovery_potential_score_rewards_mechanism_without_clinical_evidence()
     assert score <= 100.0
 
 
+def test_discovery_potential_score_zeros_novelty_when_market_unassessed():
+    # External review, second pass (2026-09-08): the neutral 2.5-point
+    # "not assessed" prior from _novelty_market() must not read as
+    # evidence of novelty.
+    unassessed = discovery_potential_score(
+        mech_points=0.0, target_count=0,
+        mechanistic_evidence_count=0, novelty_points=2.5,
+        novelty_tier="Commercial novelty not assessed",
+    )
+    assert unassessed == 0.0
+
+
+def test_discovery_potential_score_still_rewards_real_novelty_signal():
+    # A genuinely assessed, low-market-presence tier must still count.
+    white_space = discovery_potential_score(
+        mech_points=0.0, target_count=0,
+        mechanistic_evidence_count=0, novelty_points=5.0,
+        novelty_tier="Commercial white-space",
+    )
+    assert white_space == 15.0
+
+
+def test_discovery_potential_score_backward_compatible_without_tier_arg():
+    # A caller that never learned about novelty_tier (pre-existing unit
+    # tests, older callers) keeps the original, unmodified behavior.
+    score = discovery_potential_score(
+        mech_points=0.0, target_count=0,
+        mechanistic_evidence_count=0, novelty_points=2.5,
+    )
+    assert score == 7.5
+
+
 def test_discovery_potential_score_is_bounded():
     score = discovery_potential_score(
         mech_points=999.0, target_count=999,

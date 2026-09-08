@@ -221,3 +221,28 @@ def test_regulatory_prohibition_never_appears_in_discovery_section():
     assert len(dataframe_calls) == 2
     _recommended, weak_frame = dataframe_calls
     assert "Banned plant" in list(weak_frame["Alternative_Plant"])
+
+
+def test_safety_hard_stop_candidate_now_appears_in_discovery_section():
+    # External review, second pass (2026-09-08): a genuine safety
+    # hard-stop can still be a legitimate pharmacological R&D question --
+    # the row must be SHOWN in the discovery section (clearly labelled),
+    # not hidden from it entirely as before.
+    report_ready_df = pd.DataFrame([
+        _report_ready_row("Strong plant", "Go", 90.0),
+        _discovery_report_ready_row(
+            "Toxic-but-interesting plant",
+            "Not Currently Developable (Safety)", 88.0, call="No-Go",
+        ),
+    ])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), report_ready_df)
+
+    dataframe_calls = [c.args[0] for c in mock_st.dataframe.call_args_list]
+    assert len(dataframe_calls) == 3
+    _recommended, _weak, discovery_frame = dataframe_calls
+    assert "Toxic-but-interesting plant" in list(discovery_frame["Alternative_Plant"])
+    shown_row = discovery_frame[
+        discovery_frame["Alternative_Plant"] == "Toxic-but-interesting plant"
+    ].iloc[0]
+    assert shown_row["RD_Discovery_Lane"] == "Not Currently Developable (Safety)"

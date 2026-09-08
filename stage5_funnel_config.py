@@ -63,3 +63,46 @@ def resolve_exploratory_budget(mode: str | None = None, override: int | None = N
             key, STAGE5_PRESCREEN_EXPLORATORY_BUDGET[STAGE5_PRESCREEN_DEFAULT_MODE]
         )
     return max(0, min(value, STAGE5_PRESCREEN_EXPLORATORY_HARD_CEILING))
+
+
+# ---------------------------------------------------------------------------
+# Mechanistic-discovery budget (Stage-5 Mechanistic Hypothesis Entry Path,
+# external review, 2026-09-08)
+# ---------------------------------------------------------------------------
+# A SEPARATE, independent budget from STAGE5_PRESCREEN_EXPLORATORY_BUDGET
+# above. That budget admits candidates with SOME evidence-record relevance
+# (however weak); this one admits candidates with ZERO evidence records at
+# all for the requested indication, but an explicit target/mechanism match
+# on their own catalogue profile (Known_Targets) -- see
+# indication_candidate_discovery.py's _catalogue_prescreen_before_expensive_
+# loop() for where this is spent. Kept independent and separately
+# configurable so a mechanistic-hypothesis run can never crowd out (or be
+# crowded out by) the evidence-based exploratory budget; the two pools
+# never compete against each other. NOT counted against, and never
+# overlapping with, the mandatory (direct evidence / Stage-2 novel)
+# candidates, which are always admitted regardless of either budget.
+STAGE5_PRESCREEN_MECHANISTIC_BUDGET = {
+    "quick": 40,
+    "full": 150,
+}
+
+STAGE5_PRESCREEN_MECHANISTIC_HARD_CEILING = 500
+
+
+def resolve_mechanistic_discovery_budget(mode: str | None = None, override: int | None = None) -> int:
+    """Return the configured mechanistic-discovery budget for ``mode``.
+
+    Same override/fallback contract as :func:`resolve_exploratory_budget`,
+    against the independent mechanistic-budget table above.
+    """
+    if override is not None:
+        try:
+            value = int(override)
+        except (TypeError, ValueError):
+            value = STAGE5_PRESCREEN_MECHANISTIC_BUDGET[STAGE5_PRESCREEN_DEFAULT_MODE]
+    else:
+        key = str(mode or "").strip().lower()
+        value = STAGE5_PRESCREEN_MECHANISTIC_BUDGET.get(
+            key, STAGE5_PRESCREEN_MECHANISTIC_BUDGET[STAGE5_PRESCREEN_DEFAULT_MODE]
+        )
+    return max(0, min(value, STAGE5_PRESCREEN_MECHANISTIC_HARD_CEILING))

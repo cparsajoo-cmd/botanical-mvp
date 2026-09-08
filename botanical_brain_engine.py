@@ -7,6 +7,11 @@ try:
 except Exception:
     requests = None
 
+from compound_plant_resolver import (
+    build_compound_plant_index,
+    find_plants_for_compound as _resolver_find_plants_for_compound,
+)
+
 
 # Broad MVP natural-compound occurrence layer.
 # This is NOT final evidence. It is a fallback botanical occurrence map.
@@ -104,10 +109,25 @@ def _safe_get(row, cols):
 
 
 class UniversalBotanicalBrainEngine:
-    def __init__(self, evidence_df=None, max_online_records=80):
+    def __init__(self, evidence_df=None, max_online_records=80, plant_compounds_df=None):
         self.evidence_df = evidence_df if evidence_df is not None else pd.DataFrame()
         self.max_online_records = max_online_records
         self.session = None
+
+        # Real, data-backed compound->plant occurrence index (external
+        # review, 2026-09-08: "no engine should have its own private
+        # compound->plant dictionary" -- compound_plant_resolver.py is the
+        # single centralised resolver). Optional and additive: when the
+        # caller does not pass plant_compounds_df (e.g. this engine used
+        # standalone, or a session with no Supabase access), this stays
+        # empty and _find_plants_for_compound() below falls back to the
+        # legacy COMPOUND_PLANT_MAP exactly as before -- no behavior change
+        # for any existing caller.
+        self._compound_plant_index = (
+            build_compound_plant_index(plant_compounds_df)
+            if isinstance(plant_compounds_df, pd.DataFrame) and not plant_compounds_df.empty
+            else {}
+        )
 
         if requests is not None:
             self.session = requests.Session()
@@ -432,14 +452,29 @@ class UniversalBotanicalBrainEngine:
         return pd.DataFrame(records)
 
     def _find_plants_for_compound(self, compound):
-        compound_norm = _norm(compound)
         found = []
 
-        for c, plants in COMPOUND_PLANT_MAP.items():
-            c_norm = _norm(c)
-            if compound_norm == c_norm or compound_norm in c_norm or c_norm in compound_norm:
-                for p in plants:
-                    found.append((p, "MVP compound-plant occurrence map"))
+        # Real, data-backed occurrence records first (compound_plant_
+        # resolver.py over plant_compounds -- Dr. Duke's ~2,000+ plant
+        # data), with the small legacy COMPOUND_PLANT_MAP passed through
+        # ONLY as an explicitly-labelled fallback the resolver itself uses
+        # when the real index has no match at all (see
+        # find_plants_for_compound()'s own tiering). This is what lets
+        # this engine surface a plant beyond the ~50 famous species the
+        # legacy map alone could ever return.
+        resolver_records = _resolver_find_plants_for_compound(
+            compound, self._compound_plant_index, legacy_fallback_map=COMPOUND_PLANT_MAP,
+        )
+        for record in resolver_records:
+            plant = str(record.get("scientific_name") or "").strip()
+            if not plant:
+                continue
+            source_label = (
+                "MVP compound-plant occurrence map"
+                if record.get("origin") == "legacy_fallback_map"
+                else f"plant_compounds database ({record.get('source') or 'Dr. Duke'})"
+            )
+            found.append((plant, source_label))
 
         evidence_plants = self._find_plants_in_evidence(compound)
         found.extend(evidence_plants)
@@ -508,7 +543,7 @@ class UniversalBotanicalBrainEngine:
             evidence_score += 10
         if plant and plant != "Plant not found yet":
             evidence_score += 20
-        if "evidence database" in _norm(botanical_source):
+        if "evidence database" in _norm(botanical_source) or "plant_compounds database" in _norm(botanical_source):
             evidence_score += 10
 
         novelty_score = 20

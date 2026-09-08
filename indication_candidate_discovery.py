@@ -44,7 +44,13 @@ from general_indication_relevance import (
     score_record_relevance,
     score_record_relevance_hybrid,
 )
-from stage5_funnel_config import resolve_exploratory_budget, STAGE5_PRESCREEN_DEFAULT_MODE
+from stage5_funnel_config import (
+    resolve_exploratory_budget, resolve_mechanistic_discovery_budget,
+    STAGE5_PRESCREEN_DEFAULT_MODE,
+)
+from compound_plant_resolver import (
+    build_compound_plant_index, compound_plant_count, compound_specificity_score,
+)
 
 # Embedding/vector-search infrastructure is optional at import time. Step 5
 # must never crash because the `openai` package is missing, misconfigured,
@@ -852,6 +858,27 @@ def _preparation_applicability(record: dict | None, selected_dosage_form: str) -
     return "Unknown", ["Reported preparation could not be mapped to selected dosage form"]
 
 
+def _known_compound_terms(item) -> list[str]:
+    """Best-effort compound name list from a candidate profile row.
+
+    ``Known_Active_Compounds`` is stored as a Python list on the candidate
+    item (see botanical_rd_candidate_engine.py's _candidates_from_plant_
+    compounds()), which pandas preserves as-is in an object-dtype column --
+    but this also tolerates a plain delimited string, for any caller that
+    builds candidates differently (e.g. a test fixture or the legacy
+    local-fallback path). Never raises; returns [] for anything else.
+    """
+    value = item.get("Known_Active_Compounds") if hasattr(item, "get") else None
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    if not text or text.lower() in ("nan", "none", "null"):
+        return []
+    return [t.strip() for t in re.split(r"[;,]", text) if t.strip()]
+
+
 def _catalogue_prescreen_before_expensive_loop(
     engine,
     candidates: pd.DataFrame,
@@ -860,6 +887,7 @@ def _catalogue_prescreen_before_expensive_loop(
     indication: str,
     *,
     exploratory_budget: int | None = None,
+    mechanistic_budget: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Cheap, high-recall catalogue funnel executed BEFORE per-plant work.
 
@@ -869,6 +897,46 @@ def _catalogue_prescreen_before_expensive_loop(
     market enrichment, or any LLM.  Strong direct positive *or negative/null*
     indication evidence is mandatory because direction does not affect the
     directness predicate.  Stage-2 novel candidates are also mandatory.
+
+    STAGE-5 MECHANISTIC HYPOTHESIS ENTRY PATH (external review, 2026-09-08):
+    the checks above only ever look at ``evidence_index`` -- real evidence
+    RECORDS for this indication. A catalogue plant with zero evidence
+    records for this indication was, before this addition, prescreened out
+    regardless of its OWN profile (Known_Targets/Known_Active_Compounds --
+    see botanical_rd_candidate_engine.py's _candidates_from_plant_
+    compounds()), even though discover_indication_candidates()'s own main
+    loop already has a "profile-derived hypothesis" path
+    (``profile_relevance = _score(None, indications, targets, "")``) that
+    would recognise exactly this candidate as a mechanistic lead -- it just
+    never got the chance, because prescreen killed it first. This function
+    now runs that SAME profile-relevance check (Known_Targets/Indications
+    text against the same relevance_profile/assist_terms every other check
+    here already uses -- nothing new is invented) BEFORE the expensive loop,
+    and admits a match under an INDEPENDENT budget
+    (STAGE5_PRESCREEN_MECHANISTIC_BUDGET), never competing with or
+    crowding out the evidence-based exploratory budget above.
+
+    Two safeguards match the architecture note's explicit requirements:
+      - Compound identity is NEVER the entry gate by itself -- entry is
+        driven only by Known_Targets/mechanism TEXT matching the requested
+        indication (via score_record_relevance, the same engine used
+        everywhere else in this module). A plant merely containing a
+        ubiquitous compound (e.g. quercetin) does not qualify unless its
+        own target/mechanism profile is textually relevant to the
+        indication.
+      - When the mechanistic budget is smaller than the eligible pool,
+        priority goes to candidates whose known compound is RARER in the
+        real plant_compounds occurrence data (compound_plant_resolver.py) --
+        a compound reported in 2 plants is a stronger discovery signal than
+        one reported in 300 -- as a tie-break under the relevance score,
+        never as a replacement for it.
+
+    Every candidate admitted this way is tagged ``PreScreen_Reason =
+    "PROFILE_MECHANISTIC_HYPOTHESIS"`` in the returned audit frame, kept
+    distinct from "EXPLORATORY_RELEVANCE" (which always means real evidence
+    records existed, however weak) -- this module makes no claim these two
+    admission reasons are scientifically equivalent; only that both deserve
+    a chance at full scoring instead of silent removal here.
     """
     if not isinstance(candidates, pd.DataFrame) or candidates.empty:
         return candidates, pd.DataFrame()
@@ -876,10 +944,32 @@ def _catalogue_prescreen_before_expensive_loop(
     budget = resolve_exploratory_budget(
         STAGE5_PRESCREEN_DEFAULT_MODE, override=exploratory_budget
     )
+    mech_budget = resolve_mechanistic_discovery_budget(
+        STAGE5_PRESCREEN_DEFAULT_MODE, override=mechanistic_budget
+    )
     assist_family = _resolve_indication_terms(indication)
     assist_terms = tuple(dict.fromkeys((*assist_family[0], *assist_family[1]))) if assist_family else ()
 
+    # Real, data-backed compound occurrence index (compound_plant_
+    # resolver.py) built once per prescreen call, from the SAME
+    # plant_compounds_df every candidate in `candidates` was itself built
+    # from (see _candidates_from_plant_compounds()) -- never a second data
+    # source, purely a reverse index over data already loaded on `engine`.
+    # Absent/empty plant_compounds_df degrades to an empty index (no
+    # specificity signal, never an error) so this function's core
+    # entry-gate behavior does not depend on it being available.
+    _plant_compounds_df = getattr(engine, "plant_compounds_df", None)
+    compound_index = (
+        build_compound_plant_index(_plant_compounds_df)
+        if isinstance(_plant_compounds_df, pd.DataFrame) else {}
+    )
+
     direct_types = {MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP}
+    profile_relevant_types = direct_types | {
+        MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
+        MATCH_HYBRID_SEMANTIC, MATCH_EMBEDDING_SEMANTIC,
+        MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
+    }
     rows = []
     for idx, item in candidates.iterrows():
         plant = _pick_from_row(engine, item, ["Scientific_Name", "Alternative_Plant", "Plant"])
@@ -931,6 +1021,29 @@ def _catalogue_prescreen_before_expensive_loop(
         is_stage2_novel = (already_in_supabase is False) or any(
             token in origin for token in ("literature", "stage2", "discovered", "novel", "external")
         )
+
+        # --- Stage-5 Mechanistic Hypothesis Entry Path: profile-only check,
+        # never touching evidence_index -- see function docstring.
+        known_targets_text = _pick_from_row(engine, item, ["Known_Targets", "target", "mechanism"])
+        profile_relevant = False
+        profile_match_score = 0.0
+        specificity_score = 0.0
+        if known_targets_text:
+            indications_text = _pick_from_row(engine, item, ["Indications_Text", "Indications", "indication"])
+            profile_match = score_record_relevance(
+                relevance_profile, indications_text, known_targets_text, "", assist_terms,
+            )
+            profile_match_score = float(getattr(profile_match, "score", 0.0) or 0.0)
+            profile_relevant = getattr(profile_match, "match_type", None) in profile_relevant_types
+            if profile_relevant and compound_index:
+                compound_terms = _known_compound_terms(item)
+                plant_counts = [
+                    compound_plant_count(term, compound_index) for term in compound_terms
+                ]
+                plant_counts = [c for c in plant_counts if c > 0]
+                if plant_counts:
+                    specificity_score = compound_specificity_score(min(plant_counts))
+
         rows.append({
             "_index": idx,
             "Alternative_Plant": str(plant or ""),
@@ -940,6 +1053,9 @@ def _catalogue_prescreen_before_expensive_loop(
             "record_count": len(records),
             "best_relevance": best_score,
             "is_stage2_novel": bool(is_stage2_novel),
+            "profile_relevant": profile_relevant,
+            "profile_match_score": profile_match_score,
+            "specificity_score": specificity_score,
         })
 
     mandatory = [r for r in rows if r["has_direct"] or r["is_stage2_novel"]]
@@ -949,7 +1065,23 @@ def _catalogue_prescreen_before_expensive_loop(
         reverse=True,
     )
     kept_exploratory = exploratory[:budget]
-    retained_indexes = {r["_index"] for r in mandatory + kept_exploratory}
+    evidence_based_indexes = {r["_index"] for r in mandatory + kept_exploratory}
+
+    # Mechanistic pool: profile-relevant, NOT already admitted above (a
+    # candidate with both real evidence AND a matching profile is already
+    # in -- no need to spend the independent mechanistic budget on it).
+    mechanistic_pool = [
+        r for r in rows
+        if r["profile_relevant"] and r["_index"] not in evidence_based_indexes
+    ]
+    mechanistic_pool.sort(
+        key=lambda r: (r["specificity_score"], r["profile_match_score"], r["Alternative_Plant"]),
+        reverse=True,
+    )
+    kept_mechanistic = mechanistic_pool[:mech_budget]
+    mechanistic_indexes = {r["_index"] for r in kept_mechanistic}
+
+    retained_indexes = evidence_based_indexes | mechanistic_indexes
 
     # Defensive high-recall floor: if the corpus/profile is exceptionally
     # sparse and produced fewer than the configured pool, retain the best
@@ -969,6 +1101,7 @@ def _catalogue_prescreen_before_expensive_loop(
             "PreScreen_Reason": (
                 "STAGE2_NOVEL" if r["is_stage2_novel"] else
                 "DIRECT_INDICATION_EVIDENCE" if r["has_direct"] else
+                "PROFILE_MECHANISTIC_HYPOTHESIS" if r["_index"] in mechanistic_indexes else
                 "EXPLORATORY_RELEVANCE" if r["_index"] in retained_indexes else
                 "NO_OR_LOW_INDICATION_SIGNAL"
             ),

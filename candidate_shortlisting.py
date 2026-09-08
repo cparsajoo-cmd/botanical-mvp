@@ -43,6 +43,11 @@ from standard_evidence_builder import (
     evaluate_applicability, preparation_from_product_form, canonical_preparation_identity,
 )
 from evidence_consistency import classify_evidence_consistency
+from rd_discovery_classification import (
+    classify_discovery_lane,
+    discovery_potential_score,
+    evidence_maturity_score,
+)
 from phase5_scoring_config import (
     SCORING_MODEL_VERSION,
     EVIDENCE_TIER_PRECEDENCE,
@@ -2021,6 +2026,23 @@ def _critical_plant_stop(group: pd.DataFrame) -> bool:
     return hard_count >= 2 and (hard_count / row_count) >= 0.5
 
 
+def _regulatory_prohibition_text_present(group: pd.DataFrame) -> bool:
+    """Same regulatory-ban term check _critical_plant_stop() already uses,
+    exposed standalone so the additive RD Discovery Lane classification
+    (rd_discovery_classification.py) can distinguish a plant-level hard
+    stop caused by an explicit regulatory prohibition from one caused by
+    repeated/severe safety signals -- without re-deriving or altering
+    _critical_plant_stop()'s own True/False verdict, which remains the
+    single source of truth for whether a hard stop exists at all.
+    """
+    regulatory_text = " | ".join(
+        _norm(v) for v in group.get("Regulatory_Barriers", pd.Series(dtype=object)).dropna().tolist()
+    )
+    return any(term in regulatory_text for term in (
+        "prohibited", "prohibition", "banned", "regulatory ban", "contraindicated",
+    ))
+
+
 def _meaningful_group_values(group: pd.DataFrame, column: str) -> list[str]:
     """Return non-placeholder values without treating missingness as evidence."""
     if column not in group.columns:
@@ -3035,6 +3057,41 @@ def build_plant_candidate_shortlist(
                 0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
             )
 
+        # --- Additive R&D Discovery Lane classification --------------------
+        # Separates two questions this gate's plant_status conflates:
+        # "good enough to develop on today's evidence?" (plant_status
+        # itself, unchanged) vs "scientifically interesting enough for
+        # R&D attention regardless of today's evidence?" (RD_Discovery_Lane,
+        # new). See rd_discovery_classification.py module docstring.
+        # explicit_mechanistic_rationale mirrors, byte-for-byte, the same
+        # test already used above in the "Mechanistic empirical"/
+        # "Mechanistic inference only" branch (mech_points > 0.0 or
+        # len(targets) > 0) -- recomputed here rather than threaded out of
+        # that branch's local scope, since it applies to every plant_status
+        # value, not only the ones that pass through that branch.
+        explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
+        regulatory_prohibition_present = _regulatory_prohibition_text_present(group)
+        rd_discovery_lane = classify_discovery_lane(
+            plant_status=plant_status,
+            plant_hard_stop=plant_hard_stop,
+            regulatory_prohibition_present=regulatory_prohibition_present,
+            explicit_mechanistic_rationale=explicit_mechanistic_rationale,
+            indication_points=indication_points,
+            dosage_mismatch=(dosage_summary == "Mismatch"),
+        )
+        discovery_potential = discovery_potential_score(
+            mech_points=mech_points,
+            target_count=len(targets),
+            mechanistic_evidence_count=mechanistic_evidence_count,
+            novelty_points=novelty_points,
+        )
+        evidence_maturity = evidence_maturity_score(
+            evq_points=evq_points,
+            direct_evidence_count=direct_evidence_count,
+            outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
+            indication_points=indication_points,
+        )
+
         # Preparation applicability is determined by the same PRIMARY evidence
         # tier that drives the scientific score.  A single low-tier tea record
         # must not upgrade a body of capsule/extract evidence to a direct
@@ -3273,6 +3330,18 @@ def build_plant_candidate_shortlist(
             "Mechanism_Support_Score": mech_points,
             "Safety_Regulatory_Score": safety_reg_points,
             "Novelty_Market_Score": novelty_points,
+            # Additive R&D Discovery Lane fields (see
+            # rd_discovery_classification.py). Never read by
+            # plant_status/Overall_Score/ranking; purely a second, parallel
+            # classification so downstream UI/exports can present an
+            # "Evidence-Backed Candidates" view and a separate "R&D
+            # Discovery Hypotheses" view without a mechanism-only,
+            # under-studied candidate silently disappearing from output,
+            # and without conflating a genuine regulatory prohibition with
+            # a plain lack of evidence.
+            "RD_Discovery_Lane": rd_discovery_lane,
+            "Discovery_Potential_Score": discovery_potential,
+            "Evidence_Maturity_Score": evidence_maturity,
             # Stage 5 candidate-funnel performance fix -- tiny additive,
             # backward-compatible fields (no existing field renamed or
             # removed). These let rescore_commercial_component() below
@@ -3486,6 +3555,17 @@ def rescore_commercial_component(
         )
 
         out.at[idx, "Novelty_Market_Score"] = new_novelty_points
+        # Discovery_Potential_Score/Evidence_Maturity_Score/RD_Discovery_Lane
+        # (rd_discovery_classification.py) are, like Mechanism_Support_Score
+        # and Safety_Regulatory_Score above, NOT refreshed by this
+        # commercial-only fast path -- they carry over from the original
+        # full scoring pass. Discovery_Potential_Score does read novelty
+        # (capped at 15/100 points), so it can go marginally stale here the
+        # same way Overall_Score would if Novelty & Market's weight in it
+        # were larger; a full rescore_commercial_component() call for these
+        # fields was judged not worth a second full-pass dependency for a
+        # sub-15-point component -- flagged here rather than silently
+        # assumed correct.
         out.at[idx, "Overall_Score"] = new_overall_score
         out.at[idx, "R&D_Opportunity_Score"] = new_overall_score
         out.at[idx, "Score_Breakdown"] = new_score_breakdown

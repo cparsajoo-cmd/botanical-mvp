@@ -750,6 +750,7 @@ def _extract_open_world_botanical_candidates(
     # candidate needs stronger evidence than a catalogue-known one to reach
     # the same effective score.
     final_scores = {}
+    discovery_potential_scores = {}
     _NOVELTY_CONFIDENCE_PENALTY = 3.0
     for plant in scores:
         breadth_bonus = min(12.0, len(supports[plant]) * 1.2)
@@ -758,10 +759,33 @@ def _extract_open_world_botanical_candidates(
         synthesis_bonus = min(12.0, len(systematic_supports[plant]) * 4.0)
         regulatory_bonus = min(6.0, len(regulatory_supports[plant]) * 2.0)
         safety_penalty = min(8.0, len(safety_supports[plant]) * 1.5)
+        # final_scores below (and the `ranked` ordering that consumes it)
+        # is left byte-identical to its pre-existing formula -- this is
+        # still the "evidence-backed candidate" axis, and every caller
+        # that already depends on the exact ranking/inclusion behavior
+        # (candidate_selection.py, indication_candidate_discovery.py's
+        # Stage2-novel guaranteed-inclusion prescreen, existing tests)
+        # must see no change here.
         final_scores[plant] = (
             scores[plant] + breadth_bonus + title_bonus + human_bonus
             + synthesis_bonus + regulatory_bonus
             - safety_penalty - _NOVELTY_CONFIDENCE_PENALTY
+        )
+        # Additive R&D-discovery diagnostic (architecture note, Hamid,
+        # 2026-09-08): the SAME literature-quality signal, but WITHOUT the
+        # novelty-confidence penalty and WITHOUT the human-evidence /
+        # systematic-review bonuses that reward a candidate for already
+        # being well-studied. A mechanistically-plausible, under-studied,
+        # novel-to-catalogue candidate should not be scored as though its
+        # lack of clinical trials were a strike against it on THIS axis --
+        # that is exactly the axis candidate_shortlisting.py's
+        # RD_Discovery_Lane / Discovery_Potential_Score (see
+        # rd_discovery_classification.py) is for. This value is diagnostic
+        # only here: it is never used to reorder `ranked` or to decide
+        # which candidates are returned, so it changes no existing
+        # behavior of this function.
+        discovery_potential_scores[plant] = max(
+            0.0, scores[plant] + breadth_bonus - safety_penalty
         )
 
     ranked = sorted(
@@ -779,6 +803,11 @@ def _extract_open_world_botanical_candidates(
         plant: {
             "score": round(final_scores[plant], 2),
             "entity_score": round(scores[plant], 2),
+            # Additive (never read by `ranked`/inclusion above -- see
+            # discovery_potential_scores computation for why this is kept
+            # separate from "score"):
+            "evidence_maturity_score": round(final_scores[plant], 2),
+            "discovery_potential_score": round(discovery_potential_scores[plant], 2),
             "supporting_records": len(supports[plant]),
             "title_supporting_records": len(title_supports[plant]),
             "clinical_human_records": len(clinical_supports[plant]),

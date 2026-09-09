@@ -3625,6 +3625,26 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
                 result_df, plant_summary_df
             )
+            # Diagnosis fix (2026-09-09 production-integration pass): this
+            # fallback path (session lost rd_candidate_plant_summary_df but
+            # kept result_df -- e.g. a Streamlit restart/partial-state
+            # session) rebuilds report_ready_df exactly like the main path
+            # above, but was never stamping the three implementation
+            # fingerprints onto it. _report_ready_matches_current_pipeline()/
+            # _stage6_stale_pipeline_warning() then found NO fingerprint
+            # column at all on this frame and unconditionally treated it as
+            # stale, blocking Stage 6 and telling the user to rerun the full
+            # (expensive, potentially AI-calling) Candidate Discovery
+            # pipeline -- defeating the entire point of this fallback path
+            # existing. Stamped identically to the main path (same
+            # pipeline_fingerprint/scientific_fingerprint/commercial_fingerprint
+            # already computed once above in this function) so a
+            # fallback-path result renders/exports normally instead of being
+            # spuriously blocked.
+            if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
+                st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
             _perf(f"fallback-path merge_authoritative_scores() done elapsed={time.perf_counter() - _perf_t_merge_fallback:.3f}")
             _perf_t_decision_fallback = time.perf_counter()
             st.session_state["rd_decision_metadata"] = build_decision_metadata(
@@ -3636,6 +3656,10 @@ def render_rd_candidates_step(inputs):
         report_ready_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(report_ready_df, pd.DataFrame):
             report_ready_df = _merge_and_sync_final_decision_status(result_df, plant_summary_df)
+            if isinstance(report_ready_df, pd.DataFrame):
+                report_ready_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                report_ready_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                report_ready_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
             st.session_state["rd_report_ready_df"] = report_ready_df
         decision_metadata = st.session_state.get("rd_decision_metadata")
         if not decision_metadata:

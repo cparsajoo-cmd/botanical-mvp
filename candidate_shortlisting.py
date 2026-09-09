@@ -1894,6 +1894,53 @@ def _latin_binomials(text: str) -> set[str]:
     }
 
 
+# Presentation-only guard (Stage 6 stabilization pass — safety-display bug
+# fix). Deliberately NOT added to safety_interaction_attribution.py's shared
+# extraction vocabulary: that module's output (adverse_events / interactions
+# / safety_data_status) also feeds indication_candidate_discovery.py's
+# decision-relevant Safety_Data_Status path, which this pass must not touch.
+# This guard only decides what free text is fit to DISPLAY next to an
+# already-computed, authoritative Safety_Assertion_Status -- it never
+# changes that status, any gate, any score, or any decision threshold.
+#
+# The bug: a whole-abstract sentence such as "...is currently recognized to
+# ease certain types of chronic pain, reduce chemotherapy-induced nausea,
+# and improve anxiety" contains the bare trigger word "nausea", so the
+# narrower free-text scanner below (_clean_safety_flags_for_plant) mis-reads
+# a therapeutic-benefit claim as an adverse-event narrative. These patterns
+# reject a fragment as generic therapeutic/efficacy prose when a benefit
+# verb (reduce/ease/improve/alleviate/relieve/manage/lower/decrease/prevent/
+# help) governs a symptom/condition term within the same clause, or the
+# fragment is a generic "is recognized to / used to / shown to / therapeutic
+# benefit" claim. Deliberately generic (no plant names) so it generalizes
+# across candidates rather than hardcoding any one plant's abstract text.
+_GENERIC_THERAPEUTIC_BENEFIT_PATTERNS = (
+    r"\bis (?:currently |also |widely |traditionally )?recognized to\b",
+    r"\bhas been shown to\b", r"\bhave been shown to\b",
+    r"\bis (?:widely |traditionally )?used (?:to|for)\b",
+    r"\btraditionally used (?:to|for)\b",
+    r"\btherapeutic (?:benefit|benefits|potential|use|uses|effects?)\b",
+    r"\b(?:reduce|reduces|reducing|ease|eases|easing|alleviate|alleviates|"
+    r"alleviating|relieve|relieves|relieving|improve|improves|improving|"
+    r"manage|manages|managing|lower|lowers|lowering|decrease|decreases|"
+    r"decreasing|prevent|prevents|preventing|help(?:s)?)\b"
+    r"[^.;]{0,40}\b(?:nausea|vomiting|diarrh(?:ea|oea)|pain|anxiety|"
+    r"symptom(?:s)?|seizure(?:s)?|inflammation)\b",
+)
+
+
+def _is_generic_therapeutic_fragment(fragment: str) -> bool:
+    """True when a fragment reads as generic therapeutic/efficacy prose.
+
+    Used only to keep such prose out of the Safety_Flags display; it does
+    not affect Safety_Assertion_Status, Safety_Data_Status, or any other
+    field the extraction pipeline (safety_interaction_attribution.py)
+    already produces for decision purposes.
+    """
+    n = _norm(fragment)
+    return any(re.search(pattern, n, flags=re.I) for pattern in _GENERIC_THERAPEUTIC_BENEFIT_PATTERNS)
+
+
 def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: int = 8) -> str:
     """Keep only adverse signals attributable to the exact botanical species.
 
@@ -1909,6 +1956,8 @@ def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: i
             continue
         interpreted = extract_structured_safety_interactions(value, None, plant_name=plant_name)
         for flag in interpreted.get("adverse_events", []):
+            if _is_generic_therapeutic_fragment(flag):
+                continue
             binomials = _latin_binomials(flag)
             if binomials and target_binomial and target_binomial not in binomials:
                 continue
@@ -1917,6 +1966,41 @@ def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: i
                 if len(adverse) >= limit:
                     return "; ".join(adverse)
     return "; ".join(adverse)
+
+
+def _clean_interaction_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: int = 8) -> str:
+    """Same attribution/limit contract as _clean_safety_flags_for_plant, but
+    for genuine drug-interaction narrative specifically (the ``interactions``
+    list produced by extract_structured_safety_interactions), so an
+    INTERACTION_SIGNAL_RETRIEVED candidate's Safety_Flags shows interaction-
+    relevant text rather than an unrelated adverse-event fragment.
+    """
+    target = _norm(plant_name)
+    target_binomial = " ".join(target.split()[:2]) if len(target.split()) >= 2 else target
+    interactions: list[str] = []
+    for _, row in group.iterrows():
+        safety_value = row.get("Safety_Flags", "")
+        # Interaction narrative may live in a dedicated Interaction_Flags
+        # column (extract_structured_safety_interactions' `interaction_value`
+        # parameter is the one that actually populates its "interactions"
+        # output -- passing None there, as the adverse-event helper above
+        # correctly does for its own purpose, would leave "interactions"
+        # empty even when a genuine interaction narrative exists).
+        interaction_value = row.get("Interaction_Flags", "")
+        if _is_missing(safety_value) and _is_missing(interaction_value):
+            continue
+        interpreted = extract_structured_safety_interactions(
+            safety_value, interaction_value, plant_name=plant_name
+        )
+        for flag in interpreted.get("interactions", []):
+            binomials = _latin_binomials(flag)
+            if binomials and target_binomial and target_binomial not in binomials:
+                continue
+            if _norm(flag) not in {_norm(x) for x in interactions}:
+                interactions.append(flag)
+                if len(interactions) >= limit:
+                    return "; ".join(interactions)
+    return "; ".join(interactions)
 
 
 def _safety_flags_display_for_plant(group: pd.DataFrame, plant_name: str, limit: int = 8) -> str:
@@ -1931,16 +2015,47 @@ def _safety_flags_display_for_plant(group: pd.DataFrame, plant_name: str, limit:
     but visually contradictory next to ``Safety_Concern_Level=SERIOUS`` and a
     risk-positive ``Safety_Status_Rationale``.
 
-    Keep real attributable adverse-event text unchanged.  When none exists, emit
-    a status-aware neutral summary that points the reviewer to the authoritative
-    structured safety fields rather than implying absence of risk.
+    Stage 6 stabilization fix: the authoritative Safety_Assertion_Status (from
+    safety_assertion_engine.derive_structured_safety_status, pooled above by
+    _pooled_safety_status_for_plant) now controls rendering FIRST, instead of
+    unconditionally trusting whatever free text the narrower scanner below
+    happened to extract:
+      - NO_SAFETY_EVIDENCE_RETRIEVED always renders the standardized "no
+        evidence retrieved" message. The free-text scanner is not even
+        consulted -- a candidate the authoritative classifier says has no
+        safety-relevant evidence must never display prose that merely
+        mentions a trigger word (see _is_generic_therapeutic_fragment).
+      - INTERACTION_SIGNAL_RETRIEVED shows interaction-specific narrative
+        (_clean_interaction_flags_for_plant) if any was extracted, else a
+        standardized interaction message; an unrelated adverse-event
+        fragment is never substituted in.
+      - Every other status (CONCERN, CONFLICTING, REASSURANCE_ONLY,
+        INSUFFICIENT) shows a genuine adverse-event narrative when one
+        survives _clean_safety_flags_for_plant's generic-therapeutic-prose
+        filter, else the existing status-aware neutral summary below.
     """
+    pooled = _pooled_safety_status_for_plant(group)
+    status = str(pooled.get("Safety_Assertion_Status", "") or "").strip()
+
+    if status == SAFETY_STATUS_NO_EVIDENCE:
+        return (
+            "No attributable adverse-event narrative was extracted; no safety-"
+            "relevant evidence was retrieved."
+        )
+
+    if status == SAFETY_STATUS_INTERACTION:
+        interaction_text = _clean_interaction_flags_for_plant(group, plant_name, limit)
+        if interaction_text:
+            return interaction_text
+        return (
+            "No attributable adverse-event narrative was extracted; an interaction-"
+            "type safety signal is present — see Safety_Status_Rationale."
+        )
+
     explicit = _clean_safety_flags_for_plant(group, plant_name, limit)
     if explicit:
         return explicit
 
-    pooled = _pooled_safety_status_for_plant(group)
-    status = str(pooled.get("Safety_Assertion_Status", "") or "").strip()
     mapping = {
         SAFETY_STATUS_CONFLICTING: (
             "No attributable adverse-event narrative was extracted; structured "
@@ -1950,10 +2065,6 @@ def _safety_flags_display_for_plant(group: pd.DataFrame, plant_name: str, limit:
             "No attributable adverse-event narrative was extracted; a structured "
             "safety concern is present — see Safety_Status_Rationale."
         ),
-        SAFETY_STATUS_INTERACTION: (
-            "No attributable adverse-event narrative was extracted; an interaction-"
-            "type safety signal is present — see Safety_Status_Rationale."
-        ),
         SAFETY_STATUS_REASSURANCE_ONLY: (
             "No attributable adverse-event narrative was extracted; only study-"
             "specific reassurance was found — see Safety_Status_Rationale."
@@ -1961,10 +2072,6 @@ def _safety_flags_display_for_plant(group: pd.DataFrame, plant_name: str, limit:
         SAFETY_STATUS_INSUFFICIENT: (
             "No attributable adverse-event narrative was extracted; safety evidence "
             "remains insufficient — see Safety_Status_Rationale."
-        ),
-        SAFETY_STATUS_NO_EVIDENCE: (
-            "No attributable adverse-event narrative was extracted; no safety-"
-            "relevant evidence was retrieved."
         ),
     }
     return mapping.get(

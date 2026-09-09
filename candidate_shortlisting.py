@@ -3385,6 +3385,14 @@ def build_plant_candidate_shortlist(
             "Mechanism_Support_Score": mech_points,
             "Safety_Regulatory_Score": safety_reg_points,
             "Novelty_Market_Score": novelty_points,
+            "Novelty_Market_Tier": novelty_tier,
+            # Minimal state needed to refresh the parallel R&D Discovery lane
+            # after commercial enrichment without rerunning scientific scoring.
+            # These are deterministic facts already computed above, not new
+            # evidence or new gates.
+            "Already_In_Internal_Catalogue": already_in_catalogue,
+            "Plant_Hard_Stop": bool(plant_hard_stop),
+            "Regulatory_Prohibition_Present": bool(regulatory_prohibition_present),
             # Additive R&D Discovery Lane fields (see
             # rd_discovery_classification.py). Never read by
             # plant_status/Overall_Score/ranking; purely a second, parallel
@@ -3617,17 +3625,53 @@ def rescore_commercial_component(
         )
 
         out.at[idx, "Novelty_Market_Score"] = new_novelty_points
-        # Discovery_Potential_Score/Evidence_Maturity_Score/RD_Discovery_Lane
-        # (rd_discovery_classification.py) are, like Mechanism_Support_Score
-        # and Safety_Regulatory_Score above, NOT refreshed by this
-        # commercial-only fast path -- they carry over from the original
-        # full scoring pass. Discovery_Potential_Score does read novelty
-        # (capped at 15/100 points), so it can go marginally stale here the
-        # same way Overall_Score would if Novelty & Market's weight in it
-        # were larger; a full rescore_commercial_component() call for these
-        # fields was judged not worth a second full-pass dependency for a
-        # sub-15-point component -- flagged here rather than silently
-        # assumed correct.
+        out.at[idx, "Novelty_Market_Tier"] = new_novelty_tier
+
+        # Keep the PARALLEL R&D Discovery axis synchronized with the market
+        # facts that just changed.  This is a cheap algebraic refresh from
+        # already-computed plant-level fields -- no evidence, safety or
+        # applicability scoring is rerun.  Before this fix, market enrichment
+        # could correctly change Overall_Score while leaving a stale
+        # Discovery_Potential_Score and, worse, a stale
+        # "Catalogue R&D Hypothesis — Market Novelty Unassessed" lane even
+        # after the market had just been assessed as established.
+        linked_target_count_value = row.get("Discovery_Linked_Target_Count", None)
+        try:
+            linked_target_count_value = int(float(linked_target_count_value))
+        except (TypeError, ValueError):
+            linked_target_count_value = None
+        new_discovery_potential = discovery_potential_score(
+            mech_points=float(row.get("Mechanism_Support_Score", 0.0) or 0.0),
+            target_count=int(float(row.get("Supported_Target_Count", 0) or 0)),
+            mechanistic_evidence_count=int(float(row.get("Mechanistic_Evidence_Count", 0) or 0)),
+            novelty_points=new_novelty_points,
+            novelty_tier=new_novelty_tier,
+            linked_target_count=linked_target_count_value,
+            linked_compound_count=int(float(row.get("Discovery_Linked_Compound_Count", 0) or 0)),
+            compound_specificity=float(row.get("Discovery_Compound_Specificity", 0.0) or 0.0),
+        )
+        out.at[idx, "Discovery_Potential_Score"] = new_discovery_potential
+
+        explicit_mechanistic_rationale = (
+            float(row.get("Mechanism_Support_Score", 0.0) or 0.0) > 0.0
+            or int(float(row.get("Supported_Target_Count", 0) or 0)) > 0
+        )
+        new_rd_lane = classify_discovery_lane(
+            plant_status=status,
+            plant_hard_stop=bool(row.get("Plant_Hard_Stop", False)),
+            regulatory_prohibition_present=bool(row.get("Regulatory_Prohibition_Present", False)),
+            explicit_mechanistic_rationale=explicit_mechanistic_rationale,
+            indication_points=float(row.get("Indication_Relevance_Score", 0.0) or 0.0),
+            dosage_mismatch=(str(row.get("Dosage_Form_Compatibility", "")) == "Mismatch"),
+            already_in_catalogue=(
+                None if pd.isna(row.get("Already_In_Internal_Catalogue", None))
+                else bool(row.get("Already_In_Internal_Catalogue"))
+            ),
+            novelty_tier=new_novelty_tier,
+            direct_evidence_count=int(float(row.get("Direct_Indication_Evidence_Count", 0) or 0)),
+        )
+        out.at[idx, "RD_Discovery_Lane"] = new_rd_lane
+
         out.at[idx, "Overall_Score"] = new_overall_score
         out.at[idx, "R&D_Opportunity_Score"] = new_overall_score
         out.at[idx, "Score_Breakdown"] = new_score_breakdown
@@ -3761,7 +3805,8 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Safety_Status_Rationale",
         "Evidence_Quality_Score",
         "Compound_Quality_Score", "Mechanism_Support_Score",
-        "Safety_Regulatory_Score", "Novelty_Market_Score",
+        "Safety_Regulatory_Score", "Novelty_Market_Score", "Novelty_Market_Tier",
+        "Already_In_Internal_Catalogue", "Plant_Hard_Stop", "Regulatory_Prohibition_Present",
         "Outcome_Consistency", "Positive_Result_Count",
         "Null_Negative_Result_Count", "Unreported_Result_Count",
         # PHASE 5 — authoritative Scientific Score outputs (addendum

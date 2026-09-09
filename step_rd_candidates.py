@@ -72,6 +72,8 @@ def _reconcile_final_decision_status(row) -> str:
     confidence = clean("Scientific_Evidence_Confidence").upper()
     indication_mode = clean("Indication_Evidence_Mode")
     safety_text = clean("Safety_Flags").lower()
+    safety_assertion_status = clean("Safety_Assertion_Status").upper()
+    safety_concern_level = clean("Safety_Concern_Level").upper()
     direct_count_text = clean("Direct_Indication_Evidence_Count")
     outcome_direct_count_text = clean("Outcome_Specific_Direct_Evidence_Count")
     outcome_human_count_text = clean("Outcome_Specific_Human_Evidence_Count")
@@ -126,7 +128,11 @@ def _reconcile_final_decision_status(row) -> str:
         "hepatotoxic", "liver injury", "nephrotoxic", "kidney injury",
         "teratogenic", "fatal", "seizure", "major bleeding", "anaphylaxis",
     )
-    if any(term in safety_text for term in severe_safety_terms):
+    if (
+        any(term in safety_text for term in severe_safety_terms)
+        or safety_concern_level == "SERIOUS"
+        or safety_assertion_status == "CONFLICTING_SAFETY_EVIDENCE"
+    ):
         return "EXPERT REVIEW REQUIRED"
     if prep == "incompatible":
         return "EXPERT REVIEW REQUIRED"

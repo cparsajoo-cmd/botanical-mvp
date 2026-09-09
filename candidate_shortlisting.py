@@ -1919,6 +1919,60 @@ def _clean_safety_flags_for_plant(group: pd.DataFrame, plant_name: str, limit: i
     return "; ".join(adverse)
 
 
+def _safety_flags_display_for_plant(group: pd.DataFrame, plant_name: str, limit: int = 8) -> str:
+    """Return a non-contradictory plant-level safety display string.
+
+    ``Safety_Flags`` historically contained only attributable free-text adverse
+    event narratives.  The structured safety assertion engine is broader: it can
+    correctly identify interaction signals, contraindication/toxicity concerns,
+    or conflicting risk/reassurance assertions even when there is no attributable
+    adverse-event sentence to display.  Falling back to the sentence
+    ``No explicit adverse event ... found`` in those cases was technically narrow
+    but visually contradictory next to ``Safety_Concern_Level=SERIOUS`` and a
+    risk-positive ``Safety_Status_Rationale``.
+
+    Keep real attributable adverse-event text unchanged.  When none exists, emit
+    a status-aware neutral summary that points the reviewer to the authoritative
+    structured safety fields rather than implying absence of risk.
+    """
+    explicit = _clean_safety_flags_for_plant(group, plant_name, limit)
+    if explicit:
+        return explicit
+
+    pooled = _pooled_safety_status_for_plant(group)
+    status = str(pooled.get("Safety_Assertion_Status", "") or "").strip()
+    mapping = {
+        SAFETY_STATUS_CONFLICTING: (
+            "No attributable adverse-event narrative was extracted; structured "
+            "safety assertions are conflicting — see Safety_Status_Rationale."
+        ),
+        SAFETY_STATUS_CONCERN: (
+            "No attributable adverse-event narrative was extracted; a structured "
+            "safety concern is present — see Safety_Status_Rationale."
+        ),
+        SAFETY_STATUS_INTERACTION: (
+            "No attributable adverse-event narrative was extracted; an interaction-"
+            "type safety signal is present — see Safety_Status_Rationale."
+        ),
+        SAFETY_STATUS_REASSURANCE_ONLY: (
+            "No attributable adverse-event narrative was extracted; only study-"
+            "specific reassurance was found — see Safety_Status_Rationale."
+        ),
+        SAFETY_STATUS_INSUFFICIENT: (
+            "No attributable adverse-event narrative was extracted; safety evidence "
+            "remains insufficient — see Safety_Status_Rationale."
+        ),
+        SAFETY_STATUS_NO_EVIDENCE: (
+            "No attributable adverse-event narrative was extracted; no safety-"
+            "relevant evidence was retrieved."
+        ),
+    }
+    return mapping.get(
+        status,
+        "No attributable adverse-event narrative was extracted; structured safety status is unavailable.",
+    )
+
+
 _SAFETY_STATUS_PRECEDENCE = (
     SAFETY_STATUS_CONFLICTING,
     SAFETY_STATUS_CONCERN,
@@ -3439,7 +3493,7 @@ def build_plant_candidate_shortlist(
             "Positive_Result_Count": outcome_profile["positive"],
             "Null_Negative_Result_Count": outcome_profile["null"] + outcome_profile["harmful"],
             "Unreported_Result_Count": outcome_profile["unreported"],
-            "Safety_Flags": _clean_safety_flags_for_plant(group, plant, 8) or "No explicit adverse event attributable to this plant found",
+            "Safety_Flags": _safety_flags_display_for_plant(group, plant, 8),
             "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit plant-drug interaction attributable to this plant found",
             "Safety_Reassurance": _join(group.get("Safety_Reassurance", []), 8),
             "Safety_Data_Status": _join(group.get("Safety_Data_Status", []), 4) or "not_assessed",

@@ -338,5 +338,126 @@ def test_full_discovery_output_preserves_mechanistic_link_metrics_for_stage6():
     row = out.iloc[0]
     assert row["Mechanistic_Linked_Compounds"] == "Novelol"
     assert row["Mechanistic_Linked_Targets"] == "GABA-A receptor"
+    assert row["Mechanistic_Linked_Mechanisms"] == "GABAergic modulation"
     assert float(row["Mechanistic_Compound_Specificity"]) == 1.0
     assert float(row["Mechanistic_Profile_Match_Score"]) > 0.0
+
+
+def test_bronchosedative_does_not_match_sleep_sedative_term():
+    """Boundary-safe profile matching must reject substring false positives."""
+    candidates = pd.DataFrame([
+        {
+            "Scientific_Name": "Broncho plant",
+            "Known_Targets": ["Bronchosedative"],
+            "Known_Active_Compounds": ["Bronchol"],
+            "Mechanistic_Links": [
+                {"compound_name": "Bronchol", "target": "Bronchosedative", "mechanism": ""},
+            ],
+            "candidate_origin": "internal_catalogue",
+            "already_in_supabase": True,
+        },
+        {
+            "Scientific_Name": "True sedative plant",
+            "Known_Targets": ["Sedative"],
+            "Known_Active_Compounds": ["Sedatol"],
+            "Mechanistic_Links": [
+                {"compound_name": "Sedatol", "target": "Sedative", "mechanism": ""},
+            ],
+            "candidate_origin": "internal_catalogue",
+            "already_in_supabase": True,
+        },
+    ])
+    plant_compounds_df = pd.DataFrame([
+        {"scientific_name": "Broncho plant", "compound_name": "Bronchol", "target": "Bronchosedative"},
+        {"scientific_name": "True sedative plant", "compound_name": "Sedatol", "target": "Sedative"},
+    ])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert set(retained["Scientific_Name"]) == {"True sedative plant"}
+    broncho = audit.loc[audit["Alternative_Plant"] == "Broncho plant"].iloc[0]
+    assert broncho["PreScreen_Reason"] == "NO_OR_LOW_INDICATION_SIGNAL"
+    assert broncho["Mechanistic_Linked_Targets"] == ""
+
+
+def test_relevant_mechanism_does_not_relabel_unrelated_target_as_sleep_linked():
+    """A row may be retained via mechanism without laundering its target label."""
+    candidates = pd.DataFrame([{
+        "Scientific_Name": "Mechanism-only link plant",
+        "Known_Targets": ["Antioxidant enzyme"],
+        "Known_Active_Compounds": ["Mechanol"],
+        "Mechanistic_Links": [{
+            "compound_name": "Mechanol",
+            "target": "Antioxidant enzyme",
+            "mechanism": "GABAergic modulation",
+        }],
+        "candidate_origin": "internal_catalogue",
+        "already_in_supabase": True,
+    }])
+    plant_compounds_df = pd.DataFrame([{
+        "scientific_name": "Mechanism-only link plant",
+        "compound_name": "Mechanol",
+        "target": "Antioxidant enzyme",
+        "mechanism": "GABAergic modulation",
+    }])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert set(retained["Scientific_Name"]) == {"Mechanism-only link plant"}
+    row = audit.iloc[0]
+    assert row["Mechanistic_Linked_Compounds"] == "Mechanol"
+    assert row["Mechanistic_Linked_Targets"] == ""
+    assert row["Mechanistic_Linked_Mechanisms"] == "GABAergic modulation"
+
+
+def test_many_unrelated_activities_are_not_exported_as_sleep_linked_targets():
+    unrelated = [
+        "Antioxidant", "Antiviral", "Antihepatotoxic", "Estrogenic",
+        "Antiinflammatory", "Antibacterial", "Cardiotonic", "Diuretic",
+    ]
+    links = [
+        {"compound_name": f"Compound {i}", "target": target, "mechanism": ""}
+        for i, target in enumerate(unrelated)
+    ] + [{
+        "compound_name": "SleepCompound",
+        "target": "GABA-A receptor",
+        "mechanism": "GABAergic modulation",
+    }]
+    candidates = pd.DataFrame([{
+        "Scientific_Name": "Large activity profile plant",
+        "Known_Targets": unrelated + ["GABA-A receptor"],
+        "Known_Active_Compounds": [x["compound_name"] for x in links],
+        "Mechanistic_Links": links,
+        "candidate_origin": "internal_catalogue",
+        "already_in_supabase": True,
+    }])
+    plant_compounds_df = pd.DataFrame([
+        {"scientific_name": "Large activity profile plant", **link}
+        for link in links
+    ])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert len(retained) == 1
+    row = audit.iloc[0]
+    assert row["Mechanistic_Linked_Targets"] == "GABA-A receptor"
+    assert row["Mechanistic_Linked_Mechanisms"] == "GABAergic modulation"
+    assert row["Mechanistic_Linked_Compounds"] == "SleepCompound"

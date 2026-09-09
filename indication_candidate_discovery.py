@@ -21,7 +21,10 @@ from safety_assertion_engine import (
     classify_safety_assertions as _classify_safety_assertions,
     derive_structured_safety_status as _derive_structured_safety_status,
 )
-from indication_semantics import indication_terms as _resolve_indication_terms
+from indication_semantics import (
+    indication_terms as _resolve_indication_terms,
+    normalize_indication_text as _normalize_indication_text,
+)
 from standard_evidence_builder import (
     evaluate_applicability,
     evidence_transferability_fields,
@@ -164,6 +167,7 @@ _RD_ORIGIN_COLUMNS = (
 _MECHANISTIC_DISCOVERY_COLUMNS = (
     "Mechanistic_Linked_Compounds",
     "Mechanistic_Linked_Targets",
+    "Mechanistic_Linked_Mechanisms",
     "Mechanistic_Compound_Specificity",
     "Mechanistic_Profile_Match_Score",
 )
@@ -965,34 +969,95 @@ def _mechanistic_links_from_database(plant_compounds_df, plant: str) -> list[dic
     return links
 
 
+def _contains_normalized_phrase(text: object, phrase: object) -> bool:
+    """Whole-token/whole-phrase containment for mechanistic profile gating.
+
+    The general evidence relevance engine intentionally has a permissive,
+    backward-compatible curated-assist substring fallback.  That is useful for
+    evidence recall, but it is too permissive for *profile-derived* R&D
+    hypotheses: e.g. ``sedative`` must not match ``bronchosedative``.  This
+    helper normalizes both sides and then matches only token-delimited phrases.
+    """
+    text_norm = _normalize_indication_text(text)
+    phrase_norm = _normalize_indication_text(phrase)
+    if not text_norm or not phrase_norm:
+        return False
+    pattern = r"(?:^|\s)" + re.escape(phrase_norm).replace(r"\ ", r"\s+") + r"(?:$|\s)"
+    return re.search(pattern, text_norm) is not None
+
+
+def _strict_mechanistic_field_hits(
+    text: object, relevance_profile, direct_terms: Iterable[str], mechanistic_terms: Iterable[str],
+) -> tuple[float, list[str]]:
+    """Score a target/mechanism field using indication-specific, boundary-safe terms.
+
+    Profile-only mechanistic admission is deliberately stricter than evidence
+    retrieval.  It accepts only: (a) whole-token query terms, (b) curated direct
+    indication phrases, or (c) curated mechanistic phrases.  Corpus-derived
+    expansion terms and substring assist matches are *not* allowed to create an
+    R&D hypothesis, because they caused hundreds of unrelated activities to be
+    labelled ``Discovery_Linked_Targets`` in Stage 6.
+    """
+    hits: list[str] = []
+    query_terms = tuple(getattr(relevance_profile, "query_tokens", ()) or ())
+    for term in (*query_terms, *tuple(direct_terms or ()), *tuple(mechanistic_terms or ())):
+        term_text = str(term or "").strip()
+        if not term_text or term_text in hits:
+            continue
+        if _contains_normalized_phrase(text, term_text):
+            hits.append(term_text)
+    if not hits:
+        return 0.0, []
+
+    # This score is an admission/ranking heuristic, not efficacy evidence.
+    # Keep it below direct evidence strength and give only small diminishing
+    # credit for multiple independently matched mechanistic phrases.
+    score = min(0.70, 0.46 + 0.04 * min(6, len(hits) - 1))
+    return round(score, 4), hits
+
+
 def _score_mechanistic_links(
-    links: list[dict], relevance_profile, assist_terms, profile_relevant_types,
-) -> tuple[bool, float, list[str], list[str]]:
-    """Return relevance and only the compounds on indication-relevant links."""
+    links: list[dict], relevance_profile, direct_terms, mechanistic_terms,
+) -> tuple[bool, float, list[str], list[str], list[str]]:
+    """Return only indication-relevant row-level mechanistic provenance.
+
+    Target and mechanism are evaluated *separately*.  A relevant mechanism on
+    one row may justify retaining that row's compound, but it does not make an
+    unrelated target label on the same row a ``linked target``.  This prevents
+    outputs such as hundreds of unrelated anti-inflammatory/antiviral activity
+    labels from appearing as Sleep-linked targets.
+    """
     relevant = False
     best_score = 0.0
     compounds: list[str] = []
     targets: list[str] = []
+    mechanisms: list[str] = []
     for link in links or []:
         target = str(link.get("target") or "").strip()
         mechanism = str(link.get("mechanism") or "").strip()
-        link_text = " ; ".join(v for v in (target, mechanism) if v)
-        if not link_text:
+        if not (target or mechanism):
             continue
-        match = score_record_relevance(
-            relevance_profile, "", link_text, "", assist_terms,
+
+        target_score, _target_hits = _strict_mechanistic_field_hits(
+            target, relevance_profile, direct_terms, mechanistic_terms,
         )
-        score = float(getattr(match, "score", 0.0) or 0.0)
-        if getattr(match, "match_type", None) not in profile_relevant_types:
+        mechanism_score, _mechanism_hits = _strict_mechanistic_field_hits(
+            mechanism, relevance_profile, direct_terms, mechanistic_terms,
+        )
+        row_score = max(target_score, mechanism_score)
+        if row_score <= 0.0:
             continue
+
         relevant = True
-        best_score = max(best_score, score)
+        best_score = max(best_score, row_score)
         compound = str(link.get("compound_name") or link.get("compound") or "").strip()
         if compound and compound not in compounds:
             compounds.append(compound)
-        if target and target not in targets:
+        if target_score > 0.0 and target and target not in targets:
             targets.append(target)
-    return relevant, best_score, compounds, targets
+        if mechanism_score > 0.0 and mechanism and mechanism not in mechanisms:
+            mechanisms.append(mechanism)
+    return relevant, best_score, compounds, targets, mechanisms
 
 
 def _catalogue_prescreen_before_expensive_loop(
@@ -1064,7 +1129,9 @@ def _catalogue_prescreen_before_expensive_loop(
         STAGE5_PRESCREEN_DEFAULT_MODE, override=mechanistic_budget
     )
     assist_family = _resolve_indication_terms(indication)
-    assist_terms = tuple(dict.fromkeys((*assist_family[0], *assist_family[1]))) if assist_family else ()
+    direct_profile_terms = tuple(assist_family[0]) if assist_family else ()
+    mechanistic_profile_terms = tuple(assist_family[1]) if assist_family else ()
+    assist_terms = tuple(dict.fromkeys((*direct_profile_terms, *mechanistic_profile_terms)))
 
     # Real, data-backed compound occurrence index (compound_plant_
     # resolver.py) built once per prescreen call, from the SAME
@@ -1081,11 +1148,6 @@ def _catalogue_prescreen_before_expensive_loop(
     )
 
     direct_types = {MATCH_EXACT_INDICATION, MATCH_EXPLICIT_FIELD_OVERLAP}
-    profile_relevant_types = direct_types | {
-        MATCH_OUTCOME_OR_MECHANISM_SUPPORT, MATCH_CORPUS_DERIVED_SEMANTIC,
-        MATCH_HYBRID_SEMANTIC, MATCH_EMBEDDING_SEMANTIC,
-        MATCH_WEAK_LEXICAL, MATCH_CURATED_ASSIST_FALLBACK,
-    }
     rows = []
     for idx, item in candidates.iterrows():
         plant = _pick_from_row(engine, item, ["Scientific_Name", "Alternative_Plant", "Plant"])
@@ -1149,6 +1211,7 @@ def _catalogue_prescreen_before_expensive_loop(
         specificity_score = 0.0
         linked_compounds: list[str] = []
         linked_targets: list[str] = []
+        linked_mechanisms: list[str] = []
 
         mechanistic_links = _mechanistic_links_from_item(item)
         if not mechanistic_links:
@@ -1159,22 +1222,31 @@ def _catalogue_prescreen_before_expensive_loop(
         if mechanistic_links:
             (
                 profile_relevant, profile_match_score,
-                linked_compounds, linked_targets,
+                linked_compounds, linked_targets, linked_mechanisms,
             ) = _score_mechanistic_links(
-                mechanistic_links, relevance_profile, assist_terms,
-                profile_relevant_types,
+                mechanistic_links, relevance_profile,
+                direct_profile_terms, mechanistic_profile_terms,
             )
         elif known_targets_text:
             # Backward-compatible fallback for old/custom candidate rows that
-            # have no row-level provenance available at all. Such rows may still
-            # enter on target/mechanism relevance, but receive NO compound
-            # specificity boost because compound-target linkage is unverified.
-            indications_text = _pick_from_row(engine, item, ["Indications_Text", "Indications", "indication"])
-            profile_match = score_record_relevance(
-                relevance_profile, indications_text, known_targets_text, "", assist_terms,
+            # have no row-level provenance available at all.  Apply the SAME
+            # strict whole-token indication/mechanism matching used for
+            # row-level links; the permissive evidence-retrieval assist/corpus
+            # fallbacks must not create profile-derived hypotheses. Such rows
+            # receive NO compound specificity boost because compound-target
+            # linkage is unverified.
+            profile_match_score, _profile_hits = _strict_mechanistic_field_hits(
+                known_targets_text, relevance_profile,
+                direct_profile_terms, mechanistic_profile_terms,
             )
-            profile_match_score = float(getattr(profile_match, "score", 0.0) or 0.0)
-            profile_relevant = getattr(profile_match, "match_type", None) in profile_relevant_types
+            profile_relevant = profile_match_score > 0.0
+            if profile_relevant:
+                # No trustworthy row-level distinction between target and
+                # mechanism exists in this legacy fallback, so do not claim a
+                # structured linked target. The hypothesis may still enter on
+                # profile relevance, but provenance stays explicitly absent.
+                linked_targets = []
+                linked_mechanisms = []
 
         if profile_relevant and compound_index and linked_compounds:
             plant_counts = [
@@ -1198,6 +1270,7 @@ def _catalogue_prescreen_before_expensive_loop(
             "specificity_score": specificity_score,
             "linked_mechanistic_compounds": linked_compounds,
             "linked_mechanistic_targets": linked_targets,
+            "linked_mechanistic_mechanisms": linked_mechanisms,
         })
 
     mandatory = [r for r in rows if r["has_direct"] or r["is_stage2_novel"]]
@@ -1254,6 +1327,7 @@ def _catalogue_prescreen_before_expensive_loop(
             "Evidence_Record_Count": r["record_count"],
             "Mechanistic_Linked_Compounds": "; ".join(r.get("linked_mechanistic_compounds", [])),
             "Mechanistic_Linked_Targets": "; ".join(r.get("linked_mechanistic_targets", [])),
+            "Mechanistic_Linked_Mechanisms": "; ".join(r.get("linked_mechanistic_mechanisms", [])),
             "Mechanistic_Compound_Specificity": r.get("specificity_score", 0.0),
             "Mechanistic_Profile_Match_Score": r.get("profile_match_score", 0.0),
         }
@@ -1386,6 +1460,7 @@ def discover_indication_candidates(
                 prescreen_mechanistic_meta[_plant_key] = {
                     "Mechanistic_Linked_Compounds": str(_audit_row.get("Mechanistic_Linked_Compounds", "") or ""),
                     "Mechanistic_Linked_Targets": str(_audit_row.get("Mechanistic_Linked_Targets", "") or ""),
+                    "Mechanistic_Linked_Mechanisms": str(_audit_row.get("Mechanistic_Linked_Mechanisms", "") or ""),
                     "Mechanistic_Compound_Specificity": _audit_float("Mechanistic_Compound_Specificity"),
                     "Mechanistic_Profile_Match_Score": _audit_float("Mechanistic_Profile_Match_Score"),
                 }
@@ -2002,6 +2077,7 @@ def discover_indication_candidates(
                 # indication-linked profile path was established.
                 "Mechanistic_Linked_Compounds": _mech_discovery_meta.get("Mechanistic_Linked_Compounds", ""),
                 "Mechanistic_Linked_Targets": _mech_discovery_meta.get("Mechanistic_Linked_Targets", ""),
+                "Mechanistic_Linked_Mechanisms": _mech_discovery_meta.get("Mechanistic_Linked_Mechanisms", ""),
                 "Mechanistic_Compound_Specificity": _mech_discovery_meta.get("Mechanistic_Compound_Specificity", 0.0),
                 "Mechanistic_Profile_Match_Score": _mech_discovery_meta.get("Mechanistic_Profile_Match_Score", 0.0),
                 "Normalization_Summary": normalization_summary,

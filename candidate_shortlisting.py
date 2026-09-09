@@ -3090,6 +3090,9 @@ def build_plant_candidate_shortlist(
         discovery_linked_compounds = _split_values(
             group.get("Mechanistic_Linked_Compounds", pd.Series(dtype=object))
         )
+        discovery_linked_mechanisms = _split_values(
+            group.get("Mechanistic_Linked_Mechanisms", pd.Series(dtype=object))
+        )
         _specificity_values = pd.to_numeric(
             group.get("Mechanistic_Compound_Specificity", pd.Series(dtype=float)),
             errors="coerce",
@@ -3396,6 +3399,8 @@ def build_plant_candidate_shortlist(
             "Evidence_Maturity_Score": evidence_maturity,
             "Discovery_Linked_Targets": "; ".join(discovery_linked_targets),
             "Discovery_Linked_Target_Count": len(discovery_linked_targets),
+            "Discovery_Linked_Mechanisms": "; ".join(discovery_linked_mechanisms),
+            "Discovery_Linked_Mechanism_Count": len(discovery_linked_mechanisms),
             "Discovery_Linked_Compounds": "; ".join(discovery_linked_compounds),
             "Discovery_Linked_Compound_Count": len(discovery_linked_compounds),
             "Discovery_Compound_Specificity": round(discovery_compound_specificity, 4),
@@ -3800,6 +3805,7 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         # call before this fix, not assumed.
         "RD_Discovery_Lane", "Discovery_Potential_Score", "Evidence_Maturity_Score",
         "Discovery_Linked_Targets", "Discovery_Linked_Target_Count",
+        "Discovery_Linked_Mechanisms", "Discovery_Linked_Mechanism_Count",
         "Discovery_Linked_Compounds", "Discovery_Linked_Compound_Count",
         "Discovery_Compound_Specificity",
     )
@@ -3920,6 +3926,7 @@ def build_rd_discovery_hypothesis_view(
     for _col in (
         "Discovery_Compound_Specificity",
         "Discovery_Linked_Target_Count",
+        "Discovery_Linked_Mechanism_Count",
         "Discovery_Linked_Compound_Count",
     ):
         if _col in view.columns:

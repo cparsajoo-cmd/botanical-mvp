@@ -713,3 +713,31 @@ def test_catalogue_direct_evidence_gap_does_not_pollute_discovery_view():
     names = list(view["Alternative_Plant"])
     assert "Catalogue evidence-gap plant" not in names
     assert names == ["True discovery lead", "Catalogue mechanistic lead"]
+
+
+def test_shortlisting_preserves_indication_specific_linked_mechanisms():
+    row = _row(
+        Alternative_Plant="Mechanism provenance plant",
+        Target_or_Mechanism="GABAergic modulation",
+        Scientific_Rationale=(
+            "Mechanistic hypothesis only; no direct indication evidence."
+        ),
+        Evidence_Level="General literature signal",
+        Evidence_Hierarchy_Detail="Unclassified",
+        Source_Record_IDs="",
+        Already_In_Internal_Catalogue=True,
+        Market_Status="Search not performed",
+        Mechanistic_Linked_Targets="GABA-A receptor",
+        Mechanistic_Linked_Mechanisms="GABAergic modulation",
+        Mechanistic_Linked_Compounds="Novelol",
+        Mechanistic_Compound_Specificity=1.0,
+    )
+    df = pd.DataFrame([row])
+    summary, _ = build_plant_candidate_shortlist(
+        df, indication="Sleep and relaxation", dosage_form="Infusion",
+    )
+    out = summary.iloc[0]
+    assert out["Discovery_Linked_Targets"] == "GABA-A receptor"
+    assert out["Discovery_Linked_Mechanisms"] == "GABAergic modulation"
+    assert out["Discovery_Linked_Compounds"] == "Novelol"
+    assert int(out["Discovery_Linked_Mechanism_Count"]) == 1

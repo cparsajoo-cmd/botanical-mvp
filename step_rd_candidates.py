@@ -2039,8 +2039,8 @@ def _recommendation_block(result_df, report_ready_df=None):
                 c for c in (
                     ["Alternative_Plant", "RD_Discovery_Lane",
                      "Discovery_Potential_Score", "Evidence_Maturity_Score",
-                     "Discovery_Linked_Targets", "Discovery_Linked_Compounds",
-                     "Discovery_Compound_Specificity"]
+                     "Discovery_Linked_Targets", "Discovery_Linked_Mechanisms",
+                     "Discovery_Linked_Compounds", "Discovery_Compound_Specificity"]
                     + display_cols + ["Why_Selected_or_Rejected"]
                 )
                 if c in _discovery_view.columns

@@ -461,3 +461,105 @@ def test_many_unrelated_activities_are_not_exported_as_sleep_linked_targets():
     assert row["Mechanistic_Linked_Targets"] == "GABA-A receptor"
     assert row["Mechanistic_Linked_Mechanisms"] == "GABAergic modulation"
     assert row["Mechanistic_Linked_Compounds"] == "SleepCompound"
+
+
+def test_semicolon_packed_target_cell_exports_only_matching_atomic_activity():
+    """One matching activity must not export every label in the same DB cell."""
+    candidates = pd.DataFrame([{
+        "Scientific_Name": "Packed target plant",
+        "Known_Targets": ["Antioxidant; Sedative; Antiviral"],
+        "Known_Active_Compounds": ["Packol"],
+        "Mechanistic_Links": [{
+            "compound_name": "Packol",
+            "target": "Antioxidant; Sedative; Antiviral",
+            "mechanism": "",
+        }],
+        "candidate_origin": "internal_catalogue",
+        "already_in_supabase": True,
+    }])
+    plant_compounds_df = pd.DataFrame([{
+        "scientific_name": "Packed target plant",
+        "compound_name": "Packol",
+        "target": "Antioxidant; Sedative; Antiviral",
+    }])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert len(retained) == 1
+    row = audit.iloc[0]
+    assert row["Mechanistic_Linked_Targets"] == "Sedative"
+    assert row["Mechanistic_Linked_Compounds"] == "Packol"
+
+
+def test_semicolon_packed_bronchosedative_cell_does_not_enter_sleep_discovery():
+    candidates = pd.DataFrame([{
+        "Scientific_Name": "Packed broncho plant",
+        "Known_Targets": ["Antioxidant; Bronchosedative; Antiviral"],
+        "Known_Active_Compounds": ["Bronchopack"],
+        "Mechanistic_Links": [{
+            "compound_name": "Bronchopack",
+            "target": "Antioxidant; Bronchosedative; Antiviral",
+            "mechanism": "",
+        }],
+        "candidate_origin": "internal_catalogue",
+        "already_in_supabase": True,
+    }])
+    plant_compounds_df = pd.DataFrame([{
+        "scientific_name": "Packed broncho plant",
+        "compound_name": "Bronchopack",
+        "target": "Antioxidant; Bronchosedative; Antiviral",
+    }])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert retained.empty
+    row = audit.iloc[0]
+    assert row["Mechanistic_Linked_Targets"] == ""
+    assert row["PreScreen_Reason"] == "NO_OR_LOW_INDICATION_SIGNAL"
+
+
+def test_semicolon_packed_mechanism_cell_exports_only_matching_atomic_mechanism():
+    candidates = pd.DataFrame([{
+        "Scientific_Name": "Packed mechanism plant",
+        "Known_Targets": ["Unrelated enzyme"],
+        "Known_Active_Compounds": ["Mechpack"],
+        "Mechanistic_Links": [{
+            "compound_name": "Mechpack",
+            "target": "Unrelated enzyme",
+            "mechanism": "Antioxidant; GABAergic modulation; Antiviral",
+        }],
+        "candidate_origin": "internal_catalogue",
+        "already_in_supabase": True,
+    }])
+    plant_compounds_df = pd.DataFrame([{
+        "scientific_name": "Packed mechanism plant",
+        "compound_name": "Mechpack",
+        "target": "Unrelated enzyme",
+        "mechanism": "Antioxidant; GABAergic modulation; Antiviral",
+    }])
+    indication = "Sleep and relaxation"
+    profile = _profile(indication)
+
+    retained, audit = _catalogue_prescreen_before_expensive_loop(
+        _Engine(plant_compounds_df=plant_compounds_df),
+        candidates, {}, profile, indication,
+        exploratory_budget=0, mechanistic_budget=10,
+    )
+
+    assert len(retained) == 1
+    row = audit.iloc[0]
+    assert row["Mechanistic_Linked_Targets"] == ""
+    assert row["Mechanistic_Linked_Mechanisms"] == "GABAergic modulation"
+    assert row["Mechanistic_Linked_Compounds"] == "Mechpack"

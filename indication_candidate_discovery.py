@@ -1016,16 +1016,56 @@ def _strict_mechanistic_field_hits(
     return round(score, 4), hits
 
 
+def _mechanistic_field_atoms(value: object) -> list[str]:
+    """Split a database target/mechanism cell into atomic activity labels.
+
+    Dr. Duke-derived rows and some legacy imports can store dozens or hundreds
+    of activities in one semicolon-delimited cell.  Treating the entire cell as
+    a single target means one valid hit (for example ``Sedative``) causes every
+    unrelated label in that same cell (``Antiviral``, ``Antioxidant``, etc.) to
+    be exported as indication-linked provenance.  Discovery provenance must be
+    atomic: split only on explicit list delimiters and retain the original
+    label text for matched atoms.  Commas are intentionally *not* delimiters
+    because legitimate biochemical target names can contain commas.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in ("nan", "none", "null"):
+            return []
+        # Preserve ordinary target punctuation; split only explicit list
+        # separators used by the imported phytochemical datasets.
+        raw_items = re.split(r"[;|\n\r]+", text)
+
+    atoms: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        atom = str(item or "").strip()
+        if not atom:
+            continue
+        key = _norm(atom)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        atoms.append(atom)
+    return atoms
+
+
 def _score_mechanistic_links(
     links: list[dict], relevance_profile, direct_terms, mechanistic_terms,
 ) -> tuple[bool, float, list[str], list[str], list[str]]:
-    """Return only indication-relevant row-level mechanistic provenance.
+    """Return only indication-relevant *atomic* mechanistic provenance.
 
-    Target and mechanism are evaluated *separately*.  A relevant mechanism on
-    one row may justify retaining that row's compound, but it does not make an
-    unrelated target label on the same row a ``linked target``.  This prevents
-    outputs such as hundreds of unrelated anti-inflammatory/antiviral activity
-    labels from appearing as Sleep-linked targets.
+    Target and mechanism are evaluated separately and, critically, each
+    semicolon-delimited activity inside a source cell is evaluated separately.
+    A row whose target cell contains ``Antioxidant; Sedative; Antiviral`` may
+    retain ``Sedative`` for a sleep query, but it must never export the other
+    two labels merely because they share the same database row/cell.  Likewise,
+    a relevant mechanism may justify retaining the row's compound without
+    laundering an unrelated target label into ``Discovery_Linked_Targets``.
     """
     relevant = False
     best_score = 0.0
@@ -1033,18 +1073,31 @@ def _score_mechanistic_links(
     targets: list[str] = []
     mechanisms: list[str] = []
     for link in links or []:
-        target = str(link.get("target") or "").strip()
-        mechanism = str(link.get("mechanism") or "").strip()
-        if not (target or mechanism):
+        target_atoms = _mechanistic_field_atoms(link.get("target"))
+        mechanism_atoms = _mechanistic_field_atoms(link.get("mechanism"))
+        if not (target_atoms or mechanism_atoms):
             continue
 
-        target_score, _target_hits = _strict_mechanistic_field_hits(
-            target, relevance_profile, direct_terms, mechanistic_terms,
-        )
-        mechanism_score, _mechanism_hits = _strict_mechanistic_field_hits(
-            mechanism, relevance_profile, direct_terms, mechanistic_terms,
-        )
-        row_score = max(target_score, mechanism_score)
+        matched_targets: list[str] = []
+        matched_mechanisms: list[str] = []
+        row_score = 0.0
+
+        for target in target_atoms:
+            target_score, _target_hits = _strict_mechanistic_field_hits(
+                target, relevance_profile, direct_terms, mechanistic_terms,
+            )
+            if target_score > 0.0:
+                row_score = max(row_score, target_score)
+                matched_targets.append(target)
+
+        for mechanism in mechanism_atoms:
+            mechanism_score, _mechanism_hits = _strict_mechanistic_field_hits(
+                mechanism, relevance_profile, direct_terms, mechanistic_terms,
+            )
+            if mechanism_score > 0.0:
+                row_score = max(row_score, mechanism_score)
+                matched_mechanisms.append(mechanism)
+
         if row_score <= 0.0:
             continue
 
@@ -1053,10 +1106,12 @@ def _score_mechanistic_links(
         compound = str(link.get("compound_name") or link.get("compound") or "").strip()
         if compound and compound not in compounds:
             compounds.append(compound)
-        if target_score > 0.0 and target and target not in targets:
-            targets.append(target)
-        if mechanism_score > 0.0 and mechanism and mechanism not in mechanisms:
-            mechanisms.append(mechanism)
+        for target in matched_targets:
+            if target not in targets:
+                targets.append(target)
+        for mechanism in matched_mechanisms:
+            if mechanism not in mechanisms:
+                mechanisms.append(mechanism)
     return relevant, best_score, compounds, targets, mechanisms
 
 

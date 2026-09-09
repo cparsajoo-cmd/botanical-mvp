@@ -252,12 +252,12 @@ def key_evidence_gap(row) -> str:
     if safety_level == "SERIOUS" or safety_status == "CONFLICTING_SAFETY_EVIDENCE":
         return "Safety characterization insufficient"
 
-    direct_evidence = int(_n(row, "Direct_Indication_Evidence_Count") or 0)
+    human_evidence = has_confirmed_human_evidence(row)
     targets, mechanisms, compounds = _linked_counts(row)
 
-    if direct_evidence == 0 and (targets or mechanisms or compounds):
+    if not human_evidence and (targets or mechanisms or compounds):
         return "Mechanistic evidence only"
-    if direct_evidence == 0:
+    if not human_evidence:
         return "No direct human evidence for queried indication"
 
     dosage_compat = _s(row, "Dosage_Form_Compatibility")
@@ -285,19 +285,19 @@ def next_rd_step(row) -> str:
     if safety_level == "SERIOUS" or safety_status == "CONFLICTING_SAFETY_EVIDENCE":
         return "Resolve toxicology/interaction risk before efficacy development."
 
-    direct_evidence = int(_n(row, "Direct_Indication_Evidence_Count") or 0)
+    human_evidence = has_confirmed_human_evidence(row)
     targets, mechanisms, compounds = _linked_counts(row)
-    if direct_evidence == 0 and (targets or mechanisms or compounds):
+    if not human_evidence and (targets or mechanisms or compounds):
         return "Confirm indication-specific activity in a controlled preclinical model."
 
     dosage_compat = _s(row, "Dosage_Form_Compatibility")
-    if direct_evidence > 0 and dosage_compat and dosage_compat != "Compatible / unspecified":
+    if human_evidence and dosage_compat and dosage_compat != "Compatible / unspecified":
         return "Validate preparation/exposure transferability."
 
     if _s(row, "Commercial_Assessment_Status") != "ASSESSED":
         return "Complete indication-specific market and IP assessment before development positioning."
 
-    if direct_evidence > 0:
+    if human_evidence:
         return "Prioritize an early human feasibility study."
 
     return "Complete indication-specific market and IP assessment before development positioning."
@@ -310,7 +310,7 @@ def next_rd_step(row) -> str:
 def why_interesting(row) -> str:
     lane = _s(row, "RD_Discovery_Lane")
     targets, mechanisms, compounds = _linked_counts(row)
-    direct_evidence = int(_n(row, "Direct_Indication_Evidence_Count") or 0)
+    human_evidence = has_confirmed_human_evidence(row)
     commercial_class = _s(row, "Commercial_Opportunity_Class")
 
     if lane == DISCOVERY_LANE_SAFETY_STOP:
@@ -327,15 +327,15 @@ def why_interesting(row) -> str:
         if compounds:
             bits.append(f"{compounds} linked compound(s)")
         mechanism_clause = "Mechanistically supported by " + ", ".join(bits) + "."
-    elif direct_evidence:
-        mechanism_clause = f"Supported by {direct_evidence} direct indication-specific evidence record(s)."
+    elif human_evidence:
+        mechanism_clause = f"Supported by confirmed direct human evidence ({human_evidence_status(row)})."
     else:
         mechanism_clause = "Admitted on catalogue membership; no matched mechanistic or direct provenance yet."
 
-    if direct_evidence == 0 and (targets or mechanisms or compounds):
-        evidence_clause = "No direct human evidence for the queried indication has been identified yet."
-    elif direct_evidence:
-        evidence_clause = "Direct indication-specific human evidence is present."
+    if not human_evidence and (targets or mechanisms or compounds):
+        evidence_clause = "No confirmed direct human evidence for the queried indication has been identified yet."
+    elif human_evidence:
+        evidence_clause = "Confirmed direct human evidence is present for the queried indication."
     else:
         evidence_clause = "No direct or mechanistic evidence for the queried indication has been identified yet."
 
@@ -456,11 +456,71 @@ INVESTOR_VIEW_COMPACT_COLUMNS = [
 ]
 
 
-def _human_evidence_status(row) -> str:
+# ---------------------------------------------------------------------
+# Issue 2 (2026-09-09 second follow-up): authoritative human-evidence
+# hierarchy. Direct_Indication_Evidence_Count is NOT necessarily human
+# evidence (it can include animal/in-vitro rows with an indication-linked
+# outcome) -- every function that makes a "human evidence" claim must go
+# through this hierarchy instead, never through Direct_Indication_
+# Evidence_Count directly.
+# ---------------------------------------------------------------------
+
+_HUMAN_EVIDENCE_COUNT_FIELDS_PRIORITY = (
+    "AI_Direct_Human_Outcome_Evidence_Count",
+    "Outcome_Specific_Human_Evidence_Count",
+)
+_HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES = {"STRONG", "MODERATE", "WEAK"}
+
+
+def _human_evidence_count(row) -> Optional[int]:
+    for field in _HUMAN_EVIDENCE_COUNT_FIELDS_PRIORITY:
+        value = _n(row, field)
+        if value is not None:
+            return int(value)
+    return None
+
+
+def _human_evidence_ids_count(row) -> Optional[int]:
+    ids = _s(row, "Direct_Human_Outcome_Evidence_IDs")
+    if not ids:
+        return None
+    return len([piece for piece in ids.split(";") if piece.strip()])
+
+
+def has_confirmed_human_evidence(row) -> bool:
+    """True only when an authoritative human-specific signal confirms it
+    -- never derived from Direct_Indication_Evidence_Count.
+    """
+    count = _human_evidence_count(row)
+    if count is not None:
+        return count > 0
+    ids_count = _human_evidence_ids_count(row)
+    if ids_count is not None:
+        return ids_count > 0
+    strength = _s(row, "Human_Evidence_Strength").upper()
+    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
+        return True
+    return False
+
+
+def human_evidence_status(row) -> str:
+    count = _human_evidence_count(row)
+    if count is not None and count > 0:
+        return f"{count} direct human outcome record(s)"
+    ids_count = _human_evidence_ids_count(row)
+    if ids_count is not None and ids_count > 0:
+        return f"{ids_count} direct human outcome record(s)"
+    strength = _s(row, "Human_Evidence_Strength").upper()
+    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
+        return f"Human evidence present (strength: {strength.title()}); verified record count unavailable"
     direct_evidence = int(_n(row, "Direct_Indication_Evidence_Count") or 0)
-    if direct_evidence <= 0:
-        return "No direct human evidence"
-    return f"{direct_evidence} direct evidence record(s)"
+    if direct_evidence > 0:
+        return "Direct indication evidence present; human outcome status unresolved"
+    return "No verified direct human outcome evidence"
+
+
+def _human_evidence_status(row) -> str:
+    return human_evidence_status(row)
 
 
 def _mechanistic_rationale(row) -> str:
@@ -482,10 +542,33 @@ def _safety_risk(row) -> str:
     return level.title() if level else "Unknown"
 
 
-def _regulatory_status(row) -> str:
+def _regulatory_status(row, assessment) -> str:
+    """Issue 4 (2026-09-09 second follow-up): must never claim regulatory
+    clearance from the mere absence of a prohibition flag when no genuine
+    regulatory assessment was performed. Regulatory_Assessment_Status is
+    "NOT_INTEGRATED" today (documented gap -- see module docstring), so
+    this currently always returns "NOT ASSESSED"; it will start reflecting
+    a real assessment automatically once that pipeline is integrated,
+    without any further change here.
+    """
+    if assessment.get("Regulatory_Assessment_Status") != "ASSESSED":
+        return "NOT ASSESSED"
     if bool(row.get("Regulatory_Prohibition_Present")):
         return "Regulatory prohibition present"
-    return "No regulatory prohibition on record"
+    return "No regulatory prohibition identified"
+
+
+def _commercial_whitespace(row, commercial_class, assessment) -> str:
+    """Issue 3: three-state, never collapses "unknown" into "No"."""
+    if commercial_class == OPP_WHITE_SPACE_OPPORTUNITY:
+        return "YES"
+    if (
+        assessment.get("Commercial_Assessment_Status") == "ASSESSED"
+        and commercial_class
+        and commercial_class != "NOT_ASSESSED"
+    ):
+        return "NO"
+    return "NOT ASSESSED"
 
 
 def _key_risk(row) -> str:
@@ -522,7 +605,15 @@ def build_investor_opportunity_view_row(row) -> dict:
         "Discovery_Admission_Path": discovery_admission_path(row),
         "Discovery_Admission_Rationale": discovery_admission_rationale(row),
         "Has_Defensible_Admission": has_defensible_admission(row),
+        # Issue 5 (2026-09-09 second follow-up): the numeric score is an
+        # explicitly documented, uncalibrated illustrative heuristic (see
+        # module docstring) -- kept audit-only, never shown as investor-
+        # grade evidence in the compact view. Tagged so a reader of the
+        # full/audit export cannot mistake it for a calibrated figure.
         "Commercial_Opportunity_Score": score,
+        "Commercial_Opportunity_Score_Status": (
+            "UNCALIBRATED_HEURISTIC" if score is not None else "NOT_ASSESSED"
+        ),
         **assessment,
     }
 
@@ -530,14 +621,20 @@ def build_investor_opportunity_view_row(row) -> dict:
     fields["Discovery_Potential"] = _n(row, "Discovery_Potential_Score")
     fields["Evidence_Maturity"] = _n(row, "Evidence_Maturity_Score")
     fields["Development_Readiness"] = fields["Development_Readiness_Score"]
-    fields["Commercial_Opportunity"] = score if score is not None else "NOT ASSESSED"
-    fields["Mechanistic_Rationale"] = _mechanistic_rationale(row)
-    fields["Human_Evidence_Status"] = _human_evidence_status(row)
-    fields["Commercial_Whitespace"] = (
-        "Yes" if commercial_class == OPP_WHITE_SPACE_OPPORTUNITY else "No"
+    # Issue 5: the COMPACT "Commercial_Opportunity" column shows the
+    # interpretable class/label (or "NOT ASSESSED"), never the uncalibrated
+    # number -- Commercial_Opportunity_Class is also present verbatim
+    # alongside it (added in the prior pass) for anyone who wants the raw
+    # enum value specifically.
+    fields["Commercial_Opportunity"] = (
+        commercial_class if commercial_class and commercial_class != "NOT_ASSESSED"
+        else "NOT ASSESSED"
     )
+    fields["Mechanistic_Rationale"] = _mechanistic_rationale(row)
+    fields["Human_Evidence_Status"] = human_evidence_status(row)
+    fields["Commercial_Whitespace"] = _commercial_whitespace(row, commercial_class, assessment)
     fields["Safety_Risk"] = _safety_risk(row)
-    fields["Regulatory_Status"] = _regulatory_status(row)
+    fields["Regulatory_Status"] = _regulatory_status(row, assessment)
     fields["Patent_Status"] = assessment["Patent_Assessment_Status"]
     fields["Key_Risk"] = _key_risk(row)
 

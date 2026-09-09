@@ -429,6 +429,44 @@ def refresh_commercial_and_investor_view(
     return result_df, plant_summary_df, report_ready_df
 
 
+def _handle_commercial_refresh_button_click(
+    result_df, plant_summary_df, *, indication, dosage_form, market,
+):
+    """The real production body of the "Refresh Commercial Intelligence /
+    Investor View" button click (Issue 1, 2026-09-09 second follow-up).
+    Extracted from the button's inline body so the actual click-to-
+    session-state sequence is directly unit-testable (mock
+    st.session_state as a plain dict) without needing to drive the whole
+    render_rd_candidates_step() Streamlit form -- see
+    test_commercial_refresh_ui_path.py.
+
+    Calls refresh_commercial_and_investor_view() (zero scientific/AI calls
+    -- see that function's own docstring and
+    test_commercial_only_refresh_no_ai_calls.py) and writes its outputs to
+    the exact three session-state keys the rest of this module reads:
+    "rd_candidates_df", "rd_candidate_plant_summary_df",
+    "rd_report_ready_df", plus a refreshed "rd_decision_metadata".
+    """
+    refreshed_result_df, refreshed_plant_summary_df, refreshed_report_ready_df = (
+        refresh_commercial_and_investor_view(
+            result_df,
+            plant_summary_df,
+            indication=indication,
+            dosage_form=dosage_form,
+            market=market,
+            commercial_evidence_df=_get_commercial_evidence_df(),
+        )
+    )
+    st.session_state["rd_candidates_df"] = refreshed_result_df
+    st.session_state["rd_candidate_plant_summary_df"] = refreshed_plant_summary_df
+    st.session_state["rd_report_ready_df"] = refreshed_report_ready_df
+    st.session_state["rd_decision_metadata"] = build_decision_metadata(
+        refreshed_report_ready_df, indication=indication, dosage_form=dosage_form,
+        market=market, discovery_mode=_detect_discovery_mode(refreshed_result_df),
+    )
+    return refreshed_result_df, refreshed_plant_summary_df, refreshed_report_ready_df
+
+
 def _resolve_report_plant_column(df):
     """Part 6 (this session) -- canonical plant-identity column resolver
     for the report-ready frame. merge_authoritative_scores() (candidate_
@@ -3495,7 +3533,38 @@ def render_rd_candidates_step(inputs):
             )
             st.session_state["rd_decision_metadata"] = decision_metadata
 
-        # Additive AI R&D insight layer -- rendered here, clearly separated
+        # Issue 1 (2026-09-09 second follow-up): commercial-only refresh,
+        # wired into the actual production UI. refresh_commercial_and_
+        # investor_view() already existed and was already tested
+        # (test_commercial_only_refresh_no_ai_calls.py), but nothing called
+        # it from a real user action -- this button is that missing call
+        # site. It reuses the ALREADY-COMPUTED result_df/plant_summary_df
+        # in session state; it does not call engine.run(),
+        # build_plant_candidate_shortlist(), evidence adjudication, or any
+        # AI service (see refresh_commercial_and_investor_view()'s own
+        # docstring for the exact guarantee). The button body itself is a
+        # thin call into _handle_commercial_refresh_button_click() so the
+        # real click-to-session-state sequence is directly unit-testable
+        # (see test_commercial_refresh_ui_path.py) without needing to
+        # drive the whole render_rd_candidates_step() Streamlit form.
+        if st.button(
+            "🔄 Refresh Commercial Intelligence / Investor View",
+            key="rd_refresh_commercial_view_btn",
+            help=(
+                "Re-runs ONLY commercial enrichment, commercial "
+                "classification, and the investor-view build from the "
+                "existing Stage-5 scientific result. Does not rerun "
+                "scientific discovery, scoring, or any AI evidence "
+                "adjudication -- no OpenAI/Anthropic calls."
+            ),
+        ):
+            with st.spinner("Refreshing commercial intelligence and investor view..."):
+                _handle_commercial_refresh_button_click(
+                    result_df, plant_summary_df,
+                    indication=indication, dosage_form=dosage_form, market=market,
+                )
+            st.success("Commercial intelligence and investor view refreshed.")
+            st.rerun()        # Additive AI R&D insight layer -- rendered here, clearly separated
         # from the deterministic score/evidence/safety/regulatory/commercial
         # sections below. Renders nothing if no insights were computed for
         # this run (e.g. AI was unavailable) -- see _render_ai_rd_insights().

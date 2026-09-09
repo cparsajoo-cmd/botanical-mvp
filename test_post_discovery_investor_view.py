@@ -17,6 +17,7 @@ from commercial_opportunity_classification import (
     OPP_WHITE_SPACE_OPPORTUNITY,
     OPP_CROWDED_MARKET,
     OPP_REPURPOSING_OPPORTUNITY,
+    OPP_COMMERCIALLY_ESTABLISHED,
 )
 
 
@@ -149,7 +150,7 @@ def test_no_direct_evidence_and_no_linkage_is_no_direct_human_evidence():
 
 def test_commercial_not_assessed_is_lowest_priority_gap():
     row = _row(
-        Direct_Indication_Evidence_Count=2,
+        Outcome_Specific_Human_Evidence_Count=2,
         Commercial_Assessment_Status="NOT_ASSESSED",
     )
     assert piv.key_evidence_gap(row) == "Commercial market not assessed"
@@ -168,7 +169,7 @@ def test_mechanistic_only_next_step_is_confirm_preclinical():
 
 
 def test_direct_evidence_with_dosage_mismatch_next_step_is_validate_transferability():
-    row = _row(Direct_Indication_Evidence_Count=2, Dosage_Form_Compatibility="Incompatible")
+    row = _row(Outcome_Specific_Human_Evidence_Count=2, Dosage_Form_Compatibility="Incompatible")
     assert piv.next_rd_step(row) == "Validate preparation/exposure transferability."
 
 
@@ -280,3 +281,151 @@ def test_compact_view_contains_commercial_opportunity_class():
     _, compact_df = piv.build_investor_opportunity_view(df)
     assert "Commercial_Opportunity_Class" in compact_df.columns
     assert compact_df.iloc[0]["Commercial_Opportunity_Class"] == OPP_REPURPOSING_OPPORTUNITY
+
+
+# --- Issue 2 (2026-09-09 second follow-up): authoritative human evidence --
+
+def test_human_evidence_status_never_inferred_from_direct_indication_evidence_count():
+    row = _row(Direct_Indication_Evidence_Count=5)  # animal/in-vitro rows possible
+    assert piv.has_confirmed_human_evidence(row) is False
+    assert piv.human_evidence_status(row) == (
+        "Direct indication evidence present; human outcome status unresolved"
+    )
+
+
+def test_human_evidence_status_uses_authoritative_count_field():
+    row = _row(AI_Direct_Human_Outcome_Evidence_Count=3)
+    assert piv.has_confirmed_human_evidence(row) is True
+    assert piv.human_evidence_status(row) == "3 direct human outcome record(s)"
+
+
+def test_human_evidence_status_falls_back_to_outcome_specific_count():
+    row = _row(Outcome_Specific_Human_Evidence_Count=2)
+    assert piv.human_evidence_status(row) == "2 direct human outcome record(s)"
+
+
+def test_human_evidence_status_falls_back_to_ids_when_no_count_field():
+    row = _row(Direct_Human_Outcome_Evidence_IDs="ID1;ID2;ID3")
+    assert piv.human_evidence_status(row) == "3 direct human outcome record(s)"
+
+
+def test_human_evidence_status_falls_back_to_strength_when_no_count_or_ids():
+    row = _row(Human_Evidence_Strength="MODERATE")
+    assert "Moderate" in piv.human_evidence_status(row)
+    assert piv.has_confirmed_human_evidence(row) is True
+
+
+def test_human_evidence_status_no_signal_at_all_is_honest():
+    row = _row()
+    assert piv.human_evidence_status(row) == "No verified direct human outcome evidence"
+
+
+def test_why_interesting_no_longer_calls_indication_evidence_human():
+    row = _row(Direct_Indication_Evidence_Count=5, Discovery_Linked_Target_Count=1)
+    result = piv.why_interesting(row)
+    assert "No confirmed direct human evidence" in result
+
+
+def test_key_evidence_gap_uses_authoritative_human_evidence():
+    row = _row(Direct_Indication_Evidence_Count=5, Discovery_Linked_Target_Count=0)
+    # 5 non-human indication records, no human confirmation -> still a gap.
+    assert piv.key_evidence_gap(row) == "No direct human evidence for queried indication"
+
+
+def test_next_rd_step_uses_authoritative_human_evidence():
+    row = _row(Direct_Indication_Evidence_Count=5, Discovery_Linked_Target_Count=1)
+    assert piv.next_rd_step(row) == "Confirm indication-specific activity in a controlled preclinical model."
+
+
+# --- Issue 3: Commercial_Whitespace three-state ----------------------------
+
+def test_commercial_whitespace_yes_for_white_space_class():
+    row = _row(
+        Commercial_Status_Overall="NO_VERIFIED_PRODUCT_FOUND_IN_COVERED_SOURCES",
+        Commercial_Status_For_Indication="NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES",
+        Commercial_Opportunity_Class=OPP_WHITE_SPACE_OPPORTUNITY,
+    )
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Whitespace"] == "YES"
+
+
+def test_commercial_whitespace_no_when_genuinely_assessed_and_not_white_space():
+    row = _row(
+        Commercial_Status_Overall="VERIFIED_MARKETED",
+        Commercial_Status_For_Indication="VERIFIED_MARKETED_FOR_INDICATION",
+        Indication_Market_Saturation="LOW",
+        Commercial_Opportunity_Class=OPP_COMMERCIALLY_ESTABLISHED,
+    )
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Whitespace"] == "NO"
+
+
+def test_commercial_whitespace_not_assessed_when_search_never_ran():
+    """Core Issue 3 bug: unknown must never render as No."""
+    row = _row(Commercial_Status_Overall="UNKNOWN", Commercial_Status_For_Indication="UNKNOWN")
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Whitespace"] == "NOT ASSESSED"
+    assert fields["Commercial_Whitespace"] != "NO"
+
+
+# --- Issue 4: regulatory semantics ------------------------------------------
+
+def test_regulatory_status_is_not_assessed_when_not_integrated():
+    """Core Issue 4 bug: must not claim clearance when the pipeline never
+    actually ran (Regulatory_Assessment_Status stays NOT_INTEGRATED today).
+    """
+    row = _row(Regulatory_Prohibition_Present=False)
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Regulatory_Status"] == "NOT ASSESSED"
+    assert "No regulatory prohibition" not in fields["Regulatory_Status"]
+
+
+def test_regulatory_status_shows_prohibition_when_assessed_and_present():
+    row = _row(Regulatory_Prohibition_Present=True)
+    assessment = {"Regulatory_Assessment_Status": "ASSESSED"}
+    assert piv._regulatory_status(row, assessment) == "Regulatory prohibition present"
+
+
+def test_regulatory_status_shows_clear_only_when_genuinely_assessed():
+    row = _row(Regulatory_Prohibition_Present=False)
+    assessment = {"Regulatory_Assessment_Status": "ASSESSED"}
+    assert piv._regulatory_status(row, assessment) == "No regulatory prohibition identified"
+
+
+# --- Issue 5: no uncalibrated numeric score in compact view ----------------
+
+def test_compact_commercial_opportunity_shows_class_not_raw_number():
+    row = _row(
+        Commercial_Status_Overall="NO_VERIFIED_PRODUCT_FOUND_IN_COVERED_SOURCES",
+        Commercial_Status_For_Indication="NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES",
+        Commercial_Opportunity_Class=OPP_WHITE_SPACE_OPPORTUNITY,
+    )
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Opportunity"] == OPP_WHITE_SPACE_OPPORTUNITY
+    assert not isinstance(fields["Commercial_Opportunity"], float)
+
+
+def test_compact_commercial_opportunity_not_assessed_when_unavailable():
+    row = _row(Commercial_Status_Overall="UNKNOWN", Commercial_Status_For_Indication="UNKNOWN")
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Opportunity"] == "NOT ASSESSED"
+
+
+def test_numeric_score_is_audit_only_and_tagged_uncalibrated():
+    row = _row(
+        Commercial_Status_Overall="NO_VERIFIED_PRODUCT_FOUND_IN_COVERED_SOURCES",
+        Commercial_Status_For_Indication="NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES",
+        Commercial_Opportunity_Class=OPP_WHITE_SPACE_OPPORTUNITY,
+    )
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Opportunity_Score"] == 85.0
+    assert fields["Commercial_Opportunity_Score_Status"] == "UNCALIBRATED_HEURISTIC"
+    assert "Commercial_Opportunity_Score" not in piv.INVESTOR_VIEW_COMPACT_COLUMNS
+    assert "Commercial_Opportunity_Score_Status" not in piv.INVESTOR_VIEW_COMPACT_COLUMNS
+
+
+def test_numeric_score_status_not_assessed_when_score_unavailable():
+    row = _row(Commercial_Status_Overall="UNKNOWN", Commercial_Status_For_Indication="UNKNOWN")
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Commercial_Opportunity_Score"] is None
+    assert fields["Commercial_Opportunity_Score_Status"] == "NOT_ASSESSED"

@@ -23,6 +23,8 @@ from rd_discovery_classification import (
     DISCOVERY_LANE_HYPOTHESIS,
     DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
 )
+from commercial_opportunity_classification import add_commercial_opportunity_class
+from commercial_evidence_import import normalize_commercial_evidence_import
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -340,6 +342,12 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
         merged["Final_Rationale"] = [
             build_final_rationale(row) for _, row in merged.iterrows()
         ]
+    # Section 11 (investor commercial-opportunity classification): a single
+    # scannable label built only from fields already finalized above
+    # (Commercial_Status_Overall/For_Indication, safety, regulatory).
+    # Additive column; never touches scoring/ranking/Decision_Class_AH.
+    if isinstance(merged, pd.DataFrame) and not merged.empty:
+        merged = add_commercial_opportunity_class(merged)
     return merged
 
 
@@ -1052,8 +1060,55 @@ def _get_evidence_df():
     return None
 
 
+def _get_commercial_evidence_df():
+    """The dedicated commercial-evidence dataframe (Section 10), kept
+    conceptually separate from the scientific ``evidence_df``. Populated
+    today only by a structured import (see commercial_evidence_import.py
+    and the "Import commercial evidence" panel below); a future live
+    provider result would also land in this same session-state key.
+    Returns None (not an empty DataFrame) when nothing has been imported,
+    so callers can tell "no commercial evidence source at all" apart from
+    "an import ran and legitimately matched nothing".
+    """
+    commercial_evidence_df = st.session_state.get("commercial_evidence_df")
+    if isinstance(commercial_evidence_df, pd.DataFrame) and not commercial_evidence_df.empty:
+        return commercial_evidence_df
+    return None
+
+
+def _combine_scientific_and_commercial_evidence(evidence_df, commercial_evidence_df):
+    """Root-cause fix (2026-09-09 investor-view pass, Section 2): the
+    scientific ``evidence_df`` collected in Stage 2 essentially never
+    contains structured market/product rows (it is PubMed/DailyMed/EMA/etc.
+    evidence, not retail data) -- so MarketIntelligenceEngine's
+    ``_market_rows`` was empty in production runs regardless of the
+    selector fix, and every candidate fell into the honest-but-unhelpful
+    "Search not performed" branch below. This concatenates any real,
+    separately-sourced ``commercial_evidence_df`` (session-state import,
+    see commercial_evidence_import.py, or a future live provider) onto the
+    scientific evidence WITHOUT altering either frame's own semantics:
+    market_intelligence_engine.py's own row classifier
+    (_market_row_mask()/_is_market_row()) still decides, row by row, which
+    rows count as market evidence -- scientific rows are simply never
+    market-shaped and are ignored by that classifier exactly as before.
+    Column-set mismatches between the two frames are handled by
+    ``pd.concat``'s normal outer-join behavior (missing columns become
+    NaN, which the engine's ``_clean()`` already treats as blank).
+    """
+    frames = [
+        df for df in (evidence_df, commercial_evidence_df)
+        if isinstance(df, pd.DataFrame) and not df.empty
+    ]
+    if not frames:
+        return evidence_df
+    if len(frames) == 1:
+        return frames[0]
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def _attach_commercial_market_intelligence(
-    result_df, *, evidence_df, indication, dosage_form, market, candidate_plants=None
+    result_df, *, evidence_df, indication, dosage_form, market, candidate_plants=None,
+    commercial_evidence_df=None,
 ):
     """Attach one indication-aware commercial snapshot per candidate plant.
 
@@ -1063,6 +1118,14 @@ def _attach_commercial_market_intelligence(
     ``Market_Status``/``Novelty_Status`` columns remain untouched for backward
     compatibility; new ``Commercial_*`` and ``Chemical_Differentiation_Status``
     columns make the two concepts explicit.
+
+    ``commercial_evidence_df`` (new, optional, default None -- fully
+    backward compatible): a SEPARATE, dedicated commercial-evidence
+    dataframe (see _combine_scientific_and_commercial_evidence() above and
+    commercial_evidence_import.py). When provided and non-empty, it is
+    combined with ``evidence_df`` before market-row detection, so real
+    imported/cached commercial data is actually used instead of always
+    falling through to "Search not performed".
     """
     if not isinstance(result_df, pd.DataFrame) or result_df.empty:
         return result_df
@@ -1074,7 +1137,10 @@ def _attach_commercial_market_intelligence(
     if "Alternative_Plant" not in out.columns:
         return out
 
-    engine = MarketIntelligenceEngine(evidence_df)
+    combined_evidence_df = _combine_scientific_and_commercial_evidence(
+        evidence_df, commercial_evidence_df
+    )
+    engine = MarketIntelligenceEngine(combined_evidence_df)
 
     # IMPORTANT PERFORMANCE RULE: Step 5 passes a bounded pre-shortlist here.
     # Never silently expand that back to every raw candidate plant.
@@ -2336,6 +2402,57 @@ def render_rd_candidates_step(inputs):
         "and market saturation signals."
     )
 
+    with st.expander("Import structured commercial evidence (optional)", expanded=False):
+        st.caption(
+            "No live retail/brand search provider is configured for this "
+            "deployment (Commercial_Opportunity stays 'not assessed' without "
+            "one -- see commercial_evidence_provider.py). If you already have "
+            "a spreadsheet of known products/brands/retailers per plant, "
+            "import it here instead -- no code edits needed. Minimum columns: "
+            "Scientific_Name (or Plant), Product_Name, and Brand or "
+            "Retailer_or_Seller. Optional: Market_Source_Type, Country_Market, "
+            "Indication, Dosage_Form, Preparation, Source_URL_or_ID, "
+            "Retrieval_Timestamp."
+        )
+        uploaded_commercial_file = st.file_uploader(
+            "Commercial evidence file (.csv or .xlsx)",
+            type=["csv", "xlsx", "xls"],
+            key="rd_commercial_evidence_uploader",
+        )
+        if uploaded_commercial_file is not None:
+            try:
+                if uploaded_commercial_file.name.lower().endswith((".xlsx", ".xls")):
+                    raw_import_df = pd.read_excel(uploaded_commercial_file)
+                else:
+                    raw_import_df = pd.read_csv(uploaded_commercial_file)
+            except Exception as exc:
+                st.error(f"Could not read that file: {exc}")
+                raw_import_df = None
+
+            if raw_import_df is not None:
+                normalized_df, rejected_rows = normalize_commercial_evidence_import(raw_import_df)
+                if not normalized_df.empty:
+                    st.session_state["commercial_evidence_df"] = normalized_df
+                    st.success(
+                        f"Imported {len(normalized_df)} commercial evidence row(s) "
+                        f"covering {normalized_df['Scientific_Name'].nunique()} plant(s)."
+                    )
+                if rejected_rows:
+                    st.warning(f"{len(rejected_rows)} row(s) were not usable and were skipped:")
+                    st.dataframe(pd.DataFrame(rejected_rows), use_container_width=True)
+                if normalized_df.empty and not rejected_rows:
+                    st.info("No rows found in that file.")
+
+        existing_commercial_df = _get_commercial_evidence_df()
+        if isinstance(existing_commercial_df, pd.DataFrame) and not existing_commercial_df.empty:
+            st.caption(
+                f"Active commercial evidence: {len(existing_commercial_df)} row(s), "
+                f"{existing_commercial_df['Scientific_Name'].nunique() if 'Scientific_Name' in existing_commercial_df.columns else '?'} plant(s)."
+            )
+            if st.button("Clear imported commercial evidence", key="rd_clear_commercial_evidence"):
+                st.session_state.pop("commercial_evidence_df", None)
+                st.rerun()
+
     live_market = st.checkbox(
         "Include live patent / retail search if API keys are configured",
         value=False,
@@ -2928,6 +3045,7 @@ def render_rd_candidates_step(inputs):
                         dosage_form=dosage_form,
                         market=market,
                         candidate_plants=market_plants,
+                        commercial_evidence_df=_get_commercial_evidence_df(),
                     )
                     _perf(
                         f"commercial enrichment done plants={len(market_plants)} "

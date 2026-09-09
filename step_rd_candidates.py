@@ -19,6 +19,10 @@ from candidate_shortlisting import (
     rescore_commercial_component,
     build_rd_discovery_hypothesis_view,
 )
+from rd_discovery_classification import (
+    DISCOVERY_LANE_HYPOTHESIS,
+    DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
+)
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -645,6 +649,23 @@ _STEP5_FINAL_MAX_CANDIDATES = 50
 _STEP5_COMMERCIAL_SCORE_MARGIN = 5.0
 _STEP5_COMMERCIAL_MAX_PLANTS = 120
 
+# Post-discovery commercial enrichment (investor-view root-cause fix,
+# 2026-09-09): RD_Discovery_Lane candidates such as
+# DISCOVERY_LANE_HYPOTHESIS / DISCOVERY_LANE_CATALOGUE_HYPOTHESIS are, by
+# construction, capped to Exploratory/Excluded Scientific_Triage_Status and
+# typically score far below the top-50 Overall_Score window (their entire
+# point is "scientifically interesting despite weak/absent direct evidence
+# today" -- see rd_discovery_classification.py). Before this fix,
+# _step5_commercial_enrichment_plants() dropped every Excluded row before
+# the score-window check even ran, so these candidates NEVER received
+# commercial enrichment and always reached Stage 6 with the neutral
+# "Search not performed" / "Commercial novelty not assessed" defaults --
+# which then rendered indistinguishably from "we searched and found
+# nothing" to an investor. This is a separate, small, additive budget so a
+# discovery-lane candidate is always considered for commercial enrichment
+# regardless of its (by-design) low scientific score.
+_STEP5_COMMERCIAL_DISCOVERY_LANE_MAX_PLANTS = 60
+
 # AI R&D insight layer (mechanistic reasoning / evidence synthesis /
 # hypotheses) cost control -- bounds how many shortlisted candidates get
 # AI insight generation per run, independent of _STEP5_FINAL_MAX_CANDIDATES.
@@ -1162,39 +1183,81 @@ def _attach_commercial_market_intelligence(
 
 
 def _step5_commercial_enrichment_plants(pre_summary_df):
-    """Choose the only plants that need commercial enrichment in Step 5.
+    """Choose the plants that need commercial enrichment in Step 5.
 
-    The scientific/eligibility shortlist is built first.  Market opportunity
-    can add at most five points, so only non-excluded plants within five points
-    of the current final-top-50 boundary can plausibly enter that top 50 because
-    of commercial evidence.  The hard cap protects tie-heavy datasets.
+    Two independent, additive selection paths feed the final list:
+
+    1. Score-window path (unchanged): the scientific/eligibility shortlist
+       is built first. Market opportunity can add at most five points, so
+       only non-excluded plants within five points of the current
+       final-top-50 boundary can plausibly enter that top 50 because of
+       commercial evidence. The hard cap protects tie-heavy datasets.
+
+    2. Discovery-lane path (root-cause fix, 2026-09-09): plants whose
+       RD_Discovery_Lane marks them as a Stage-5 R&D discovery hypothesis
+       (DISCOVERY_LANE_HYPOTHESIS / DISCOVERY_LANE_CATALOGUE_HYPOTHESIS)
+       are included regardless of Scientific_Triage_Status or score --
+       these candidates are Excluded/Exploratory and low-scoring BY
+       DESIGN (see rd_discovery_classification.py), so the score-window
+       path alone would never select them, leaving them permanently
+       unassessed commercially. This path uses the same
+       DISCOVERY_LANE_* vocabulary build_rd_discovery_hypothesis_view()
+       already filters on, so "which candidates count as an R&D discovery
+       hypothesis" is defined in exactly one place.
     """
     if not isinstance(pre_summary_df, pd.DataFrame) or pre_summary_df.empty:
         return []
     if "Alternative_Plant" not in pre_summary_df.columns:
         return []
 
-    eligible = pre_summary_df.copy()
-    if "Scientific_Triage_Status" in eligible.columns:
-        eligible = eligible[eligible["Scientific_Triage_Status"] != "Excluded"]
-    if eligible.empty:
-        return []
+    # --- Path 1: score-window (existing behavior, unchanged) -----------
+    score_window = pre_summary_df.copy()
+    if "Scientific_Triage_Status" in score_window.columns:
+        score_window = score_window[score_window["Scientific_Triage_Status"] != "Excluded"]
 
-    scores = pd.to_numeric(eligible.get("Overall_Score"), errors="coerce").fillna(0.0)
-    eligible = eligible.assign(_step5_pre_score=scores).sort_values(
-        "_step5_pre_score", ascending=False
-    )
-    if len(eligible) > _STEP5_FINAL_MAX_CANDIDATES:
-        cutoff = float(eligible.iloc[_STEP5_FINAL_MAX_CANDIDATES - 1]["_step5_pre_score"])
-        eligible = eligible[
-            eligible["_step5_pre_score"] >= cutoff - _STEP5_COMMERCIAL_SCORE_MARGIN
+    score_window_plants = []
+    if not score_window.empty:
+        scores = pd.to_numeric(score_window.get("Overall_Score"), errors="coerce").fillna(0.0)
+        score_window = score_window.assign(_step5_pre_score=scores).sort_values(
+            "_step5_pre_score", ascending=False
+        )
+        if len(score_window) > _STEP5_FINAL_MAX_CANDIDATES:
+            cutoff = float(
+                score_window.iloc[_STEP5_FINAL_MAX_CANDIDATES - 1]["_step5_pre_score"]
+            )
+            score_window = score_window[
+                score_window["_step5_pre_score"] >= cutoff - _STEP5_COMMERCIAL_SCORE_MARGIN
+            ]
+        score_window = score_window.head(_STEP5_COMMERCIAL_MAX_PLANTS)
+        score_window_plants = [
+            str(v).strip() for v in score_window["Alternative_Plant"].tolist()
+            if str(v).strip()
         ]
 
-    eligible = eligible.head(_STEP5_COMMERCIAL_MAX_PLANTS)
-    return [
-        str(v).strip() for v in eligible["Alternative_Plant"].tolist()
-        if str(v).strip()
-    ]
+    # --- Path 2: discovery-lane (post-discovery commercial enrichment) -
+    discovery_plants = []
+    if "RD_Discovery_Lane" in pre_summary_df.columns:
+        discovery_rows = pre_summary_df[
+            pre_summary_df["RD_Discovery_Lane"].isin(
+                [DISCOVERY_LANE_HYPOTHESIS, DISCOVERY_LANE_CATALOGUE_HYPOTHESIS]
+            )
+        ]
+        if not discovery_rows.empty:
+            discovery_plants = [
+                str(v).strip() for v in discovery_rows["Alternative_Plant"].tolist()
+                if str(v).strip()
+            ][:_STEP5_COMMERCIAL_DISCOVERY_LANE_MAX_PLANTS]
+
+    # --- Merge, dedupe, preserve first-seen order -----------------------
+    seen = set()
+    merged = []
+    for name in [*score_window_plants, *discovery_plants]:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(name)
+    return merged
 
 
 def _combine_step5_final_summary(pre_summary_df, enriched_summary_df):

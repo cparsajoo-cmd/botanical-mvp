@@ -3740,7 +3740,16 @@ def rescore_commercial_component(
         key = str(row.get("Alternative_Plant", "")).strip().lower()
         if key not in plant_keys or key not in raw_by_plant.groups:
             continue
-        group = raw_by_plant.get_group(key)
+        # NOTE: intentionally not using raw_by_plant.get_group(key) here.
+        # When the filtered frame this groupby was built on happens to
+        # contain exactly one row for a given run, pandas' groupby
+        # internals (get_group's single-key tuple-unwrapping branch,
+        # keyed off len(self.keys) rather than len(group)) raise
+        # KeyError for a plain scalar key on some pandas versions
+        # (reproduced on pandas 3.0.5). Indexing via .groups[key], which
+        # is a stable label lookup, does not go through that branch and
+        # is equivalent to get_group(key) for our purposes.
+        group = enriched_raw_df.loc[raw_by_plant.groups[key]]
         new_novelty_points, new_novelty_tier = _novelty_market(group)
 
         raw_score_breakdown = {

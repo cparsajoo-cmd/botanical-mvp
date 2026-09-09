@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from evidence_id_parsing import normalize_evidence_ids
 from rd_discovery_classification import (
     DISCOVERY_LANE_EVIDENCE_BACKED,
     DISCOVERY_LANE_HYPOTHESIS,
@@ -247,9 +248,14 @@ def what_is_new(row) -> str:
 # ---------------------------------------------------------------------
 
 def key_evidence_gap(row) -> str:
+    lane = _s(row, "RD_Discovery_Lane")
     safety_level = _s(row, "Safety_Concern_Level").upper()
-    safety_status = _s(row, "Safety_Assertion_Status")
-    if safety_level == "SERIOUS" or safety_status == "CONFLICTING_SAFETY_EVIDENCE":
+    safety_status = _s(row, "Safety_Assertion_Status").upper()
+    if (
+        lane == DISCOVERY_LANE_SAFETY_STOP
+        or safety_level == "SERIOUS"
+        or safety_status == "CONFLICTING_SAFETY_EVIDENCE"
+    ):
         return "Safety characterization insufficient"
 
     human_evidence = has_confirmed_human_evidence(row)
@@ -280,9 +286,14 @@ def key_evidence_gap(row) -> str:
 # ---------------------------------------------------------------------
 
 def next_rd_step(row) -> str:
+    lane = _s(row, "RD_Discovery_Lane")
     safety_level = _s(row, "Safety_Concern_Level").upper()
-    safety_status = _s(row, "Safety_Assertion_Status")
-    if safety_level == "SERIOUS" or safety_status == "CONFLICTING_SAFETY_EVIDENCE":
+    safety_status = _s(row, "Safety_Assertion_Status").upper()
+    if (
+        lane == DISCOVERY_LANE_SAFETY_STOP
+        or safety_level == "SERIOUS"
+        or safety_status == "CONFLICTING_SAFETY_EVIDENCE"
+    ):
         return "Resolve toxicology/interaction risk before efficacy development."
 
     human_evidence = has_confirmed_human_evidence(row)
@@ -451,7 +462,9 @@ INVESTOR_VIEW_COMPACT_COLUMNS = [
     "Development_Readiness", "Commercial_Opportunity", "Commercial_Opportunity_Class",
     "Why_Interesting",
     "What_Is_New", "Key_Evidence_Gap", "Mechanistic_Rationale",
-    "Human_Evidence_Status", "Commercial_Whitespace", "Safety_Risk",
+    "Human_Evidence_Status", "Human_Evidence_Source_Count",
+    "Human_Evidence_Primary_Source_Title", "Human_Evidence_Primary_Source_URL",
+    "Commercial_Whitespace", "Safety_Risk",
     "Regulatory_Status", "Patent_Status", "Key_Risk", "Next_R&D_Step",
 ]
 
@@ -472,47 +485,76 @@ _HUMAN_EVIDENCE_COUNT_FIELDS_PRIORITY = (
 _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES = {"STRONG", "MODERATE", "WEAK"}
 
 
-def _human_evidence_count(row) -> Optional[int]:
-    for field in _HUMAN_EVIDENCE_COUNT_FIELDS_PRIORITY:
-        value = _n(row, field)
-        if value is not None:
-            return int(value)
-    return None
+def human_evidence_hierarchy(row):
+    """The ONE authoritative human-evidence precedence for the whole
+    application (Section 6, 2026-09-09 third follow-up):
 
+        AI_Direct_Human_Outcome_Evidence_Count
+            -> Direct_Human_Outcome_Evidence_IDs (via the canonical
+               evidence_id_parsing.normalize_evidence_ids() -- Section 5's
+               bug fix)
+            -> Outcome_Specific_Human_Evidence_Count
+            -> Human_Evidence_Strength
+            -> UNRESOLVED
 
-def _human_evidence_ids_count(row) -> Optional[int]:
-    ids = _s(row, "Direct_Human_Outcome_Evidence_IDs")
-    if not ids:
-        return None
-    return len([piece for piece in ids.split(";") if piece.strip()])
+    Returns (tier, value): the FIRST tier that is actually PRESENT on the
+    row wins outright -- once a tier resolves, lower tiers are never
+    consulted, even if the resolved value is zero. This is deliberate:
+    an authoritative zero from a higher tier (e.g. the AI adjudicator
+    explicitly says 0) must not be silently overridden by a coincidental
+    positive value in a lower-priority field -- that would hide a real
+    disagreement rather than surface it (see
+    validate_candidate_evidence_consistency() for the check that DOES
+    surface such disagreements instead of picking one silently).
+
+    tier is one of "AI_COUNT", "IDS", "OUTCOME_COUNT", "STRENGTH",
+    "UNRESOLVED". value is an int for the three count-shaped tiers, the
+    strength string for "STRENGTH", or None for "UNRESOLVED".
+    """
+    ai_count = _n(row, "AI_Direct_Human_Outcome_Evidence_Count")
+    if ai_count is not None:
+        return "AI_COUNT", int(ai_count)
+
+    if "Direct_Human_Outcome_Evidence_IDs" in row:
+        ids_count = len(normalize_evidence_ids(row.get("Direct_Human_Outcome_Evidence_IDs")))
+        return "IDS", ids_count
+
+    outcome_count = _n(row, "Outcome_Specific_Human_Evidence_Count")
+    if outcome_count is not None:
+        return "OUTCOME_COUNT", int(outcome_count)
+
+    strength = _s(row, "Human_Evidence_Strength").upper()
+    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES or strength == "NONE":
+        return "STRENGTH", strength
+
+    return "UNRESOLVED", None
 
 
 def has_confirmed_human_evidence(row) -> bool:
-    """True only when an authoritative human-specific signal confirms it
-    -- never derived from Direct_Indication_Evidence_Count.
+    """True only when the authoritative hierarchy's resolved tier
+    confirms it -- never derived from Direct_Indication_Evidence_Count.
     """
-    count = _human_evidence_count(row)
-    if count is not None:
-        return count > 0
-    ids_count = _human_evidence_ids_count(row)
-    if ids_count is not None:
-        return ids_count > 0
-    strength = _s(row, "Human_Evidence_Strength").upper()
-    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
-        return True
+    tier, value = human_evidence_hierarchy(row)
+    if tier in ("AI_COUNT", "IDS", "OUTCOME_COUNT"):
+        return bool(value) and value > 0
+    if tier == "STRENGTH":
+        return value in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES
     return False
 
 
 def human_evidence_status(row) -> str:
-    count = _human_evidence_count(row)
-    if count is not None and count > 0:
-        return f"{count} direct human outcome record(s)"
-    ids_count = _human_evidence_ids_count(row)
-    if ids_count is not None and ids_count > 0:
-        return f"{ids_count} direct human outcome record(s)"
-    strength = _s(row, "Human_Evidence_Strength").upper()
-    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
-        return f"Human evidence present (strength: {strength.title()}); verified record count unavailable"
+    tier, value = human_evidence_hierarchy(row)
+    if tier in ("AI_COUNT", "IDS", "OUTCOME_COUNT"):
+        if value and value > 0:
+            return f"{value} direct human outcome record(s)"
+        return "No verified direct human outcome evidence"
+    if tier == "STRENGTH":
+        if value in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
+            return f"Human evidence present (strength: {value.title()}); verified record count unavailable"
+        return "No verified direct human outcome evidence"
+    # UNRESOLVED -- no authoritative human-specific signal exists at all;
+    # the only honest thing left to say references non-human-specific
+    # indication evidence, explicitly labelled as unresolved for humans.
     direct_evidence = int(_n(row, "Direct_Indication_Evidence_Count") or 0)
     if direct_evidence > 0:
         return "Direct indication evidence present; human outcome status unresolved"
@@ -538,8 +580,16 @@ def _mechanistic_rationale(row) -> str:
 
 
 def _safety_risk(row) -> str:
-    level = _s(row, "Safety_Concern_Level") or "NONE"
-    return level.title() if level else "Unknown"
+    lane = _s(row, "RD_Discovery_Lane")
+    level = _s(row, "Safety_Concern_Level").upper()
+    status = _s(row, "Safety_Assertion_Status").upper()
+    if lane == DISCOVERY_LANE_SAFETY_STOP and level in {"", "NONE", "UNKNOWN"}:
+        return "Safety stop — concern details unresolved"
+    if level:
+        return level.title()
+    if status and status not in {"NO_SAFETY_EVIDENCE_RETRIEVED", "UNKNOWN", "NONE"}:
+        return status.replace("_", " ").title()
+    return "Unknown"
 
 
 def _regulatory_status(row, assessment) -> str:
@@ -585,6 +635,120 @@ def _key_risk(row) -> str:
         return "Scientific (no direct evidence)"
     return "Development"
 
+
+# ---------------------------------------------------------------------
+# Section 7 (2026-09-09 third follow-up): cross-layer consistency
+# validator. Detects contradictions; NEVER silently repairs them.
+# ---------------------------------------------------------------------
+
+CONSISTENCY_COHERENT = "COHERENT"
+CONSISTENCY_HUMAN_EVIDENCE_CONTRADICTION = "HUMAN_EVIDENCE_CONTRADICTION"
+CONSISTENCY_COMMERCIAL_CONTRADICTION = "COMMERCIAL_CONTRADICTION"
+CONSISTENCY_REGULATORY_CONTRADICTION = "REGULATORY_CONTRADICTION"
+CONSISTENCY_SAFETY_CONTRADICTION = "SAFETY_CONTRADICTION"
+CONSISTENCY_SOURCE_LINKAGE_INCOMPLETE = "SOURCE_LINKAGE_INCOMPLETE"
+CONSISTENCY_MULTIPLE = "MULTIPLE_CONTRADICTIONS"
+
+
+def _explicit_numeric(row, field):
+    if field not in row:
+        return False, None
+    value = _n(row, field)
+    return (value is not None), (int(value) if value is not None else None)
+
+
+def validate_candidate_evidence_consistency(row):
+    """Detect cross-layer contradictions without mutating scientific facts.
+
+    Human evidence is checked pairwise across every explicitly-present tier.
+    Source-linkage fields, when attached by evidence_source_resolver, are also
+    checked so an evidence count can never look fully traceable when its IDs
+    or evidence records are missing.
+    """
+    issues: list[str] = []
+
+    # --- Human evidence: pairwise explicit-field consistency ---
+    ai_present, ai_count = _explicit_numeric(row, "AI_Direct_Human_Outcome_Evidence_Count")
+    ids_present = "Direct_Human_Outcome_Evidence_IDs" in row
+    ids = normalize_evidence_ids(row.get("Direct_Human_Outcome_Evidence_IDs")) if ids_present else []
+    ids_count = len(ids)
+    outcome_present, outcome_count = _explicit_numeric(row, "Outcome_Specific_Human_Evidence_Count")
+    strength = _s(row, "Human_Evidence_Strength").upper()
+    strength_present = strength in (_HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES | {"NONE"})
+
+    if ai_present and ids_present and ai_count != ids_count:
+        issues.append(
+            f"Human evidence mismatch: AI_Direct_Human_Outcome_Evidence_Count={ai_count} "
+            f"but Direct_Human_Outcome_Evidence_IDs contains {ids_count} unique ID(s)."
+        )
+    if ids_present and outcome_present and ids_count != outcome_count:
+        issues.append(
+            f"Human evidence mismatch: Direct_Human_Outcome_Evidence_IDs contains {ids_count} "
+            f"unique ID(s) but Outcome_Specific_Human_Evidence_Count={outcome_count}."
+        )
+    if strength in _HUMAN_EVIDENCE_STRENGTH_PRESENT_VALUES:
+        explicit_counts = [count for present, count in ((ai_present, ai_count), (ids_present, ids_count), (outcome_present, outcome_count)) if present]
+        if explicit_counts and max(explicit_counts) == 0:
+            issues.append(
+                f"Human_Evidence_Strength={strength} indicates human evidence, but every "
+                "explicit authoritative human-evidence count/ID field is zero."
+            )
+
+    # --- Source linkage: only when traceability fields have been attached ---
+    source_linkage_issue = False
+    if "Human_Evidence_Unresolved_Source_Count" in row:
+        unresolved = int(_n(row, "Human_Evidence_Unresolved_Source_Count") or 0)
+        expected_positive = (ai_count or 0) > 0 if ai_present else (ids_count > 0 or ((outcome_count or 0) > 0 if outcome_present else False))
+        if unresolved > 0 and expected_positive:
+            source_linkage_issue = True
+            issues.append(
+                f"Human evidence source linkage incomplete: {unresolved} expected/identified "
+                "human evidence source(s) are not fully linked to evidence records."
+            )
+
+    # --- Commercial ---
+    commercial_class = _s(row, "Commercial_Opportunity_Class")
+    assessment = commercial_assessment_fields(row)
+    whitespace = _commercial_whitespace(row, commercial_class, assessment)
+    if whitespace != "NOT ASSESSED" and assessment["Commercial_Assessment_Status"] != "ASSESSED":
+        issues.append(
+            f"Commercial_Whitespace={whitespace!r} was produced while "
+            f"Commercial_Assessment_Status={assessment['Commercial_Assessment_Status']!r} "
+            "(not ASSESSED)."
+        )
+
+    # --- Safety ---
+    lane = _s(row, "RD_Discovery_Lane")
+    safety_level = _s(row, "Safety_Concern_Level").upper()
+    safety_status = _s(row, "Safety_Assertion_Status").upper()
+    no_safety_assertion = safety_status in {
+        "", "NONE", "UNKNOWN", "NO_SAFETY_EVIDENCE_RETRIEVED",
+        "SAFETY_EVIDENCE_NOT_FOUND", "NO_SAFETY_SIGNAL_RETRIEVED",
+    }
+    if lane == DISCOVERY_LANE_SAFETY_STOP and safety_level in {"", "NONE", "UNKNOWN"} and no_safety_assertion:
+        issues.append(
+            "RD_Discovery_Lane is a safety-stop lane but the authoritative safety fields "
+            "record no supporting concern/evidence state."
+        )
+
+    if not issues:
+        return CONSISTENCY_COHERENT, []
+
+    categories = set()
+    for issue in issues:
+        low = issue.lower()
+        if "human" in low or "ai_direct" in low:
+            categories.add(CONSISTENCY_HUMAN_EVIDENCE_CONTRADICTION)
+        if "commercial" in low:
+            categories.add(CONSISTENCY_COMMERCIAL_CONTRADICTION)
+        if "safety" in low:
+            categories.add(CONSISTENCY_SAFETY_CONTRADICTION)
+    if source_linkage_issue:
+        categories.add(CONSISTENCY_SOURCE_LINKAGE_INCOMPLETE)
+
+    if len(categories) == 1:
+        return next(iter(categories)), issues
+    return CONSISTENCY_MULTIPLE, issues
 
 def build_investor_opportunity_view_row(row) -> dict:
     """Builds ALL new explanatory/commercial fields for one report-ready
@@ -637,6 +801,10 @@ def build_investor_opportunity_view_row(row) -> dict:
     fields["Regulatory_Status"] = _regulatory_status(row, assessment)
     fields["Patent_Status"] = assessment["Patent_Assessment_Status"]
     fields["Key_Risk"] = _key_risk(row)
+
+    consistency_status, consistency_issues = validate_candidate_evidence_consistency(row)
+    fields["Evidence_Consistency_Status"] = consistency_status
+    fields["Evidence_Consistency_Issues"] = "; ".join(consistency_issues)
 
     return fields
 

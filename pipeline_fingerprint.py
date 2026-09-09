@@ -76,6 +76,8 @@ COMMERCIAL_FINGERPRINT_FILES = (
     "commercial_evidence_import.py",
     "commercial_opportunity_classification.py",
     "post_discovery_investor_view.py",
+    "evidence_id_parsing.py",
+    "evidence_source_resolver.py",
 )
 
 

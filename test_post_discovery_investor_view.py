@@ -429,3 +429,132 @@ def test_numeric_score_status_not_assessed_when_score_unavailable():
     fields = piv.build_investor_opportunity_view_row(row)
     assert fields["Commercial_Opportunity_Score"] is None
     assert fields["Commercial_Opportunity_Score_Status"] == "NOT_ASSESSED"
+
+
+# --- Section 5/6 (2026-09-09 third follow-up): the exact production bug ----
+
+def test_empty_tuple_repr_ids_field_no_longer_produces_one_record():
+    """The exact reported production contradiction: Direct_Human_Outcome_
+    Evidence_IDs round-tripped to the literal string "()" must resolve to
+    "No verified direct human outcome evidence", not "1 ... record(s)".
+    """
+    row = _row(Direct_Human_Outcome_Evidence_IDs="()")
+    assert piv.has_confirmed_human_evidence(row) is False
+    assert piv.human_evidence_status(row) == "No verified direct human outcome evidence"
+
+
+def test_empty_list_repr_ids_field_also_fixed():
+    row = _row(Direct_Human_Outcome_Evidence_IDs="[]")
+    assert piv.has_confirmed_human_evidence(row) is False
+
+
+def test_human_evidence_hierarchy_precedence_ai_count_wins_over_ids():
+    """Section 6's exact precedence: AI_Direct_Human_Outcome_Evidence_Count
+    outranks Direct_Human_Outcome_Evidence_IDs -- once it's present, IDs
+    are not even consulted, even if IDs would say something different.
+    """
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=2,
+        Direct_Human_Outcome_Evidence_IDs="()",  # would say 0
+    )
+    tier, value = piv.human_evidence_hierarchy(row)
+    assert tier == "AI_COUNT"
+    assert value == 2
+    assert piv.human_evidence_status(row) == "2 direct human outcome record(s)"
+
+
+def test_human_evidence_hierarchy_ids_outrank_outcome_count():
+    row = _row(
+        Direct_Human_Outcome_Evidence_IDs="E1;E2;E3",
+        Outcome_Specific_Human_Evidence_Count=99,  # must be ignored
+    )
+    tier, value = piv.human_evidence_hierarchy(row)
+    assert tier == "IDS"
+    assert value == 3
+
+
+def test_human_evidence_hierarchy_authoritative_zero_is_not_overridden():
+    """An authoritative zero from the top tier must win outright -- not
+    be silently replaced by a positive value in a lower tier.
+    """
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=0,
+        Outcome_Specific_Human_Evidence_Count=5,
+        Human_Evidence_Strength="STRONG",
+    )
+    assert piv.has_confirmed_human_evidence(row) is False
+    assert piv.human_evidence_status(row) == "No verified direct human outcome evidence"
+
+
+# --- Section 7 (2026-09-09 third follow-up): consistency validator ---------
+
+def test_consistency_validator_coherent_case():
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=2,
+        Direct_Human_Outcome_Evidence_IDs="E1;E2",
+        Commercial_Status_Overall="UNKNOWN",
+        Commercial_Status_For_Indication="UNKNOWN",
+        Commercial_Opportunity_Class=None,
+    )
+    status, issues = piv.validate_candidate_evidence_consistency(row)
+    assert status == "COHERENT"
+    assert issues == []
+
+
+def test_consistency_validator_detects_human_evidence_contradiction():
+    """Example A: AI says a positive count while the resolvable ID
+    collection is empty."""
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=3,
+        Direct_Human_Outcome_Evidence_IDs="()",
+    )
+    status, issues = piv.validate_candidate_evidence_consistency(row)
+    assert status == "HUMAN_EVIDENCE_CONTRADICTION"
+    assert any("human" in issue.lower() for issue in issues)
+
+
+def test_consistency_validator_detects_commercial_contradiction():
+    """Example D: Commercial_Whitespace = YES while assessment is
+    NOT_ASSESSED (should be structurally impossible given the Issue-3 fix,
+    but the validator must catch it if it ever happens)."""
+    row = _row(
+        Commercial_Status_Overall="UNKNOWN",
+        Commercial_Status_For_Indication="UNKNOWN",
+        Commercial_Opportunity_Class="WHITE_SPACE_OPPORTUNITY",
+    )
+    status, issues = piv.validate_candidate_evidence_consistency(row)
+    assert status in ("COMMERCIAL_CONTRADICTION", "MULTIPLE_CONTRADICTIONS")
+    assert any("commercial" in issue.lower() for issue in issues)
+
+
+def test_consistency_validator_no_contradiction_when_class_is_none_and_unassessed():
+    row = _row(
+        Commercial_Status_Overall="UNKNOWN",
+        Commercial_Status_For_Indication="UNKNOWN",
+        Commercial_Opportunity_Class=None,
+    )
+    status, issues = piv.validate_candidate_evidence_consistency(row)
+    assert status == "COHERENT"
+
+
+def test_consistency_validator_multiple_contradictions_combine():
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=3,
+        Direct_Human_Outcome_Evidence_IDs="()",
+        Commercial_Status_Overall="UNKNOWN",
+        Commercial_Status_For_Indication="UNKNOWN",
+        Commercial_Opportunity_Class="WHITE_SPACE_OPPORTUNITY",
+    )
+    status, issues = piv.validate_candidate_evidence_consistency(row)
+    assert status == "MULTIPLE_CONTRADICTIONS"
+    assert len(issues) >= 2
+
+
+def test_consistency_fields_are_included_in_investor_view_row():
+    row = _row(
+        AI_Direct_Human_Outcome_Evidence_Count=3,
+        Direct_Human_Outcome_Evidence_IDs="()",
+    )
+    fields = piv.build_investor_opportunity_view_row(row)
+    assert fields["Evidence_Consistency_Status"] == "HUMAN_EVIDENCE_CONTRADICTION"
+    assert fields["Evidence_Consistency_Issues"]

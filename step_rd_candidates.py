@@ -30,6 +30,10 @@ from pipeline_fingerprint import (
     commercial_implementation_fingerprint,
 )
 from post_discovery_investor_view import build_investor_opportunity_view
+from evidence_source_resolver import (
+    attach_human_evidence_source_traceability,
+    parse_sources_json,
+)
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -2055,7 +2059,69 @@ def _stage6_stale_pipeline_warning(session_report_ready_df) -> str | None:
     return None
 
 
-def _recommendation_block(result_df, report_ready_df=None):
+def _human_source_column_config():
+    """Native Streamlit clickable-link configuration for human evidence."""
+    try:
+        return {
+            "Human_Evidence_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary human source",
+                help="Open the strongest directly linked human-evidence source available for this candidate.",
+                display_text="View source",
+            )
+        }
+    except Exception:
+        return {}
+
+
+def _render_human_evidence_source_details(df, *, section_key):
+    """Collapsed, audit-friendly list of every linked human source per candidate."""
+    if not isinstance(df, pd.DataFrame) or df.empty or "Human_Evidence_Sources_JSON" not in df.columns:
+        return
+    rows_with_sources = []
+    plant_col = _resolve_report_plant_column(df)
+    if plant_col is None:
+        return
+    for _, row in df.iterrows():
+        sources = parse_sources_json(row.get("Human_Evidence_Sources_JSON"))
+        _unresolved_value = pd.to_numeric(
+            row.get("Human_Evidence_Unresolved_Source_Count", 0), errors="coerce"
+        )
+        unresolved = 0 if pd.isna(_unresolved_value) else int(_unresolved_value)
+        if sources or unresolved:
+            rows_with_sources.append((str(row.get(plant_col) or "Unknown candidate"), sources, unresolved))
+    if not rows_with_sources:
+        return
+
+    with st.expander("Human evidence sources — record-level details", expanded=False):
+        for plant_name, sources, unresolved in rows_with_sources:
+            st.markdown(f"**{plant_name}**")
+            if sources:
+                detail_df = pd.DataFrame([{
+                    "Evidence Record ID": src.get("Evidence_Record_ID"),
+                    "Title": src.get("Title"),
+                    "Study Type": src.get("Study_Type"),
+                    "Year": src.get("Year"),
+                    "Population": src.get("Population"),
+                    "Source": src.get("Resolved_URL"),
+                    "Resolution": src.get("Resolution_Status"),
+                } for src in sources])
+                try:
+                    config = {
+                        "Source": st.column_config.LinkColumn(
+                            "Source", display_text="View source"
+                        )
+                    }
+                except Exception:
+                    config = {}
+                st.dataframe(detail_df, width="stretch", column_config=config)
+            if unresolved:
+                st.warning(
+                    f"{unresolved} expected/identified human evidence source(s) are not fully "
+                    "linked to a resolvable evidence record. Internal IDs/counts remain in the audit export."
+                )
+
+
+def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
     # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
     # one-row-per-plant frame (merge_authoritative_scores()'s output) so
     # this block's picks can never disagree with the Step 5 shortlist or
@@ -2074,6 +2140,14 @@ def _recommendation_block(result_df, report_ready_df=None):
     # render_rd_candidates_step() for the real freshness guard.
     if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
         df = report_ready_df.copy()
+        if isinstance(evidence_df, pd.DataFrame):
+            df = attach_human_evidence_source_traceability(df, evidence_df)
+        # Apply the deterministic investor/audit adapter to the entire Stage-6
+        # frame (not only the orange Discovery subsection) so consistency and
+        # source-linkage diagnostics are visible in Priority and Expert Review
+        # as well. This appends presentation fields only; no rows/scores/decisions
+        # are changed.
+        df, _ = build_investor_opportunity_view(df, exclude_non_defensible=False)
 
         call_col = "Go_Investigate_Hold_NoGo" if "Go_Investigate_Hold_NoGo" in df.columns else None
 
@@ -2217,6 +2291,15 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "Evidence_Adjudication_Evidence_Count",
                 "AI_Direct_Outcome_Evidence_Count",
                 "AI_Direct_Human_Outcome_Evidence_Count",
+                "Human_Evidence_Source_Count",
+                "Human_Evidence_Resolved_Source_Count",
+                "Human_Evidence_Unresolved_Source_Count",
+                "Human_Evidence_Primary_Source_Title",
+                "Human_Evidence_Primary_Source_URL",
+                "Human_Evidence_Source_Resolution_Status",
+                "Human_Evidence_Status",
+                "Evidence_Consistency_Status",
+                "Evidence_Consistency_Issues",
                 "Evidence_Coherence_Status",
                 "Evidence_Adjudication_Fallback_Reason",
                 "Indication_Evidence_Direction",
@@ -2321,7 +2404,14 @@ def _recommendation_block(result_df, report_ready_df=None):
             c for c in ["Stage_6_Section"] + display_cols
             if c in _recommended_display.columns
         ]
-        st.dataframe(_recommended_display[_primary_cols].head(10), width="stretch")
+        st.dataframe(
+            _recommended_display[_primary_cols].head(10),
+            width="stretch",
+            column_config=_human_source_column_config(),
+        )
+        _render_human_evidence_source_details(
+            _recommended_display.head(10), section_key="priority"
+        )
 
         # Unresolved candidates get their own amber section.  They are not
         # labelled weak/rejected because EXPERT REVIEW REQUIRED means the
@@ -2346,7 +2436,14 @@ def _recommendation_block(result_df, report_ready_df=None):
                 ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
                 if c in _review_display.columns
             ]
-            st.dataframe(_review_display[_review_cols].head(20), width="stretch")
+            st.dataframe(
+                _review_display[_review_cols].head(20),
+                width="stretch",
+                column_config=_human_source_column_config(),
+            )
+            _render_human_evidence_source_details(
+                _review_display.head(20), section_key="expert_review"
+            )
 
         # The red section is reserved for genuinely non-actionable scientific
         # outcomes (insufficient evidence / Hold / hard No-Go / excluded), not
@@ -2364,7 +2461,11 @@ def _recommendation_block(result_df, report_ready_df=None):
                 ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
                 if c in _weak_display.columns
             ]
-            st.dataframe(_weak_display[_weak_cols].head(20), width="stretch")
+            st.dataframe(
+                _weak_display[_weak_cols].head(20),
+                width="stretch",
+                column_config=_human_source_column_config(),
+            )
 
         # RD Discovery Hypotheses -- a THIRD, positively-framed lane
         # (external review, 2026-09-08): a mechanism-only, under-studied
@@ -2427,7 +2528,14 @@ def _recommendation_block(result_df, report_ready_df=None):
                 _discovery_view
             )
             if not _discovery_compact_df.empty:
-                st.dataframe(_discovery_compact_df.head(20), width="stretch")
+                st.dataframe(
+                    _discovery_compact_df.head(20),
+                    width="stretch",
+                    column_config=_human_source_column_config(),
+                )
+                _render_human_evidence_source_details(
+                    _discovery_full_df.head(20), section_key="discovery"
+                )
             else:
                 st.caption(
                     "No candidate in this run has a defensible admission "
@@ -2452,7 +2560,11 @@ def _recommendation_block(result_df, report_ready_df=None):
                 # De-duplicate while preserving the Discovery_Potential_Score
                 # ordering build_rd_discovery_hypothesis_view() already applied.
                 _discovery_cols = list(dict.fromkeys(_discovery_cols))
-                st.dataframe(_discovery_full_df[_discovery_cols].head(20), width="stretch")
+                st.dataframe(
+                    _discovery_full_df[_discovery_cols].head(20),
+                    width="stretch",
+                    column_config=_human_source_column_config(),
+                )
 
             st.session_state["rd_discovery_investor_view_full_df"] = _discovery_full_df
 
@@ -3870,6 +3982,9 @@ def render_rd_candidates_step(inputs):
         # on-screen columns. build_investor_opportunity_view()'s full_df
         # is exactly report_ready_df with those columns appended.
         if isinstance(_decision_table_source_df, pd.DataFrame) and not _decision_table_source_df.empty:
+            _decision_table_source_df = attach_human_evidence_source_traceability(
+                _decision_table_source_df, _get_evidence_df()
+            )
             _decision_table_source_df, _ = build_investor_opportunity_view(
                 _decision_table_source_df,
             )
@@ -3940,7 +4055,9 @@ def render_rd_candidates_step(inputs):
         if _stale_warning:
             st.warning(_stale_warning)
         else:
-            _recommendation_block(result_df, _session_report_ready_df)
+            _recommendation_block(
+                result_df, _session_report_ready_df, evidence_df=_get_evidence_df()
+            )
 
     _render_ai_rd_insights()
     _render_ai_status_summary()

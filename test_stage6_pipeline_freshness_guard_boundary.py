@@ -65,14 +65,22 @@ def test_pure_helper_true_for_frame_with_no_fingerprint_column():
 
 def test_pure_helper_true_when_fingerprint_matches_current_code():
     df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
-    df["Pipeline_Implementation_Fingerprint"] = src._pipeline_implementation_fingerprint()
+    df["Scientific_Implementation_Fingerprint"] = src.scientific_implementation_fingerprint()
     assert src._report_ready_matches_current_pipeline(df) is True
 
 
 def test_pure_helper_false_when_fingerprint_is_stale():
     df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
-    df["Pipeline_Implementation_Fingerprint"] = "an-old-stale-fingerprint"
+    df["Scientific_Implementation_Fingerprint"] = "an-old-stale-fingerprint"
     assert src._report_ready_matches_current_pipeline(df) is False
+
+
+def test_pure_helper_still_honors_legacy_pipeline_fingerprint_column():
+    # Section 6 migration: a report-ready frame written before this pass
+    # (only the old combined column) must still be readable.
+    df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
+    df["Pipeline_Implementation_Fingerprint"] = src._pipeline_implementation_fingerprint()
+    assert src._report_ready_matches_current_pipeline(df) is True
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +105,7 @@ def test_recommendation_block_renders_synthetic_frame_without_fingerprint():
 
 def test_stage6_boundary_current_fingerprint_may_render():
     df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
-    df["Pipeline_Implementation_Fingerprint"] = src._pipeline_implementation_fingerprint()
+    df["Scientific_Implementation_Fingerprint"] = src.scientific_implementation_fingerprint()
     assert src._stage6_stale_pipeline_warning(df) is None
 
 
@@ -111,8 +119,19 @@ def test_stage6_boundary_missing_fingerprint_is_stale():
 
 def test_stage6_boundary_outdated_fingerprint_is_stale():
     df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
-    df["Pipeline_Implementation_Fingerprint"] = "an-old-stale-fingerprint"
+    df["Scientific_Implementation_Fingerprint"] = "an-old-stale-fingerprint"
     assert src._stage6_stale_pipeline_warning(df) == src._STAGE6_STALE_PIPELINE_MESSAGE
+
+
+def test_stage6_boundary_commercial_only_change_does_not_invalidate_result():
+    # Section 6's central requirement: a commercial/investor-view-only code
+    # change must NOT invalidate a scientifically valid Stage-5 result.
+    # Simulated here by giving a correct scientific fingerprint alongside a
+    # deliberately "wrong" commercial one -- the boundary must still render.
+    df = pd.DataFrame([_report_ready_row("Strong plant", "Go", 90.0)])
+    df["Scientific_Implementation_Fingerprint"] = src.scientific_implementation_fingerprint()
+    df["Commercial_Implementation_Fingerprint"] = "some-other-commercial-fingerprint"
+    assert src._stage6_stale_pipeline_warning(df) is None
 
 
 def test_stage6_boundary_empty_or_missing_frame_is_not_stale():
@@ -120,6 +139,43 @@ def test_stage6_boundary_empty_or_missing_frame_is_not_stale():
     # frame in this session.
     assert src._stage6_stale_pipeline_warning(None) is None
     assert src._stage6_stale_pipeline_warning(pd.DataFrame()) is None
+
+
+def test_stage6_discovery_table_compact_view_contains_commercial_opportunity_class():
+    """End-to-end (Feature 1/3): calling the real _recommendation_block()
+    render path with a discovery-lane candidate must render a compact
+    investor table containing Commercial_Opportunity_Class -- not just the
+    old raw column set.
+    """
+    df = pd.DataFrame([{
+        "Alternative_Plant": "Withania somnifera",
+        "RD_Discovery_Lane": "R&D Discovery Hypothesis",
+        "Already_In_Internal_Catalogue": False,
+        "Discovery_Linked_Target_Count": 2,
+        "Discovery_Linked_Mechanism_Count": 1,
+        "Discovery_Linked_Compound_Count": 1,
+        "Discovery_Potential_Score": 70.0,
+        "Evidence_Maturity_Score": 15.0,
+        "Direct_Indication_Evidence_Count": 0,
+        "Overall_Score": 40.0,
+        "R&D_Opportunity_Score": 40.0,
+        "Commercial_Status_Overall": "NO_VERIFIED_PRODUCT_FOUND_IN_COVERED_SOURCES",
+        "Commercial_Status_For_Indication": "NO_VERIFIED_PRODUCT_FOR_INDICATION_IN_COVERED_SOURCES",
+        "Commercial_Opportunity_Class": "WHITE_SPACE_OPPORTUNITY",
+        "Safety_Concern_Level": "NONE",
+        "Regulatory_Prohibition_Present": False,
+        "Go_Investigate_Hold_NoGo": "Hold",
+    }])
+    with mock.patch.object(src, "st") as mock_st:
+        src._recommendation_block(pd.DataFrame(), df)
+
+    rendered_frames = [
+        call.args[0] for call in mock_st.dataframe.call_args_list if call.args
+    ]
+    assert any(
+        isinstance(frame, pd.DataFrame) and "Commercial_Opportunity_Class" in frame.columns
+        for frame in rendered_frames
+    ), "compact investor view must include Commercial_Opportunity_Class"
 
 
 def test_stage6_call_site_logic_warns_and_skips_stale_recommendation():

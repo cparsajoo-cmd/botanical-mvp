@@ -25,6 +25,11 @@ from rd_discovery_classification import (
 )
 from commercial_opportunity_classification import add_commercial_opportunity_class
 from commercial_evidence_import import normalize_commercial_evidence_import
+from pipeline_fingerprint import (
+    scientific_implementation_fingerprint,
+    commercial_implementation_fingerprint,
+)
+from post_discovery_investor_view import build_investor_opportunity_view
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -349,6 +354,79 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
     if isinstance(merged, pd.DataFrame) and not merged.empty:
         merged = add_commercial_opportunity_class(merged)
     return merged
+
+
+def refresh_commercial_and_investor_view(
+    result_df, plant_summary_df, *, indication, dosage_form, market,
+    commercial_evidence_df=None, market_plants=None,
+):
+    """Mandatory Section 6 feature: rerun ONLY commercial enrichment,
+    commercial classification, and the report-ready merge/investor-view
+    build, starting from an EXISTING valid Stage-5 scientific result.
+
+    Deliberately calls NONE of: MarketIntelligenceEngine... no, wait --
+    it DOES call MarketIntelligenceEngine (that's the commercial part,
+    always local/deterministic, never AI). What it deliberately never
+    calls: engine.run() / indication_candidate_discovery() /
+    build_plant_candidate_shortlist() -- i.e. nothing that performs
+    scientific evidence retrieval, mechanistic discovery, scientific
+    scoring, or AI evidence adjudication. Every one of those is expensive
+    and/or AI-calling; every function this DOES call
+    (_attach_commercial_market_intelligence, rescore_commercial_component,
+    _finalize_step5_summary, _merge_and_sync_final_decision_status) is
+    local, deterministic, and network/AI-free.
+
+    ``result_df``/``plant_summary_df`` are the caller's ALREADY-COMPUTED
+    Stage-5 frames (e.g. from st.session_state["rd_candidates_df"] /
+    ["rd_candidate_plant_summary_df"]) -- this function does not create
+    them, only re-derives commercial/presentation state from them.
+
+    Returns (result_df, plant_summary_df, report_ready_df) -- report_ready_df
+    already carries Commercial_Opportunity_Class (via
+    _merge_and_sync_final_decision_status) and the refreshed
+    Commercial_Implementation_Fingerprint / unchanged
+    Scientific_Implementation_Fingerprint.
+    """
+    if not isinstance(result_df, pd.DataFrame) or result_df.empty:
+        return result_df, plant_summary_df, pd.DataFrame()
+    if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
+        return result_df, plant_summary_df, pd.DataFrame()
+
+    if market_plants is None:
+        market_plants = _step5_commercial_enrichment_plants(plant_summary_df)
+
+    result_df = _attach_commercial_market_intelligence(
+        result_df,
+        evidence_df=pd.DataFrame(),  # no scientific evidence re-read here --
+        # the caller's existing result_df already carries everything
+        # scientific from the original run; only commercial_evidence_df
+        # (structured import / cache) is a real input to this refresh.
+        indication=indication,
+        dosage_form=dosage_form,
+        market=market,
+        candidate_plants=market_plants,
+        commercial_evidence_df=commercial_evidence_df,
+    )
+
+    if market_plants:
+        plant_summary_df = rescore_commercial_component(
+            plant_summary_df, result_df, market_plants,
+        )
+    plant_summary_df = _finalize_step5_summary(plant_summary_df)
+
+    scientific_fingerprint = scientific_implementation_fingerprint()
+    commercial_fingerprint = commercial_implementation_fingerprint()
+    result_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+    result_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
+    plant_summary_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+    plant_summary_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
+
+    report_ready_df = _merge_and_sync_final_decision_status(result_df, plant_summary_df)
+    if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
+        report_ready_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+        report_ready_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
+
+    return result_df, plant_summary_df, report_ready_df
 
 
 def _resolve_report_plant_column(df):
@@ -1866,30 +1944,47 @@ def _no_go_mask(df: pd.DataFrame) -> pd.Series:
 
 
 def _report_ready_matches_current_pipeline(df: pd.DataFrame) -> bool:
-    """True iff every fingerprinted row in ``df`` was produced by the Stage 5/6
-    code currently on disk.
+    """True iff every fingerprinted row in ``df`` was produced by the Stage 5
+    SCIENTIFIC code currently on disk.
+
+    Section 6 fix (2026-09-09): this now keys off
+    ``Scientific_Implementation_Fingerprint`` (pipeline_fingerprint.py)
+    rather than the old combined ``Pipeline_Implementation_Fingerprint``,
+    so a commercial/investor-view-only code change no longer marks a
+    scientifically valid Stage-5 result as stale. Falls back to the legacy
+    ``Pipeline_Implementation_Fingerprint`` column for older
+    report-ready frames written before this column existed, so an
+    in-progress session isn't punished mid-migration.
 
     Pure/side-effect-free by design (no Streamlit calls) so it can be tested
     directly and reused at any real call site. An empty ``df`` or a frame with
-    no ``Pipeline_Implementation_Fingerprint`` column at all trivially has no
-    fingerprints to disagree with the current one, so it is treated as
-    matching here -- callers that need "no fingerprint at all" to count as
-    stale (the real production session-state path) decide that themselves,
-    since a synthetic/unit-test frame legitimately has no fingerprint and
-    must not be penalized for it.
+    no fingerprint column at all trivially has no fingerprints to disagree
+    with the current one, so it is treated as matching here -- callers that
+    need "no fingerprint at all" to count as stale (the real production
+    session-state path) decide that themselves, since a synthetic/unit-test
+    frame legitimately has no fingerprint and must not be penalized for it.
     """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return True
-    if "Pipeline_Implementation_Fingerprint" not in df.columns:
+    fingerprint_column = (
+        "Scientific_Implementation_Fingerprint"
+        if "Scientific_Implementation_Fingerprint" in df.columns
+        else "Pipeline_Implementation_Fingerprint"
+    )
+    if fingerprint_column not in df.columns:
         return True
-    current_pipeline_fingerprint = _pipeline_implementation_fingerprint()
+    current_fingerprint = (
+        scientific_implementation_fingerprint()
+        if fingerprint_column == "Scientific_Implementation_Fingerprint"
+        else _pipeline_implementation_fingerprint()
+    )
     report_fingerprints = set(
-        df["Pipeline_Implementation_Fingerprint"]
+        df[fingerprint_column]
         .dropna().astype(str).str.strip().tolist()
     )
     if not report_fingerprints:
         return True
-    return report_fingerprints == {current_pipeline_fingerprint}
+    return report_fingerprints == {current_fingerprint}
 
 
 _STAGE6_STALE_PIPELINE_MESSAGE = (
@@ -1913,7 +2008,9 @@ def _stage6_stale_pipeline_warning(session_report_ready_df) -> str | None:
     """
     if not isinstance(session_report_ready_df, pd.DataFrame) or session_report_ready_df.empty:
         return None
-    if "Pipeline_Implementation_Fingerprint" not in session_report_ready_df.columns:
+    has_scientific_column = "Scientific_Implementation_Fingerprint" in session_report_ready_df.columns
+    has_legacy_column = "Pipeline_Implementation_Fingerprint" in session_report_ready_df.columns
+    if not has_scientific_column and not has_legacy_column:
         return _STAGE6_STALE_PIPELINE_MESSAGE
     if not _report_ready_matches_current_pipeline(session_report_ready_df):
         return _STAGE6_STALE_PIPELINE_MESSAGE
@@ -2279,21 +2376,47 @@ def _recommendation_block(result_df, report_ready_df=None):
                 "research question, not because the safety concern is "
                 "resolved; see Safety_Flags / Safety_Concern_Level."
             )
-            _discovery_cols = [
-                c for c in (
-                    ["Alternative_Plant", "RD_Discovery_Lane",
-                     "Discovery_Potential_Score", "Evidence_Maturity_Score",
-                     "Discovery_Linked_Targets", "Discovery_Linked_Mechanisms",
-                     "Discovery_Linked_Compounds", "Discovery_Compound_Specificity",
-                     "Pipeline_Implementation_Fingerprint"]
-                    + display_cols + ["Why_Selected_or_Rejected"]
+            # Investor/R&D decision view (Sections 1/13/31 of the 2026-09-09
+            # follow-up): the compact table below is built from
+            # post_discovery_investor_view.py, not from raw pipeline
+            # columns -- every candidate shown gets a deterministic
+            # Why_Interesting / What_Is_New / Key_Evidence_Gap / Next_R&D_
+            # Step / Commercial_Opportunity(_Class) rather than a bare
+            # score. Candidates with no defensible admission provenance
+            # (Section 8/22) are excluded from THIS compact view but remain
+            # in the full audit export below.
+            _discovery_full_df, _discovery_compact_df = build_investor_opportunity_view(
+                _discovery_view
+            )
+            if not _discovery_compact_df.empty:
+                st.dataframe(_discovery_compact_df.head(20), width="stretch")
+            else:
+                st.caption(
+                    "No candidate in this run has a defensible admission "
+                    "rationale for the compact investor view; see the full "
+                    "audit export for details."
                 )
-                if c in _discovery_view.columns
-            ]
-            # De-duplicate while preserving the Discovery_Potential_Score
-            # ordering build_rd_discovery_hypothesis_view() already applied.
-            _discovery_cols = list(dict.fromkeys(_discovery_cols))
-            st.dataframe(_discovery_view[_discovery_cols].head(20), width="stretch")
+
+            with st.expander("Full scientific/audit columns for this section"):
+                _discovery_cols = [
+                    c for c in (
+                        ["Alternative_Plant", "RD_Discovery_Lane",
+                         "Discovery_Potential_Score", "Evidence_Maturity_Score",
+                         "Discovery_Linked_Targets", "Discovery_Linked_Mechanisms",
+                         "Discovery_Linked_Compounds", "Discovery_Compound_Specificity",
+                         "Pipeline_Implementation_Fingerprint",
+                         "Scientific_Implementation_Fingerprint",
+                         "Commercial_Implementation_Fingerprint"]
+                        + display_cols + ["Why_Selected_or_Rejected"]
+                    )
+                    if c in _discovery_full_df.columns
+                ]
+                # De-duplicate while preserving the Discovery_Potential_Score
+                # ordering build_rd_discovery_hypothesis_view() already applied.
+                _discovery_cols = list(dict.fromkeys(_discovery_cols))
+                st.dataframe(_discovery_full_df[_discovery_cols].head(20), width="stretch")
+
+            st.session_state["rd_discovery_investor_view_full_df"] = _discovery_full_df
 
         return
 
@@ -2871,6 +2994,8 @@ def render_rd_candidates_step(inputs):
 
     evidence_df_for_run = _get_evidence_df()
     pipeline_fingerprint = _pipeline_implementation_fingerprint()
+    scientific_fingerprint = scientific_implementation_fingerprint()
+    commercial_fingerprint = commercial_implementation_fingerprint()
     run_key = _candidate_discovery_run_key(
         indication=indication,
         dosage_form=dosage_form,
@@ -2985,6 +3110,8 @@ def render_rd_candidates_step(inputs):
                     # lets a CSV prove which code implementation generated it,
                     # eliminating ambiguity after Streamlit hot reloads.
                     result_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                    result_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                    result_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
 
                 # The authoritative Stage-5 catalogue pre-screen now runs INSIDE
                 # indication_candidate_discovery, before its expensive per-plant
@@ -3029,6 +3156,8 @@ def render_rd_candidates_step(inputs):
                     )
                     if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty:
                         plant_summary_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                        plant_summary_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                        plant_summary_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
                     market_plants = _step5_commercial_enrichment_plants(plant_summary_df)
                     _perf(
                         f"shortlist done plants={len(plant_summary_df)} "
@@ -3136,6 +3265,8 @@ def render_rd_candidates_step(inputs):
                     )
                     if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
                         st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                        st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                        st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
                     _perf(
                         f"merge_authoritative_scores() done "
                         f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
@@ -3661,6 +3792,18 @@ def render_rd_candidates_step(inputs):
         _decision_table_source_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(_decision_table_source_df, pd.DataFrame) or _decision_table_source_df.empty:
             _decision_table_source_df = result_df
+        # Export requirement (2026-09-09 follow-up): the downloadable
+        # decision table must be audit-rich, including the investor/audit
+        # fields (Why_Interesting, What_Is_New, Key_Evidence_Gap,
+        # Next_R&D_Step, Discovery_Admission_Path/Rationale,
+        # Commercial_Opportunity_Score/Class/Assessment_*, Development_
+        # Readiness_Score, both fingerprints) -- not just the compact
+        # on-screen columns. build_investor_opportunity_view()'s full_df
+        # is exactly report_ready_df with those columns appended.
+        if isinstance(_decision_table_source_df, pd.DataFrame) and not _decision_table_source_df.empty:
+            _decision_table_source_df, _ = build_investor_opportunity_view(
+                _decision_table_source_df,
+            )
         st.download_button(
             "Download decision table (CSV)",
             data=_decision_table_source_df.to_csv(index=False).encode("utf-8"),

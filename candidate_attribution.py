@@ -80,6 +80,41 @@ _ADMINISTRATION_CUES = (
     "orally", "oral administration",
 )
 
+# REMAINING DEFECT B FIX: an administration cue co-occurring with the
+# candidate's name in one sentence is still not sufficient -- the same
+# sentence (or one very like it) commonly says the candidate was NOT what
+# was given (negation), was given historically/in a prior study rather
+# than in the present one (background), or was actively excluded from the
+# study population. Every phrase below describes SENTENCE STRUCTURE/STUDY-
+# DESIGN CONTEXT only -- nothing here names a botanical, compound, or
+# indication, so this stays general across arbitrary candidates and
+# indications. A sentence matching any of these is disqualified outright
+# and can never contribute to verification, regardless of what
+# administration cues or candidate-name mentions it also contains.
+_NEGATION_OR_EXCLUSION_CUES = (
+    "rather than", "instead of", "in place of", "as opposed to",
+    "not receive", "did not receive", "does not receive", "never received",
+    "not administered", "not given", "without receiving",
+    "no longer receiving", "discontinued",
+    "excluded", "exclusion criteria", "were excluded", "was excluded",
+    "ineligible", "not eligible",
+)
+
+_HISTORICAL_OR_BACKGROUND_CUES = (
+    "prior treatment", "prior use", "prior exposure", "prior therapy",
+    "prior studies", "prior trials",
+    "previously treated", "previously used", "previously received",
+    "previously administered", "previously prescribed",
+    "history of", "previous use", "previous treatment", "previous therapy",
+    "previous studies", "previous research", "previous trials",
+    "earlier studies", "earlier research",
+    "has previously", "have previously", "had previously",
+    "was previously", "were previously", "previously been",
+    "traditionally used", "traditionally administered", "traditionally applied",
+    "is traditionally", "are traditionally", "has traditionally", "have traditionally",
+    "in the past", "historically used", "historically administered",
+)
+
 
 def _name_tokens(name: object) -> list[str]:
     """Whole-word tokens (>=3 chars) for a scientific or common name."""
@@ -157,26 +192,46 @@ def _split_sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?;])\s+", str(text or "")) if s.strip()]
 
 
+def _is_disqualified_sentence(low: str) -> bool:
+    """True when ``low`` (an already-lowercased sentence) describes
+    negation, exclusion, or historical/background exposure rather than the
+    present study's actual administered intervention (REMAINING DEFECT B).
+    A disqualified sentence can never contribute to verification, even if
+    it also contains an administration cue and the candidate's name --
+    that combination is exactly the false-positive pattern being fixed
+    (e.g. "rather than CANDIDATE", "prior treatment with CANDIDATE",
+    "CANDIDATE... were excluded", "CANDIDATE has previously been
+    administered").
+    """
+    return any(cue in low for cue in _NEGATION_OR_EXCLUSION_CUES) or any(
+        cue in low for cue in _HISTORICAL_OR_BACKGROUND_CUES
+    )
+
+
 def administration_context_text(raw_text: object) -> str:
     """Return only the sentences of ``raw_text`` that themselves contain a
-    generic administration/exposure cue (see _ADMINISTRATION_CUES) -- used
-    for unstructured literature (e.g. PubMed abstracts) that has no
-    structured intervention field. A botanical named only in a sentence
-    without such a cue (background, eligibility, discussion, a different
-    arm, prior-treatment history) is excluded, so it cannot verify
-    attribution merely by co-occurring somewhere in the abstract.
+    generic administration/exposure cue (see _ADMINISTRATION_CUES) AND are
+    not disqualified by a negation/exclusion/historical cue (see
+    _is_disqualified_sentence) -- used for unstructured literature (e.g.
+    PubMed abstracts) that has no structured intervention field. A
+    botanical named only in a sentence without a genuine, non-disqualified
+    administration cue (background, eligibility, discussion, a different
+    arm, prior-treatment history, negated or excluded exposure) is
+    excluded, so it cannot verify attribution merely by co-occurring
+    somewhere in the abstract.
 
-    Returns an empty string when no sentence in ``raw_text`` carries an
-    administration cue at all -- the correct "cannot be established from
-    the available record" signal for verify_pubmed_intervention_attribution
-    to fail closed on, per the cahier's fail-safe requirement.
+    Returns an empty string when no sentence in ``raw_text`` qualifies at
+    all -- the correct "cannot be established from the available record"
+    signal for verify_pubmed_intervention_attribution to fail closed on,
+    per the cahier's fail-safe requirement.
     """
     sentences = _split_sentences(str(raw_text or ""))
-    lowered_cues = _ADMINISTRATION_CUES
     kept = []
     for sentence in sentences:
         low = sentence.lower()
-        if any(cue in low for cue in lowered_cues):
+        if _is_disqualified_sentence(low):
+            continue
+        if any(cue in low for cue in _ADMINISTRATION_CUES):
             kept.append(sentence)
     return " ".join(kept)
 

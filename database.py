@@ -114,6 +114,17 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     # not run the migrations yet, but when present they must round-trip; losing
     # them would force downstream code back to text heuristics.
     "llm_result_direction", "llm_safety_signal", "llm_gate_assertions",
+    # Problem 1 (remaining defect A) — migrations/0011_add_candidate_
+    # attribution.sql. Candidate_Attribution_Verified/_Basis are
+    # decision-critical (evidence_adjudication_engine.py and
+    # candidate_shortlisting.py both fail CLOSED -- treat the record as
+    # unverified -- whenever this is absent). Following the SAME optional-
+    # column fallback as every field above means an unmigrated deployment
+    # degrades safely (missing => unverified, never silently upgraded to
+    # verified) rather than raising, while the existing fallback's own
+    # print() already makes that condition observable in logs instead of
+    # silently discarding the field.
+    "candidate_attribution_verified", "candidate_attribution_basis",
 }
 
 
@@ -810,6 +821,20 @@ def save_evidence_record(record):
         if record.get("Source_Authority_Score") not in (None, "") else None,
         "source_authority_reason": record.get("Source_Authority_Reason") or None,
         "llm_gate_assertions": record.get("LLM_Gate_Assertions") or None,
+
+        # Problem 1 (remaining defect A) fix -- these were previously
+        # computed by connectors (candidate_attribution.py) and preserved
+        # through evidence_standardizer.py, but silently dropped right
+        # here: nothing in this payload ever carried them into
+        # evidence_records, so a verified record's attribution status was
+        # lost on every save/reload round trip and downstream fail-closed
+        # logic then (correctly, given what it could see) treated it as
+        # unverified. `.get(key)` (not `.get(key, "")`) preserves True/
+        # False/None exactly -- an absent value must reach the database as
+        # NULL, never as a falsy placeholder that could be misread as an
+        # explicit False.
+        "candidate_attribution_verified": record.get("Candidate_Attribution_Verified"),
+        "candidate_attribution_basis": record.get("Candidate_Attribution_Basis") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -955,6 +980,16 @@ def load_evidence_records():
             "Source_Authority": item.get("source_authority"),
             "Source_Authority_Score": item.get("source_authority_score"),
             "Source_Authority_Reason": item.get("source_authority_reason"),
+
+            # Problem 1 (remaining defect A) fix -- degrade-safely-to-None
+            # behavior, same as every optional Phase 2/3 field above: an
+            # unmigrated table (column absent) and a migrated table with a
+            # genuinely null value both read as None here, which
+            # _row_has_verified_candidate_attribution() / the adjudication
+            # engine's canonical-field read both already treat as
+            # "unverified" -- i.e. fail closed. Never defaulted to True.
+            "Candidate_Attribution_Verified": item.get("candidate_attribution_verified"),
+            "Candidate_Attribution_Basis": item.get("candidate_attribution_basis") or "",
 
             # Task 10.2 — previously discarded on read (id was selected
             # implicitly via "*" but never mapped into the returned row

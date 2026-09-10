@@ -1148,6 +1148,7 @@ from phase5_scoring_config import (
     UNKNOWN as _APPL_UNKNOWN,
     MISMATCH as _APPL_MISMATCH,
     NOT_APPLICABLE as _APPL_NOT_APPLICABLE,
+    TARGET_UNSPECIFIED as _APPL_TARGET_UNSPECIFIED,
     APPLICABILITY_FACTORS,
     APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
     APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
@@ -1625,6 +1626,7 @@ def evaluate_applicability(
             "Record_Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
             "Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
             "Applicability_Data_Completeness": "preliminary",
+            "Target_Definition_Completeness": "incomplete",
         }
 
     dimension_status = {
@@ -1642,22 +1644,23 @@ def evaluate_applicability(
         "indication": _appl_dimension_indication(evidence_row, target_context),
     }
 
-    # Production transferability contexts explicitly identify clinically
-    # material dimensions that must be known before a record may be called a
-    # complete MATCH.  If the target product itself has not specified one of
-    # those dimensions, the older implementation returned NOT_APPLICABLE and
-    # silently ignored it, allowing indication+preparation alone to become a
-    # misleading full match.  Required-but-unspecified is uncertainty, not
-    # irrelevance, so convert only those dimensions to UNKNOWN.  Legacy callers
-    # that do not provide Required_Transferability_Dimensions retain their
-    # historical behavior unchanged.
+    # A dimension the target/product itself never specified is different
+    # from a target dimension that was specified but is missing from the
+    # evidence record.  The former must not penalize evidence transferability;
+    # it is tracked separately as target-definition incompleteness.
     required_dimensions = set(target_context.get("Required_Transferability_Dimensions") or ())
     for dim in required_dimensions:
         if dim in dimension_status and dimension_status[dim] == _APPL_NOT_APPLICABLE:
-            dimension_status[dim] = _APPL_UNKNOWN
+            dimension_status[dim] = _APPL_TARGET_UNSPECIFIED
+
+    target_unspecified_dims = {
+        dim for dim, status in dimension_status.items() if status == _APPL_TARGET_UNSPECIFIED
+    }
+    target_definition_completeness = "incomplete" if target_unspecified_dims else "complete"
 
     evaluable = {
-        dim: status for dim, status in dimension_status.items() if status != _APPL_NOT_APPLICABLE
+        dim: status for dim, status in dimension_status.items()
+        if status not in (_APPL_NOT_APPLICABLE, _APPL_TARGET_UNSPECIFIED)
     }
 
     if not evaluable:
@@ -1667,6 +1670,7 @@ def evaluate_applicability(
             "Record_Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
             "Applicability_Factor": APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
             "Applicability_Data_Completeness": APPLICABILITY_COMPLETENESS_WHEN_NOTHING_EVALUABLE,
+            "Target_Definition_Completeness": target_definition_completeness,
         }
 
     record_factor = min(APPLICABILITY_FACTORS[status] for status in evaluable.values())
@@ -1685,4 +1689,5 @@ def evaluate_applicability(
         "Record_Applicability_Factor": record_factor,
         "Applicability_Factor": record_factor,
         "Applicability_Data_Completeness": completeness,
+        "Target_Definition_Completeness": target_definition_completeness,
     }

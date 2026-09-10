@@ -4,6 +4,10 @@ from source_ingestion_engine import normalize_source_record
 from standard_evidence_builder import build_standard_evidence
 from standard_evidence_schema import canonicalize_evidence_record
 from evidence_authority import classify_source_authority_from_row
+from candidate_intervention_assertion import (
+    assertion_from_llm_extraction,
+    assertion_from_deterministic_fast_path,
+)
 
 try:
     from llm_extractor import extract_evidence_with_llm, extract_gate_assertions_with_llm
@@ -104,11 +108,24 @@ def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
         not normalized.get(field)
         for field in ("Preparation", "Administration_Route", "Dose", "Plant_Part")
     )
+    # Problem 1 (architectural fix) -- when a structured connector
+    # (e.g. clinicaltrials_connector.py) has ALREADY set
+    # Candidate_Attribution_Verified from its own structured intervention
+    # field (see candidate_attribution.verify_intervention_attribution,
+    # unchanged), that judgment is authoritative and must not be
+    # recomputed here. Only unstructured sources that left this field
+    # unset (PubMed) need the LLM-derived Candidate_Intervention_Assertion
+    # below.
+    needs_candidate_intervention_assertion = not (
+        "Candidate_Attribution_Verified" in normalized
+        and normalized.get("Candidate_Attribution_Verified") is not None
+    )
 
     if allow_llm and extract_evidence_with_llm is not None and (
         not already_has_reliable_evidence_level
         or needs_structured_assertion
         or needs_transferability_context
+        or needs_candidate_intervention_assertion
     ):
         try:
             llm = extract_evidence_with_llm(
@@ -123,6 +140,29 @@ def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
 
             if not normalized.get("Scientific_Name"):
                 normalized["Scientific_Name"] = llm.get("plant_scientific_name", "")
+
+            # Problem 1 (architectural fix) -- derive Candidate_Attribution_
+            # Verified from a canonical Candidate_Intervention_Assertion
+            # built from this SAME extraction call's new candidate_
+            # intervention_* fields, with a verbatim-supporting-span check
+            # (see candidate_intervention_assertion.py). This is what
+            # replaces every prior regex/token-distance PubMed heuristic.
+            if needs_candidate_intervention_assertion:
+                _source_text_for_span = f"{normalized.get('Source_Title', '')}\n\n{normalized.get('Notes', '')}"
+                _cia = assertion_from_llm_extraction(
+                    llm,
+                    source_text=_source_text_for_span,
+                    scientific_name=normalized.get("Scientific_Name", ""),
+                )
+                normalized["Candidate_Attribution_Verified"] = _cia.verified
+                normalized["Candidate_Attribution_Basis"] = (
+                    _cia.candidate_role.value if _cia.verified else ""
+                )
+                normalized["Candidate_Intervention_Role"] = _cia.candidate_role.value
+                normalized["Candidate_Intervention_Polarity"] = _cia.polarity.value
+                normalized["Candidate_Intervention_Temporality"] = _cia.temporality.value
+                normalized["Candidate_Intervention_Supporting_Text"] = _cia.supporting_text
+                normalized["Candidate_Intervention_Extraction_Method"] = _cia.extraction_method
 
             # Never overwrite reliable connector/source fields merely because
             # structured assertion extraction was needed.
@@ -235,6 +275,34 @@ def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
             # genuinely said. Leaving it unset lets the canonical
             # resolver's normal precedence (source > llm_result_direction
             # > reported_direction/text-fallback) apply correctly instead.
+
+    # Problem 1 (architectural fix) -- unified fail-closed fallback. This
+    # runs whenever needs_candidate_intervention_assertion was True but
+    # nothing above actually set the field: LLM extraction disabled
+    # (allow_llm=False), extract_evidence_with_llm unavailable, the whole
+    # try block above never ran because none of the OTHER trigger
+    # conditions applied, or the LLM call itself raised. The very
+    # conservative deterministic fast path (two unambiguous constructions
+    # only -- see candidate_intervention_assertion.py) is tried first;
+    # anything it cannot establish falls closed to UNVERIFIED rather than
+    # ever defaulting to verified.
+    if needs_candidate_intervention_assertion and not (
+        "Candidate_Attribution_Verified" in normalized
+        and normalized.get("Candidate_Attribution_Verified") is not None
+    ):
+        _fast = assertion_from_deterministic_fast_path(
+            normalized.get("Notes", ""),
+            scientific_name=normalized.get("Scientific_Name", ""),
+        )
+        normalized["Candidate_Attribution_Verified"] = _fast.verified
+        normalized["Candidate_Attribution_Basis"] = (
+            _fast.candidate_role.value if _fast.verified else ""
+        )
+        normalized["Candidate_Intervention_Role"] = _fast.candidate_role.value
+        normalized["Candidate_Intervention_Polarity"] = _fast.polarity.value
+        normalized["Candidate_Intervention_Temporality"] = _fast.temporality.value
+        normalized["Candidate_Intervention_Supporting_Text"] = _fast.supporting_text
+        normalized["Candidate_Intervention_Extraction_Method"] = _fast.extraction_method
 
     # High-stakes semantic gate extraction is enabled by default for new
     # evidence.  It remains independently switchable for operational reasons,

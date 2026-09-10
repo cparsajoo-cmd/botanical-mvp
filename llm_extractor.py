@@ -151,6 +151,29 @@ EVIDENCE_SCHEMA = {
         "who_relevance": {"type": "string"},
         "escop_relevance": {"type": "string"},
         "reason": {"type": "string"},
+        # Problem 1 (architectural fix) -- candidate-intervention
+        # assertion. Reuses this SAME extraction call rather than adding a
+        # second, parallel model call. See candidate_intervention_
+        # assertion.py for the full role/polarity/temporality contract and
+        # how these fields are consumed and verified.
+        "candidate_intervention_role": {
+            "type": "string",
+            "enum": [
+                "studied_intervention", "studied_comparator",
+                "concomitant_exposure", "prior_exposure",
+                "excluded_exposure", "background_mention", "unknown",
+            ],
+        },
+        "candidate_intervention_polarity": {
+            "type": "string",
+            "enum": ["positive", "negated", "unknown"],
+        },
+        "candidate_intervention_temporality": {
+            "type": "string",
+            "enum": ["current_study", "prior_or_historical", "unknown"],
+        },
+        "candidate_intervention_supporting_text": {"type": "string"},
+        "candidate_intervention_confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
     "required": [
         "plant_scientific_name",
@@ -178,6 +201,11 @@ EVIDENCE_SCHEMA = {
         "who_relevance",
         "escop_relevance",
         "reason",
+        "candidate_intervention_role",
+        "candidate_intervention_polarity",
+        "candidate_intervention_temporality",
+        "candidate_intervention_supporting_text",
+        "candidate_intervention_confidence",
     ],
 }
 
@@ -253,6 +281,58 @@ Unknown = cannot determine dosage form.
 EMA/WHO/ESCOP relevance:
 Yes only if the text clearly mentions EMA, HMPC, WHO monograph, or ESCOP.
 Otherwise No.
+
+Candidate-intervention assertion (candidate_intervention_role/polarity/
+temporality/supporting_text/confidence):
+This describes the RELATION between the candidate botanical named above and
+what THIS study's own participants actually received -- not whether the
+botanical is merely mentioned anywhere in the text.
+
+candidate_intervention_role must be exactly one of:
+- studied_intervention: the candidate IS (one of) this study's own
+  administered arm(s)/exposure.
+- studied_comparator: the candidate IS this study's own comparator arm
+  (e.g. an active-comparator trial of CANDIDATE vs. another treatment).
+- concomitant_exposure: participants were permitted/reported to use the
+  candidate ALONGSIDE the actual study intervention, not as the studied
+  intervention itself.
+- prior_exposure: the candidate describes exposure/use BEFORE the study
+  period (history, discontinued before enrollment, washout, prior
+  treatment) -- not what participants received during the study.
+- excluded_exposure: candidate use was an exclusion criterion, was
+  prohibited by the protocol, or was considered/discussed but explicitly
+  NOT administered.
+- background_mention: the candidate is discussed only in background,
+  other-study literature, a review/meta-analysis describing what OTHER
+  trials did, or general discussion -- not this study's own participants.
+- unknown: cannot be determined from the text.
+
+candidate_intervention_polarity:
+- positive: the text affirmatively states this role happened/applies.
+- negated: the text explicitly negates it (e.g. "were NOT randomized to
+  CANDIDATE", "was considered but not administered").
+- unknown: cannot be determined.
+
+candidate_intervention_temporality:
+- current_study: describes THIS study's own participants during the study
+  period.
+- prior_or_historical: describes exposure before/outside the study period,
+  or a different (e.g. previously published) study.
+- unknown: cannot be determined.
+
+candidate_intervention_supporting_text: the EXACT sentence or clause from
+the input text (copied verbatim, character-for-character) that supports
+this role/polarity/temporality judgment. Empty string if none applies.
+Never paraphrase, translate, or reconstruct the span -- it will be
+validated against the source text and discarded if it does not match
+exactly.
+
+candidate_intervention_confidence: your confidence in this specific
+judgment, 0 to 1.
+
+If ANY of role, polarity, or temporality is ambiguous, set it to unknown
+rather than guessing -- an ambiguous judgment must never be reported as
+though it were certain.
 """
 
     extracted = llm_client.call_structured_json(

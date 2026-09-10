@@ -63,29 +63,22 @@ def test_no_text_available_fails_closed_not_direct():
 
 
 # ---------------------------------------------------------------------
-# Test 1 -- background mention only must NOT verify attribution
+# Test 1 (superseded) -- background-mention-only PubMed attribution.
+#
+# ARCHITECTURE NOTE: the two tests previously here
+# (test_1_background_mention_only_does_not_verify_pubmed_attribution,
+# test_1_administration_sentence_without_candidate_name_is_excluded)
+# exercised candidate_attribution.verify_pubmed_intervention_attribution()
+# and candidate_attribution.administration_context_text() directly.
+# Following the STOP-PATCHING architectural pass, that whole text-
+# heuristic layer was REMOVED from candidate_attribution.py (not merely
+# patched again) -- PubMed candidate attribution is now derived by
+# candidate_intervention_assertion.py from structured LLM extraction, with
+# a fail-closed deterministic fast path as a fallback only. The exact
+# scenario these two tests covered (a background-only botanical mention
+# must not verify) is re-covered, against the NEW architecture, in
+# test_candidate_intervention_assertion_v1.py.
 # ---------------------------------------------------------------------
-
-def test_1_background_mention_only_does_not_verify_pubmed_attribution():
-    raw_text = (
-        "Background: Ficticus alpinum is traditionally used for sleep. "
-        "In this randomized trial, patients received cognitive behavioral "
-        "therapy versus placebo. Sleep onset latency was the primary outcome."
-    )
-    result = ca.verify_pubmed_intervention_attribution(raw_text, scientific_name="Ficticus alpinum")
-    assert result["verified"] is False
-
-
-def test_1_administration_sentence_without_candidate_name_is_excluded():
-    # Sanity check on the underlying heuristic: the administration-cue
-    # sentence here names the comparator, not the candidate, so narrowing
-    # to that sentence correctly still finds no candidate mention.
-    context = ca.administration_context_text(
-        "Ficticus alpinum is traditionally used for sleep. "
-        "Patients received cognitive behavioral therapy versus placebo."
-    )
-    assert "ficticus" not in context.lower()
-    assert "received" in context.lower()
 
 
 # ---------------------------------------------------------------------

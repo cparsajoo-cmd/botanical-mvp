@@ -125,6 +125,16 @@ _OPTIONAL_EVIDENCE_COLUMNS = {
     # print() already makes that condition observable in logs instead of
     # silently discarding the field.
     "candidate_attribution_verified", "candidate_attribution_basis",
+    # Problem 1 (architectural fix) — migrations/0012_add_candidate_
+    # intervention_assertion.sql. The richer Candidate_Intervention_
+    # Assertion (role/polarity/temporality/supporting text/extraction
+    # method) that candidate_attribution_verified/_basis above are derived
+    # from (see candidate_intervention_assertion.py) -- persisted
+    # separately so the full provenance, not just the final boolean,
+    # survives a save/reload round trip. Same fail-safe fallback pattern.
+    "candidate_intervention_role", "candidate_intervention_polarity",
+    "candidate_intervention_temporality", "candidate_intervention_supporting_text",
+    "candidate_intervention_extraction_method",
 }
 
 
@@ -835,6 +845,17 @@ def save_evidence_record(record):
         # explicit False.
         "candidate_attribution_verified": record.get("Candidate_Attribution_Verified"),
         "candidate_attribution_basis": record.get("Candidate_Attribution_Basis") or None,
+
+        # Problem 1 (architectural fix) -- full Candidate_Intervention_
+        # Assertion provenance (see candidate_intervention_assertion.py).
+        # `.get(key) or None` (never a fabricated "unknown" string) so an
+        # absent judgment persists as genuinely NULL, not a value that
+        # looks like a real classification.
+        "candidate_intervention_role": record.get("Candidate_Intervention_Role") or None,
+        "candidate_intervention_polarity": record.get("Candidate_Intervention_Polarity") or None,
+        "candidate_intervention_temporality": record.get("Candidate_Intervention_Temporality") or None,
+        "candidate_intervention_supporting_text": record.get("Candidate_Intervention_Supporting_Text") or None,
+        "candidate_intervention_extraction_method": record.get("Candidate_Intervention_Extraction_Method") or None,
     }
 
     evidence_result = _insert_evidence_with_optional_schema_fallback(
@@ -990,6 +1011,14 @@ def load_evidence_records():
             # "unverified" -- i.e. fail closed. Never defaulted to True.
             "Candidate_Attribution_Verified": item.get("candidate_attribution_verified"),
             "Candidate_Attribution_Basis": item.get("candidate_attribution_basis") or "",
+
+            # Problem 1 (architectural fix) -- same degrade-safely-to-None/
+            # empty behavior as every optional field above.
+            "Candidate_Intervention_Role": item.get("candidate_intervention_role") or "",
+            "Candidate_Intervention_Polarity": item.get("candidate_intervention_polarity") or "",
+            "Candidate_Intervention_Temporality": item.get("candidate_intervention_temporality") or "",
+            "Candidate_Intervention_Supporting_Text": item.get("candidate_intervention_supporting_text") or "",
+            "Candidate_Intervention_Extraction_Method": item.get("candidate_intervention_extraction_method") or "",
 
             # Task 10.2 — previously discarded on read (id was selected
             # implicitly via "*" but never mapped into the returned row

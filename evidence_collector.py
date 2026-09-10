@@ -2,7 +2,6 @@ from pubmed_connector import search_and_fetch_pubmed
 from evidence_extractor import extract_evidence_from_text
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
-from candidate_attribution import verify_pubmed_intervention_attribution
 
 import time
 
@@ -248,26 +247,25 @@ def collect_pubmed_evidence(
     for article in articles:
         extracted = extract_evidence_from_text(article["Raw_Text"])
 
-        # REMAINING DEFECT 1 FIX: the article's own name appearing anywhere
-        # in the title/abstract is not intervention attribution -- a plant
-        # can be named in background, eligibility criteria, discussion, or
-        # a different arm without being what was actually administered
-        # (e.g. "Ficticus alpinum is traditionally used for sleep. Patients
-        # received cognitive behavioral therapy versus placebo." must NOT
-        # verify). PubMed abstracts carry no structured intervention field,
-        # so verify_pubmed_intervention_attribution deterministically
-        # narrows the text to sentences that themselves contain a generic
-        # administration/exposure cue before checking for the candidate's
-        # name -- general, non-LLM, no invented facts (see
-        # candidate_attribution.py). Fails closed when no such sentence
-        # exists at all.
-        attribution = verify_pubmed_intervention_attribution(
-            article["Raw_Text"],
-            scientific_name=scientific_name,
-        )
+        # REMAINING ARCHITECTURAL FIX: candidate-intervention attribution is
+        # no longer computed here via a text heuristic. Independent
+        # adversarial testing showed that ANY bounded-token/regex-style
+        # local-relation approach remains structurally brittle (negation,
+        # "considered but not administered", "prohibited", "history",
+        # "discontinued before enrollment" all still slip through some
+        # phrasing, while other genuine constructions -- "consumed",
+        # "ingested", "allocated to", "arm received" -- get missed). This
+        # collector now only passes the article's own text through;
+        # evidence_standardizer.standardize_extracted_record() derives
+        # Candidate_Attribution_Verified from a proper
+        # Candidate_Intervention_Assertion (see
+        # candidate_intervention_assertion.py) built from the SAME
+        # structured evidence-extraction call already made for
+        # Result_Direction/Preparation/etc -- not a second, parallel model
+        # call -- with a verbatim-supporting-span check and a fail-closed
+        # default. See that module and evidence_standardizer.py for the
+        # full rationale.
         extracted["Scientific_Name"] = scientific_name
-        extracted["Candidate_Attribution_Verified"] = attribution["verified"]
-        extracted["Candidate_Attribution_Basis"] = attribution["basis"]
         # Search/product context must never overwrite facts extracted from the
         # study itself.  Keep the requested indication/form under dedicated
         # transient keys; build_standard_evidence() can use them for contextual

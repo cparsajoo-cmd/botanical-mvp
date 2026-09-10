@@ -4145,7 +4145,35 @@ def rescore_commercial_component(
     """
     if not isinstance(plant_summary, pd.DataFrame) or plant_summary.empty:
         return plant_summary
-    plant_keys = {str(p).strip().lower() for p in (plants or []) if str(p).strip()}
+
+    # Demo-safety hardening: callers normally pass a list of plant names, but
+    # CSV/Streamlit/pandas round-trips can occasionally collapse an empty or
+    # single-valued object into a scalar (including NaN/float).  The previous
+    # set-comprehension iterated ``plants`` directly and therefore raised
+    # ``TypeError: 'float' object is not iterable``.  Commercial enrichment is
+    # optional and must never take down the scientific shortlist.  Normalize
+    # all accepted input shapes to a small iterable here instead of relying on
+    # caller shape.
+    if plants is None:
+        _plants_iter = []
+    elif isinstance(plants, str):
+        _plants_iter = [plants]
+    elif isinstance(plants, (list, tuple, set, pd.Series, pd.Index)):
+        _plants_iter = list(plants)
+    else:
+        try:
+            if pd.isna(plants):
+                _plants_iter = []
+            else:
+                _plants_iter = [plants]
+        except Exception:
+            _plants_iter = [plants]
+
+    plant_keys = {
+        str(p).strip().lower()
+        for p in _plants_iter
+        if p is not None and str(p).strip() and str(p).strip().lower() not in {"nan", "none"}
+    }
     if not plant_keys:
         return plant_summary
     if not isinstance(enriched_raw_df, pd.DataFrame) or enriched_raw_df.empty:

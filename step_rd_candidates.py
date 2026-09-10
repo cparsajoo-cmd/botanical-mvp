@@ -3657,13 +3657,34 @@ def render_rd_candidates_step(inputs):
                     progress.progress(0.95, text="Updating scores with commercial data…")
                     if market_plants:
                         _perf_t_rescore = time.perf_counter()
-                        plant_summary_df = rescore_commercial_component(
-                            plant_summary_df, result_df, market_plants,
-                        )
-                        _perf(
-                            f"commercial rescore done plants={len(market_plants)} "
-                            f"elapsed={time.perf_counter() - _perf_t_rescore:.3f}"
-                        )
+                        # Live-demo reliability: commercial intelligence is an
+                        # additive/optional layer.  A malformed commercial field
+                        # must never discard the already-computed scientific
+                        # shortlist.  Preserve the pre-commercial scores and
+                        # continue in a clearly degraded state if this refresh
+                        # fails for any reason.
+                        try:
+                            plant_summary_df = rescore_commercial_component(
+                                plant_summary_df, result_df, market_plants,
+                            )
+                            _perf(
+                                f"commercial rescore done plants={len(market_plants)} "
+                                f"elapsed={time.perf_counter() - _perf_t_rescore:.3f}"
+                            )
+                        except Exception as _commercial_rescore_exc:
+                            st.session_state["rd_commercial_rescore_status"] = "COMPLETE_WITH_LIMITATIONS"
+                            st.session_state["rd_commercial_rescore_error"] = (
+                                f"{type(_commercial_rescore_exc).__name__}: {_commercial_rescore_exc}"
+                            )
+                            _perf(
+                                "commercial rescore skipped; scientific shortlist preserved "
+                                f"({type(_commercial_rescore_exc).__name__}: {_commercial_rescore_exc})"
+                            )
+                            st.warning(
+                                "Commercial score refresh was unavailable for this run. "
+                                "The scientific shortlist is still valid and is being shown without "
+                                "commercial re-scoring."
+                            )
                     plant_summary_df = _finalize_step5_summary(plant_summary_df)
                 else:
                     plant_summary_df, triage_audit_df = pd.DataFrame(), pd.DataFrame()

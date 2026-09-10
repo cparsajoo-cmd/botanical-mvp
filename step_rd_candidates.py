@@ -817,10 +817,27 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
             "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Fallback_Reason",
         ):
             new_columns[key][idx] = adjudication.get(key)
+        def _safe_count_ids(value):
+            if value is None:
+                return 0
+            if isinstance(value, (list, tuple, set, pd.Series, pd.Index)):
+                return len(value)
+            try:
+                if pd.isna(value):
+                    return 0
+            except Exception:
+                pass
+            # tolerate one legacy scalar ID; malformed scalars must not crash Stage 5
+            return 1 if str(value).strip() else 0
+
         new_columns.setdefault("AI_Direct_Outcome_Evidence_Count", [0] * len(plant_summary_df))
         new_columns.setdefault("AI_Direct_Human_Outcome_Evidence_Count", [0] * len(plant_summary_df))
-        new_columns["AI_Direct_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Outcome_Evidence_IDs") or [])
-        new_columns["AI_Direct_Human_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Human_Outcome_Evidence_IDs") or [])
+        new_columns["AI_Direct_Outcome_Evidence_Count"][idx] = _safe_count_ids(
+            adjudication.get("Direct_Outcome_Evidence_IDs")
+        )
+        new_columns["AI_Direct_Human_Outcome_Evidence_Count"][idx] = _safe_count_ids(
+            adjudication.get("Direct_Human_Outcome_Evidence_IDs")
+        )
 
         for key in (
             "Evidence_Adjudication_Adjustment", "Negative_Human_Evidence_Adjustment",
@@ -3686,6 +3703,13 @@ def render_rd_candidates_step(inputs):
                                 "commercial re-scoring."
                             )
                     plant_summary_df = _finalize_step5_summary(plant_summary_df)
+                    # Live-demo fail-safe: from this point the deterministic
+                    # scientific shortlist is a valid Stage-5 output. Persist it
+                    # immediately, before optional AI adjudication / reporting
+                    # layers run, so a downstream enhancement failure can never
+                    # make the UI fall back to "Scientific shortlist — 0".
+                    st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
+                    st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
                 else:
                     plant_summary_df, triage_audit_df = pd.DataFrame(), pd.DataFrame()
 
@@ -3724,10 +3748,27 @@ def render_rd_candidates_step(inputs):
                     _adjudication_evidence_df = _authoritative_ai_evidence_df(
                         result_df, triage_audit_df
                     )
-                    plant_summary_df = _run_evidence_adjudication(
-                        plant_summary_df, _adjudication_evidence_df, indication,
-                        transferability_target_context,
-                    )
+                    try:
+                        plant_summary_df = _run_evidence_adjudication(
+                            plant_summary_df, _adjudication_evidence_df, indication,
+                            transferability_target_context,
+                        )
+                    except Exception as _adjudication_exc:
+                        # AI adjudication is additive.  Never discard a valid
+                        # deterministic scientific shortlist because one cached
+                        # or malformed adjudication field has the wrong shape.
+                        st.session_state["rd_adjudication_status"] = "COMPLETE_WITH_LIMITATIONS"
+                        st.session_state["rd_adjudication_error"] = (
+                            f"{type(_adjudication_exc).__name__}: {_adjudication_exc}"
+                        )
+                        _perf(
+                            "evidence adjudication skipped; deterministic shortlist preserved "
+                            f"({type(_adjudication_exc).__name__}: {_adjudication_exc})"
+                        )
+                        st.warning(
+                            "AI evidence adjudication was unavailable for this run. "
+                            "The deterministic scientific shortlist is still valid and is being shown."
+                        )
                     _perf(
                         f"evidence adjudication done "
                         f"elapsed={time.perf_counter() - _perf_t_adjudication:.3f} "
@@ -3745,42 +3786,53 @@ def render_rd_candidates_step(inputs):
                     # directly, so they can never disagree with the shortlist
                     # above about which plant is the top candidate.
                     _perf_t_merge = time.perf_counter()
-                    st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
-                        result_df, plant_summary_df
-                    )
-                    if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
-                        st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                        st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                        st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
-                    _perf(
-                        f"merge_authoritative_scores() done "
-                        f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
-                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                    )
-                    # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
-                    # decision run, from the same report_ready_df just built.
-                    # Both the downloaded report and the persisted decision
-                    # record read this exact dict — see build_decision_metadata()'s
-                    # own docstring.
-                    _perf_t_decision = time.perf_counter()
-                    st.session_state["rd_decision_metadata"] = build_decision_metadata(
-                        st.session_state["rd_report_ready_df"],
-                        indication=indication, dosage_form=dosage_form, market=market,
-                        discovery_mode=_detect_discovery_mode(result_df),
-                    )
-                    _perf(
-                        f"build_decision_metadata() done "
-                        f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
-                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                    )
-                    # PHASE 6 — additive structured causal trace.  This reads the
-                    # authoritative score/gate outputs and triage audit only; it never
-                    # changes scoring, gating, ranking, connectors, or UI behaviour.
-                    st.session_state["rd_report_ready_df"] = attach_decision_explanations(
-                        st.session_state["rd_report_ready_df"],
-                        triage_audit_df,
-                        decision_metadata=st.session_state["rd_decision_metadata"],
-                    )
+                    try:
+                        st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
+                            result_df, plant_summary_df
+                        )
+                        if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
+                            st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                            st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
+                            st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
+                        _perf(
+                            f"merge_authoritative_scores() done "
+                            f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
+                            f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                        )
+                        _perf_t_decision = time.perf_counter()
+                        st.session_state["rd_decision_metadata"] = build_decision_metadata(
+                            st.session_state["rd_report_ready_df"],
+                            indication=indication, dosage_form=dosage_form, market=market,
+                            discovery_mode=_detect_discovery_mode(result_df),
+                        )
+                        _perf(
+                            f"build_decision_metadata() done "
+                            f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
+                            f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                        )
+                        st.session_state["rd_report_ready_df"] = attach_decision_explanations(
+                            st.session_state["rd_report_ready_df"],
+                            triage_audit_df,
+                            decision_metadata=st.session_state["rd_decision_metadata"],
+                        )
+                    except Exception as _reporting_exc:
+                        # Reporting/explainability is downstream of the scientific
+                        # shortlist. Never sacrifice Stage 5 results because an
+                        # optional report field has a malformed cached value.
+                        st.session_state["rd_reporting_status"] = "COMPLETE_WITH_LIMITATIONS"
+                        st.session_state["rd_reporting_error"] = (
+                            f"{type(_reporting_exc).__name__}: {_reporting_exc}"
+                        )
+                        st.session_state["rd_report_ready_df"] = plant_summary_df.copy()
+                        st.session_state["rd_decision_metadata"] = {}
+                        _perf(
+                            "report/explainability layer skipped; scientific shortlist preserved "
+                            f"({type(_reporting_exc).__name__}: {_reporting_exc})"
+                        )
+                        st.warning(
+                            "Detailed report enrichment was unavailable for this run. "
+                            "The scientific shortlist and scores are still shown."
+                        )
 
                     counts = (
                         plant_summary_df["Scientific_Triage_Status"].value_counts()

@@ -793,8 +793,41 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
     ]
 
     by_id = {str(item.get("evidence_id")): item for item in evidence_items}
-    raw_direct_outcome_ids = out.get("Direct_Outcome_Evidence_IDs")
-    legacy_schema = raw_direct_outcome_ids is None and out.get("Direct_Human_Outcome_Evidence_IDs") is None
+    def _safe_id_sequence(value):
+        """Normalize cached/legacy ID fields to a list without treating scalars as iterables.
+
+        Streamlit/session-state and CSV round-trips can turn an empty list into
+        NaN/float.  Those values mean "no usable IDs"; they must never crash
+        Stage 5 with ``TypeError: 'float' object is not iterable``.
+        """
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple, set)):
+            return [str(v) for v in value if str(v).strip() and str(v).lower() not in {"nan", "none"}]
+        try:
+            if pd.isna(value):
+                return []
+        except Exception:
+            pass
+        # A single scalar/string ID is tolerated for backwards compatibility.
+        text = str(value).strip()
+        return [text] if text and text.lower() not in {"nan", "none"} else []
+
+    # Normalize every list-valued evidence-ID field before any set/list
+    # operation.  Cached DataFrames can deserialize empty object cells as
+    # float NaN, and one such scalar previously crashed all of Stage 5.
+    for _id_field in (
+        "Positive_Evidence_IDs", "Negative_Evidence_IDs", "Key_Human_Evidence_IDs",
+        "Direct_Outcome_Evidence_IDs", "Direct_Human_Outcome_Evidence_IDs",
+        "Preparation_Mismatch_Evidence_IDs",
+    ):
+        if _id_field in out:
+            _normalized_ids = _safe_id_sequence(out.get(_id_field))
+            out[_id_field] = [] if _normalized_ids is None else _normalized_ids
+
+    raw_direct_outcome_ids = _safe_id_sequence(out.get("Direct_Outcome_Evidence_IDs"))
+    raw_direct_human_ids_initial = _safe_id_sequence(out.get("Direct_Human_Outcome_Evidence_IDs"))
+    legacy_schema = raw_direct_outcome_ids is None and raw_direct_human_ids_initial is None
     if raw_direct_outcome_ids is None:
         # Backward-compatible path for pre-v11 cached/mocked adjudication
         # responses.  Those responses had no explicit direct-outcome ID fields,
@@ -813,7 +846,7 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
         direct_outcome_ids = [eid for eid in raw_direct_outcome_ids if eid in by_id]
     direct_outcome_set = set(direct_outcome_ids)
 
-    raw_direct_human_ids = out.get("Direct_Human_Outcome_Evidence_IDs")
+    raw_direct_human_ids = raw_direct_human_ids_initial
     if raw_direct_human_ids is None:
         direct_human_outcome_ids = [
             eid for eid in direct_outcome_ids
@@ -889,7 +922,15 @@ def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_item
     out = dict(structured)
     human_items = [i for i in evidence_items if i.get("human_animal_in_vitro") == "HUMAN"]
     if "Direct_Human_Outcome_Evidence_IDs" in structured:
-        verified_direct_human_ids = set(structured.get("Direct_Human_Outcome_Evidence_IDs") or [])
+        _raw_verified_ids = structured.get("Direct_Human_Outcome_Evidence_IDs")
+        if isinstance(_raw_verified_ids, (list, tuple, set)):
+            _verified_seq = _raw_verified_ids
+        else:
+            try:
+                _verified_seq = [] if pd.isna(_raw_verified_ids) else [_raw_verified_ids]
+            except Exception:
+                _verified_seq = [_raw_verified_ids] if _raw_verified_ids is not None else []
+        verified_direct_human_ids = {str(v) for v in _verified_seq if str(v).strip()}
         direct_human = [
             i for i in human_items if i.get("evidence_id") in verified_direct_human_ids
         ]

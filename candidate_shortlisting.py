@@ -42,7 +42,7 @@ from safety_assertion_engine import (
 from standard_evidence_builder import (
     evaluate_applicability, preparation_from_product_form, canonical_preparation_identity,
 )
-from evidence_consistency import classify_evidence_consistency
+from evidence_consistency import classify_evidence_consistency, direction_data_completeness
 from rd_discovery_classification import (
     classify_discovery_lane,
     discovery_potential_score,
@@ -57,6 +57,14 @@ from phase5_scoring_config import (
     HIERARCHY_LABEL_TO_TIER,
     DIRECTION_FACTORS,
     CONSISTENCY_FACTORS,
+    CONSISTENT_POSITIVE,
+    MOSTLY_POSITIVE,
+    MIXED,
+    MOSTLY_NULL,
+    CONSISTENT_NULL,
+    MOSTLY_NEGATIVE,
+    INSUFFICIENT,
+    INSUFFICIENT_DIRECTION_DATA,
     APPLICABILITY_FACTORS,
     APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
     APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
@@ -196,6 +204,26 @@ def _row_source_record_ids(row: pd.Series) -> list[str]:
         return ids
     fallback = str(row.get("Evidence_Source", "") or "").strip()
     return [fallback] if fallback and not _is_missing(fallback) else []
+
+
+def _parse_reference_map(value) -> dict:
+    """Parse one row's Mechanistic_*_Reference_Map JSON cell.
+
+    Returns {} for anything malformed/absent -- never raises, never
+    fabricates a reference. Values are either {name: [{"compound","title",
+    "url"}, ...]} (target/mechanism maps) or {name: {"title","url"}}
+    (compound map); both pass through as-parsed.
+    """
+    if isinstance(value, dict):
+        return value
+    text = str(value or "").strip()
+    if not text or text.lower() in ("nan", "none", "null", "{}"):
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _source_ids_for_rows(rows: Iterable[pd.Series]) -> list[str]:
@@ -693,6 +721,13 @@ _COMMERCIAL_UNASSESSED_TERMS = (
     "commercial novelty not assessed", "market data incomplete",
     "search not performed", "source unavailable", "market not covered",
     "connector not implemented",
+    # DEFECT 6 FIX (pre-investor reliability repair): the observed
+    # production run reported "unknown" (Commercial_Status_Overall) and
+    # "skipped" (per-connector patent/retail status) alongside the terms
+    # already listed above. These are equally unassessed states and must
+    # route to the same zero-point branch, not fall through toward a
+    # positive white-space/repurposing/established match below.
+    "unknown", "skipped", "search incomplete",
 )
 
 
@@ -920,6 +955,25 @@ def _row_has_indication_specific_outcome(row: pd.Series, indication: str) -> boo
     if has_reported_direction and _contains_direct(row.get("Source_Evidence_Text", "")):
         return True
 
+    # DEFECT 2 FIX (final pre-demo reliability pass): Clinical_Rationale/
+    # Scientific_Rationale are this module's OWN record-level narrative
+    # fields for a study's reported result -- _result_category() elsewhere
+    # in this file already treats them as the record's reported outcome
+    # when Result_Direction itself is blank. Excluding them here (while
+    # using them everywhere else to resolve direction) was an inconsistency
+    # in this function, not a deliberate narrower contract: a record whose
+    # own rationale text states "improved HbA1c" for the requested
+    # indication IS the record's own reported outcome, on the same terms as
+    # Source_Evidence_Text above -- it must also carry a resolved result
+    # (Result_Direction, or a resolvable _result_category()), never a bare
+    # indication mention alone.
+    has_resolved_result = has_reported_direction or _result_category(row) != "unreported"
+    if has_resolved_result and (
+        _contains_direct(row.get("Clinical_Rationale", ""))
+        or _contains_direct(row.get("Scientific_Rationale", ""))
+    ):
+        return True
+
     reason = str(row.get("Indication_Match_Reason", "") or "").lower()
     # Legacy rows created before source-field transport may still carry the
     # exact provenance sentence from the relevance engine.  Only the
@@ -955,6 +1009,38 @@ def _result_category(row: pd.Series) -> str:
     return "unreported"
 
 
+# DEFECT 1 / 9 FIX (pre-investor reliability repair): both outcome-profile
+# builders below used to compute their own "label" with an independent
+# heuristic that did NOT count "unreported" toward a Mixed/inconsistent
+# verdict, while classify_evidence_consistency() (evidence_consistency.py)
+# DID count "unreported" in its ratio denominator. That is the exact
+# mechanism behind the reported Valerian contradiction: Primary_Tier_
+# Outcome_Label said "Predominantly positive results" (positive-only rule,
+# unreported ignored) while Evidence_Consistency_Class said "MIXED" (same
+# counts, unreported diluting the ratio into the old catch-all). The label
+# is now derived from the SAME canonical classify_evidence_consistency()
+# call every caller already uses for Evidence_Consistency_Class/
+# Direction_Factor, so the two fields can no longer disagree about the same
+# counts -- one authority, one classification, one label mapping.
+_CONSISTENCY_CLASS_TO_OUTCOME_LABEL = {
+    CONSISTENT_POSITIVE: "Predominantly positive results",
+    # MOSTLY_POSITIVE means a meaningful minority of known-direction
+    # records did NOT show a positive result (up to just under half) --
+    # genuinely inconsistent, not "predominantly positive" (that label is
+    # reserved for the near-unanimous CONSISTENT_POSITIVE case).
+    MOSTLY_POSITIVE: "Mixed/inconsistent results",
+    MIXED: "Mixed/inconsistent results",
+    MOSTLY_NULL: "No demonstrated benefit",
+    CONSISTENT_NULL: "No demonstrated benefit",
+    MOSTLY_NEGATIVE: "Adverse/negative evidence",
+    INSUFFICIENT: "No empirical outcomes",
+    # Evidence exists but no record's result direction could be resolved --
+    # distinct from "no empirical outcomes at all" and never mislabeled as
+    # a positive default.
+    INSUFFICIENT_DIRECTION_DATA: "Results not reported",
+}
+
+
 def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
     """Summarise unique record-level efficacy directions for transparent gating."""
     empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
@@ -970,16 +1056,8 @@ def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
     for _, row in empirical.iterrows():
         counts[_result_category(row)] += 1
     total = len(empirical)
-    if counts["harmful"] > 0 and counts["positive"] == 0:
-        label = "Adverse/negative evidence"
-    elif counts["positive"] == 0 and counts["null"] > 0:
-        label = "No demonstrated benefit"
-    elif counts["positive"] > 0 and (counts["null"] + counts["harmful"] + counts["mixed"]) > 0:
-        label = "Mixed/inconsistent results"
-    elif counts["positive"] > 0:
-        label = "Predominantly positive results"
-    else:
-        label = "Results not reported"
+    consistency_class = classify_evidence_consistency({**counts, "total": total})
+    label = _CONSISTENCY_CLASS_TO_OUTCOME_LABEL[consistency_class]
     return {**counts, "total": total, "label": label}
 
 
@@ -990,18 +1068,8 @@ def _outcome_profile_from_row_records(row_records: list[dict]) -> dict[str, int 
         category = record.get("result_category") or _result_category(record["row"])
         counts[category if category in counts else "unreported"] += 1
     total = len(row_records)
-    if total == 0:
-        label = "No empirical outcomes"
-    elif counts["harmful"] > 0 and counts["positive"] == 0:
-        label = "Adverse/negative evidence"
-    elif counts["positive"] == 0 and counts["null"] > 0:
-        label = "No demonstrated benefit"
-    elif counts["positive"] > 0 and (counts["null"] + counts["harmful"] + counts["mixed"]) > 0:
-        label = "Mixed/inconsistent results"
-    elif counts["positive"] > 0:
-        label = "Predominantly positive results"
-    else:
-        label = "Results not reported"
+    consistency_class = classify_evidence_consistency({**counts, "total": total})
+    label = _CONSISTENCY_CLASS_TO_OUTCOME_LABEL[consistency_class]
     return {**counts, "total": total, "label": label}
 
 def _row_authoritative_relevance(row: pd.Series) -> tuple[str, set[str]]:
@@ -1079,6 +1147,9 @@ def _indication_relevance_detail_authoritative(
 
     direct_source_ids: list[str] = []
     direct_human_source_ids: list[str] = []
+    # DEFECT 2 FIX: source IDs for human-sourced direct-hit rows that ALSO
+    # clear the stricter outcome-specific-evidence bar (see the loop below).
+    verified_human_source_ids: list[str] = []
     direct_preclinical_source_ids: list[str] = []
     mechanism_source_ids: list[str] = []
     direct_hits_all: set[str] = set()
@@ -1114,6 +1185,21 @@ def _indication_relevance_detail_authoritative(
             direct_source_ids.extend(row_sources)
             if row_human:
                 direct_human_source_ids.extend(row_sources)
+                # DEFECT 2 FIX (final pre-demo reliability pass): a row
+                # qualifying as "empirical" here only requires human-study-
+                # design VOCABULARY (see _row_has_candidate_specific_
+                # empirical_support() -- "human"/"clinical"/"random"/etc in
+                # Evidence_Level/Hierarchy/Rationale text). That is NOT the
+                # same claim as the row having a verified, candidate- and
+                # indication-specific reported OUTCOME -- the stricter test
+                # is _row_has_indication_specific_outcome(), which is what
+                # Outcome_Specific_Human_Evidence_Count is actually built
+                # from elsewhere in this module. Track which human-sourced
+                # rows also clear that stricter bar so "Direct human/
+                # clinical" (near-maximal relevance) is never awarded on
+                # study-design vocabulary alone.
+                if _row_has_indication_specific_outcome(row, indication):
+                    verified_human_source_ids.extend(row_sources)
             elif row_preclinical:
                 direct_preclinical_source_ids.extend(row_sources)
         if mechanism_hits:
@@ -1125,6 +1211,7 @@ def _indication_relevance_detail_authoritative(
 
     direct_sources = len(set(map(_norm, direct_source_ids)))
     human_sources = len(set(map(_norm, direct_human_source_ids)))
+    verified_human_sources = len(set(map(_norm, verified_human_source_ids)))
     preclinical_sources = len(set(map(_norm, direct_preclinical_source_ids)))
     mechanism_sources = len(set(map(_norm, mechanism_source_ids)))
 
@@ -1141,7 +1228,17 @@ def _indication_relevance_detail_authoritative(
             # Indication_Relevance -- see the authoritative sibling
             # function's identical comment above. Direction/Consistency
             # now affect only Scientific_Evidence_Score.
-            return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+            if verified_human_sources >= 1:
+                return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+            # DEFECT 2 FIX: human-study-design vocabulary matched, and the
+            # indication match itself was strong (direct_hits), but no row
+            # cleared the stricter outcome-specific-evidence bar. This must
+            # not be presented or scored as verified direct clinical
+            # evidence. The candidate stays discoverable at a reduced,
+            # explicitly-provisional relevance ceiling (never reaching the
+            # 28-35 verified-direct-human range) rather than being dropped.
+            capped_points = round(min(24.0, points), 1)
+            return capped_points, "Medium relevance", "UNVERIFIED_DIRECT_HUMAN_SIGNAL", direct_sources
         if preclinical_sources >= 1:
             source_bonus = min(4.0, 1.5 * math.log2(1 + preclinical_sources))
             points = min(27.0, 21.0 + source_bonus + min(2.0, concept_bonus))
@@ -1198,6 +1295,9 @@ def _indication_relevance_detail_legacy_fallback(
 
     direct_source_ids: list[str] = []
     direct_human_source_ids: list[str] = []
+    # DEFECT 2 FIX: source IDs for human-sourced direct-hit rows that ALSO
+    # clear the stricter outcome-specific-evidence bar (see the loop below).
+    verified_human_source_ids: list[str] = []
     direct_preclinical_source_ids: list[str] = []
     mechanism_source_ids: list[str] = []
     direct_hits_all: set[str] = set()
@@ -1222,6 +1322,10 @@ def _indication_relevance_detail_legacy_fallback(
             direct_source_ids.extend(row_sources)
             if row_human:
                 direct_human_source_ids.extend(row_sources)
+                # DEFECT 2 FIX: see the identical guard in the authoritative
+                # sibling function above for the full rationale.
+                if _row_has_indication_specific_outcome(row, indication):
+                    verified_human_source_ids.extend(row_sources)
             elif row_preclinical:
                 direct_preclinical_source_ids.extend(row_sources)
         if mechanism_hits:
@@ -1233,6 +1337,7 @@ def _indication_relevance_detail_legacy_fallback(
 
     direct_sources = len(set(map(_norm, direct_source_ids)))
     human_sources = len(set(map(_norm, direct_human_source_ids)))
+    verified_human_sources = len(set(map(_norm, verified_human_source_ids)))
     preclinical_sources = len(set(map(_norm, direct_preclinical_source_ids)))
     mechanism_sources = len(set(map(_norm, mechanism_source_ids)))
 
@@ -1245,7 +1350,10 @@ def _indication_relevance_detail_legacy_fallback(
             # Indication_Relevance -- see the authoritative sibling
             # function's identical comment above. Direction/Consistency
             # now affect only Scientific_Evidence_Score.
-            return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+            if verified_human_sources >= 1:
+                return round(points, 1), "High relevance", "Direct human/clinical", direct_sources
+            capped_points = round(min(24.0, points), 1)
+            return capped_points, "Medium relevance", "UNVERIFIED_DIRECT_HUMAN_SIGNAL", direct_sources
         if preclinical_sources >= 1:
             source_bonus = min(4.0, 1.5 * math.log2(1 + preclinical_sources))
             points = min(27.0, 21.0 + source_bonus + min(2.0, concept_bonus))
@@ -1683,6 +1791,7 @@ def _scientific_evidence_components(
     weight_total = 0.0
     aggregate_dimension_status: dict[str, str] = {}
     any_incomplete = False
+    any_target_incomplete = False
     for record in primary_records:
         source_id = str(record["source_record_ids"] or record["row_id"])
         result = evaluate_applicability(record["row"], target_context)
@@ -1692,6 +1801,12 @@ def _scientific_evidence_components(
         weight_total += weight
         if result["Applicability_Data_Completeness"] == "incomplete":
             any_incomplete = True
+        # DEFECT 3 FIX: surfaced separately from Applicability_Data_
+        # Completeness (which now reflects only evidence-side UNKNOWNs) so
+        # an incomplete PRODUCT/PROJECT definition remains visible without
+        # feeding back into Plant_Applicability_Factor.
+        if result.get("Target_Definition_Completeness") == "incomplete":
+            any_target_incomplete = True
         for dim, status in result["Dimension_Status"].items():
             if status == NOT_APPLICABLE:
                 continue
@@ -1709,10 +1824,12 @@ def _scientific_evidence_components(
         plant_applicability_factor = APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE
         applicability_classification = APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE
         applicability_completeness = "preliminary"
+        target_definition_completeness = "incomplete"
     elif weight_total <= 0.0 or not primary_records:
         plant_applicability_factor = APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE
         applicability_classification = APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE
         applicability_completeness = "incomplete"
+        target_definition_completeness = "incomplete"
     else:
         plant_applicability_factor = weighted_sum / weight_total
         applicability_classification = NOT_APPLICABLE
@@ -1721,6 +1838,7 @@ def _scientific_evidence_components(
                 applicability_classification = candidate_status
                 break
         applicability_completeness = "incomplete" if any_incomplete else "complete"
+        target_definition_completeness = "incomplete" if any_target_incomplete else "complete"
 
     raw_score = (
         evidence_quality_score * direction_factor * consistency_factor * plant_applicability_factor
@@ -1734,6 +1852,12 @@ def _scientific_evidence_components(
         "Primary_Tier_Record_Count": len(primary_records),
         "Evidence_Consistency_Class": consistency_class,
         "Direction_Factor": direction_factor,
+        # DEFECT 1 FIX, requirement D: explicit, separate signal for
+        # "some primary-tier records have an unresolved result direction",
+        # additive and never consumed by scoring -- purely informational
+        # transparency about how complete the direction data behind this
+        # classification is.
+        "Direction_Data_Completeness": direction_data_completeness(primary_outcome_profile),
     }
 
     # PHASE 6 — exact, non-fabricated per-evidence score effect.  Because
@@ -1778,6 +1902,7 @@ def _scientific_evidence_components(
         "Dimension_Status": aggregate_dimension_status,
         "Applicability_Classification": applicability_classification,
         "Applicability_Data_Completeness": applicability_completeness,
+        "Target_Definition_Completeness": target_definition_completeness,
         "Primary_Evidence_Tier": primary_tier,
         "Supporting_Evidence_Tiers_Present": supporting_tiers_present,
         "Supporting_Evidence_Record_Count": supporting_record_count,
@@ -1795,7 +1920,18 @@ def _scientific_evidence_components(
 def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
     """Supporting chemistry only; capped at 5% of the 100-point score."""
     best_by_name: dict[str, float] = {}
-    linked_weight = 0.0
+    # DEFECT 5 FIX (pre-investor reliability repair): the base score above
+    # already de-duplicates by compound NAME via max() (best_by_name), so
+    # repeated rows for the same compound never inflate it. The "linked to
+    # a supported mechanism" bonus, however, previously summed row_weight
+    # across every matching row (`linked_weight += row_weight`) with no
+    # such de-duplication -- so the same compound/target relationship
+    # projected across many rows kept adding to the bonus, which is exactly
+    # what saturated 44/51 candidates to 5/5 in production. Tracking the
+    # best linked weight PER COMPOUND NAME (same max()-based de-duplication
+    # already used for the base score) removes the row-volume inflation
+    # while keeping every other part of the formula unchanged.
+    best_linked_by_name: dict[str, float] = {}
     # NOTE (2026-08-26): measured directly -- for this function's typical
     # per-plant row count, group.iterrows() is faster than
     # group.to_dict("records") (the fixed per-call conversion cost of
@@ -1808,6 +1944,7 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
         row_weight = _compound_weight(
             row.get("Shared_or_Similar_Compound", ""), row.get("Novelty_Status", "")
         )
+        mechanism_supported = bool(row.get("Supported_Target_or_Mechanism", False))
         for name in _compound_names(row.get("Shared_or_Similar_Compound", "")):
             if name in _COMPOUND_TIER_0:
                 weight = 0.0
@@ -1816,13 +1953,14 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
             else:
                 weight = row_weight
             best_by_name[name] = max(best_by_name.get(name, 0.0), weight)
-        if bool(row.get("Supported_Target_or_Mechanism", False)):
-            linked_weight += row_weight
+            if mechanism_supported:
+                best_linked_by_name[name] = max(best_linked_by_name.get(name, 0.0), weight)
 
     weighted_sum = sum(best_by_name.values())
     if weighted_sum <= 0:
         return 0.0, "Non-informative overlap only"
 
+    linked_weight = sum(best_linked_by_name.values())
     base = min(4.0, 1.0 * weighted_sum)
     bonus = min(1.0, 0.2 * linked_weight)
     total = round(min(5.0, base + bonus), 1)
@@ -1874,15 +2012,28 @@ def _indication_specific_mechanism_values(
 
 
 def _mechanism_support(group: pd.DataFrame, indication: str = "") -> tuple[float, str]:
-    # IMPORTANT: keep the calibrated Phase-5 scoring semantics unchanged.
-    # Indication-specific filtering is a reporting/traceability concern, not a
-    # retroactive score recalibration.  Changing this support count would alter
-    # Overall_Score and existing Go/Investigate thresholds for already-validated
-    # primary-tier programmes.  The final report uses
-    # _indication_specific_mechanism_values() separately to avoid displaying
-    # unrelated whole-plant bioactivities.
-    supported = int(group["Supported_Target_or_Mechanism"].sum())
-    total = min(10.0, 2.0 * supported)
+    # DEFECT 4 FIX (pre-investor reliability repair): the previous
+    # implementation counted `Supported_Target_or_Mechanism == True` ROWS
+    # (2 points/row, capped at 10). A whole-plant phytochemical projection
+    # can attach the same handful of mechanisms across dozens of duplicate
+    # rows, so this measured database row volume rather than independent
+    # mechanistic support -- confirmed by production output showing 10/10
+    # for 49 of 51 candidates regardless of how many DISTINCT,
+    # indication-relevant mechanisms were actually present.
+    #
+    # Reuses _indication_specific_mechanism_values(), which already exists
+    # specifically to de-duplicate mechanism components and restrict them to
+    # ones grounded in the requested indication (via the same authoritative
+    # Indication_Match_Type/_row_authoritative_relevance() signal
+    # shortlisting uses everywhere else) -- no new semantic logic is
+    # introduced here, per the cahier's instruction to reuse the existing
+    # indication-specific extraction rather than duplicate it. This
+    # supersedes the previous decision to keep row-count scoring "for
+    # calibration stability"; that tradeoff is exactly the defect being
+    # fixed here.
+    unique_mechanisms = _indication_specific_mechanism_values(group, indication, limit=10)
+    distinct_count = len(unique_mechanisms)
+    total = min(10.0, 2.0 * distinct_count)
     tier = "Strong" if total >= 7 else "Some" if total > 0 else "None"
     return total, tier
 
@@ -2245,16 +2396,28 @@ def _meaningful_group_values(group: pd.DataFrame, column: str) -> list[str]:
     return out
 
 
-def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
+def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str, bool]:
     """Score only explicit safety/regulatory information.
 
     Absence of a flag is not proof of safety.  Unknown safety and an unperformed
     regulatory search therefore receive a conservative neutral score rather than
     the previous optimistic 'clean' score.  Genuine reassuring, adverse, and
     prohibitive evidence still produce differentiated values.
+
+    Returns (points, tier, prohibitive). DEFECT 7 FIX (pre-investor
+    reliability repair): `prohibitive` is a separate, explicit signal for
+    "a genuine hard-stop-worthy safety/regulatory concern was found"
+    (plant-level hard stop, a severe safety term, or an explicit
+    regulatory prohibition). It exists because, once absence-of-data no
+    longer earns positive points (see below), the raw numeric score alone
+    can no longer distinguish "we found nothing" (now 0.0, should not be
+    an automatic exclusion -- unknown safety requires review, not a
+    silent No-Go) from "we found a real prohibitive signal" (also a low
+    score, and genuinely should exclude). Callers that need a hard-stop
+    decision must use `prohibitive`, never a bare points<=0 comparison.
     """
     if _critical_plant_stop(group):
-        return 0.0, "Plant-level hard stop"
+        return 0.0, "Plant-level hard stop", True
 
     safety_values = (
         _meaningful_group_values(group, "Safety_Flags")
@@ -2274,7 +2437,16 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
     elif any(term in safety_text for term in concern_terms):
         safety_points, tier = 4.0, "Safety review needed"
     else:
-        safety_points, tier = 5.0, "Safety not adequately assessed"
+        # DEFECT 7 FIX (pre-investor reliability repair): this branch used
+        # to award 5.0 points for "no safety information was found" -- a
+        # positive score for the ABSENCE of safety evidence, which is
+        # scientifically indistinguishable from "demonstrated safe" once it
+        # is added into Safety_Regulatory_Score. Absence of a flag is still
+        # not proof of safety (see this function's own docstring); the
+        # score must reflect that honestly. Score/decision stay separate:
+        # this only removes the positive credit -- eligibility_gate.py's
+        # existing unknown-safety-requires-review behavior is untouched.
+        safety_points, tier = 0.0, "Safety not adequately assessed"
 
     regulatory_values = _meaningful_group_values(group, "Regulatory_Barriers")
     regulatory_text = _norm(" | ".join(regulatory_values))
@@ -2288,9 +2460,17 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
             if tier == "Safety not adequately assessed":
                 tier = "Regulatory review needed"
     else:
-        reg_points = 3.0
+        # DEFECT 7 FIX: an unperformed regulatory assessment used to earn
+        # +3.0 -- positive regulatory-fit credit for having no regulatory
+        # information at all. "No known signal found" must not be treated
+        # as favorable regulatory standing.
+        reg_points = 0.0
 
-    return round(min(15.0, safety_points + reg_points), 1), tier
+    prohibitive = (
+        any(term in safety_text for term in severe_terms)
+        or any(term in regulatory_text for term in ("prohibited", "banned", "regulatory ban"))
+    )
+    return round(min(15.0, safety_points + reg_points), 1), tier, prohibitive
 
 def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
     """Score COMMERCIAL opportunity only; never infer it from chemistry.
@@ -2321,11 +2501,18 @@ def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
 
     combined = _norm(" | ".join(commercial_values))
     if not combined or any(t in combined for t in _COMMERCIAL_UNASSESSED_TERMS):
-        # Preserve the platform's historical neutral prior so legacy scientific
-        # score contracts do not shift merely because commercial intelligence
-        # was unavailable.  The LABEL is deliberately non-claiming: 2.5 is a
-        # neutral scoring prior, not evidence of novelty or white-space.
-        return 2.5, "Commercial novelty not assessed"
+        # DEFECT 6 FIX (pre-investor reliability repair): this branch used
+        # to return 2.5 -- a positive half-credit "neutral prior" -- despite
+        # this function's own docstring already stating "Missing market
+        # data earns zero points rather than a half-score prior, because
+        # 'not searched' is not an opportunity." The code and docstring
+        # directly contradicted each other; production confirmed the code
+        # ran (all 51 candidates in the observed Sleep run received 2.5/5
+        # with every commercial connector reporting Skipped/
+        # SEARCH_NOT_PERFORMED/UNKNOWN). An unperformed/unavailable/
+        # unassessed search must contribute zero positive market-
+        # opportunity points, never a reward or a penalty.
+        return 0.0, "Commercial novelty not assessed"
 
     if any(t in combined for t in _COMMERCIAL_ESTABLISHED_TERMS) or (
         "verified marketed product" in combined
@@ -2440,7 +2627,10 @@ def _indication_component_source_ids(
         for _, row in group.iterrows():
             match_type, _ = _row_authoritative_relevance(row)
             empirical = _row_has_candidate_specific_empirical_support(row)
-            if str(indication_mode).startswith("Direct"):
+            # DEFECT 2 FIX: UNVERIFIED_DIRECT_HUMAN_SIGNAL rows must remain
+            # traceable to their provenance too, even though they no longer
+            # count as verified direct evidence for scoring purposes.
+            if str(indication_mode).startswith("Direct") or indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
                 if (
                     match_type in _MATCH_STRONG
                     and empirical
@@ -2467,7 +2657,7 @@ def _indication_component_source_ids(
             row_blob = _candidate_specific_blob(pd.DataFrame([row]), indication)
             direct_hits = set(_matched_terms(row_blob, family["direct"]))
             mechanism_hits = set(_matched_terms(row_blob, family["mechanistic"]))
-            if str(indication_mode).startswith("Direct"):
+            if str(indication_mode).startswith("Direct") or indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
                 if (
                     direct_hits
                     and empirical
@@ -2640,22 +2830,11 @@ def _derive_go_call(
     dosage_compatibility: str = "Unknown",
     safety_tier: str = "Safety not adequately assessed",
     outcome_label: str = "Results not reported",
-    indication_mode: str = "",
-    outcome_specific_human_evidence_count: int | float = 0,
+    target_definition_completeness: str = "complete",
 ) -> str:
     if status == "Excluded":
         return "No-Go" if "safety" in _norm(reason) else "Hold"
     if status == "Exploratory":
-        return "Investigate — verify before proceeding"
-    # Source-traceable human evidence whose indication-specific outcome has
-    # not yet been verified may remain on the shortlist, but cannot justify Go.
-    if indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
-        return "Investigate — verify before proceeding"
-    # Backward-compatible authority guard: older discovery code may still label
-    # a candidate "Direct human/clinical" from upstream matching even when no
-    # source-grounded outcome-specific human record has been verified. Such a
-    # candidate may remain on the shortlist, but cannot be promoted to Go.
-    if str(indication_mode).startswith("Direct") and int(float(outcome_specific_human_evidence_count or 0)) <= 0:
         return "Investigate — verify before proceeding"
     # A high numeric score alone cannot justify Go. Product-form applicability,
     # explicit safety information, and demonstrated benefit must all be present.
@@ -2665,10 +2844,32 @@ def _derive_go_call(
         return "Investigate — complete safety/interaction review"
     if outcome_label != "Predominantly positive results":
         return "Investigate — resolve efficacy consistency"
-    return "Go" if overall_score >= _STRONG_SCORE_THRESHOLD else "Investigate"
+    if overall_score < _STRONG_SCORE_THRESHOLD:
+        return "Investigate"
+    # TARGET DEFINITION COMPLETENESS FIX (final pre-demo reliability pass):
+    # the scientific evidence itself justifies Go at this point, but the
+    # TARGET/PROJECT definition -- not the evidence -- is still incomplete
+    # (a required dimension, e.g. plant part/route/dose, was never
+    # specified by the user/project; see standard_evidence_builder.
+    # evaluate_applicability()'s TARGET_UNSPECIFIED status). Scientific_
+    # Evidence_Score itself is never penalized for this (Defect 3 fix);
+    # this only withholds the unjustified "fully transferable"/final-Go
+    # conclusion until the product definition is completed. Least
+    # restrictive: never Excluded/No-Go/Hold for this reason alone, and
+    # the candidate keeps its Shortlist status and its score.
+    if target_definition_completeness == "incomplete":
+        return "Investigate — complete target product definition"
+    return "Go"
 
 
-def _derive_decision_class_ah(status: str, overall_score: float, reason: str = "") -> str:
+def _derive_decision_class_ah(
+    status: str,
+    overall_score: float,
+    reason: str = "",
+    *,
+    go_call: str = "",
+    indication_mode: str = "",
+) -> str:
     # Reuses the same A-H label vocabulary already established in
     # decision_class_ah.py, but computed here from the one authoritative
     # plant-level score rather than that module's row-level match_quality/
@@ -2677,7 +2878,27 @@ def _derive_decision_class_ah(status: str, overall_score: float, reason: str = "
         return "H — No-go / safety concern" if "safety" in _norm(reason) else "G — Hold / insufficient evidence"
     if status == "Exploratory":
         return "F — Exploratory hypothesis"
-    if overall_score >= _STRONG_SCORE_THRESHOLD:
+    # DEFECT 8 FIX (final pre-demo reliability pass): "Established
+    # scientific candidate" is a scientific evidence claim, not merely a
+    # score threshold -- market novelty, compound count, and mechanism
+    # count must never be able to manufacture it by pushing overall_score
+    # past the threshold alone. go_call == "Go" already requires
+    # compatible preparation, explicit reassuring safety evidence, and a
+    # predominantly-positive outcome label (see _derive_go_call).
+    # Additionally requiring indication_mode == "Direct human/clinical"
+    # means verified, source-grounded human outcome evidence specifically
+    # (not an unverified AI/semantic direct-human signal -- see the
+    # Defect 2 fix, UNVERIFIED_DIRECT_HUMAN_SIGNAL) before the one label
+    # that implies human/clinical establishment may be used. Callers that
+    # do not have go_call/indication_mode available (e.g. a commercial-
+    # only rescore with reduced context) default to empty strings, which
+    # never satisfy this condition -- the conservative behavior is to
+    # withhold "Established", not to award it on missing context.
+    if (
+        go_call == "Go"
+        and indication_mode == "Direct human/clinical"
+        and overall_score >= _STRONG_SCORE_THRESHOLD
+    ):
         return "B — Established scientific candidate"
     return "C — Alternative-source R&D candidate"
 
@@ -2975,681 +3196,914 @@ def build_plant_candidate_shortlist(
             continue
         _plants_processed += 1
 
-        _t = time.perf_counter()
-        shortlist_rows = group[group["Scientific_Triage_Status"] == "Shortlist"]
-        exploratory_rows = group[group["Scientific_Triage_Status"] == "Exploratory"]
-        usable = shortlist_rows if not shortlist_rows.empty else exploratory_rows
-        if usable.empty:
-            usable = group
+        try:
+            _t = time.perf_counter()
+            shortlist_rows = group[group["Scientific_Triage_Status"] == "Shortlist"]
+            exploratory_rows = group[group["Scientific_Triage_Status"] == "Exploratory"]
+            usable = shortlist_rows if not shortlist_rows.empty else exploratory_rows
+            if usable.empty:
+                usable = group
 
-        compounds = _split_values(usable.get("Shared_or_Similar_Compound", []))
-        distinctive_compounds = [
-            c for c in compounds if _compound_weight(c, "") >= 0.7
-        ]
-        supportive_common_compounds = [
-            c for c in compounds if 0.0 < _compound_weight(c, "") < 0.7
-        ]
-        targets = _split_values(usable.get("Target_or_Mechanism", []))
-        sources = _split_values(usable.get("Source_Record_IDs", []))
-        references = _split_values(usable.get("Reference_Plant", []))
-        statuses_count = Counter(group["Scientific_Triage_Status"].tolist())
+            compounds = _split_values(usable.get("Shared_or_Similar_Compound", []))
+            distinctive_compounds = [
+                c for c in compounds if _compound_weight(c, "") >= 0.7
+            ]
+            supportive_common_compounds = [
+                c for c in compounds if 0.0 < _compound_weight(c, "") < 0.7
+            ]
+            targets = _split_values(usable.get("Target_or_Mechanism", []))
+            sources = _split_values(usable.get("Source_Record_IDs", []))
+            references = _split_values(usable.get("Reference_Plant", []))
+            statuses_count = Counter(group["Scientific_Triage_Status"].tolist())
 
-        if statuses_count["Shortlist"] > 0:
-            plant_status = "Shortlist"
-        elif statuses_count["Exploratory"] > 0:
-            plant_status = "Exploratory"
-        else:
-            plant_status = "Excluded"
-        _plant_section_add("plant_row_filter", time.perf_counter() - _t)
-
-        _t = time.perf_counter()
-        evidence_points = _evidence_points(group)
-        target_points = min(20.0, 5.0 * int(group["Supported_Target_or_Mechanism"].sum()))
-        compound_points = min(15.0, 5.0 * len(distinctive_compounds))
-        source_points = min(10.0, 2.0 * len(sources))
-        dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
-        dosage_points = 10.0 if "Compatible" in dosage_statuses else (5.0 if "Unknown" in dosage_statuses else 0.0)
-        safety_points = 0.0 if group["Hard_Stop_Present"].any() else 10.0
-        reference_points = min(5.0, 2.5 * len(references))
-        negative_penalty = 10.0 if group["Negative_Evidence_Present"].any() else 0.0
-        generic_penalty = 10.0 if len(distinctive_compounds) == 0 else 0.0
-        _plant_section_add("aggregation", time.perf_counter() - _t)
-
-        triage_score = max(
-            0.0,
-            min(
-                100.0,
-                evidence_points + target_points + compound_points + source_points
-                + dosage_points + safety_points + reference_points
-                - negative_penalty - generic_penalty,
-            ),
-        )
-        if plant_status == "Excluded":
-            triage_score = min(triage_score, 39.0)
-        elif plant_status == "Exploratory":
-            # Preserve ranking differences while ensuring incomplete hypotheses
-            # cannot outrank fully gate-passing shortlist candidates merely by
-            # accumulating many weak associations.
-            triage_score = min(74.0, round(triage_score * 0.75, 1))
-
-        # --- Requirement 8: transparent weighted score (0-100) -------------
-        _t = time.perf_counter()
-        (
-            indication_points,
-            indication_tier,
-            indication_mode,
-            indication_source_count,
-        ) = _indication_relevance_detail(group, indication)
-        all_tier_evq_points, all_tier_evq_tier, all_tier_evq_explain = _evidence_quality(
-            group, sources, references
-        )
-        sci_evidence = _scientific_evidence_components(
-            all_tier_evq_explain["row_records"], resolved_target_context,
-        )
-        evq_points = sci_evidence["Evidence_Quality_Score"]
-        evq_tier = sci_evidence["Evidence_Quality_Tier"]
-        evq_explain = sci_evidence["Evidence_Quality_Explain"]
-        cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
-        mech_points, mech_tier = _mechanism_support(group, indication)
-        safety_reg_points, safety_reg_tier = _safety_regulatory(group)
-        novelty_points, novelty_tier = _novelty_market(group)
-        component_source_record_ids = _component_source_record_ids(
-            group,
-            indication=indication,
-            indication_mode=indication_mode,
-            scientific_source_ids=sci_evidence["Scientific_Evidence_Source_Record_IDs"],
-        )
-        authoritative_source_record_ids = sorted({
-            source_id
-            for source_ids in component_source_record_ids.values()
-            for source_id in source_ids
-        })
-        authoritative_narrative_source_record_id = sci_evidence[
-            "Authoritative_Narrative_Source_Record_ID"
-        ]
-        authoritative_narrative_provenance = sci_evidence[
-            "Authoritative_Narrative_Provenance"
-        ]
-        if (
-            authoritative_narrative_source_record_id is None
-            and authoritative_source_record_ids
-        ):
-            authoritative_narrative_source_record_id = authoritative_source_record_ids[0]
-            authoritative_narrative_provenance = (
-                "selected: deterministic first score-contributing source because "
-                "no primary-tier scientific narrative source was available"
-            )
-        _plant_section_add("scoring", time.perf_counter() - _t)
-
-        # Final plant-level decision gates. Mechanism similarity is supporting
-        # evidence only: it cannot create a Shortlist recommendation without
-        # direct candidate-specific indication evidence and adequate evidence
-        # quality/traceability.
-        _t = time.perf_counter()
-        indication_requested = bool(_norm(indication))
-        reasons_note = None
-        base_plant_status = plant_status
-        plant_hard_stop = _critical_plant_stop(group)
-        empirical_rows = int(group.apply(_row_has_candidate_specific_empirical_support, axis=1).sum())
-        traceable_count = len(set(map(_norm, sources)))
-        all_tier_outcome_profile = _outcome_profile(group)
-        outcome_profile = sci_evidence["Primary_Tier_Outcome_Profile"]
-        primary_record_count = int(sci_evidence["Evidence_Direction_Profile"]["Primary_Tier_Record_Count"])
-        primary_traceable_count = len(set(sci_evidence["Scientific_Evidence_Source_Record_IDs"]))
-        dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
-        dosage_summary = (
-            "Compatible" if "Compatible" in dosage_statuses
-            else "Mismatch" if dosage_statuses == {"Mismatch"}
-            else "Unknown"
-        )
-
-        if plant_hard_stop:
-            plant_status = "Excluded"
-            reasons_note = "a repeated or explicit plant-level safety/regulatory stop is present"
-        elif not indication_requested:
-            plant_status = base_plant_status
-        elif indication_points == 0.0:
-            plant_status = "Excluded"
-            reasons_note = "no candidate-specific evidence was found for the requested indication"
-        elif str(indication_mode).startswith("Direct human/clinical") :
-            if evq_points >= 12.0 and primary_record_count >= 1 and primary_traceable_count >= 1:
+            if statuses_count["Shortlist"] > 0:
                 plant_status = "Shortlist"
-            else:
+            elif statuses_count["Exploratory"] > 0:
                 plant_status = "Exploratory"
-                reasons_note = "direct human relevance is present, but traceability or evidence quality is still limited"
-        elif indication_mode in {"Direct preclinical", "Direct but limited", "Direct candidate-specific"}:
-            if indication_points >= 22.0 and evq_points >= 10.0 and primary_record_count >= 1 and primary_traceable_count >= 2:
-                plant_status = "Shortlist"
-            else:
-                plant_status = "Exploratory"
-                reasons_note = "direct indication relevance is present, but the evidence base is not yet sufficient"
-        elif indication_mode in {"Mechanistic empirical", "Mechanistic inference only"}:
-            # PROBLEM 2 fix: indication relevance is a TRIAGE GATE, not
-            # merely one additive score among several. Both of these modes
-            # are "Low relevance" -- mechanism/target similarity without
-            # direct candidate-specific indication evidence. However much
-            # evidence volume or replication accumulates, that alone must
-            # NEVER promote a Low-relevance candidate into the primary
-            # shortlist (general fix, not menopause-specific). It may still
-            # be surfaced as an exploratory hypothesis, but only when the
-            # mechanistic rationale is explicit -- a real supported
-            # target/mechanism is present, not merely an inferred or
-            # generic one -- and the evidence gap is stated.
-            explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
-            if explicit_mechanistic_rationale:
-                plant_status = "Exploratory"
-                reasons_note = (
-                    f"indication relevance is Low ({indication_mode}); mechanism/target "
-                    "similarity alone does not qualify for the primary shortlist -- "
-                    "flagged as an exploratory hypothesis requiring direct, "
-                    "indication-specific validation before further prioritisation"
-                )
             else:
                 plant_status = "Excluded"
-                reasons_note = (
-                    "indication relevance is Low and no explicit supported "
-                    "target/mechanism is present, so even an exploratory "
-                    "hypothesis is not justified"
+            _plant_section_add("plant_row_filter", time.perf_counter() - _t)
+
+            _t = time.perf_counter()
+            evidence_points = _evidence_points(group)
+            target_points = min(20.0, 5.0 * int(group["Supported_Target_or_Mechanism"].sum()))
+            compound_points = min(15.0, 5.0 * len(distinctive_compounds))
+            source_points = min(10.0, 2.0 * len(sources))
+            dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
+            dosage_points = 10.0 if "Compatible" in dosage_statuses else (5.0 if "Unknown" in dosage_statuses else 0.0)
+            safety_points = 0.0 if group["Hard_Stop_Present"].any() else 10.0
+            reference_points = min(5.0, 2.5 * len(references))
+            negative_penalty = 10.0 if group["Negative_Evidence_Present"].any() else 0.0
+            generic_penalty = 10.0 if len(distinctive_compounds) == 0 else 0.0
+            _plant_section_add("aggregation", time.perf_counter() - _t)
+
+            triage_score = max(
+                0.0,
+                min(
+                    100.0,
+                    evidence_points + target_points + compound_points + source_points
+                    + dosage_points + safety_points + reference_points
+                    - negative_penalty - generic_penalty,
+                ),
+            )
+            if plant_status == "Excluded":
+                triage_score = min(triage_score, 39.0)
+            elif plant_status == "Exploratory":
+                # Preserve ranking differences while ensuring incomplete hypotheses
+                # cannot outrank fully gate-passing shortlist candidates merely by
+                # accumulating many weak associations.
+                triage_score = min(74.0, round(triage_score * 0.75, 1))
+
+            # --- Requirement 8: transparent weighted score (0-100) -------------
+            _t = time.perf_counter()
+            (
+                indication_points,
+                indication_tier,
+                indication_mode,
+                indication_source_count,
+            ) = _indication_relevance_detail(group, indication)
+            all_tier_evq_points, all_tier_evq_tier, all_tier_evq_explain = _evidence_quality(
+                group, sources, references
+            )
+            sci_evidence = _scientific_evidence_components(
+                all_tier_evq_explain["row_records"], resolved_target_context,
+            )
+            evq_points = sci_evidence["Evidence_Quality_Score"]
+            evq_tier = sci_evidence["Evidence_Quality_Tier"]
+            evq_explain = sci_evidence["Evidence_Quality_Explain"]
+            cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
+            mech_points, mech_tier = _mechanism_support(group, indication)
+            safety_reg_points, safety_reg_tier, safety_reg_prohibitive = _safety_regulatory(group)
+            novelty_points, novelty_tier = _novelty_market(group)
+            component_source_record_ids = _component_source_record_ids(
+                group,
+                indication=indication,
+                indication_mode=indication_mode,
+                scientific_source_ids=sci_evidence["Scientific_Evidence_Source_Record_IDs"],
+            )
+            authoritative_source_record_ids = sorted({
+                source_id
+                for source_ids in component_source_record_ids.values()
+                for source_id in source_ids
+            })
+            authoritative_narrative_source_record_id = sci_evidence[
+                "Authoritative_Narrative_Source_Record_ID"
+            ]
+            authoritative_narrative_provenance = sci_evidence[
+                "Authoritative_Narrative_Provenance"
+            ]
+            if (
+                authoritative_narrative_source_record_id is None
+                and authoritative_source_record_ids
+            ):
+                authoritative_narrative_source_record_id = authoritative_source_record_ids[0]
+                authoritative_narrative_provenance = (
+                    "selected: deterministic first score-contributing source because "
+                    "no primary-tier scientific narrative source was available"
                 )
-        else:
-            plant_status = "Exploratory"
-            reasons_note = "only weak, indirect, or inferred indication relevance was found"
+            _plant_section_add("scoring", time.perf_counter() - _t)
 
-        if safety_reg_points <= 0.0:
-            plant_status = "Excluded"
-            reasons_note = "safety/regulatory screening did not pass at plant level"
-        elif outcome_profile["positive"] == 0 and (outcome_profile["null"] + outcome_profile["harmful"]) > 0:
-            plant_status = "Exploratory"
-            reasons_note = "human/clinical records did not demonstrate benefit or reported an adverse direction"
-        elif dosage_summary == "Mismatch":
-            plant_status = "Excluded"
-            reasons_note = "available evidence uses a preparation that does not match the selected dosage form"
-        _plant_section_add("decision_gates", time.perf_counter() - _t)
+            # Final plant-level decision gates. Mechanism similarity is supporting
+            # evidence only: it cannot create a Shortlist recommendation without
+            # direct candidate-specific indication evidence and adequate evidence
+            # quality/traceability.
+            _t = time.perf_counter()
+            indication_requested = bool(_norm(indication))
+            reasons_note = None
+            base_plant_status = plant_status
+            plant_hard_stop = _critical_plant_stop(group)
+            empirical_rows = int(group.apply(_row_has_candidate_specific_empirical_support, axis=1).sum())
+            traceable_count = len(set(map(_norm, sources)))
+            all_tier_outcome_profile = _outcome_profile(group)
+            outcome_profile = sci_evidence["Primary_Tier_Outcome_Profile"]
+            primary_record_count = int(sci_evidence["Evidence_Direction_Profile"]["Primary_Tier_Record_Count"])
+            primary_traceable_count = len(set(sci_evidence["Scientific_Evidence_Source_Record_IDs"]))
+            dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
+            dosage_summary = (
+                "Compatible" if "Compatible" in dosage_statuses
+                else "Mismatch" if dosage_statuses == {"Mismatch"}
+                else "Unknown"
+            )
 
-        _t = time.perf_counter()
-        # --- Problem 2 additive diagnostics -------------------------------
-        # Direct- vs mechanistic-support row counts, read from the same
-        # authoritative per-row relevance used above wherever available, so
-        # this reporting layer cannot disagree with the gate that already
-        # decided plant_status.
-        if _group_has_authoritative_relevance(group):
-            direct_source_ids = {
+            if plant_hard_stop:
+                plant_status = "Excluded"
+                reasons_note = "a repeated or explicit plant-level safety/regulatory stop is present"
+            elif not indication_requested:
+                plant_status = base_plant_status
+            elif indication_points == 0.0:
+                plant_status = "Excluded"
+                reasons_note = "no candidate-specific evidence was found for the requested indication"
+            elif str(indication_mode).startswith("Direct human/clinical") :
+                if evq_points >= 12.0 and primary_record_count >= 1 and primary_traceable_count >= 1:
+                    plant_status = "Shortlist"
+                else:
+                    plant_status = "Exploratory"
+                    reasons_note = "direct human relevance is present, but traceability or evidence quality is still limited"
+            elif indication_mode in {"Direct preclinical", "Direct but limited", "Direct candidate-specific"}:
+                if indication_points >= 22.0 and evq_points >= 10.0 and primary_record_count >= 1 and primary_traceable_count >= 2:
+                    plant_status = "Shortlist"
+                else:
+                    plant_status = "Exploratory"
+                    reasons_note = "direct indication relevance is present, but the evidence base is not yet sufficient"
+            elif indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
+                # DEFECT 2 FIX (final pre-demo reliability pass), REVISED
+                # after live Sleep-run production feedback: the original
+                # version of this branch always routed to Exploratory,
+                # however strong the surrounding evidence looked, to avoid
+                # ever presenting an unverified direct-human signal as
+                # verified clinical evidence. In the real production run
+                # this proved too strict -- it collapsed the primary
+                # Scientific Shortlist to a single plant, because the
+                # strict outcome-specific-evidence parser can legitimately
+                # be incomplete even when traceable human records and
+                # adequate evidence quality/relevance ARE present.
+                #
+                # A candidate now gets a PROVISIONAL Shortlist placement
+                # when it clears a substantive (not just nonzero) bar:
+                # indication_points >= 20, evq_points >= 12, at least one
+                # primary-tier record, and at least one traceable
+                # primary-tier source. Every safety property from the
+                # original fix is unchanged and independently enforced
+                # elsewhere regardless of this triage-status change:
+                #   - the relevance SCORE itself stays capped below the
+                #     verified range (max 24/35 -- see
+                #     _indication_relevance_detail_authoritative()/
+                #     _legacy_fallback()), never presented as verified;
+                #   - Outcome_Specific_Human_Evidence_Count stays 0 and
+                #     visible;
+                #   - _derive_go_call() only allows "Go" when
+                #     indication_mode == "Direct human/clinical"
+                #     specifically (Defect 8 fix) -- a provisional
+                #     UNVERIFIED_DIRECT_HUMAN_SIGNAL Shortlist placement
+                #     can NEVER reach "Go" through this path, regardless
+                #     of score;
+                #   - _derive_decision_class_ah() only allows
+                #     "B -- Established scientific candidate" under that
+                #     same indication_mode condition, so this candidate
+                #     can never be labelled Established either;
+                #   - the explanation text below explicitly states outcome
+                #     verification is pending, so this is never displayed
+                #     as settled clinical evidence.
+                if indication_points >= 20.0 and evq_points >= 12.0 and primary_record_count >= 1 and primary_traceable_count >= 1:
+                    plant_status = "Shortlist"
+                    reasons_note = (
+                        "indication relevance looked direct and human-related with "
+                        "traceable, substantive supporting evidence, but no record yet "
+                        "carries a verified, indication-specific reported outcome "
+                        "(Outcome_Specific_Human_Evidence_Count == 0) -- included as a "
+                        "provisional candidate with outcome verification still pending; "
+                        "cannot reach Go or an Established classification on this signal alone"
+                    )
+                else:
+                    plant_status = "Exploratory"
+                    reasons_note = (
+                        "indication relevance looked direct and human-related, but no record "
+                        "carries a verified, indication-specific reported outcome "
+                        "(Outcome_Specific_Human_Evidence_Count == 0), and the surrounding "
+                        "evidence base is not yet substantive enough for even a provisional "
+                        "shortlist placement -- flagged as an unverified direct-human signal "
+                        "requiring expert review before it can be treated as clinical evidence"
+                    )
+            elif indication_mode in {"Mechanistic empirical", "Mechanistic inference only"}:
+                # PROBLEM 2 fix: indication relevance is a TRIAGE GATE, not
+                # merely one additive score among several. Both of these modes
+                # are "Low relevance" -- mechanism/target similarity without
+                # direct candidate-specific indication evidence. However much
+                # evidence volume or replication accumulates, that alone must
+                # NEVER promote a Low-relevance candidate into the primary
+                # shortlist (general fix, not menopause-specific). It may still
+                # be surfaced as an exploratory hypothesis, but only when the
+                # mechanistic rationale is explicit -- a real supported
+                # target/mechanism is present, not merely an inferred or
+                # generic one -- and the evidence gap is stated.
+                explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
+                if explicit_mechanistic_rationale:
+                    plant_status = "Exploratory"
+                    reasons_note = (
+                        f"indication relevance is Low ({indication_mode}); mechanism/target "
+                        "similarity alone does not qualify for the primary shortlist -- "
+                        "flagged as an exploratory hypothesis requiring direct, "
+                        "indication-specific validation before further prioritisation"
+                    )
+                else:
+                    plant_status = "Excluded"
+                    reasons_note = (
+                        "indication relevance is Low and no explicit supported "
+                        "target/mechanism is present, so even an exploratory "
+                        "hypothesis is not justified"
+                    )
+            else:
+                plant_status = "Exploratory"
+                reasons_note = "only weak, indirect, or inferred indication relevance was found"
+
+            if safety_reg_prohibitive:
+                # DEFECT 7 FIX (pre-investor reliability repair): this used to
+                # be `if safety_reg_points <= 0.0`. Once "no safety/regulatory
+                # information at all" stopped earning positive points (see
+                # _safety_regulatory()), that comparison could no longer tell
+                # a genuine prohibitive signal apart from simple absence of
+                # data -- both now score at or near 0. Gating on the explicit
+                # `prohibitive` flag keeps the hard-stop behavior for a real
+                # severe-safety-term or regulatory-prohibition match, while an
+                # honestly-unknown candidate is no longer silently auto-
+                # excluded merely for having no safety/regulatory data (it
+                # still scores 0 safety points and still requires review
+                # before Go via eligibility_gate.py, per the cahier's
+                # instruction to separate score from decision eligibility).
+                plant_status = "Excluded"
+                reasons_note = "safety/regulatory screening did not pass at plant level"
+            elif outcome_profile["positive"] == 0 and (outcome_profile["null"] + outcome_profile["harmful"]) > 0:
+                plant_status = "Exploratory"
+                reasons_note = "human/clinical records did not demonstrate benefit or reported an adverse direction"
+            elif dosage_summary == "Mismatch":
+                plant_status = "Excluded"
+                reasons_note = "available evidence uses a preparation that does not match the selected dosage form"
+            _plant_section_add("decision_gates", time.perf_counter() - _t)
+
+            _t = time.perf_counter()
+            # --- Problem 2 additive diagnostics -------------------------------
+            # Direct- vs mechanistic-support row counts, read from the same
+            # authoritative per-row relevance used above wherever available, so
+            # this reporting layer cannot disagree with the gate that already
+            # decided plant_status.
+            if _group_has_authoritative_relevance(group):
+                direct_source_ids = {
+                    _norm(source_id)
+                    for _, r in group.iterrows()
+                    if (
+                        _row_authoritative_relevance(r)[0] in _MATCH_STRONG
+                        and _row_has_traceable_source(r)
+                        and _row_has_candidate_specific_empirical_support(r)
+                        and _row_has_indication_specific_outcome(r, indication)
+                        and not _row_is_inferred_or_generic(r)
+                    )
+                    for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                    if _norm(source_id)
+                }
+                # Report DIRECT evidence from the exact deduplicated primary-tier
+                # records that drive Scientific_Evidence_Score.  Use row identity
+                # rather than an identifier intersection: one evidence record can
+                # carry multiple aliases (PMID/DOI/NCT/etc.) and many raw rows can
+                # project the same record across compounds/targets.  Counting the
+                # primary record once preserves the scientific meaning "independent
+                # evidence records", without alias inflation or projection
+                # duplication.
+                _primary_row_ids = set(sci_evidence.get("Primary_Evidence_Row_IDs") or [])
+                _primary_direct_records = []
+                _primary_outcome_direct_records = []
+                _primary_outcome_human_records = []
+                for _idx, _r in group.iterrows():
+                    if _idx not in _primary_row_ids:
+                        continue
+                    _is_direct = (
+                        _row_authoritative_relevance(_r)[0] in _MATCH_STRONG
+                        and _row_has_traceable_source(_r)
+                        and _row_has_candidate_specific_empirical_support(_r)
+                        and not _row_is_inferred_or_generic(_r)
+                    )
+                    if not _is_direct:
+                        continue
+                    _primary_direct_records.append(_idx)
+                    if _row_has_indication_specific_outcome(_r, indication):
+                        _primary_outcome_direct_records.append(_idx)
+                        _is_human, _ = _evidence_context_row(_r)
+                        if _is_human:
+                            _primary_outcome_human_records.append(_idx)
+                direct_evidence_count = len(_primary_direct_records)
+                outcome_specific_direct_evidence_count = len(_primary_outcome_direct_records)
+                outcome_specific_human_evidence_count = len(_primary_outcome_human_records)
+                mechanistic_source_ids = {
+                    _norm(source_id)
+                    for _, r in group.iterrows()
+                    if (
+                        _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                        and _row_has_traceable_source(r)
+                        and _row_has_candidate_specific_empirical_support(r)
+                    )
+                    for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                    if _norm(source_id)
+                }
+                mechanistic_evidence_count = len(mechanistic_source_ids)
+
+                # Source-traceability pass (2026-09-10, corrective): the IDs
+                # above were being discarded after computing only their COUNT
+                # (Mechanistic_Evidence_Count). Persist the actual IDs.
+                # mechanistic_source_ids itself is normalized (_norm() lower-
+                # cases) -- correct for a dedup/count set, but a real
+                # Evidence_Record_ID is case-sensitive, so lowercasing it here
+                # would silently break resolution against evidence_df later.
+                # Recompute the SAME row/condition filter but keep raw-case
+                # IDs for what actually gets persisted and resolved.
+                mechanistic_evidence_record_ids = sorted({
+                    source_id
+                    for _, r in group.iterrows()
+                    if (
+                        _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                        and _row_has_traceable_source(r)
+                        and _row_has_candidate_specific_empirical_support(r)
+                    )
+                    for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                    if _norm(source_id)
+                })
+
+                # Pair each supportive row's own Source_Record_IDs with that
+                # SAME row's own Mechanistic_Linked_Targets/_Mechanisms atoms
+                # (not the whole-group aggregate used for
+                # discovery_linked_targets above), so a target/mechanism is
+                # never attributed to an unrelated row's source -- the same
+                # no-laundering discipline indication_candidate_discovery.py's
+                # _mechanistic_field_atoms()/_score_mechanistic_links() already
+                # apply to admission, applied here to provenance instead.
+                #
+                # CRITICAL CORRECTION (2026-09-10): a target/mechanism claim must
+                # be traceable to a CLICKABLE reference wherever one genuinely
+                # exists, not just an internal evidence-record ID. Each row also
+                # carries its own Mechanistic_Target_Reference_Map/_Mechanism_
+                # Reference_Map -- the exact reference_title/reference_url pairs
+                # read directly off the SAME plant-compound link row that
+                # produced this target/mechanism (indication_candidate_
+                # discovery.py's _score_mechanistic_links(), previously dropped
+                # after admission scoring). Merged in here, per target/mechanism,
+                # never cross-attributed to a different row's target/mechanism.
+                target_source_map: dict[str, dict] = {}
+                mechanism_source_map: dict[str, dict] = {}
+                compound_reference_map: dict[str, dict] = {}
+                compound_target_source_map: dict[str, dict] = {}
+                for _, r in group.iterrows():
+                    if not (
+                        _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                        and _row_has_traceable_source(r)
+                        and _row_has_candidate_specific_empirical_support(r)
+                    ):
+                        continue
+                    _row_ids = [
+                        sid for sid in _split_values([r.get("Source_Record_IDs", "")])
+                        if _norm(sid)
+                    ]
+                    _row_target_refs = _parse_reference_map(r.get("Mechanistic_Target_Reference_Map"))
+                    _row_mechanism_refs = _parse_reference_map(r.get("Mechanistic_Mechanism_Reference_Map"))
+                    _row_compound_refs = _parse_reference_map(r.get("Mechanistic_Compound_Reference_Map"))
+
+                    for _target in _split_values([r.get("Mechanistic_Linked_Targets", "")]):
+                        if not _row_ids and _target not in _row_target_refs:
+                            continue
+                        entry = target_source_map.setdefault(
+                            _target, {"evidence_ids": set(), "references": []}
+                        )
+                        entry["evidence_ids"].update(_row_ids)
+                        for ref in _row_target_refs.get(_target, []):
+                            if ref not in entry["references"]:
+                                entry["references"].append(ref)
+                            # Compound -> Target/Mechanism provenance (spec §E):
+                            # a DIFFERENT claim from Plant -> Compound, kept in
+                            # its own map even though it may cite the same
+                            # underlying plant-compound-database row/reference
+                            # -- that is the genuine single source behind both
+                            # facts, not a laundered substitute.
+                            _ref_compound = ref.get("compound")
+                            if _ref_compound:
+                                _compound_targets = compound_target_source_map.setdefault(_ref_compound, {})
+                                _target_refs = _compound_targets.setdefault(_target, [])
+                                _slim_ref = {"title": ref.get("title"), "url": ref.get("url")}
+                                if _slim_ref not in _target_refs:
+                                    _target_refs.append(_slim_ref)
+                    for _mechanism in _split_values([r.get("Mechanistic_Linked_Mechanisms", "")]):
+                        if not _row_ids and _mechanism not in _row_mechanism_refs:
+                            continue
+                        entry = mechanism_source_map.setdefault(
+                            _mechanism, {"evidence_ids": set(), "references": []}
+                        )
+                        entry["evidence_ids"].update(_row_ids)
+                        for ref in _row_mechanism_refs.get(_mechanism, []):
+                            if ref not in entry["references"]:
+                                entry["references"].append(ref)
+                    for _compound, _ref in _row_compound_refs.items():
+                        if _compound not in compound_reference_map:
+                            compound_reference_map[_compound] = _ref
+                target_source_map = {
+                    name: {"evidence_ids": sorted(v["evidence_ids"]), "references": v["references"]}
+                    for name, v in target_source_map.items()
+                }
+                mechanism_source_map = {
+                    name: {"evidence_ids": sorted(v["evidence_ids"]), "references": v["references"]}
+                    for name, v in mechanism_source_map.items()
+                }
+            else:
+                direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
+                outcome_specific_direct_evidence_count = int(
+                    sum(
+                        bool(r.get("Direct_Evidence_Present", False))
+                        and _row_has_indication_specific_outcome(r, indication)
+                        for _, r in group.iterrows()
+                    )
+                )
+                outcome_specific_human_evidence_count = int(
+                    sum(
+                        bool(r.get("Direct_Evidence_Present", False))
+                        and _row_has_indication_specific_outcome(r, indication)
+                        and _evidence_context_row(r)[0]
+                        for _, r in group.iterrows()
+                    )
+                )
+                mechanistic_evidence_count = max(
+                    0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
+                )
+                # No authoritative per-row relevance available on this legacy
+                # path -- honestly empty rather than guessing at provenance.
+                mechanistic_evidence_record_ids = []
+                target_source_map = {}
+                mechanism_source_map = {}
+                compound_reference_map = {}
+                compound_target_source_map = {}
+
+            # Discovery ranking must use the exact indication-linked mechanistic
+            # path when Stage 5 supplied it. Whole-plant Known_Targets and compound
+            # lists can contain many unrelated bioactivities; using those aggregates
+            # here was one cause of the Stage-6 70/70/70 score saturation and could
+            # reward a rare compound unrelated to the matched indication target.
+            _has_linked_target_diagnostic = "Mechanistic_Linked_Targets" in group.columns
+            discovery_linked_targets = _split_values(
+                group.get("Mechanistic_Linked_Targets", pd.Series(dtype=object))
+            )
+            discovery_linked_compounds = _split_values(
+                group.get("Mechanistic_Linked_Compounds", pd.Series(dtype=object))
+            )
+            discovery_linked_mechanisms = _split_values(
+                group.get("Mechanistic_Linked_Mechanisms", pd.Series(dtype=object))
+            )
+            _specificity_values = pd.to_numeric(
+                group.get("Mechanistic_Compound_Specificity", pd.Series(dtype=float)),
+                errors="coerce",
+            ).dropna()
+            discovery_compound_specificity = (
+                float(_specificity_values.max()) if not _specificity_values.empty else 0.0
+            )
+            discovery_linked_target_count = (
+                len(discovery_linked_targets) if _has_linked_target_diagnostic else None
+            )
+
+            # --- Additive R&D Discovery Lane classification --------------------
+            # Separates two questions this gate's plant_status conflates:
+            # "good enough to develop on today's evidence?" (plant_status
+            # itself, unchanged) vs "scientifically interesting enough for
+            # R&D attention regardless of today's evidence?" (RD_Discovery_Lane,
+            # new). See rd_discovery_classification.py module docstring.
+            # explicit_mechanistic_rationale mirrors, byte-for-byte, the same
+            # test already used above in the "Mechanistic empirical"/
+            # "Mechanistic inference only" branch (mech_points > 0.0 or
+            # len(targets) > 0) -- recomputed here rather than threaded out of
+            # that branch's local scope, since it applies to every plant_status
+            # value, not only the ones that pass through that branch.
+            explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
+            regulatory_prohibition_present = _regulatory_prohibition_text_present(group)
+            already_in_catalogue = _already_in_catalogue_for_group(group)
+            rd_discovery_lane = classify_discovery_lane(
+                plant_status=plant_status,
+                plant_hard_stop=plant_hard_stop,
+                regulatory_prohibition_present=regulatory_prohibition_present,
+                explicit_mechanistic_rationale=explicit_mechanistic_rationale,
+                indication_points=indication_points,
+                dosage_mismatch=(dosage_summary == "Mismatch"),
+                already_in_catalogue=already_in_catalogue,
+                novelty_tier=novelty_tier,
+                direct_evidence_count=direct_evidence_count,
+            )
+            discovery_potential = discovery_potential_score(
+                mech_points=mech_points,
+                target_count=len(targets),
+                mechanistic_evidence_count=mechanistic_evidence_count,
+                novelty_points=novelty_points,
+                novelty_tier=novelty_tier,
+                linked_target_count=discovery_linked_target_count,
+                linked_compound_count=len(discovery_linked_compounds),
+                compound_specificity=discovery_compound_specificity,
+            )
+            evidence_maturity = evidence_maturity_score(
+                evq_points=evq_points,
+                direct_evidence_count=direct_evidence_count,
+                outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
+                indication_points=indication_points,
+            )
+
+            # Preparation applicability is determined by the same PRIMARY evidence
+            # tier that drives the scientific score.  A single low-tier tea record
+            # must not upgrade a body of capsule/extract evidence to a direct
+            # infusion match.  Lower-tier rows may only provide an indirect hint
+            # when the primary tier did not report preparation at all.
+            primary_prep = str(sci_evidence.get("Dimension_Status", {}).get("preparation") or "").upper()
+            primary_source_ids_for_prep = {
                 _norm(source_id)
-                for _, r in group.iterrows()
-                if (
-                    _row_authoritative_relevance(r)[0] in _MATCH_STRONG
-                    and _row_has_traceable_source(r)
-                    and _row_has_candidate_specific_empirical_support(r)
-                    and _row_has_indication_specific_outcome(r, indication)
-                    and not _row_is_inferred_or_generic(r)
-                )
-                for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                for value in (sci_evidence.get("Scientific_Evidence_Source_Record_IDs") or [])
+                for source_id in _split_values([value])
                 if _norm(source_id)
             }
-            # Report DIRECT evidence from the exact deduplicated primary-tier
-            # records that drive Scientific_Evidence_Score.  Use row identity
-            # rather than an identifier intersection: one evidence record can
-            # carry multiple aliases (PMID/DOI/NCT/etc.) and many raw rows can
-            # project the same record across compounds/targets.  Counting the
-            # primary record once preserves the scientific meaning "independent
-            # evidence records", without alias inflation or projection
-            # duplication.
-            _primary_row_ids = set(sci_evidence.get("Primary_Evidence_Row_IDs") or [])
-            _primary_direct_records = []
-            _primary_outcome_direct_records = []
-            _primary_outcome_human_records = []
-            for _idx, _r in group.iterrows():
-                if _idx not in _primary_row_ids:
-                    continue
-                _is_direct = (
-                    _row_authoritative_relevance(_r)[0] in _MATCH_STRONG
-                    and _row_has_traceable_source(_r)
-                    and _row_has_candidate_specific_empirical_support(_r)
-                    and not _row_is_inferred_or_generic(_r)
-                )
-                if not _is_direct:
-                    continue
-                _primary_direct_records.append(_idx)
-                if _row_has_indication_specific_outcome(_r, indication):
-                    _primary_outcome_direct_records.append(_idx)
-                    _is_human, _ = _evidence_context_row(_r)
-                    if _is_human:
-                        _primary_outcome_human_records.append(_idx)
-            direct_evidence_count = len(_primary_direct_records)
-            outcome_specific_direct_evidence_count = len(_primary_outcome_direct_records)
-            outcome_specific_human_evidence_count = len(_primary_outcome_human_records)
-            mechanistic_source_ids = {
-                _norm(source_id)
-                for _, r in group.iterrows()
-                if (
-                    _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
-                    and _row_has_traceable_source(r)
-                    and _row_has_candidate_specific_empirical_support(r)
-                )
-                for source_id in _split_values([r.get("Source_Record_IDs", "")])
-                if _norm(source_id)
+            primary_rows_for_prep = []
+            for _, r in group.iterrows():
+                row_ids = {_norm(x) for x in _split_values([r.get("Source_Record_IDs", "")]) if _norm(x)}
+                if row_ids & primary_source_ids_for_prep:
+                    primary_rows_for_prep.append(r)
+            explicit_primary_classes = {
+                _explicit_preparation_applicability_row(r, dosage_form)
+                for r in primary_rows_for_prep
             }
-            mechanistic_evidence_count = len(mechanistic_source_ids)
-        else:
-            direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
-            outcome_specific_direct_evidence_count = int(
-                sum(
-                    bool(r.get("Direct_Evidence_Present", False))
-                    and _row_has_indication_specific_outcome(r, indication)
-                    for _, r in group.iterrows()
-                )
-            )
-            outcome_specific_human_evidence_count = int(
-                sum(
-                    bool(r.get("Direct_Evidence_Present", False))
-                    and _row_has_indication_specific_outcome(r, indication)
-                    and _evidence_context_row(r)[0]
-                    for _, r in group.iterrows()
-                )
-            )
-            mechanistic_evidence_count = max(
-                0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
-            )
-
-        # Discovery ranking must use the exact indication-linked mechanistic
-        # path when Stage 5 supplied it. Whole-plant Known_Targets and compound
-        # lists can contain many unrelated bioactivities; using those aggregates
-        # here was one cause of the Stage-6 70/70/70 score saturation and could
-        # reward a rare compound unrelated to the matched indication target.
-        _has_linked_target_diagnostic = "Mechanistic_Linked_Targets" in group.columns
-        discovery_linked_targets = _split_values(
-            group.get("Mechanistic_Linked_Targets", pd.Series(dtype=object))
-        )
-        discovery_linked_compounds = _split_values(
-            group.get("Mechanistic_Linked_Compounds", pd.Series(dtype=object))
-        )
-        discovery_linked_mechanisms = _split_values(
-            group.get("Mechanistic_Linked_Mechanisms", pd.Series(dtype=object))
-        )
-        _specificity_values = pd.to_numeric(
-            group.get("Mechanistic_Compound_Specificity", pd.Series(dtype=float)),
-            errors="coerce",
-        ).dropna()
-        discovery_compound_specificity = (
-            float(_specificity_values.max()) if not _specificity_values.empty else 0.0
-        )
-        discovery_linked_target_count = (
-            len(discovery_linked_targets) if _has_linked_target_diagnostic else None
-        )
-
-        # --- Additive R&D Discovery Lane classification --------------------
-        # Separates two questions this gate's plant_status conflates:
-        # "good enough to develop on today's evidence?" (plant_status
-        # itself, unchanged) vs "scientifically interesting enough for
-        # R&D attention regardless of today's evidence?" (RD_Discovery_Lane,
-        # new). See rd_discovery_classification.py module docstring.
-        # explicit_mechanistic_rationale mirrors, byte-for-byte, the same
-        # test already used above in the "Mechanistic empirical"/
-        # "Mechanistic inference only" branch (mech_points > 0.0 or
-        # len(targets) > 0) -- recomputed here rather than threaded out of
-        # that branch's local scope, since it applies to every plant_status
-        # value, not only the ones that pass through that branch.
-        explicit_mechanistic_rationale = mech_points > 0.0 or len(targets) > 0
-        regulatory_prohibition_present = _regulatory_prohibition_text_present(group)
-        already_in_catalogue = _already_in_catalogue_for_group(group)
-        rd_discovery_lane = classify_discovery_lane(
-            plant_status=plant_status,
-            plant_hard_stop=plant_hard_stop,
-            regulatory_prohibition_present=regulatory_prohibition_present,
-            explicit_mechanistic_rationale=explicit_mechanistic_rationale,
-            indication_points=indication_points,
-            dosage_mismatch=(dosage_summary == "Mismatch"),
-            already_in_catalogue=already_in_catalogue,
-            novelty_tier=novelty_tier,
-            direct_evidence_count=direct_evidence_count,
-        )
-        discovery_potential = discovery_potential_score(
-            mech_points=mech_points,
-            target_count=len(targets),
-            mechanistic_evidence_count=mechanistic_evidence_count,
-            novelty_points=novelty_points,
-            novelty_tier=novelty_tier,
-            linked_target_count=discovery_linked_target_count,
-            linked_compound_count=len(discovery_linked_compounds),
-            compound_specificity=discovery_compound_specificity,
-        )
-        evidence_maturity = evidence_maturity_score(
-            evq_points=evq_points,
-            direct_evidence_count=direct_evidence_count,
-            outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
-            indication_points=indication_points,
-        )
-
-        # Preparation applicability is determined by the same PRIMARY evidence
-        # tier that drives the scientific score.  A single low-tier tea record
-        # must not upgrade a body of capsule/extract evidence to a direct
-        # infusion match.  Lower-tier rows may only provide an indirect hint
-        # when the primary tier did not report preparation at all.
-        primary_prep = str(sci_evidence.get("Dimension_Status", {}).get("preparation") or "").upper()
-        primary_source_ids_for_prep = {
-            _norm(source_id)
-            for value in (sci_evidence.get("Scientific_Evidence_Source_Record_IDs") or [])
-            for source_id in _split_values([value])
-            if _norm(source_id)
-        }
-        primary_rows_for_prep = []
-        for _, r in group.iterrows():
-            row_ids = {_norm(x) for x in _split_values([r.get("Source_Record_IDs", "")]) if _norm(x)}
-            if row_ids & primary_source_ids_for_prep:
-                primary_rows_for_prep.append(r)
-        explicit_primary_classes = {
-            _explicit_preparation_applicability_row(r, dosage_form)
-            for r in primary_rows_for_prep
-        }
-        # Scoring retains the calibrated legacy adapter, but the Stage-6 label
-        # "direct_match" is stricter: it requires an explicitly reported
-        # preparation in a primary-tier evidence record.  A generic legacy
-        # "Compatible" flag is transferability support, not proof that the
-        # studied preparation equals the requested product form.
-        if primary_prep == "MATCH":
-            if PREP_DIRECT_MATCH in explicit_primary_classes:
-                preparation_applicability_class = PREP_DIRECT_MATCH
-            elif PREP_INCOMPATIBLE in explicit_primary_classes:
+            # Scoring retains the calibrated legacy adapter, but the Stage-6 label
+            # "direct_match" is stricter: it requires an explicitly reported
+            # preparation in a primary-tier evidence record.  A generic legacy
+            # "Compatible" flag is transferability support, not proof that the
+            # studied preparation equals the requested product form.
+            if primary_prep == "MATCH":
+                if PREP_DIRECT_MATCH in explicit_primary_classes:
+                    preparation_applicability_class = PREP_DIRECT_MATCH
+                elif PREP_INCOMPATIBLE in explicit_primary_classes:
+                    preparation_applicability_class = PREP_INCOMPATIBLE
+                else:
+                    preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+            elif primary_prep == "PARTIAL":
+                preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+            elif primary_prep == "MISMATCH":
                 preparation_applicability_class = PREP_INCOMPATIBLE
             else:
-                preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
-        elif primary_prep == "PARTIAL":
-            preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
-        elif primary_prep == "MISMATCH":
-            preparation_applicability_class = PREP_INCOMPATIBLE
-        else:
-            lower_classes = group.apply(lambda r: _explicit_preparation_applicability_row(r, dosage_form), axis=1)
-            if PREP_INCOMPATIBLE in set(lower_classes.values):
-                preparation_applicability_class = PREP_INCOMPATIBLE
-            elif PREP_DIRECT_MATCH in set(lower_classes.values) or PREP_COMPATIBLE_BUT_INDIRECT in set(lower_classes.values):
-                preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+                lower_classes = group.apply(lambda r: _explicit_preparation_applicability_row(r, dosage_form), axis=1)
+                if PREP_INCOMPATIBLE in set(lower_classes.values):
+                    preparation_applicability_class = PREP_INCOMPATIBLE
+                elif PREP_DIRECT_MATCH in set(lower_classes.values) or PREP_COMPATIBLE_BUT_INDIRECT in set(lower_classes.values):
+                    preparation_applicability_class = PREP_COMPATIBLE_BUT_INDIRECT
+                else:
+                    preparation_applicability_class = PREP_NOT_REPORTED
+
+            primary_app = sci_evidence.get("Record_Applicability_Summary", {}) or {}
+            preparation_specific_evidence_count = sum(
+                1 for rec in primary_app.values()
+                if str((rec.get("Dimension_Status", {}) or {}).get("preparation") or "").upper() == "MATCH"
+            )
+
+            if plant_hard_stop or safety_reg_prohibitive:
+                relevance_gate_result = "failed_safety"
+            elif not indication_requested:
+                relevance_gate_result = "not_applicable"
+            elif indication_points == 0.0:
+                relevance_gate_result = "failed_no_relevance"
+            elif indication_tier in ("High relevance", "Medium relevance"):
+                relevance_gate_result = "passed_direct"
+            elif indication_tier == "Low relevance":
+                relevance_gate_result = (
+                    "passed_indirect_exploratory_only" if plant_status != "Excluded"
+                    else "failed_no_relevance"
+                )
             else:
-                preparation_applicability_class = PREP_NOT_REPORTED
+                relevance_gate_result = "failed_no_relevance"
 
-        primary_app = sci_evidence.get("Record_Applicability_Summary", {}) or {}
-        preparation_specific_evidence_count = sum(
-            1 for rec in primary_app.values()
-            if str((rec.get("Dimension_Status", {}) or {}).get("preparation") or "").upper() == "MATCH"
-        )
+            _EVIDENCE_ROUTE_BY_MODE = {
+                "Direct human/clinical": "direct_clinical",
+                "Direct human/clinical; result direction unavailable": "direct_clinical",
+                "Direct human mixed": "direct_clinical_mixed",
+                "Direct human null/negative": "direct_clinical_null",
+                "Direct preclinical": "direct_preclinical",
+                "Direct but limited": "direct_limited",
+                "Direct candidate-specific": "direct_candidate_specific",
+                # DEFECT 2 FIX: explicit route (not "unclassified") for a
+                # candidate whose direct/human signal was reduced for lack of
+                # verified outcome-specific evidence.
+                "UNVERIFIED_DIRECT_HUMAN_SIGNAL": "direct_human_unverified",
+                "Mechanistic empirical": "mechanistic_only",
+                "Mechanistic inference only": "mechanistic_only",
+                "Indirect candidate-specific": "indirect_candidate_specific",
+                "Not evaluated": "not_evaluated",
+                "None": "none",
+            }
+            evidence_route = _EVIDENCE_ROUTE_BY_MODE.get(str(indication_mode), "unclassified")
 
-        if plant_hard_stop or safety_reg_points <= 0.0:
-            relevance_gate_result = "failed_safety"
-        elif not indication_requested:
-            relevance_gate_result = "not_applicable"
-        elif indication_points == 0.0:
-            relevance_gate_result = "failed_no_relevance"
-        elif indication_tier in ("High relevance", "Medium relevance"):
-            relevance_gate_result = "passed_direct"
-        elif indication_tier == "Low relevance":
-            relevance_gate_result = (
-                "passed_indirect_exploratory_only" if plant_status != "Excluded"
-                else "failed_no_relevance"
+            triage_gate_reasons = (
+                f"Relevance: {indication_tier} (route={evidence_route}); "
+                f"Gate: {relevance_gate_result}; "
+                f"Preparation: {preparation_applicability_class}; "
+                + (reasons_note or "passed all scientific triage gates")
             )
-        else:
-            relevance_gate_result = "failed_no_relevance"
 
-        _EVIDENCE_ROUTE_BY_MODE = {
-            "Direct human/clinical": "direct_clinical",
-            "Direct human/clinical; result direction unavailable": "direct_clinical",
-            "Direct human mixed": "direct_clinical_mixed",
-            "Direct human null/negative": "direct_clinical_null",
-            "Direct preclinical": "direct_preclinical",
-            "Direct but limited": "direct_limited",
-            "Direct candidate-specific": "direct_candidate_specific",
-            "Mechanistic empirical": "mechanistic_only",
-            "Mechanistic inference only": "mechanistic_only",
-            "Indirect candidate-specific": "indirect_candidate_specific",
-            "Not evaluated": "not_evaluated",
-            "None": "none",
-        }
-        evidence_route = _EVIDENCE_ROUTE_BY_MODE.get(str(indication_mode), "unclassified")
-
-        triage_gate_reasons = (
-            f"Relevance: {indication_tier} (route={evidence_route}); "
-            f"Gate: {relevance_gate_result}; "
-            f"Preparation: {preparation_applicability_class}; "
-            + (reasons_note or "passed all scientific triage gates")
-        )
-
-        raw_score_breakdown = {
-            "Indication Relevance": indication_points,
-            "Scientific Evidence": sci_evidence["Scientific_Evidence_Score"],
-            "Compound Support": cq_points,
-            "Mechanism Support": mech_points,
-            "Safety & Regulatory": safety_reg_points,
-            "Novelty & Market": novelty_points,
-        }
-        # Phase 7 — production ranking now passes through the same explicit
-        # weight model used by robustness/calibration. With today's active
-        # weights (35/30/5/10/15/5), this is mathematically identical to the
-        # historical sum, so no existing score changes merely because the
-        # architecture became calibratable.
-        score_breakdown = reweight_score_breakdown(
-            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
-        )
-        overall_score = score_from_breakdown(
-            raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
-        )
-
-        score_components = {
-            "indication": (indication_points, indication_tier),
-            "evidence": (sci_evidence["Scientific_Evidence_Score"], evq_tier),
-            "compound": (cq_points, cq_tier),
-            "mechanism": (mech_points, mech_tier),
-            "safety": (safety_reg_points, safety_reg_tier),
-            "novelty": (novelty_points, novelty_tier),
-        }
-        # Phase 3 (IMPLEMENTATION_PLAN.md) — Score_Breakdown is now a plain
-        # {name: value} dict (score_breakdown_schema.AUTHORITATIVE_CANONICAL_SECTIONS),
-        # the same machine-parseable convention already used for the
-        # indication-centric raw schema, so it round-trips through
-        # score_breakdown_schema.parse_score_breakdown() and reconstructs
-        # Overall_Score exactly. The dot-leader display string moves to its
-        # own field for UI/report rendering, since that format was never
-        # meant to be machine-parsed.
-        # PHASE 5 — "Evidence Quality" renamed "Scientific Evidence",
-        # backed by Scientific_Evidence_Score (replaces the raw,
-        # direction/applicability-blind Evidence_Quality_Score
-        # contribution — addendum §8/§1.5). Evidence_Quality_Score
-        # itself remains available, unchanged and unsigned, as its own
-        # separate authoritative field below.
-        score_breakdown_display = _format_breakdown([
-            (name, score_breakdown[name], RANKING_COMPONENT_ACTIVE_WEIGHTS[name])
-            for name in RANKING_COMPONENT_ACTIVE_WEIGHTS
-        ])
-
-        if plant_status == "Excluded":
-            explanation_reason = reasons_note or _join(group.get("Scientific_Triage_Reasons", []), 10)
-        elif plant_status == "Exploratory" and reasons_note:
-            explanation_reason = reasons_note
-        else:
-            explanation_reason = ""
-        why_text = _explain_candidate(
-            plant_status, score_components, len(distinctive_compounds), explanation_reason
-        )
-
-        # Phase 3 — the three separate, non-collapsed authoritative outputs.
-        # R&D_Opportunity_Score is a backward-compatible ALIAS for
-        # Overall_Score (same value, legacy field name every existing
-        # report/UI/test already reads) — not a second, independently
-        # computed number.
-        evidence_confidence = _derive_evidence_confidence(
-            indication_points, sci_evidence["Scientific_Evidence_Score"]
-        )
-        go_call = _derive_go_call(
-            plant_status,
-            overall_score,
-            explanation_reason,
-            dosage_compatibility=dosage_summary,
-            safety_tier=safety_reg_tier,
-            outcome_label=str(outcome_profile["label"]),
-            indication_mode=indication_mode,
-            outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
-        )
-        decision_class_ah = _derive_decision_class_ah(plant_status, overall_score, explanation_reason)
-        commercial_summary = _commercial_summary_fields(group)
-
-        rows.append({
-            "Alternative_Plant": plant,
-            **commercial_summary,
-            "Scientific_Triage_Status": plant_status,
-            "Scientific_Triage_Score": round(triage_score, 1),
-            "Overall_Score": overall_score,
-            "R&D_Opportunity_Score": overall_score,
-            "Score_Breakdown": score_breakdown,
-            "Score_Breakdown_Display": score_breakdown_display,
-            "Evidence_Confidence": evidence_confidence,
-            "Decision_Class_AH": decision_class_ah,
-            "Go_Investigate_Hold_NoGo": go_call,
-            "Indication_Relevance": indication_tier,
-            "Indication_Relevance_Score": indication_points,
-            "Indication_Evidence_Mode": indication_mode,
-            "Indication_Supporting_Source_Count": indication_source_count,
-            "Candidate_Specific_Empirical_Row_Count": empirical_rows,
-            "Evidence_Quality_Score": evq_points,
-            "All_Tier_Evidence_Quality_Diagnostic": {
-                "Score": all_tier_evq_points,
-                "Tier": all_tier_evq_tier,
-            },
-            # PHASE 5 — Scientific Score Calibration authoritative outputs
-            # (addendum §1/§3/§8). Scientific_Evidence_Score replaces
-            # Evidence_Quality_Score inside Overall_Score/Score_Breakdown
-            # above; Evidence_Quality_Score itself remains unchanged and
-            # unsigned. Scoring_Model_Version identifies which version of
-            # phase5_scoring_config.py's weights/thresholds produced this
-            # row.
-            "Scientific_Evidence_Score": sci_evidence["Scientific_Evidence_Score"],
-            "Scientific_Evidence_Contributions": sci_evidence["Scientific_Evidence_Contributions"],
-            "Direction_Factor": sci_evidence["Direction_Factor"],
-            "Evidence_Consistency_Class": sci_evidence["Evidence_Consistency_Class"],
-            "Evidence_Consistency_Factor": sci_evidence["Evidence_Consistency_Factor"],
-            "Evidence_Direction_Profile": sci_evidence["Evidence_Direction_Profile"],
-            "Plant_Applicability_Factor": sci_evidence["Plant_Applicability_Factor"],
-            # Backward-compat alias at plant level, mirroring evaluate_
-            # applicability()'s own Applicability_Factor=Record_
-            # Applicability_Factor alias (addendum §5).
-            "Applicability_Factor": sci_evidence["Plant_Applicability_Factor"],
-            "Record_Applicability_Summary": sci_evidence["Record_Applicability_Summary"],
-            "Dimension_Status": sci_evidence["Dimension_Status"],
-            "Applicability_Classification": sci_evidence["Applicability_Classification"],
-            "Applicability_Data_Completeness": sci_evidence["Applicability_Data_Completeness"],
-            "Primary_Evidence_Tier": sci_evidence["Primary_Evidence_Tier"],
-            "Supporting_Evidence_Tiers_Present": sci_evidence["Supporting_Evidence_Tiers_Present"],
-            "Supporting_Evidence_Record_Count": sci_evidence["Supporting_Evidence_Record_Count"],
-            "Primary_Tier_Outcome_Profile": sci_evidence["Primary_Tier_Outcome_Profile"],
-            "Primary_Tier_Outcome_Label": sci_evidence["Primary_Tier_Outcome_Label"],
-            "Scoring_Model_Version": SCORING_MODEL_VERSION,
-            "Component_Source_Record_IDs": component_source_record_ids,
-            "Authoritative_Source_Record_IDs": authoritative_source_record_ids,
-            "Authoritative_Narrative_Source_Record_ID": authoritative_narrative_source_record_id,
-            "Authoritative_Narrative_Provenance": authoritative_narrative_provenance,
-            # PHASE 3 — additive explainability (brief section 8). New
-            # columns only; nothing above/below this line is renamed or
-            # removed, and no existing column's value changes because of
-            # these. UI/Dashboard are untouched per the brief's explicit
-            # scope limit ("UI و Dashboard را تغییر نده").
-            "Source_Authority_Distribution": evq_explain["authority_distribution"],
-            "Evidence_Quality_Design_Distribution": evq_explain["quality_design_distribution"],
-            "Positive_Weighted_Evidence_Contribution": evq_explain["positive_weighted_contribution"],
-            "Negative_Weighted_Evidence_Contribution": evq_explain["negative_weighted_contribution"],
-            "Null_Weighted_Evidence_Contribution": evq_explain["null_weighted_contribution"],
-            "Unknown_Authority_Evidence_Count": evq_explain["unknown_authority_count"],
-            "Top_Supporting_Evidence": evq_explain["top_supporting_evidence"],
-            "Top_Contradicting_Evidence": evq_explain["top_contradicting_evidence"],
-            "Compound_Quality_Score": cq_points,
-            "Mechanism_Support_Score": mech_points,
-            "Safety_Regulatory_Score": safety_reg_points,
-            "Novelty_Market_Score": novelty_points,
-            "Novelty_Market_Tier": novelty_tier,
-            # Minimal state needed to refresh the parallel R&D Discovery lane
-            # after commercial enrichment without rerunning scientific scoring.
-            # These are deterministic facts already computed above, not new
-            # evidence or new gates.
-            "Already_In_Internal_Catalogue": already_in_catalogue,
-            "Plant_Hard_Stop": bool(plant_hard_stop),
-            "Regulatory_Prohibition_Present": bool(regulatory_prohibition_present),
-            # Additive R&D Discovery Lane fields (see
-            # rd_discovery_classification.py). Never read by
-            # plant_status/Overall_Score/ranking; purely a second, parallel
-            # classification so downstream UI/exports can present an
-            # "Evidence-Backed Candidates" view and a separate "R&D
-            # Discovery Hypotheses" view without a mechanism-only,
-            # under-studied candidate silently disappearing from output,
-            # and without conflating a genuine regulatory prohibition with
-            # a plain lack of evidence.
-            "RD_Discovery_Lane": rd_discovery_lane,
-            "Discovery_Potential_Score": discovery_potential,
-            "Evidence_Maturity_Score": evidence_maturity,
-            "Discovery_Linked_Targets": "; ".join(discovery_linked_targets),
-            "Discovery_Linked_Target_Count": len(discovery_linked_targets),
-            "Discovery_Linked_Mechanisms": "; ".join(discovery_linked_mechanisms),
-            "Discovery_Linked_Mechanism_Count": len(discovery_linked_mechanisms),
-            "Discovery_Linked_Compounds": "; ".join(discovery_linked_compounds),
-            "Discovery_Linked_Compound_Count": len(discovery_linked_compounds),
-            "Discovery_Compound_Specificity": round(discovery_compound_specificity, 4),
-            # Stage 5 candidate-funnel performance fix -- tiny additive,
-            # backward-compatible fields (no existing field renamed or
-            # removed). These let rescore_commercial_component() below
-            # regenerate the Go/decision-class/explanation text after a
-            # commercial-only update WITHOUT recomputing evidence quality
-            # or safety/regulatory from scratch, so market enrichment can
-            # never trigger a second full scientific scoring pass.
-            "Scientific_Evidence_Tier": evq_tier,
-            "Safety_Regulatory_Tier": safety_reg_tier,
-            "Reference_Plants": _join(usable.get("Reference_Plant", []), 8),
-            "Reference_Plant_Count": len(references),
-            "Distinctive_Shared_Compounds": "; ".join(distinctive_compounds[:10]),
-            "Distinctive_Compound_Count": len(distinctive_compounds),
-            "Supportive_Common_Compounds": "; ".join(supportive_common_compounds[:10]),
-            "Supportive_Common_Compound_Count": len(supportive_common_compounds),
-            "All_Shared_Compounds": _join(usable.get("Shared_or_Similar_Compound", []), 12),
-            "Supported_Targets_or_Mechanisms": "; ".join(_indication_specific_mechanism_values(group, indication, 10)),
-            "Supported_Target_Count": len(_indication_specific_mechanism_values(group, indication, 20)),
-            "Evidence_Levels": _join(usable.get("Evidence_Level", []), 8),
-            "Evidence_Sources": _join(usable.get("Evidence_Source", []), 8),
-            "Traceable_Source_Count": len(sources),
-            "Dosage_Form_Compatibility": dosage_summary,
-            "Outcome_Consistency": outcome_profile["label"],
-            "All_Tier_Outcome_Consistency_Diagnostic": all_tier_outcome_profile["label"],
-            "Positive_Result_Count": outcome_profile["positive"],
-            "Null_Negative_Result_Count": outcome_profile["null"] + outcome_profile["harmful"],
-            "Unreported_Result_Count": outcome_profile["unreported"],
-            "Safety_Flags": _safety_flags_display_for_plant(group, plant, 8),
-            "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit plant-drug interaction attributable to this plant found",
-            "Safety_Reassurance": _join(group.get("Safety_Reassurance", []), 8),
-            "Safety_Data_Status": _join(group.get("Safety_Data_Status", []), 4) or "not_assessed",
-            **_pooled_safety_status_for_plant(group),
-            "Negative_Evidence": _join(group.get("Negative_Evidence_Types", []), 8),
-            "Best_Existing_R&D_Score": round(float(pd.to_numeric(group.get("R&D_Opportunity_Score", pd.Series([0])), errors="coerce").fillna(0).max()), 1),
-            "Raw_Association_Row_Count": len(group),
-            "Shortlist_Row_Count": statuses_count["Shortlist"],
-            "Exploratory_Row_Count": statuses_count["Exploratory"],
-            "Excluded_Row_Count": statuses_count["Excluded"],
-            "Why_Selected_or_Rejected": why_text,
-            "Row_Level_Reasons": _join(group.get("Scientific_Triage_Reasons", []), 10),
-            "Selected_Indication": indication,
-            "Selected_Dosage_Form": dosage_form,
-            "Relevance_Gate_Result": relevance_gate_result,
-            "Evidence_Route": evidence_route,
-            "Direct_Indication_Evidence_Count": direct_evidence_count,
-            "Outcome_Specific_Direct_Evidence_Count": outcome_specific_direct_evidence_count,
-            "Outcome_Specific_Human_Evidence_Count": outcome_specific_human_evidence_count,
-            "Mechanistic_Evidence_Count": mechanistic_evidence_count,
-            "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
-            "Preparation_Applicability_Class": preparation_applicability_class,
-            "Triage_Gate_Reasons": triage_gate_reasons,
-        })
-        _plant_section_add("row_append", time.perf_counter() - _t)
-
-        if _plants_processed % _PLANT_PROGRESS_EVERY == 0:
-            _total_plants_estimate = audit["Alternative_Plant"].nunique()
-            _print_plant_loop_profile(
-                f"{_plants_processed}", f"/~{_total_plants_estimate}"
+            raw_score_breakdown = {
+                "Indication Relevance": indication_points,
+                "Scientific Evidence": sci_evidence["Scientific_Evidence_Score"],
+                "Compound Support": cq_points,
+                "Mechanism Support": mech_points,
+                "Safety & Regulatory": safety_reg_points,
+                "Novelty & Market": novelty_points,
+            }
+            # Phase 7 — production ranking now passes through the same explicit
+            # weight model used by robustness/calibration. With today's active
+            # weights (35/30/5/10/15/5), this is mathematically identical to the
+            # historical sum, so no existing score changes merely because the
+            # architecture became calibratable.
+            score_breakdown = reweight_score_breakdown(
+                raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
             )
-            _progress(
-                _plants_processed, _total_plants_estimate,
-                f"Scoring {_plants_processed} / {_total_plants_estimate} plant candidates…",
+            overall_score = score_from_breakdown(
+                raw_score_breakdown, RANKING_COMPONENT_ACTIVE_WEIGHTS
             )
+
+            score_components = {
+                "indication": (indication_points, indication_tier),
+                "evidence": (sci_evidence["Scientific_Evidence_Score"], evq_tier),
+                "compound": (cq_points, cq_tier),
+                "mechanism": (mech_points, mech_tier),
+                "safety": (safety_reg_points, safety_reg_tier),
+                "novelty": (novelty_points, novelty_tier),
+            }
+            # Phase 3 (IMPLEMENTATION_PLAN.md) — Score_Breakdown is now a plain
+            # {name: value} dict (score_breakdown_schema.AUTHORITATIVE_CANONICAL_SECTIONS),
+            # the same machine-parseable convention already used for the
+            # indication-centric raw schema, so it round-trips through
+            # score_breakdown_schema.parse_score_breakdown() and reconstructs
+            # Overall_Score exactly. The dot-leader display string moves to its
+            # own field for UI/report rendering, since that format was never
+            # meant to be machine-parsed.
+            # PHASE 5 — "Evidence Quality" renamed "Scientific Evidence",
+            # backed by Scientific_Evidence_Score (replaces the raw,
+            # direction/applicability-blind Evidence_Quality_Score
+            # contribution — addendum §8/§1.5). Evidence_Quality_Score
+            # itself remains available, unchanged and unsigned, as its own
+            # separate authoritative field below.
+            score_breakdown_display = _format_breakdown([
+                (name, score_breakdown[name], RANKING_COMPONENT_ACTIVE_WEIGHTS[name])
+                for name in RANKING_COMPONENT_ACTIVE_WEIGHTS
+            ])
+
+            if plant_status == "Excluded":
+                explanation_reason = reasons_note or _join(group.get("Scientific_Triage_Reasons", []), 10)
+            elif plant_status == "Exploratory" and reasons_note:
+                explanation_reason = reasons_note
+            else:
+                explanation_reason = ""
+            why_text = _explain_candidate(
+                plant_status, score_components, len(distinctive_compounds), explanation_reason
+            )
+
+            # Phase 3 — the three separate, non-collapsed authoritative outputs.
+            # R&D_Opportunity_Score is a backward-compatible ALIAS for
+            # Overall_Score (same value, legacy field name every existing
+            # report/UI/test already reads) — not a second, independently
+            # computed number.
+            evidence_confidence = _derive_evidence_confidence(
+                indication_points, sci_evidence["Scientific_Evidence_Score"]
+            )
+            go_call = _derive_go_call(
+                plant_status,
+                overall_score,
+                explanation_reason,
+                dosage_compatibility=dosage_summary,
+                safety_tier=safety_reg_tier,
+                outcome_label=str(outcome_profile["label"]),
+                target_definition_completeness=sci_evidence["Target_Definition_Completeness"],
+            )
+            decision_class_ah = _derive_decision_class_ah(
+                plant_status, overall_score, explanation_reason,
+                go_call=go_call, indication_mode=indication_mode,
+            )
+            commercial_summary = _commercial_summary_fields(group)
+
+            rows.append({
+                "Alternative_Plant": plant,
+                **commercial_summary,
+                "Scientific_Triage_Status": plant_status,
+                "Scientific_Triage_Score": round(triage_score, 1),
+                "Overall_Score": overall_score,
+                "R&D_Opportunity_Score": overall_score,
+                "Score_Breakdown": score_breakdown,
+                "Score_Breakdown_Display": score_breakdown_display,
+                "Evidence_Confidence": evidence_confidence,
+                "Decision_Class_AH": decision_class_ah,
+                "Go_Investigate_Hold_NoGo": go_call,
+                "Indication_Relevance": indication_tier,
+                "Indication_Relevance_Score": indication_points,
+                "Indication_Evidence_Mode": indication_mode,
+                "Indication_Supporting_Source_Count": indication_source_count,
+                "Candidate_Specific_Empirical_Row_Count": empirical_rows,
+                "Evidence_Quality_Score": evq_points,
+                "All_Tier_Evidence_Quality_Diagnostic": {
+                    "Score": all_tier_evq_points,
+                    "Tier": all_tier_evq_tier,
+                },
+                # PHASE 5 — Scientific Score Calibration authoritative outputs
+                # (addendum §1/§3/§8). Scientific_Evidence_Score replaces
+                # Evidence_Quality_Score inside Overall_Score/Score_Breakdown
+                # above; Evidence_Quality_Score itself remains unchanged and
+                # unsigned. Scoring_Model_Version identifies which version of
+                # phase5_scoring_config.py's weights/thresholds produced this
+                # row.
+                "Scientific_Evidence_Score": sci_evidence["Scientific_Evidence_Score"],
+                "Scientific_Evidence_Contributions": sci_evidence["Scientific_Evidence_Contributions"],
+                "Direction_Factor": sci_evidence["Direction_Factor"],
+                "Evidence_Consistency_Class": sci_evidence["Evidence_Consistency_Class"],
+                "Evidence_Consistency_Factor": sci_evidence["Evidence_Consistency_Factor"],
+                "Evidence_Direction_Profile": sci_evidence["Evidence_Direction_Profile"],
+                "Plant_Applicability_Factor": sci_evidence["Plant_Applicability_Factor"],
+                # Backward-compat alias at plant level, mirroring evaluate_
+                # applicability()'s own Applicability_Factor=Record_
+                # Applicability_Factor alias (addendum §5).
+                "Applicability_Factor": sci_evidence["Plant_Applicability_Factor"],
+                "Record_Applicability_Summary": sci_evidence["Record_Applicability_Summary"],
+                "Dimension_Status": sci_evidence["Dimension_Status"],
+                "Applicability_Classification": sci_evidence["Applicability_Classification"],
+                "Applicability_Data_Completeness": sci_evidence["Applicability_Data_Completeness"],
+                # TARGET DEFINITION COMPLETENESS FIX (final pre-demo reliability
+                # pass): computed since the Defect-3 pass but never exposed on
+                # the output row -- the same "invisible field" trap this project
+                # has hit before (RD_Discovery_Lane, Mechanistic_Evidence_
+                # Record_IDs). Now on the row and wired into go_call below.
+                "Target_Definition_Completeness": sci_evidence["Target_Definition_Completeness"],
+                "Primary_Evidence_Tier": sci_evidence["Primary_Evidence_Tier"],
+                "Supporting_Evidence_Tiers_Present": sci_evidence["Supporting_Evidence_Tiers_Present"],
+                "Supporting_Evidence_Record_Count": sci_evidence["Supporting_Evidence_Record_Count"],
+                "Primary_Tier_Outcome_Profile": sci_evidence["Primary_Tier_Outcome_Profile"],
+                "Primary_Tier_Outcome_Label": sci_evidence["Primary_Tier_Outcome_Label"],
+                "Scoring_Model_Version": SCORING_MODEL_VERSION,
+                "Component_Source_Record_IDs": component_source_record_ids,
+                "Authoritative_Source_Record_IDs": authoritative_source_record_ids,
+                "Authoritative_Narrative_Source_Record_ID": authoritative_narrative_source_record_id,
+                "Authoritative_Narrative_Provenance": authoritative_narrative_provenance,
+                # PHASE 3 — additive explainability (brief section 8). New
+                # columns only; nothing above/below this line is renamed or
+                # removed, and no existing column's value changes because of
+                # these. UI/Dashboard are untouched per the brief's explicit
+                # scope limit ("UI و Dashboard را تغییر نده").
+                "Source_Authority_Distribution": evq_explain["authority_distribution"],
+                "Evidence_Quality_Design_Distribution": evq_explain["quality_design_distribution"],
+                "Positive_Weighted_Evidence_Contribution": evq_explain["positive_weighted_contribution"],
+                "Negative_Weighted_Evidence_Contribution": evq_explain["negative_weighted_contribution"],
+                "Null_Weighted_Evidence_Contribution": evq_explain["null_weighted_contribution"],
+                "Unknown_Authority_Evidence_Count": evq_explain["unknown_authority_count"],
+                "Top_Supporting_Evidence": evq_explain["top_supporting_evidence"],
+                "Top_Contradicting_Evidence": evq_explain["top_contradicting_evidence"],
+                "Compound_Quality_Score": cq_points,
+                "Mechanism_Support_Score": mech_points,
+                "Safety_Regulatory_Score": safety_reg_points,
+                "Novelty_Market_Score": novelty_points,
+                "Novelty_Market_Tier": novelty_tier,
+                # Minimal state needed to refresh the parallel R&D Discovery lane
+                # after commercial enrichment without rerunning scientific scoring.
+                # These are deterministic facts already computed above, not new
+                # evidence or new gates.
+                "Already_In_Internal_Catalogue": already_in_catalogue,
+                "Plant_Hard_Stop": bool(plant_hard_stop),
+                "Regulatory_Prohibition_Present": bool(regulatory_prohibition_present),
+                # Additive R&D Discovery Lane fields (see
+                # rd_discovery_classification.py). Never read by
+                # plant_status/Overall_Score/ranking; purely a second, parallel
+                # classification so downstream UI/exports can present an
+                # "Evidence-Backed Candidates" view and a separate "R&D
+                # Discovery Hypotheses" view without a mechanism-only,
+                # under-studied candidate silently disappearing from output,
+                # and without conflating a genuine regulatory prohibition with
+                # a plain lack of evidence.
+                "RD_Discovery_Lane": rd_discovery_lane,
+                "Discovery_Potential_Score": discovery_potential,
+                "Evidence_Maturity_Score": evidence_maturity,
+                "Discovery_Linked_Targets": "; ".join(discovery_linked_targets),
+                "Discovery_Linked_Target_Count": len(discovery_linked_targets),
+                "Discovery_Linked_Mechanisms": "; ".join(discovery_linked_mechanisms),
+                "Discovery_Linked_Mechanism_Count": len(discovery_linked_mechanisms),
+                "Discovery_Linked_Compounds": "; ".join(discovery_linked_compounds),
+                "Discovery_Linked_Compound_Count": len(discovery_linked_compounds),
+                "Discovery_Compound_Specificity": round(discovery_compound_specificity, 4),
+                # Stage 5 candidate-funnel performance fix -- tiny additive,
+                # backward-compatible fields (no existing field renamed or
+                # removed). These let rescore_commercial_component() below
+                # regenerate the Go/decision-class/explanation text after a
+                # commercial-only update WITHOUT recomputing evidence quality
+                # or safety/regulatory from scratch, so market enrichment can
+                # never trigger a second full scientific scoring pass.
+                "Scientific_Evidence_Tier": evq_tier,
+                "Safety_Regulatory_Tier": safety_reg_tier,
+                "Reference_Plants": _join(usable.get("Reference_Plant", []), 8),
+                "Reference_Plant_Count": len(references),
+                "Distinctive_Shared_Compounds": "; ".join(distinctive_compounds[:10]),
+                "Distinctive_Compound_Count": len(distinctive_compounds),
+                "Supportive_Common_Compounds": "; ".join(supportive_common_compounds[:10]),
+                "Supportive_Common_Compound_Count": len(supportive_common_compounds),
+                "All_Shared_Compounds": _join(usable.get("Shared_or_Similar_Compound", []), 12),
+                "Supported_Targets_or_Mechanisms": "; ".join(_indication_specific_mechanism_values(group, indication, 10)),
+                "Supported_Target_Count": len(_indication_specific_mechanism_values(group, indication, 20)),
+                "Evidence_Levels": _join(usable.get("Evidence_Level", []), 8),
+                "Evidence_Sources": _join(usable.get("Evidence_Source", []), 8),
+                "Traceable_Source_Count": len(sources),
+                "Dosage_Form_Compatibility": dosage_summary,
+                "Outcome_Consistency": outcome_profile["label"],
+                "All_Tier_Outcome_Consistency_Diagnostic": all_tier_outcome_profile["label"],
+                "Positive_Result_Count": outcome_profile["positive"],
+                "Null_Negative_Result_Count": outcome_profile["null"] + outcome_profile["harmful"],
+                "Unreported_Result_Count": outcome_profile["unreported"],
+                "Safety_Flags": _safety_flags_display_for_plant(group, plant, 8),
+                "Interaction_Flags": _join(group.get("Interaction_Flags", []), 8) or "No explicit plant-drug interaction attributable to this plant found",
+                "Safety_Reassurance": _join(group.get("Safety_Reassurance", []), 8),
+                "Safety_Data_Status": _join(group.get("Safety_Data_Status", []), 4) or "not_assessed",
+                **_pooled_safety_status_for_plant(group),
+                "Negative_Evidence": _join(group.get("Negative_Evidence_Types", []), 8),
+                "Best_Existing_R&D_Score": round(float(pd.to_numeric(group.get("R&D_Opportunity_Score", pd.Series([0])), errors="coerce").fillna(0).max()), 1),
+                "Raw_Association_Row_Count": len(group),
+                "Shortlist_Row_Count": statuses_count["Shortlist"],
+                "Exploratory_Row_Count": statuses_count["Exploratory"],
+                "Excluded_Row_Count": statuses_count["Excluded"],
+                "Why_Selected_or_Rejected": why_text,
+                "Row_Level_Reasons": _join(group.get("Scientific_Triage_Reasons", []), 10),
+                "Selected_Indication": indication,
+                "Selected_Dosage_Form": dosage_form,
+                "Relevance_Gate_Result": relevance_gate_result,
+                "Evidence_Route": evidence_route,
+                "Direct_Indication_Evidence_Count": direct_evidence_count,
+                "Outcome_Specific_Direct_Evidence_Count": outcome_specific_direct_evidence_count,
+                "Outcome_Specific_Human_Evidence_Count": outcome_specific_human_evidence_count,
+                "Mechanistic_Evidence_Count": mechanistic_evidence_count,
+                "Mechanistic_Evidence_Record_IDs": mechanistic_evidence_record_ids,
+                "Target_Source_Map": target_source_map,
+                "Mechanism_Source_Map": mechanism_source_map,
+                "Compound_Reference_Map": compound_reference_map,
+                "Compound_Target_Source_Map": compound_target_source_map,
+                "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
+                "Preparation_Applicability_Class": preparation_applicability_class,
+                "Triage_Gate_Reasons": triage_gate_reasons,
+            })
+            _plant_section_add("row_append", time.perf_counter() - _t)
+
+            if _plants_processed % _PLANT_PROGRESS_EVERY == 0:
+                _total_plants_estimate = audit["Alternative_Plant"].nunique()
+                _print_plant_loop_profile(
+                    f"{_plants_processed}", f"/~{_total_plants_estimate}"
+                )
+                _progress(
+                    _plants_processed, _total_plants_estimate,
+                    f"Scoring {_plants_processed} / {_total_plants_estimate} plant candidates…",
+                )
+        except Exception as _plant_scoring_exc:
+            # DEFECT 10 FIX (final pre-demo reliability pass): one malformed
+            # candidate/evidence record must not crash the entire batch
+            # scoring run. Catch any exception raised while scoring a SINGLE
+            # plant, record an honest INCOMPLETE row for that plant (never
+            # fabricated as zero evidence or a clean pass), and continue with
+            # the remaining candidates so the rest of the run still produces
+            # a defensible result rather than crashing the whole demo.
+            _perf(f"[PLANT_SCORING_ERROR] plant={plant!r} error={_plant_scoring_exc!r}")
+            try:
+                _ref_plant = str(group["Reference_Plant"].iloc[0]) if "Reference_Plant" in group.columns and len(group) else ""
+            except Exception:
+                _ref_plant = ""
+            rows.append({
+                "Alternative_Plant": plant,
+                "Reference_Plant": _ref_plant,
+                "Scientific_Triage_Status": "Excluded",
+                "Scientific_Triage_Reasons": "processing error",
+                "Overall_Score": 0.0,
+                "R&D_Opportunity_Score": 0.0,
+                "Go_Investigate_Hold_NoGo": "Hold",
+                "Decision_Class_AH": "G — Hold / insufficient evidence",
+                "Why_Selected_or_Rejected": (
+                    "Excluded because: an internal scoring error occurred while "
+                    "processing this candidate's evidence -- the run continued for "
+                    "all other candidates. This is a data-quality/processing "
+                    "limitation, not a scientific finding of no evidence."
+                ),
+                "Processing_Status": "INCOMPLETE",
+                "Processing_Error": repr(_plant_scoring_exc),
+            })
+            continue
 
     _perf(
         f"plant loop done plants_processed={_plants_processed}, output_rows={len(rows)} "
@@ -3732,7 +4186,35 @@ def rescore_commercial_component(
     """
     if not isinstance(plant_summary, pd.DataFrame) or plant_summary.empty:
         return plant_summary
-    plant_keys = {str(p).strip().lower() for p in (plants or []) if str(p).strip()}
+
+    # Demo-safety hardening: callers normally pass a list of plant names, but
+    # CSV/Streamlit/pandas round-trips can occasionally collapse an empty or
+    # single-valued object into a scalar (including NaN/float).  The previous
+    # set-comprehension iterated ``plants`` directly and therefore raised
+    # ``TypeError: 'float' object is not iterable``.  Commercial enrichment is
+    # optional and must never take down the scientific shortlist.  Normalize
+    # all accepted input shapes to a small iterable here instead of relying on
+    # caller shape.
+    if plants is None:
+        _plants_iter = []
+    elif isinstance(plants, str):
+        _plants_iter = [plants]
+    elif isinstance(plants, (list, tuple, set, pd.Series, pd.Index)):
+        _plants_iter = list(plants)
+    else:
+        try:
+            if pd.isna(plants):
+                _plants_iter = []
+            else:
+                _plants_iter = [plants]
+        except Exception:
+            _plants_iter = [plants]
+
+    plant_keys = {
+        str(p).strip().lower()
+        for p in _plants_iter
+        if p is not None and str(p).strip() and str(p).strip().lower() not in {"nan", "none"}
+    }
     if not plant_keys:
         return plant_summary
     if not isinstance(enriched_raw_df, pd.DataFrame) or enriched_raw_df.empty:
@@ -3791,10 +4273,12 @@ def rescore_commercial_component(
             dosage_compatibility=str(row.get("Dosage_Form_Compatibility", "Unknown")),
             safety_tier=str(row.get("Safety_Regulatory_Tier", "Safety not adequately assessed")),
             outcome_label=str(row.get("Outcome_Consistency", "Results not reported")),
-            indication_mode=str(row.get("Indication_Evidence_Mode", "")),
-            outcome_specific_human_evidence_count=row.get("Outcome_Specific_Human_Evidence_Count", 0),
+            target_definition_completeness=str(row.get("Target_Definition_Completeness", "complete")),
         )
-        decision_class_ah = _derive_decision_class_ah(status, new_overall_score)
+        decision_class_ah = _derive_decision_class_ah(
+            status, new_overall_score,
+            go_call=go_call, indication_mode=str(row.get("Indication_Evidence_Mode", "")),
+        )
 
         score_components = {
             "indication": (row.get("Indication_Relevance_Score", 0.0), str(row.get("Indication_Relevance", ""))),
@@ -3974,6 +4458,14 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Indication_Evidence_Mode", "Indication_Supporting_Source_Count",
         "Relevance_Gate_Result", "Evidence_Route",
         "Direct_Indication_Evidence_Count", "Outcome_Specific_Direct_Evidence_Count", "Outcome_Specific_Human_Evidence_Count", "Mechanistic_Evidence_Count",
+        # Source-traceability pass (2026-09-10, corrective): mechanistic
+        # source IDs were computed above (mechanistic_source_ids) but only
+        # their count survived past this point -- adding these here is the
+        # actual root-cause fix, matching the RD_Discovery_Lane precedent
+        # (computed-but-invisible fields must be in this tuple or they are
+        # silently dropped before ever reaching rd_report_ready_df/Stage 6).
+        "Mechanistic_Evidence_Record_IDs", "Target_Source_Map", "Mechanism_Source_Map",
+        "Compound_Reference_Map", "Compound_Target_Source_Map",
         "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
         "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
         # Plant-level, attribution-cleaned safety fields must override the
@@ -4001,6 +4493,10 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Evidence_Consistency_Factor", "Evidence_Direction_Profile", "Plant_Applicability_Factor",
         "Record_Applicability_Summary", "Dimension_Status", "Applicability_Classification",
         "Applicability_Data_Completeness", "Applicability_Factor", "Primary_Evidence_Tier",
+        # TARGET DEFINITION COMPLETENESS FIX (final pre-demo reliability
+        # pass): computed since the Defect-3 pass but never added here --
+        # the same "invisible field" trap this project has hit before.
+        "Target_Definition_Completeness",
         "Supporting_Evidence_Tiers_Present", "Supporting_Evidence_Record_Count",
         "Primary_Tier_Outcome_Profile", "Primary_Tier_Outcome_Label",
         "All_Tier_Evidence_Quality_Diagnostic", "All_Tier_Outcome_Consistency_Diagnostic",

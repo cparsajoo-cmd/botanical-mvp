@@ -850,3 +850,42 @@ def test_one_malformed_candidate_does_not_crash_the_whole_batch(monkeypatch):
     malformed_summary = summary[summary["Alternative_Plant"] == "Malformed candidate"].iloc[0]
     assert malformed_summary["Scientific_Triage_Status"] == "Excluded"
     assert malformed_summary.get("Processing_Status") == "INCOMPLETE"
+
+
+def test_unverified_direct_human_signal_can_reach_provisional_shortlist_but_never_go_or_established():
+    # DEFECT 2 FIX, REVISED after live production feedback: a candidate
+    # with substantive indication relevance/evidence quality and a
+    # traceable primary-tier record, but zero verified outcome-specific
+    # human evidence, now gets a PROVISIONAL Shortlist placement (fixing
+    # the real-run collapse to a single plant) -- but must still never
+    # reach "Go" or "B - Established scientific candidate" through this
+    # signal alone.
+    rows = [_row(
+        Alternative_Plant="Provisional candidate",
+        Scientific_Rationale="human clinical trial", Clinical_Rationale="clinical evidence",
+        Evidence_Level="Clinical / human evidence", Evidence_Hierarchy_Detail="Clinical trial",
+        Indication_Match_Type="exact_indication", Indication_Match_Terms="Metabolic & blood sugar support",
+        Source_Record_IDs=f"PMID:{300+i}",
+    ) for i in range(4)]
+    summary, _ = build_plant_candidate_shortlist(
+        pd.DataFrame(rows), indication="Metabolic & blood sugar support", dosage_form="Infusion"
+    )
+    row = summary.iloc[0]
+    assert row["Indication_Evidence_Mode"] == "UNVERIFIED_DIRECT_HUMAN_SIGNAL"
+    assert row["Outcome_Specific_Human_Evidence_Count"] == 0
+    assert row["Scientific_Triage_Status"] == "Shortlist"
+    assert row["Go_Investigate_Hold_NoGo"] != "Go"
+    assert row["Decision_Class_AH"] != "B — Established scientific candidate"
+
+
+def test_evidence_adjudication_ids_tolerate_scalar_nan_values():
+    # STEP5_FLOAT_ITERABLE_FIX hardening: a cached/legacy adjudication
+    # response with a scalar NaN in an evidence-ID field must not crash
+    # with "'float' object is not iterable".
+    from evidence_adjudication_engine import _as_id_list
+
+    assert _as_id_list(float("nan")) == []
+    assert _as_id_list(None) == []
+    assert _as_id_list(["E1", "E2"]) == ["E1", "E2"]
+    assert _as_id_list(("E1",)) == ["E1"]
+    assert _as_id_list(3.5) == []

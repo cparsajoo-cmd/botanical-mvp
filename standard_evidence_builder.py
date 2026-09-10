@@ -1644,10 +1644,32 @@ def evaluate_applicability(
         "indication": _appl_dimension_indication(evidence_row, target_context),
     }
 
-    # A dimension the target/product itself never specified is different
-    # from a target dimension that was specified but is missing from the
-    # evidence record.  The former must not penalize evidence transferability;
-    # it is tracked separately as target-definition incompleteness.
+    # DEFECT 3 FIX (pre-investor reliability repair): Production
+    # transferability contexts explicitly identify clinically material
+    # dimensions that must be known before a record may be called a
+    # complete MATCH. A dimension the TARGET/PROJECT itself never specified
+    # (plant_part/route/dose left blank in the product definition) used to
+    # be converted to UNKNOWN here -- the SAME status used for a dimension
+    # the target DID specify but the evidence record fails to report -- and
+    # both were then min()'d into Record_Applicability_Factor identically.
+    # That conflation is what collapsed Plant_Applicability_Factor to
+    # ~0.60 for nearly every candidate: a project that only specified
+    # preparation+indication would drag a perfectly-matching-preparation
+    # record down to 0.60 for the unrelated reason that dose/plant_part/
+    # route were never asked about. TARGET_UNSPECIFIED is now a distinct
+    # status: excluded from the factor/classification aggregation entirely
+    # (same treatment as NOT_APPLICABLE) so an incomplete PRODUCT
+    # definition no longer penalizes genuine EVIDENCE transferability, but
+    # still visible in Dimension_Status and reported via the new
+    # Target_Definition_Completeness field below so it can still block a
+    # "fully transferable"/Go conclusion downstream. When the target DID
+    # specify a dimension and the evidence record just doesn't report it,
+    # the dimension-comparator functions above already return UNKNOWN
+    # directly (never NOT_APPLICABLE in that case), so this loop never
+    # touches them and that case's factor/classification impact is
+    # unchanged. Legacy callers that do not provide
+    # Required_Transferability_Dimensions retain their historical behavior
+    # unchanged.
     required_dimensions = set(target_context.get("Required_Transferability_Dimensions") or ())
     for dim in required_dimensions:
         if dim in dimension_status and dimension_status[dim] == _APPL_NOT_APPLICABLE:

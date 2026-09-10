@@ -7274,15 +7274,34 @@ class BotanicalRDCandidateEngine:
         """
         Retail/brand product presence needs a paid web-search API (there is
         no free, structured, ToS-compliant source for 'which brands sell
-        X'). Set SEARCH_API_KEY (+ optionally SEARCH_API_PROVIDER) to
-        activate once you've picked a provider (Bing Web Search API,
-        SerpAPI, etc.) — this function is the single place to wire it in.
-        """
-        if not self.use_live_search:
-            return [{"status": "Skipped", "canonical_status": "SEARCH_NOT_PERFORMED", "detail": "Live search disabled."}]
+        X'). Set SEARCH_API_KEY (+ SEARCH_API_PROVIDER) to activate once
+        you've picked a provider (Bing Web Search API, SerpAPI, etc.).
 
-        api_key = os.environ.get("SEARCH_API_KEY")
-        if not api_key:
+        REFACTOR NOTE (post-discovery commercial enrichment pass,
+        2026-09-09): the actual decision logic (disabled / no key / no
+        provider selected / provider not wired-in / real call outcome) now
+        lives in commercial_evidence_provider.dispatch_retail_provider_search()
+        so it isn't duplicated between this legacy call site and the new
+        canonical enrichment pipeline (post_discovery_commercial_enrichment.py)
+        -- Section 39. This method translates that dispatcher's canonical
+        result back into the exact ``status``/``canonical_status``/``detail``
+        shape this method has always returned, so every existing caller
+        (enrich_candidates_with_market_landscape(), market_landscape(), and
+        their tests) is byte-for-byte unaffected.
+        """
+        from commercial_evidence_provider import (
+            dispatch_retail_provider_search,
+            SEARCH_NOT_PERFORMED as _SNP,
+            PROVIDER_UNAVAILABLE as _PU,
+            CONNECTOR_NOT_IMPLEMENTED as _CNI,
+        )
+
+        result = dispatch_retail_provider_search(query, use_live_search=self.use_live_search)
+        status = result.get("canonical_status")
+
+        if status == _SNP:
+            return [{"status": "Skipped", "canonical_status": "SEARCH_NOT_PERFORMED", "detail": result.get("detail", "Live search disabled.")}]
+        if status == _PU:
             return [{
                 "status": "Not configured",
                 "canonical_status": "SOURCE_UNAVAILABLE",
@@ -7292,13 +7311,25 @@ class BotanicalRDCandidateEngine:
                           "retail/brand product scanning. No free source "
                           "exists for this data.",
             }]
+        if status == _CNI:
+            return [{
+                "status": "Not implemented",
+                "canonical_status": "CONNECTOR_NOT_IMPLEMENTED",
+                "source_type": "Search engine proxy",
+                "detail": "SEARCH_API_KEY is set, but no provider call is wired "
+                          "in yet. Implement the request for your chosen "
+                          "provider inside commercial_evidence_provider.py.",
+            }]
+        # A real provider call was attempted (SEARCH_FAILED /
+        # SEARCH_COMPLETED_*) -- no provider is registered today (Section
+        # 12), so this branch is not reachable in production yet, but is
+        # handled honestly rather than silently dropped once one is added.
         return [{
-            "status": "Not implemented",
-            "canonical_status": "CONNECTOR_NOT_IMPLEMENTED",
+            "status": result.get("status", status),
+            "canonical_status": status,
             "source_type": "Search engine proxy",
-            "detail": "SEARCH_API_KEY is set, but no provider call is wired "
-                      "in yet. Implement the request for your chosen "
-                      "provider inside _search_retail_products().",
+            "detail": result.get("detail", ""),
+            "results": result.get("results", []),
         }]
 
     def market_landscape(self, plant):

@@ -178,6 +178,34 @@ def _clean(value: Any) -> str:
     return "" if text.lower() in {"nan", "none", "null"} else text
 
 
+def _as_id_list(value: Any) -> list:
+    """Normalize an evidence-ID field to a list, tolerating every shape a
+    cached/legacy row or a DataFrame round-trip can produce.
+
+    STEP5_FLOAT_ITERABLE_FIX (post-production hardening): cached/legacy
+    evidence-ID fields (Direct_Outcome_Evidence_IDs, Direct_Human_Outcome_
+    Evidence_IDs, Key_Human_Evidence_IDs, etc.) are expected to be a list,
+    but a scalar NaN/float (e.g. from a pandas merge/fillna artifact on an
+    older cached row) reaching a bare ``value or []`` expression is NOT
+    safely normalized: a non-zero float is truthy, so ``value or []``
+    evaluates to the float itself, and a subsequent ``set(value)``/
+    ``for eid in value`` raises ``TypeError: 'float' object is not
+    iterable``. This tolerates that shape (and any other non-list scalar)
+    by treating it as an empty list, while leaving genuine list/tuple/set
+    values untouched.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    try:
+        if value != value:  # NaN is the only value that is not equal to itself
+            return []
+    except (TypeError, ValueError):
+        pass
+    return []
+
+
 def _row_get(row, *keys) -> str:
     for key in keys:
         try:
@@ -810,7 +838,7 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
             and str(item.get("evidence_id") or "")
         ]
     else:
-        direct_outcome_ids = [eid for eid in raw_direct_outcome_ids if eid in by_id]
+        direct_outcome_ids = [eid for eid in _as_id_list(raw_direct_outcome_ids) if eid in by_id]
     direct_outcome_set = set(direct_outcome_ids)
 
     raw_direct_human_ids = out.get("Direct_Human_Outcome_Evidence_IDs")
@@ -821,7 +849,7 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
         ]
     else:
         direct_human_outcome_ids = [
-            eid for eid in raw_direct_human_ids
+            eid for eid in _as_id_list(raw_direct_human_ids)
             if eid in by_id
             and eid in direct_outcome_set
             and by_id[eid].get("human_animal_in_vitro") == "HUMAN"
@@ -863,15 +891,15 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
         if out.get("Scientific_Evidence_Confidence") in {"HIGH", "MODERATE"}:
             out["Scientific_Evidence_Confidence"] = "LOW"
 
-    allowed_direct_ids = set(out.get("Direct_Outcome_Evidence_IDs") or [])
+    allowed_direct_ids = set(_as_id_list(out.get("Direct_Outcome_Evidence_IDs")))
     for key in ("Positive_Evidence_IDs", "Negative_Evidence_IDs"):
         if key in out:
-            out[key] = [eid for eid in (out.get(key) or []) if eid in allowed_direct_ids]
+            out[key] = [eid for eid in _as_id_list(out.get(key)) if eid in allowed_direct_ids]
 
-    allowed_human_ids = set(out.get("Direct_Human_Outcome_Evidence_IDs") or [])
+    allowed_human_ids = set(_as_id_list(out.get("Direct_Human_Outcome_Evidence_IDs")))
     if "Key_Human_Evidence_IDs" in out:
         out["Key_Human_Evidence_IDs"] = [
-            eid for eid in (out.get("Key_Human_Evidence_IDs") or [])
+            eid for eid in _as_id_list(out.get("Key_Human_Evidence_IDs"))
             if eid in allowed_human_ids
         ]
     return out
@@ -889,7 +917,7 @@ def _calibrate_ai_evidence_strength(structured: Mapping[str, Any], evidence_item
     out = dict(structured)
     human_items = [i for i in evidence_items if i.get("human_animal_in_vitro") == "HUMAN"]
     if "Direct_Human_Outcome_Evidence_IDs" in structured:
-        verified_direct_human_ids = set(structured.get("Direct_Human_Outcome_Evidence_IDs") or [])
+        verified_direct_human_ids = set(_as_id_list(structured.get("Direct_Human_Outcome_Evidence_IDs")))
         direct_human = [
             i for i in human_items if i.get("evidence_id") in verified_direct_human_ids
         ]

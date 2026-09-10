@@ -1931,21 +1931,24 @@ def test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision():
     real market or regulatory data (so both now correctly score 0 rather
     than the old inflated 2.5/3.0).
 
-    DEFECT 2 FIX NOTE (final pre-demo reliability pass): this fixture's
-    Clinical_Rationale text ("significant positive effect reported;
-    improvement in symptoms") never actually names "test indication" in
-    the record's own outcome/rationale text -- it is matched to the
-    indication only via the upstream Indication_Match_Type field, not via
-    its own reported-outcome text. Under the corrected authority rule this
-    is exactly an unverified direct-human signal (a real, common shape:
-    record matched to the right indication upstream, but its own text
-    doesn't state the result for that specific indication), so the mode
-    correctly downgrades to UNVERIFIED_DIRECT_HUMAN_SIGNAL and the status
-    correctly moves from Shortlist to Exploratory. The invariant this test
-    actually protects -- that diagnostic-only lower-tier (Tier-B) records
-    cannot change the primary-tier decision -- is unaffected and still
-    verified below (both runs still produce the same decision and the same
-    primary-tier scores).
+    DEFECT 2 FIX NOTE, REVISED again (live production feedback,
+    2026-09-10): the original UNVERIFIED_DIRECT_HUMAN_SIGNAL fix routed
+    every such candidate to Exploratory unconditionally, however strong
+    the surrounding evidence -- this fixture (7 primary-tier positive
+    records, substantive indication relevance and evidence quality) is
+    exactly the shape of candidate that policy wrongly collapsed to
+    Exploratory in the real Sleep run, reducing the shortlist to a single
+    plant. The provisional-shortlist compromise (indication_points>=20,
+    evq_points>=12, >=1 primary-tier record, >=1 traceable primary-tier
+    source) now correctly places this fixture in Shortlist -- with every
+    safety property unchanged: it still cannot reach "Go" (indication_mode
+    stays UNVERIFIED_DIRECT_HUMAN_SIGNAL, not "Direct human/clinical", so
+    _derive_go_call()'s Defect-8 condition is never met) and still cannot
+    reach "B - Established scientific candidate" for the same reason. The
+    invariant this test actually protects -- that diagnostic-only lower-
+    tier (Tier-B) records cannot change the primary-tier decision -- is
+    unaffected and still verified below (both runs still produce the same
+    decision and the same primary-tier scores).
     """
     primary_rows = [
         plant_row(
@@ -1966,8 +1969,8 @@ def test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision():
     )
 
     assert primary_only is not None and with_lower is not None
-    assert primary_only["Go_Investigate_Hold_NoGo"] == "Investigate — verify before proceeding"
-    assert with_lower["Go_Investigate_Hold_NoGo"] == "Investigate — verify before proceeding"
+    assert primary_only["Go_Investigate_Hold_NoGo"] == "Investigate"
+    assert with_lower["Go_Investigate_Hold_NoGo"] == "Investigate"
     assert with_lower["Overall_Score"] == primary_only["Overall_Score"]
     assert with_lower["Scientific_Evidence_Score"] == primary_only["Scientific_Evidence_Score"]
     assert with_lower["Primary_Tier_Outcome_Profile"] == primary_only["Primary_Tier_Outcome_Profile"]

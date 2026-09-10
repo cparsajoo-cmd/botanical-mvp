@@ -145,7 +145,13 @@ def test_go_requires_positive_results_compatible_preparation_and_explicit_safety
         "No Indication_Match_Type on these rows -- honestly UNKNOWN, "
         "not assumed MATCH from free text."
     )
-    assert row["Overall_Score"] == 77.8
+    # DEFECT 4/5/6/7 FIX (pre-investor reliability repair): 77.8 -> 68.5
+    # reflects the corrected (de-saturated) Mechanism/Compound/Safety/
+    # Novelty component scores for this fixture, not a change to the
+    # Applicability/indication-UNKNOWN reasoning explained in the
+    # docstring above, which is unaffected. The Go/Investigate call
+    # (still "Investigate", still below the 78 threshold) is unchanged.
+    assert row["Overall_Score"] == 68.5
     assert row["Go_Investigate_Hold_NoGo"] == "Investigate"
 
 

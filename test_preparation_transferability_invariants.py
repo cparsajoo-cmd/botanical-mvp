@@ -198,15 +198,65 @@ def test_source_provided_preparation_context_is_never_overwritten_by_llm(monkeyp
 
 
 def test_capsule_is_dosage_form_not_automatically_a_preparation_and_missing_context_is_not_full_match():
+    # DEFECT 3 FIX (pre-investor reliability repair): this project only
+    # specifies indication+dosage_form ("Capsule", which is not itself a
+    # preparation -- see the assertion below). plant_part/route/dose were
+    # never asked about by the PROJECT itself (not "unreported by the
+    # evidence"), so they must not drag Record_Applicability_Factor down.
+    # Only the one dimension the project actually specified (indication)
+    # is evaluated, and the evidence record matches it exactly -- the
+    # honest incompleteness of the product/project definition is now
+    # reported via Target_Definition_Completeness instead of corrupting
+    # the evidence-transferability factor.
     ctx = build_transferability_target_context(
         "pain", "Capsule", {"target_indication": "pain", "dosage_form": "Capsule"}
     )
     assert "Target_Preparation" not in ctx
     result = evaluate_applicability(_evidence(), ctx)
-    assert result["Applicability_Classification"] == "UNKNOWN"
-    assert result["Applicability_Data_Completeness"] == "incomplete"
-    assert result["Record_Applicability_Factor"] < 1.0
+    assert result["Applicability_Classification"] == "MATCH"
+    assert result["Applicability_Data_Completeness"] == "complete"
+    assert result["Record_Applicability_Factor"] == 1.0
+    assert result["Target_Definition_Completeness"] == "incomplete"
+    for dim in ("plant_part", "preparation", "route", "dose"):
+        assert result["Dimension_Status"][dim] == "TARGET_UNSPECIFIED"
 
+
+
+def test_target_unspecified_dose_and_part_do_not_mask_a_preparation_mismatch():
+    # DEFECT 3 FIX, cahier acceptance test: a project specifying only an
+    # infusion preparation + indication (no target dose/plant part) must
+    # still distinguish a record with matching infusion preparation from
+    # one with a mismatched preparation -- both must not be forced to the
+    # same 0.60 factor merely because target dose/plant_part were never
+    # specified.
+    ctx = build_transferability_target_context(
+        "pain", "Infusion", {"target_indication": "pain", "dosage_form": "Infusion"}
+    )
+    matching = evaluate_applicability(_evidence(prep="infusion"), ctx)
+    mismatched = evaluate_applicability(_evidence(prep="standardized dry extract"), ctx)
+    assert matching["Record_Applicability_Factor"] == 1.0
+    assert matching["Applicability_Classification"] == "MATCH"
+    assert mismatched["Record_Applicability_Factor"] < matching["Record_Applicability_Factor"]
+    assert mismatched["Applicability_Classification"] == "MISMATCH"
+    assert matching["Record_Applicability_Factor"] != 0.60
+    assert mismatched["Record_Applicability_Factor"] != 0.60
+
+
+def test_target_specified_but_evidence_silent_stays_unknown_not_target_unspecified():
+    # DEFECT 3 FIX regression: when the TARGET *does* specify a dimension
+    # (route, here) but the EVIDENCE record simply doesn't report it, that
+    # is genuine scientific uncertainty and must remain UNKNOWN (still
+    # penalizes the factor) -- never silently reclassified as
+    # TARGET_UNSPECIFIED just because the dimension is in the required set.
+    ctx = _context(prep="standardized dry extract", route="oral", part="leaf", dose="240 mg/day")
+    fields = evidence_transferability_fields(
+        species="Example species", plant_part="leaf",
+        preparation="standardized dry extract", route="",  # evidence never reports route
+        dose="240 mg/day", indication_match_type="exact_indication",
+    )
+    result = evaluate_applicability(fields, ctx)
+    assert result["Dimension_Status"]["route"] == "UNKNOWN"
+    assert result["Record_Applicability_Factor"] == 0.60
 
 
 def test_unambiguous_part_and_route_spelling_variants_do_not_create_false_mismatch():

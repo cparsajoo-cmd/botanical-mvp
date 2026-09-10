@@ -334,7 +334,14 @@ def test_single_no_go_row_does_not_exclude_multirow_candidate_with_clean_support
         dosage_form="Infusion",
     )
     assert summary.iloc[0]["Scientific_Triage_Status"] != "Excluded"
-    assert summary.iloc[0]["Safety_Regulatory_Score"] > 0
+    # DEFECT 7 FIX (pre-investor reliability repair): this row's
+    # Safety_Flags/Regulatory_Barriers are both the default "no info"
+    # placeholders (unknown, not reassuring) -- that must score 0.0, not
+    # a positive score, per the corrected _safety_regulatory(). The
+    # point of this test is that "unknown" no longer causes an automatic
+    # Excluded (checked above via the explicit `prohibitive` signal), not
+    # that unknown safety data earns positive points.
+    assert summary.iloc[0]["Safety_Regulatory_Score"] == 0.0
 
 
 def test_replicated_mechanistic_evidence_can_support_rd_shortlist():
@@ -572,7 +579,10 @@ def test_missing_safety_and_regulatory_data_is_not_scored_as_clean():
         pd.DataFrame([row]), indication="Metabolic & blood sugar support", dosage_form="Infusion"
     )
     out = summary.iloc[0]
-    assert out["Safety_Regulatory_Score"] == 8.0
+    # DEFECT 7 FIX (pre-investor reliability repair): absence of safety
+    # evidence and absence of a regulatory assessment must not earn
+    # positive points (previously 5.0 + 3.0 = 8.0 for knowing nothing).
+    assert out["Safety_Regulatory_Score"] == 0.0
     assert "not adequately assessed" in out["Score_Breakdown_Display"].lower() or out["Safety_Regulatory_Score"] < 11.0
 
 
@@ -601,8 +611,82 @@ def test_explicit_safety_and_market_information_create_real_differentiation():
     indexed = summary.set_index("Alternative_Plant")
     assert indexed.loc["Supported plant", "Safety_Regulatory_Score"] > indexed.loc["Unknown plant", "Safety_Regulatory_Score"]
     assert indexed.loc["Supported plant", "Novelty_Market_Score"] > indexed.loc["Unknown plant", "Novelty_Market_Score"]
-    # Missing market search retains the platform's historical neutral 2.5
-    # scoring prior for backward compatibility, but it must not be labelled
-    # as commercial novelty/white-space. Chemical/source novelty is separate.
-    assert indexed.loc["Unknown plant", "Novelty_Market_Score"] == 2.5
+    # DEFECT 6 FIX (pre-investor reliability repair): a missing/unperformed
+    # market search must earn zero positive market-opportunity points, not
+    # the previous 2.5 neutral-but-positive prior -- "not searched" is not
+    # an opportunity. It must also not be labelled as commercial
+    # novelty/white-space. Chemical/source novelty is tracked separately.
+    assert indexed.loc["Unknown plant", "Novelty_Market_Score"] == 0.0
     assert indexed.loc["Unknown plant", "Commercial_Novelty_Status"] == "Commercial novelty not assessed"
+
+
+def _mechanism_row(target_or_mechanism, **overrides):
+    row = _row(
+        Target_or_Mechanism=target_or_mechanism,
+        Supported_Target_or_Mechanism=True,
+        Indication_Match_Type="exact_indication",
+        Indication_Match_Terms=target_or_mechanism,
+    )
+    row.update(overrides)
+    return row
+
+
+def test_duplicate_mechanism_rows_do_not_saturate_mechanism_support():
+    # DEFECT 4 FIX (pre-investor reliability repair): 20 duplicate rows
+    # for the SAME mechanism must not score as if 5 distinct mechanisms
+    # were independently supported (2.0 pts/mechanism, capped at 10.0).
+    from candidate_shortlisting import _mechanism_support
+
+    duplicate_rows = pd.DataFrame([
+        _mechanism_row("AMPK activation") for _ in range(20)
+    ])
+    points, tier = _mechanism_support(duplicate_rows, indication="metabolic support")
+    assert points == 2.0
+    assert tier == "Some"
+
+
+def test_unrelated_mechanisms_do_not_score_for_requested_indication():
+    from candidate_shortlisting import _mechanism_support
+
+    unrelated_rows = pd.DataFrame([
+        _row(Target_or_Mechanism="cytotoxic activity against unrelated cancer cell line",
+             Supported_Target_or_Mechanism=True),
+        _row(Target_or_Mechanism="pesticidal activity", Supported_Target_or_Mechanism=True),
+    ])
+    points, tier = _mechanism_support(unrelated_rows, indication="metabolic support")
+    assert points == 0.0
+    assert tier == "None"
+
+
+def test_several_distinct_mechanisms_score_higher_than_one_duplicated_mechanism():
+    from candidate_shortlisting import _mechanism_support
+
+    one_duplicated = pd.DataFrame([_mechanism_row("AMPK activation") for _ in range(6)])
+    several_distinct = pd.DataFrame([
+        _mechanism_row("AMPK activation"),
+        _mechanism_row("insulin sensitization"),
+        _mechanism_row("glucose uptake stimulation"),
+    ])
+    dup_points, _ = _mechanism_support(one_duplicated, indication="metabolic support")
+    distinct_points, _ = _mechanism_support(several_distinct, indication="metabolic support")
+    assert distinct_points > dup_points
+
+
+def test_duplicate_compound_rows_do_not_inflate_linked_mechanism_bonus():
+    # DEFECT 5 FIX (pre-investor reliability repair): the linked-mechanism
+    # bonus must de-duplicate by compound identity the same way the base
+    # compound score already does -- 20 rows repeating the same compound
+    # tied to a supported mechanism must not out-score one row.
+    from candidate_shortlisting import _compound_quality
+
+    one_row = pd.DataFrame([_row(
+        Shared_or_Similar_Compound="specific alkaloid",
+        Supported_Target_or_Mechanism=True,
+    )])
+    duplicate_rows = pd.DataFrame([_row(
+        Shared_or_Similar_Compound="specific alkaloid",
+        Supported_Target_or_Mechanism=True,
+    ) for _ in range(20)])
+    one_total, _ = _compound_quality(one_row, [])
+    dup_total, _ = _compound_quality(duplicate_rows, [])
+    assert one_total == dup_total

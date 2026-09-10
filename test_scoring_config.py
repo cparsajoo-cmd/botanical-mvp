@@ -110,7 +110,15 @@ def test_default_scoring_config_field_values_match_documented_pre_task_weights()
     assert config.market_commercial_evidence_reported == 2
     assert config.market_no_verified_product_found == 6
     assert config.market_conflicting_evidence == -2
-    assert config.market_search_incomplete == 3
+    # DEFECT 6 FIX (pre-investor reliability repair): "Search incomplete"
+    # used to award +3 -- a positive market-opportunity bonus for a search
+    # that did not actually complete, contradicting the neutral treatment
+    # the surrounding code (botanical_rd_candidate_engine.py) already
+    # documented for this exact case ("same neutral treatment as not
+    # performed, not a bonus"). It is now neutral (0), matching
+    # market_neutral_default, not part of the "documented pre-task
+    # weights" this test otherwise still locks in.
+    assert config.market_search_incomplete == 0
     # PHASE 5 (§10 fix, confirmed defect, main audit §3.1): the old
     # value (+3) scored a candidate whose market status was never
     # checked ABOVE a candidate with a confirmed, verified positive

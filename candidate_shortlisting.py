@@ -42,7 +42,7 @@ from safety_assertion_engine import (
 from standard_evidence_builder import (
     evaluate_applicability, preparation_from_product_form, canonical_preparation_identity,
 )
-from evidence_consistency import classify_evidence_consistency
+from evidence_consistency import classify_evidence_consistency, direction_data_completeness
 from rd_discovery_classification import (
     classify_discovery_lane,
     discovery_potential_score,
@@ -57,6 +57,14 @@ from phase5_scoring_config import (
     HIERARCHY_LABEL_TO_TIER,
     DIRECTION_FACTORS,
     CONSISTENCY_FACTORS,
+    CONSISTENT_POSITIVE,
+    MOSTLY_POSITIVE,
+    MIXED,
+    MOSTLY_NULL,
+    CONSISTENT_NULL,
+    MOSTLY_NEGATIVE,
+    INSUFFICIENT,
+    INSUFFICIENT_DIRECTION_DATA,
     APPLICABILITY_FACTORS,
     APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE,
     APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE,
@@ -713,6 +721,13 @@ _COMMERCIAL_UNASSESSED_TERMS = (
     "commercial novelty not assessed", "market data incomplete",
     "search not performed", "source unavailable", "market not covered",
     "connector not implemented",
+    # DEFECT 6 FIX (pre-investor reliability repair): the observed
+    # production run reported "unknown" (Commercial_Status_Overall) and
+    # "skipped" (per-connector patent/retail status) alongside the terms
+    # already listed above. These are equally unassessed states and must
+    # route to the same zero-point branch, not fall through toward a
+    # positive white-space/repurposing/established match below.
+    "unknown", "skipped", "search incomplete",
 )
 
 
@@ -975,6 +990,38 @@ def _result_category(row: pd.Series) -> str:
     return "unreported"
 
 
+# DEFECT 1 / 9 FIX (pre-investor reliability repair): both outcome-profile
+# builders below used to compute their own "label" with an independent
+# heuristic that did NOT count "unreported" toward a Mixed/inconsistent
+# verdict, while classify_evidence_consistency() (evidence_consistency.py)
+# DID count "unreported" in its ratio denominator. That is the exact
+# mechanism behind the reported Valerian contradiction: Primary_Tier_
+# Outcome_Label said "Predominantly positive results" (positive-only rule,
+# unreported ignored) while Evidence_Consistency_Class said "MIXED" (same
+# counts, unreported diluting the ratio into the old catch-all). The label
+# is now derived from the SAME canonical classify_evidence_consistency()
+# call every caller already uses for Evidence_Consistency_Class/
+# Direction_Factor, so the two fields can no longer disagree about the same
+# counts -- one authority, one classification, one label mapping.
+_CONSISTENCY_CLASS_TO_OUTCOME_LABEL = {
+    CONSISTENT_POSITIVE: "Predominantly positive results",
+    # MOSTLY_POSITIVE means a meaningful minority of known-direction
+    # records did NOT show a positive result (up to just under half) --
+    # genuinely inconsistent, not "predominantly positive" (that label is
+    # reserved for the near-unanimous CONSISTENT_POSITIVE case).
+    MOSTLY_POSITIVE: "Mixed/inconsistent results",
+    MIXED: "Mixed/inconsistent results",
+    MOSTLY_NULL: "No demonstrated benefit",
+    CONSISTENT_NULL: "No demonstrated benefit",
+    MOSTLY_NEGATIVE: "Adverse/negative evidence",
+    INSUFFICIENT: "No empirical outcomes",
+    # Evidence exists but no record's result direction could be resolved --
+    # distinct from "no empirical outcomes at all" and never mislabeled as
+    # a positive default.
+    INSUFFICIENT_DIRECTION_DATA: "Results not reported",
+}
+
+
 def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
     """Summarise unique record-level efficacy directions for transparent gating."""
     empirical = group[group.apply(_row_has_candidate_specific_empirical_support, axis=1)].copy()
@@ -990,16 +1037,8 @@ def _outcome_profile(group: pd.DataFrame) -> dict[str, int | float | str]:
     for _, row in empirical.iterrows():
         counts[_result_category(row)] += 1
     total = len(empirical)
-    if counts["harmful"] > 0 and counts["positive"] == 0:
-        label = "Adverse/negative evidence"
-    elif counts["positive"] == 0 and counts["null"] > 0:
-        label = "No demonstrated benefit"
-    elif counts["positive"] > 0 and (counts["null"] + counts["harmful"] + counts["mixed"]) > 0:
-        label = "Mixed/inconsistent results"
-    elif counts["positive"] > 0:
-        label = "Predominantly positive results"
-    else:
-        label = "Results not reported"
+    consistency_class = classify_evidence_consistency({**counts, "total": total})
+    label = _CONSISTENCY_CLASS_TO_OUTCOME_LABEL[consistency_class]
     return {**counts, "total": total, "label": label}
 
 
@@ -1010,18 +1049,8 @@ def _outcome_profile_from_row_records(row_records: list[dict]) -> dict[str, int 
         category = record.get("result_category") or _result_category(record["row"])
         counts[category if category in counts else "unreported"] += 1
     total = len(row_records)
-    if total == 0:
-        label = "No empirical outcomes"
-    elif counts["harmful"] > 0 and counts["positive"] == 0:
-        label = "Adverse/negative evidence"
-    elif counts["positive"] == 0 and counts["null"] > 0:
-        label = "No demonstrated benefit"
-    elif counts["positive"] > 0 and (counts["null"] + counts["harmful"] + counts["mixed"]) > 0:
-        label = "Mixed/inconsistent results"
-    elif counts["positive"] > 0:
-        label = "Predominantly positive results"
-    else:
-        label = "Results not reported"
+    consistency_class = classify_evidence_consistency({**counts, "total": total})
+    label = _CONSISTENCY_CLASS_TO_OUTCOME_LABEL[consistency_class]
     return {**counts, "total": total, "label": label}
 
 def _row_authoritative_relevance(row: pd.Series) -> tuple[str, set[str]]:
@@ -1703,6 +1732,7 @@ def _scientific_evidence_components(
     weight_total = 0.0
     aggregate_dimension_status: dict[str, str] = {}
     any_incomplete = False
+    any_target_incomplete = False
     for record in primary_records:
         source_id = str(record["source_record_ids"] or record["row_id"])
         result = evaluate_applicability(record["row"], target_context)
@@ -1712,6 +1742,12 @@ def _scientific_evidence_components(
         weight_total += weight
         if result["Applicability_Data_Completeness"] == "incomplete":
             any_incomplete = True
+        # DEFECT 3 FIX: surfaced separately from Applicability_Data_
+        # Completeness (which now reflects only evidence-side UNKNOWNs) so
+        # an incomplete PRODUCT/PROJECT definition remains visible without
+        # feeding back into Plant_Applicability_Factor.
+        if result.get("Target_Definition_Completeness") == "incomplete":
+            any_target_incomplete = True
         for dim, status in result["Dimension_Status"].items():
             if status == NOT_APPLICABLE:
                 continue
@@ -1729,10 +1765,12 @@ def _scientific_evidence_components(
         plant_applicability_factor = APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE
         applicability_classification = APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE
         applicability_completeness = "preliminary"
+        target_definition_completeness = "incomplete"
     elif weight_total <= 0.0 or not primary_records:
         plant_applicability_factor = APPLICABILITY_FACTOR_WHEN_NOTHING_EVALUABLE
         applicability_classification = APPLICABILITY_CLASSIFICATION_WHEN_NOTHING_EVALUABLE
         applicability_completeness = "incomplete"
+        target_definition_completeness = "incomplete"
     else:
         plant_applicability_factor = weighted_sum / weight_total
         applicability_classification = NOT_APPLICABLE
@@ -1741,6 +1779,7 @@ def _scientific_evidence_components(
                 applicability_classification = candidate_status
                 break
         applicability_completeness = "incomplete" if any_incomplete else "complete"
+        target_definition_completeness = "incomplete" if any_target_incomplete else "complete"
 
     raw_score = (
         evidence_quality_score * direction_factor * consistency_factor * plant_applicability_factor
@@ -1754,6 +1793,12 @@ def _scientific_evidence_components(
         "Primary_Tier_Record_Count": len(primary_records),
         "Evidence_Consistency_Class": consistency_class,
         "Direction_Factor": direction_factor,
+        # DEFECT 1 FIX, requirement D: explicit, separate signal for
+        # "some primary-tier records have an unresolved result direction",
+        # additive and never consumed by scoring -- purely informational
+        # transparency about how complete the direction data behind this
+        # classification is.
+        "Direction_Data_Completeness": direction_data_completeness(primary_outcome_profile),
     }
 
     # PHASE 6 — exact, non-fabricated per-evidence score effect.  Because
@@ -1798,6 +1843,7 @@ def _scientific_evidence_components(
         "Dimension_Status": aggregate_dimension_status,
         "Applicability_Classification": applicability_classification,
         "Applicability_Data_Completeness": applicability_completeness,
+        "Target_Definition_Completeness": target_definition_completeness,
         "Primary_Evidence_Tier": primary_tier,
         "Supporting_Evidence_Tiers_Present": supporting_tiers_present,
         "Supporting_Evidence_Record_Count": supporting_record_count,
@@ -1815,7 +1861,18 @@ def _scientific_evidence_components(
 def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> tuple[float, str]:
     """Supporting chemistry only; capped at 5% of the 100-point score."""
     best_by_name: dict[str, float] = {}
-    linked_weight = 0.0
+    # DEFECT 5 FIX (pre-investor reliability repair): the base score above
+    # already de-duplicates by compound NAME via max() (best_by_name), so
+    # repeated rows for the same compound never inflate it. The "linked to
+    # a supported mechanism" bonus, however, previously summed row_weight
+    # across every matching row (`linked_weight += row_weight`) with no
+    # such de-duplication -- so the same compound/target relationship
+    # projected across many rows kept adding to the bonus, which is exactly
+    # what saturated 44/51 candidates to 5/5 in production. Tracking the
+    # best linked weight PER COMPOUND NAME (same max()-based de-duplication
+    # already used for the base score) removes the row-volume inflation
+    # while keeping every other part of the formula unchanged.
+    best_linked_by_name: dict[str, float] = {}
     # NOTE (2026-08-26): measured directly -- for this function's typical
     # per-plant row count, group.iterrows() is faster than
     # group.to_dict("records") (the fixed per-call conversion cost of
@@ -1828,6 +1885,7 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
         row_weight = _compound_weight(
             row.get("Shared_or_Similar_Compound", ""), row.get("Novelty_Status", "")
         )
+        mechanism_supported = bool(row.get("Supported_Target_or_Mechanism", False))
         for name in _compound_names(row.get("Shared_or_Similar_Compound", "")):
             if name in _COMPOUND_TIER_0:
                 weight = 0.0
@@ -1836,13 +1894,14 @@ def _compound_quality(group: pd.DataFrame, distinctive_compounds: list[str]) -> 
             else:
                 weight = row_weight
             best_by_name[name] = max(best_by_name.get(name, 0.0), weight)
-        if bool(row.get("Supported_Target_or_Mechanism", False)):
-            linked_weight += row_weight
+            if mechanism_supported:
+                best_linked_by_name[name] = max(best_linked_by_name.get(name, 0.0), weight)
 
     weighted_sum = sum(best_by_name.values())
     if weighted_sum <= 0:
         return 0.0, "Non-informative overlap only"
 
+    linked_weight = sum(best_linked_by_name.values())
     base = min(4.0, 1.0 * weighted_sum)
     bonus = min(1.0, 0.2 * linked_weight)
     total = round(min(5.0, base + bonus), 1)
@@ -1894,15 +1953,28 @@ def _indication_specific_mechanism_values(
 
 
 def _mechanism_support(group: pd.DataFrame, indication: str = "") -> tuple[float, str]:
-    # IMPORTANT: keep the calibrated Phase-5 scoring semantics unchanged.
-    # Indication-specific filtering is a reporting/traceability concern, not a
-    # retroactive score recalibration.  Changing this support count would alter
-    # Overall_Score and existing Go/Investigate thresholds for already-validated
-    # primary-tier programmes.  The final report uses
-    # _indication_specific_mechanism_values() separately to avoid displaying
-    # unrelated whole-plant bioactivities.
-    supported = int(group["Supported_Target_or_Mechanism"].sum())
-    total = min(10.0, 2.0 * supported)
+    # DEFECT 4 FIX (pre-investor reliability repair): the previous
+    # implementation counted `Supported_Target_or_Mechanism == True` ROWS
+    # (2 points/row, capped at 10). A whole-plant phytochemical projection
+    # can attach the same handful of mechanisms across dozens of duplicate
+    # rows, so this measured database row volume rather than independent
+    # mechanistic support -- confirmed by production output showing 10/10
+    # for 49 of 51 candidates regardless of how many DISTINCT,
+    # indication-relevant mechanisms were actually present.
+    #
+    # Reuses _indication_specific_mechanism_values(), which already exists
+    # specifically to de-duplicate mechanism components and restrict them to
+    # ones grounded in the requested indication (via the same authoritative
+    # Indication_Match_Type/_row_authoritative_relevance() signal
+    # shortlisting uses everywhere else) -- no new semantic logic is
+    # introduced here, per the cahier's instruction to reuse the existing
+    # indication-specific extraction rather than duplicate it. This
+    # supersedes the previous decision to keep row-count scoring "for
+    # calibration stability"; that tradeoff is exactly the defect being
+    # fixed here.
+    unique_mechanisms = _indication_specific_mechanism_values(group, indication, limit=10)
+    distinct_count = len(unique_mechanisms)
+    total = min(10.0, 2.0 * distinct_count)
     tier = "Strong" if total >= 7 else "Some" if total > 0 else "None"
     return total, tier
 
@@ -2265,16 +2337,28 @@ def _meaningful_group_values(group: pd.DataFrame, column: str) -> list[str]:
     return out
 
 
-def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
+def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str, bool]:
     """Score only explicit safety/regulatory information.
 
     Absence of a flag is not proof of safety.  Unknown safety and an unperformed
     regulatory search therefore receive a conservative neutral score rather than
     the previous optimistic 'clean' score.  Genuine reassuring, adverse, and
     prohibitive evidence still produce differentiated values.
+
+    Returns (points, tier, prohibitive). DEFECT 7 FIX (pre-investor
+    reliability repair): `prohibitive` is a separate, explicit signal for
+    "a genuine hard-stop-worthy safety/regulatory concern was found"
+    (plant-level hard stop, a severe safety term, or an explicit
+    regulatory prohibition). It exists because, once absence-of-data no
+    longer earns positive points (see below), the raw numeric score alone
+    can no longer distinguish "we found nothing" (now 0.0, should not be
+    an automatic exclusion -- unknown safety requires review, not a
+    silent No-Go) from "we found a real prohibitive signal" (also a low
+    score, and genuinely should exclude). Callers that need a hard-stop
+    decision must use `prohibitive`, never a bare points<=0 comparison.
     """
     if _critical_plant_stop(group):
-        return 0.0, "Plant-level hard stop"
+        return 0.0, "Plant-level hard stop", True
 
     safety_values = (
         _meaningful_group_values(group, "Safety_Flags")
@@ -2294,7 +2378,16 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
     elif any(term in safety_text for term in concern_terms):
         safety_points, tier = 4.0, "Safety review needed"
     else:
-        safety_points, tier = 5.0, "Safety not adequately assessed"
+        # DEFECT 7 FIX (pre-investor reliability repair): this branch used
+        # to award 5.0 points for "no safety information was found" -- a
+        # positive score for the ABSENCE of safety evidence, which is
+        # scientifically indistinguishable from "demonstrated safe" once it
+        # is added into Safety_Regulatory_Score. Absence of a flag is still
+        # not proof of safety (see this function's own docstring); the
+        # score must reflect that honestly. Score/decision stay separate:
+        # this only removes the positive credit -- eligibility_gate.py's
+        # existing unknown-safety-requires-review behavior is untouched.
+        safety_points, tier = 0.0, "Safety not adequately assessed"
 
     regulatory_values = _meaningful_group_values(group, "Regulatory_Barriers")
     regulatory_text = _norm(" | ".join(regulatory_values))
@@ -2308,9 +2401,17 @@ def _safety_regulatory(group: pd.DataFrame) -> tuple[float, str]:
             if tier == "Safety not adequately assessed":
                 tier = "Regulatory review needed"
     else:
-        reg_points = 3.0
+        # DEFECT 7 FIX: an unperformed regulatory assessment used to earn
+        # +3.0 -- positive regulatory-fit credit for having no regulatory
+        # information at all. "No known signal found" must not be treated
+        # as favorable regulatory standing.
+        reg_points = 0.0
 
-    return round(min(15.0, safety_points + reg_points), 1), tier
+    prohibitive = (
+        any(term in safety_text for term in severe_terms)
+        or any(term in regulatory_text for term in ("prohibited", "banned", "regulatory ban"))
+    )
+    return round(min(15.0, safety_points + reg_points), 1), tier, prohibitive
 
 def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
     """Score COMMERCIAL opportunity only; never infer it from chemistry.
@@ -2341,11 +2442,18 @@ def _novelty_market(group: pd.DataFrame) -> tuple[float, str]:
 
     combined = _norm(" | ".join(commercial_values))
     if not combined or any(t in combined for t in _COMMERCIAL_UNASSESSED_TERMS):
-        # Preserve the platform's historical neutral prior so legacy scientific
-        # score contracts do not shift merely because commercial intelligence
-        # was unavailable.  The LABEL is deliberately non-claiming: 2.5 is a
-        # neutral scoring prior, not evidence of novelty or white-space.
-        return 2.5, "Commercial novelty not assessed"
+        # DEFECT 6 FIX (pre-investor reliability repair): this branch used
+        # to return 2.5 -- a positive half-credit "neutral prior" -- despite
+        # this function's own docstring already stating "Missing market
+        # data earns zero points rather than a half-score prior, because
+        # 'not searched' is not an opportunity." The code and docstring
+        # directly contradicted each other; production confirmed the code
+        # ran (all 51 candidates in the observed Sleep run received 2.5/5
+        # with every commercial connector reporting Skipped/
+        # SEARCH_NOT_PERFORMED/UNKNOWN). An unperformed/unavailable/
+        # unassessed search must contribute zero positive market-
+        # opportunity points, never a reward or a penalty.
+        return 0.0, "Commercial novelty not assessed"
 
     if any(t in combined for t in _COMMERCIAL_ESTABLISHED_TERMS) or (
         "verified marketed product" in combined
@@ -3059,7 +3167,7 @@ def build_plant_candidate_shortlist(
         evq_explain = sci_evidence["Evidence_Quality_Explain"]
         cq_points, cq_tier = _compound_quality(group, distinctive_compounds)
         mech_points, mech_tier = _mechanism_support(group, indication)
-        safety_reg_points, safety_reg_tier = _safety_regulatory(group)
+        safety_reg_points, safety_reg_tier, safety_reg_prohibitive = _safety_regulatory(group)
         novelty_points, novelty_tier = _novelty_market(group)
         component_source_record_ids = _component_source_record_ids(
             group,
@@ -3163,7 +3271,20 @@ def build_plant_candidate_shortlist(
             plant_status = "Exploratory"
             reasons_note = "only weak, indirect, or inferred indication relevance was found"
 
-        if safety_reg_points <= 0.0:
+        if safety_reg_prohibitive:
+            # DEFECT 7 FIX (pre-investor reliability repair): this used to
+            # be `if safety_reg_points <= 0.0`. Once "no safety/regulatory
+            # information at all" stopped earning positive points (see
+            # _safety_regulatory()), that comparison could no longer tell
+            # a genuine prohibitive signal apart from simple absence of
+            # data -- both now score at or near 0. Gating on the explicit
+            # `prohibitive` flag keeps the hard-stop behavior for a real
+            # severe-safety-term or regulatory-prohibition match, while an
+            # honestly-unknown candidate is no longer silently auto-
+            # excluded merely for having no safety/regulatory data (it
+            # still scores 0 safety points and still requires review
+            # before Go via eligibility_gate.py, per the cahier's
+            # instruction to separate score from decision eligibility).
             plant_status = "Excluded"
             reasons_note = "safety/regulatory screening did not pass at plant level"
         elif outcome_profile["positive"] == 0 and (outcome_profile["null"] + outcome_profile["harmful"]) > 0:
@@ -3491,7 +3612,7 @@ def build_plant_candidate_shortlist(
             if str((rec.get("Dimension_Status", {}) or {}).get("preparation") or "").upper() == "MATCH"
         )
 
-        if plant_hard_stop or safety_reg_points <= 0.0:
+        if plant_hard_stop or safety_reg_prohibitive:
             relevance_gate_result = "failed_safety"
         elif not indication_requested:
             relevance_gate_result = "not_applicable"

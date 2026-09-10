@@ -33,6 +33,7 @@ _REQUIRED_EXPORT_COLUMNS = (
     "Compound_Primary_Source_URL",
     "Compound_Source_URLs",
     "Compound_Source_Map",
+    "Compound_Sources_JSON",
     "Claim_Source_Map",
     "Derived_Claim_Provenance",
     "Human_Evidence_Record_IDs",
@@ -64,8 +65,8 @@ def test_export_dataframe_contains_all_required_source_columns():
         "Direct_Human_Outcome_Evidence_IDs": ["E1"],
         "Safety_Evidence_IDs": ["S1"],
         "Mechanistic_Evidence_Record_IDs": ["M1"],
-        "Target_Source_Map": {"GABA-A receptor": ["M1"]},
-        "Mechanism_Source_Map": {"GABAergic modulation": ["M1"]},
+        "Target_Source_Map": {"GABA-A receptor": {"evidence_ids": ["M1"], "references": []}},
+        "Mechanism_Source_Map": {"GABAergic modulation": {"evidence_ids": ["M1"], "references": []}},
         "Discovery_Linked_Compounds": "Withanolide A",
     }])
     evidence_df = pd.DataFrame([
@@ -91,7 +92,7 @@ def test_export_dataframe_is_csv_serializable():
     report_df = pd.DataFrame([{
         "Alternative_Plant": "Withania somnifera",
         "Mechanistic_Evidence_Record_IDs": ["M1"],
-        "Target_Source_Map": {"GABA-A receptor": ["M1"]},
+        "Target_Source_Map": {"GABA-A receptor": {"evidence_ids": ["M1"], "references": []}},
         "Mechanism_Source_Map": {},
     }])
     evidence_df = pd.DataFrame([

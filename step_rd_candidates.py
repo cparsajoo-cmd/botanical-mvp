@@ -2231,15 +2231,25 @@ def render_candidate_reference_detail(row):
         mechanism_map = parse_claim_source_map(row.get("Mechanism_Source_Map"))
         if mechanistic_sources or target_map or mechanism_map or "Mechanistic_Source_Count" in row:
             st.markdown("**🧬 Mechanisms / targets**")
-            _reference_detail_source_table(mechanistic_sources, empty_note="No mechanistic sources linked.")
-            if target_map:
-                st.caption("Target → source records: " + "; ".join(
-                    f"{name}: {', '.join(ids)}" for name, ids in target_map.items()
-                ))
-            if mechanism_map:
-                st.caption("Mechanism → source records: " + "; ".join(
-                    f"{name}: {', '.join(ids)}" for name, ids in mechanism_map.items()
-                ))
+            if not target_map and not mechanism_map:
+                _reference_detail_source_table(mechanistic_sources, empty_note="No mechanistic sources linked.")
+            for label, named_map in (("Target", target_map), ("Mechanism", mechanism_map)):
+                for name, entry in named_map.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    evidence_ids = entry.get("evidence_ids") or []
+                    sources = entry.get("sources") or []
+                    st.markdown(f"**{label}: {name}**")
+                    if evidence_ids:
+                        st.caption(f"Evidence records: {', '.join(evidence_ids)}")
+                    if sources:
+                        for src in sources:
+                            if src.get("url"):
+                                st.markdown(f"- [{src.get('title') or 'View source'}]({src['url']})")
+                            elif src.get("title"):
+                                st.caption(f"- {src['title']} — internal record, no external URL")
+                    else:
+                        st.caption("No clickable source available for this claim.")
 
         compound_map = parse_claim_source_map(row.get("Compound_Source_Map"))
         if compound_map or "Compound_Source_Count" in row:
@@ -2247,10 +2257,20 @@ def render_candidate_reference_detail(row):
             if not compound_map:
                 st.caption("No linked compounds.")
             for name, entry in compound_map.items():
-                if entry.get("provenance_type") == "EXTERNALLY_LINKED" and entry.get("url"):
-                    st.markdown(f"- **{name}**: [{entry.get('source') or 'View source'}]({entry['url']})")
+                st.markdown(f"**{name}**")
+                plant_source = entry.get("plant_compound_source") or {}
+                if plant_source.get("url"):
+                    st.markdown(f"- Plant-compound source: [{plant_source.get('title') or 'View source'}]({plant_source['url']})")
+                elif plant_source.get("title"):
+                    st.caption(f"- Plant-compound source: {plant_source['title']}")
                 else:
-                    st.caption(f"- {name}: Internal curated provenance — external URL unavailable")
+                    st.caption("- Plant-compound source: Internal curated provenance — external URL unavailable")
+                for target_name, refs in (entry.get("target_sources") or {}).items():
+                    for ref in refs:
+                        if ref.get("url"):
+                            st.markdown(f"  - Compound-target evidence ({target_name}): [{ref.get('title') or 'View source'}]({ref['url']})")
+                        elif ref.get("title"):
+                            st.caption(f"  - Compound-target evidence ({target_name}): {ref['title']}")
 
         commercial_sources = parse_commercial_sources_json(row.get("Commercial_Sources_JSON"))
         if commercial_sources or "Commercial_Source_Count" in row:

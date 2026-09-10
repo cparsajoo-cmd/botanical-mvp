@@ -16,7 +16,7 @@ def test_no_linked_compounds_yields_empty_map():
 def test_compound_without_metadata_is_internal_curated_provenance():
     source_map = build_compound_source_map(["Apigenin"])
     assert source_map["Apigenin"]["provenance_type"] == "INTERNAL_CURATED_PROVENANCE"
-    assert source_map["Apigenin"]["url"] is None
+    assert source_map["Apigenin"]["plant_compound_source"]["url"] is None
 
 
 def test_compound_with_real_external_metadata_is_externally_linked():
@@ -32,7 +32,7 @@ def test_compound_with_real_external_metadata_is_externally_linked():
     )
     entry = source_map["Linalool"]
     assert entry["provenance_type"] == "EXTERNALLY_LINKED"
-    assert entry["url"] == "https://pubchem.ncbi.nlm.nih.gov/compound/6549"
+    assert entry["plant_compound_source"]["url"] == "https://pubchem.ncbi.nlm.nih.gov/compound/6549"
     assert entry["pubchem_cid"] == "6549"
 
 
@@ -107,3 +107,66 @@ def test_parse_compound_source_map_roundtrip():
 def test_empty_report_df_returns_unchanged():
     empty = pd.DataFrame()
     assert attach_compound_source_traceability(empty).empty
+
+
+# ---------------------------------------------------------------------------
+# Corrective pass (2026-09-10): plant->compound vs compound->target/mechanism
+# provenance must stay distinct, and a compound-target link's real citation
+# must reach Stage 6 as a clickable URL even with no Evidence_Record_ID.
+# ---------------------------------------------------------------------------
+
+def test_plant_compound_source_and_compound_target_source_are_distinct():
+    report_df = pd.DataFrame([{
+        "Alternative_Plant": "Withania somnifera",
+        "Discovery_Linked_Compounds": "Withanolide A",
+        "Compound_Reference_Map": {
+            "Withanolide A": {"title": "Dr. Duke phytochemical DB", "url": "https://example.org/plant-compound"},
+        },
+        "Compound_Target_Source_Map": {
+            "Withanolide A": {
+                "GABA-A receptor": [{"title": "Receptor binding study", "url": "https://example.org/compound-target"}],
+            },
+        },
+    }])
+    out = attach_compound_source_traceability(report_df)
+    source_map = parse_compound_source_map(out.iloc[0]["Compound_Source_Map"])
+    entry = source_map["Withanolide A"]
+    assert entry["plant_compound_source"]["url"] == "https://example.org/plant-compound"
+    assert entry["target_sources"]["GABA-A receptor"][0]["url"] == "https://example.org/compound-target"
+    # The two claims are genuinely different URLs here -- neither field
+    # leaked into the other.
+    assert entry["plant_compound_source"]["url"] != entry["target_sources"]["GABA-A receptor"][0]["url"]
+
+
+def test_compound_target_source_reaches_stage6_with_no_evidence_record_id():
+    """Compound-target links from the plant-compound DB typically have no
+    Evidence_Record_ID -- only their own reference_url. Must still surface
+    as a clickable Stage-6 source."""
+    report_df = pd.DataFrame([{
+        "Alternative_Plant": "Withania somnifera",
+        "Discovery_Linked_Compounds": "Withanolide A",
+        "Compound_Target_Source_Map": {
+            "Withanolide A": {
+                "GABA-A receptor": [{"title": "Receptor binding study", "url": "https://example.org/compound-target"}],
+            },
+        },
+    }])
+    out = attach_compound_source_traceability(report_df)
+    row = out.iloc[0]
+    assert row["Compound_Resolved_Source_Count"] == 1
+    assert row["Compound_Primary_Source_URL"] == "https://example.org/compound-target"
+
+
+def test_compound_target_source_for_one_compound_never_attaches_to_another():
+    report_df = pd.DataFrame([{
+        "Alternative_Plant": "Withania somnifera",
+        "Discovery_Linked_Compounds": "Withanolide A; Withaferin A",
+        "Compound_Target_Source_Map": {
+            "Withanolide A": {"GABA-A receptor": [{"title": "Study A", "url": "https://example.org/a"}]},
+            "Withaferin A": {"NF-kB": [{"title": "Study B", "url": "https://example.org/b"}]},
+        },
+    }])
+    out = attach_compound_source_traceability(report_df)
+    source_map = parse_compound_source_map(out.iloc[0]["Compound_Source_Map"])
+    assert "NF-kB" not in source_map["Withanolide A"].get("target_sources", {})
+    assert "GABA-A receptor" not in source_map["Withaferin A"].get("target_sources", {})

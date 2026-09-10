@@ -99,3 +99,54 @@ def test_no_selection_made_does_not_call_the_renderer_and_does_not_crash():
 def test_old_human_only_detail_function_is_retired():
     """No two conflicting detail systems left behind."""
     assert not hasattr(src, "_render_human_evidence_source_details")
+
+
+def test_render_candidate_reference_detail_shows_clickable_mechanism_link():
+    """Mandatory (corrective pass, §F/§I.7): a mechanism/target clickable
+    link must actually appear as rendered markdown output from the real
+    grouped detail renderer -- not just exist as backing data."""
+    row = pd.Series({
+        "Alternative_Plant": "Withania somnifera",
+        "Target_Source_Map": '{"GABA-A receptor": {"evidence_ids": ["E12"], "sources": [{"title": "Example paper", "url": "https://pubmed.ncbi.nlm.nih.gov/12345/"}]}}',
+        "Mechanism_Source_Map": "{}",
+    })
+    with mock.patch.object(src, "st") as mock_st:
+        src.render_candidate_reference_detail(row)
+
+    markdown_calls = [c.args[0] for c in mock_st.markdown.call_args_list if c.args]
+    assert any(
+        "https://pubmed.ncbi.nlm.nih.gov/12345/" in text and "Example paper" in text
+        for text in markdown_calls
+    ), f"no clickable mechanism link rendered; got: {markdown_calls}"
+
+
+def test_render_candidate_reference_detail_shows_clickable_compound_target_link():
+    row = pd.Series({
+        "Alternative_Plant": "Withania somnifera",
+        "Compound_Source_Map": (
+            '{"Withanolide A": {"provenance_type": "EXTERNALLY_LINKED", '
+            '"plant_compound_source": {"title": "Dr. Duke DB", "url": "https://example.org/plant-compound"}, '
+            '"target_sources": {"GABA-A receptor": [{"title": "Binding study", "url": "https://example.org/compound-target"}]}}}'
+        ),
+    })
+    with mock.patch.object(src, "st") as mock_st:
+        src.render_candidate_reference_detail(row)
+
+    markdown_calls = [c.args[0] for c in mock_st.markdown.call_args_list if c.args]
+    assert any("https://example.org/plant-compound" in text for text in markdown_calls)
+    assert any("https://example.org/compound-target" in text for text in markdown_calls)
+
+
+def test_render_candidate_reference_detail_never_fabricates_a_link_for_internal_only():
+    row = pd.Series({
+        "Alternative_Plant": "Withania somnifera",
+        "Compound_Source_Map": (
+            '{"Apigenin": {"provenance_type": "INTERNAL_CURATED_PROVENANCE", '
+            '"plant_compound_source": {"title": "internal curated plant-compound relational database", "url": null}}}'
+        ),
+    })
+    with mock.patch.object(src, "st") as mock_st:
+        src.render_candidate_reference_detail(row)
+
+    markdown_calls = [c.args[0] for c in mock_st.markdown.call_args_list if c.args]
+    assert not any("](" in text and "http" in text for text in markdown_calls if "Apigenin" in text)

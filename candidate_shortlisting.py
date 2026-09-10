@@ -198,6 +198,26 @@ def _row_source_record_ids(row: pd.Series) -> list[str]:
     return [fallback] if fallback and not _is_missing(fallback) else []
 
 
+def _parse_reference_map(value) -> dict:
+    """Parse one row's Mechanistic_*_Reference_Map JSON cell.
+
+    Returns {} for anything malformed/absent -- never raises, never
+    fabricates a reference. Values are either {name: [{"compound","title",
+    "url"}, ...]} (target/mechanism maps) or {name: {"title","url"}}
+    (compound map); both pass through as-parsed.
+    """
+    if isinstance(value, dict):
+        return value
+    text = str(value or "").strip()
+    if not text or text.lower() in ("nan", "none", "null", "{}"):
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _source_ids_for_rows(rows: Iterable[pd.Series]) -> list[str]:
     return sorted({source_id for row in rows for source_id in _row_source_record_ids(row)})
 
@@ -3248,8 +3268,21 @@ def build_plant_candidate_shortlist(
             # no-laundering discipline indication_candidate_discovery.py's
             # _mechanistic_field_atoms()/_score_mechanistic_links() already
             # apply to admission, applied here to provenance instead.
-            target_source_map: dict[str, set[str]] = {}
-            mechanism_source_map: dict[str, set[str]] = {}
+            #
+            # CRITICAL CORRECTION (2026-09-10): a target/mechanism claim must
+            # be traceable to a CLICKABLE reference wherever one genuinely
+            # exists, not just an internal evidence-record ID. Each row also
+            # carries its own Mechanistic_Target_Reference_Map/_Mechanism_
+            # Reference_Map -- the exact reference_title/reference_url pairs
+            # read directly off the SAME plant-compound link row that
+            # produced this target/mechanism (indication_candidate_
+            # discovery.py's _score_mechanistic_links(), previously dropped
+            # after admission scoring). Merged in here, per target/mechanism,
+            # never cross-attributed to a different row's target/mechanism.
+            target_source_map: dict[str, dict] = {}
+            mechanism_source_map: dict[str, dict] = {}
+            compound_reference_map: dict[str, dict] = {}
+            compound_target_source_map: dict[str, dict] = {}
             for _, r in group.iterrows():
                 if not (
                     _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
@@ -3261,17 +3294,53 @@ def build_plant_candidate_shortlist(
                     sid for sid in _split_values([r.get("Source_Record_IDs", "")])
                     if _norm(sid)
                 ]
-                if not _row_ids:
-                    continue
+                _row_target_refs = _parse_reference_map(r.get("Mechanistic_Target_Reference_Map"))
+                _row_mechanism_refs = _parse_reference_map(r.get("Mechanistic_Mechanism_Reference_Map"))
+                _row_compound_refs = _parse_reference_map(r.get("Mechanistic_Compound_Reference_Map"))
+
                 for _target in _split_values([r.get("Mechanistic_Linked_Targets", "")]):
-                    target_source_map.setdefault(_target, set()).update(_row_ids)
+                    if not _row_ids and _target not in _row_target_refs:
+                        continue
+                    entry = target_source_map.setdefault(
+                        _target, {"evidence_ids": set(), "references": []}
+                    )
+                    entry["evidence_ids"].update(_row_ids)
+                    for ref in _row_target_refs.get(_target, []):
+                        if ref not in entry["references"]:
+                            entry["references"].append(ref)
+                        # Compound -> Target/Mechanism provenance (spec §E):
+                        # a DIFFERENT claim from Plant -> Compound, kept in
+                        # its own map even though it may cite the same
+                        # underlying plant-compound-database row/reference
+                        # -- that is the genuine single source behind both
+                        # facts, not a laundered substitute.
+                        _ref_compound = ref.get("compound")
+                        if _ref_compound:
+                            _compound_targets = compound_target_source_map.setdefault(_ref_compound, {})
+                            _target_refs = _compound_targets.setdefault(_target, [])
+                            _slim_ref = {"title": ref.get("title"), "url": ref.get("url")}
+                            if _slim_ref not in _target_refs:
+                                _target_refs.append(_slim_ref)
                 for _mechanism in _split_values([r.get("Mechanistic_Linked_Mechanisms", "")]):
-                    mechanism_source_map.setdefault(_mechanism, set()).update(_row_ids)
+                    if not _row_ids and _mechanism not in _row_mechanism_refs:
+                        continue
+                    entry = mechanism_source_map.setdefault(
+                        _mechanism, {"evidence_ids": set(), "references": []}
+                    )
+                    entry["evidence_ids"].update(_row_ids)
+                    for ref in _row_mechanism_refs.get(_mechanism, []):
+                        if ref not in entry["references"]:
+                            entry["references"].append(ref)
+                for _compound, _ref in _row_compound_refs.items():
+                    if _compound not in compound_reference_map:
+                        compound_reference_map[_compound] = _ref
             target_source_map = {
-                name: sorted(ids) for name, ids in target_source_map.items()
+                name: {"evidence_ids": sorted(v["evidence_ids"]), "references": v["references"]}
+                for name, v in target_source_map.items()
             }
             mechanism_source_map = {
-                name: sorted(ids) for name, ids in mechanism_source_map.items()
+                name: {"evidence_ids": sorted(v["evidence_ids"]), "references": v["references"]}
+                for name, v in mechanism_source_map.items()
             }
         else:
             direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
@@ -3298,6 +3367,8 @@ def build_plant_candidate_shortlist(
             mechanistic_evidence_record_ids = []
             target_source_map = {}
             mechanism_source_map = {}
+            compound_reference_map = {}
+            compound_target_source_map = {}
 
         # Discovery ranking must use the exact indication-linked mechanistic
         # path when Stage 5 supplied it. Whole-plant Known_Targets and compound
@@ -3684,6 +3755,8 @@ def build_plant_candidate_shortlist(
             "Mechanistic_Evidence_Record_IDs": mechanistic_evidence_record_ids,
             "Target_Source_Map": target_source_map,
             "Mechanism_Source_Map": mechanism_source_map,
+            "Compound_Reference_Map": compound_reference_map,
+            "Compound_Target_Source_Map": compound_target_source_map,
             "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
             "Preparation_Applicability_Class": preparation_applicability_class,
             "Triage_Gate_Reasons": triage_gate_reasons,
@@ -4028,6 +4101,7 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         # (computed-but-invisible fields must be in this tuple or they are
         # silently dropped before ever reaching rd_report_ready_df/Stage 6).
         "Mechanistic_Evidence_Record_IDs", "Target_Source_Map", "Mechanism_Source_Map",
+        "Compound_Reference_Map", "Compound_Target_Source_Map",
         "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
         "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
         # Plant-level, attribution-cleaned safety fields must override the

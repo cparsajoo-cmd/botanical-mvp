@@ -62,13 +62,17 @@ def test_mechanistic_evidence_record_ids_survive_to_plant_summary():
 def test_target_source_map_uses_exact_source_ids():
     plant_summary = _run_shortlist([_mechanistic_row()])
     row = plant_summary.iloc[0]
-    assert row["Target_Source_Map"] == {"GABA-A receptor": ["M-1"]}
+    assert row["Target_Source_Map"] == {
+        "GABA-A receptor": {"evidence_ids": ["M-1"], "references": []}
+    }
 
 
 def test_mechanism_source_map_uses_exact_source_ids():
     plant_summary = _run_shortlist([_mechanistic_row()])
     row = plant_summary.iloc[0]
-    assert row["Mechanism_Source_Map"] == {"GABAergic modulation": ["M-1"]}
+    assert row["Mechanism_Source_Map"] == {
+        "GABAergic modulation": {"evidence_ids": ["M-1"], "references": []}
+    }
 
 
 def test_target_source_map_never_attaches_an_unrelated_rows_source():
@@ -89,10 +93,10 @@ def test_target_source_map_never_attaches_an_unrelated_rows_source():
     ]
     plant_summary = _run_shortlist(rows)
     row = plant_summary.iloc[0]
-    assert row["Target_Source_Map"]["GABA-A receptor"] == ["M-1"]
-    assert row["Target_Source_Map"]["5-HT1A receptor"] == ["M-2"]
-    assert "M-2" not in row["Target_Source_Map"]["GABA-A receptor"]
-    assert "M-1" not in row["Target_Source_Map"]["5-HT1A receptor"]
+    assert row["Target_Source_Map"]["GABA-A receptor"]["evidence_ids"] == ["M-1"]
+    assert row["Target_Source_Map"]["5-HT1A receptor"]["evidence_ids"] == ["M-2"]
+    assert "M-2" not in row["Target_Source_Map"]["GABA-A receptor"]["evidence_ids"]
+    assert "M-1" not in row["Target_Source_Map"]["5-HT1A receptor"]["evidence_ids"]
 
 
 def test_mechanistic_ids_absent_when_no_authoritative_relevance():
@@ -137,16 +141,82 @@ def test_mechanistic_ids_resolve_through_the_shared_resolver():
     assert row["Mechanistic_Source_Resolution_Status"] == "ALL_RECORDS_RESOLVED"
 
 
-def test_mechanistic_target_and_mechanism_maps_are_json_encoded_for_export():
+def test_mechanistic_target_and_mechanism_maps_are_enriched_and_json_encoded():
     report_df = pd.DataFrame([{
         "Mechanistic_Evidence_Record_IDs": ["M-1"],
-        "Target_Source_Map": {"GABA-A receptor": ["M-1"]},
-        "Mechanism_Source_Map": {"GABAergic modulation": ["M-1"]},
+        "Target_Source_Map": {"GABA-A receptor": {"evidence_ids": ["M-1"], "references": []}},
+        "Mechanism_Source_Map": {"GABAergic modulation": {"evidence_ids": ["M-1"], "references": []}},
     }])
     out = attach_mechanistic_evidence_source_traceability(report_df, _evidence_df())
     row = out.iloc[0]
-    assert json.loads(row["Target_Source_Map"]) == {"GABA-A receptor": ["M-1"]}
-    assert json.loads(row["Mechanism_Source_Map"]) == {"GABAergic modulation": ["M-1"]}
+    targets = json.loads(row["Target_Source_Map"])
+    assert targets["GABA-A receptor"]["evidence_ids"] == ["M-1"]
+    assert targets["GABA-A receptor"]["primary_source_url"] == "https://example.org/m1"
+    mechanisms = json.loads(row["Mechanism_Source_Map"])
+    assert mechanisms["GABAergic modulation"]["primary_source_url"] == "https://example.org/m1"
+
+
+def test_target_with_only_a_raw_reference_url_still_resolves_clickable():
+    """Compound-target links from the plant-compound DB generally have no
+    Evidence_Record_ID -- only a reference_title/reference_url pair. These
+    must still surface as a clickable source."""
+    report_df = pd.DataFrame([{
+        "Mechanistic_Evidence_Record_IDs": [],
+        "Target_Source_Map": {
+            "5-HT1A receptor": {
+                "evidence_ids": [],
+                "references": [{"compound": "Apigenin", "title": "Dr. Duke phytochemical DB", "url": "https://example.org/apigenin-5ht1a"}],
+            }
+        },
+        "Mechanism_Source_Map": {},
+    }])
+    out = attach_mechanistic_evidence_source_traceability(report_df, pd.DataFrame())
+    row = out.iloc[0]
+    targets = json.loads(row["Target_Source_Map"])
+    assert targets["5-HT1A receptor"]["primary_source_url"] == "https://example.org/apigenin-5ht1a"
+    assert row["Mechanistic_Primary_Source_URL"] == "https://example.org/apigenin-5ht1a"
+
+
+def test_target_with_evidence_id_resolves_doi_pmid_or_source_url():
+    """Mandatory (corrective pass, §I.1): a target's evidence_ids must
+    resolve to the record's real DOI/PMID/Source_URL via the shared
+    resolver -- not just an internal ID."""
+    evidence_df = pd.DataFrame([{
+        "Evidence_Record_ID": "E1",
+        "Source_Title": "GABA-A receptor binding study",
+        "DOI": "10.1000/example-gaba",
+        "PMID": "87654321",
+    }])
+    report_df = pd.DataFrame([{
+        "Mechanistic_Evidence_Record_IDs": ["E1"],
+        "Target_Source_Map": {"GABA-A receptor": {"evidence_ids": ["E1"], "references": []}},
+        "Mechanism_Source_Map": {},
+    }])
+    out = attach_mechanistic_evidence_source_traceability(report_df, evidence_df)
+    targets = json.loads(out.iloc[0]["Target_Source_Map"])
+    # No Source_URL on the record -- DOI takes precedence per
+    # evidence_source_resolver.resolve_external_url()'s existing rule.
+    assert targets["GABA-A receptor"]["primary_source_url"] == "https://doi.org/10.1000/example-gaba"
+
+
+def test_target_never_receives_an_unrelated_human_efficacy_source():
+    """No laundering: a target's evidence_ids list only ever contains what
+    candidate_shortlisting.py's row-level pairing put there -- resolving it
+    must never pull in an unrelated record from evidence_df."""
+    evidence_df = pd.DataFrame([
+        {"Evidence_Record_ID": "EFF1", "Source_Title": "Unrelated human efficacy RCT", "Source_URL": "https://example.org/eff1"},
+        {"Evidence_Record_ID": "M-1", "Source_Title": "Mechanistic study", "Source_URL": "https://example.org/m1"},
+    ])
+    report_df = pd.DataFrame([{
+        "Mechanistic_Evidence_Record_IDs": ["M-1"],
+        "Target_Source_Map": {"GABA-A receptor": {"evidence_ids": ["M-1"], "references": []}},
+        "Mechanism_Source_Map": {},
+    }])
+    out = attach_mechanistic_evidence_source_traceability(report_df, evidence_df)
+    targets = json.loads(out.iloc[0]["Target_Source_Map"])
+    urls = [s["url"] for s in targets["GABA-A receptor"]["sources"]]
+    assert "https://example.org/eff1" not in urls
+    assert urls == ["https://example.org/m1"]
 
 
 def test_empty_report_df_returns_unchanged():

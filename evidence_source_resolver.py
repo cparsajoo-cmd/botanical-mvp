@@ -425,6 +425,70 @@ def attach_safety_evidence_source_traceability(report_df, evidence_df):
     return out
 
 
+def _enrich_named_source_map(named_map: dict, evidence_df) -> dict:
+    """Resolve one {name: {"evidence_ids": [...], "references": [...]}} map
+    (candidate_shortlisting.py's Target_Source_Map/Mechanism_Source_Map raw
+    shape) into the clickable, per-name source structure Stage 6 renders.
+
+    Merges two genuinely different provenance channels for the SAME named
+    target/mechanism, never fabricating either:
+      1. ``evidence_ids`` resolved against evidence_df (scientific evidence
+         records, via the same resolve_evidence_sources() human/safety use).
+      2. ``references`` -- reference_title/reference_url pairs read directly
+         off the plant-compound database row that asserted this target/
+         mechanism (indication_candidate_discovery.py's
+         _score_mechanistic_links(); these compound-target links generally
+         have no Evidence_Record_ID of their own, so they would otherwise
+         never resolve through evidence_df at all).
+    Deduplicated by URL. A name with real ids/refs but no valid URL among
+    them still gets its evidence_ids listed -- it is not silently dropped,
+    just correctly shown as internal/unresolved rather than clickable.
+    """
+    enriched: dict = {}
+    for name, entry in (named_map or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        evidence_ids = normalize_evidence_ids(entry.get("evidence_ids") or [])
+        references = entry.get("references") or []
+
+        bundle = build_source_bundle(evidence_ids, evidence_df)
+        sources = [
+            {
+                "title": s.get("Title"),
+                "url": s.get("Resolved_URL"),
+                "evidence_record_id": s.get("Evidence_Record_ID"),
+            }
+            for s in bundle["sources"]
+            if s.get("Resolution_Status") != "UNRESOLVED_RECORD"
+        ]
+        seen_urls = {s["url"] for s in sources if s.get("url")}
+        for ref in references:
+            if not isinstance(ref, dict):
+                continue
+            title = _clean(ref.get("title"))
+            url = _valid_http_url(ref.get("url"))
+            if url and url in seen_urls:
+                continue
+            if not (title or url):
+                continue
+            sources.append({"title": title, "url": url, "evidence_record_id": None})
+            if url:
+                seen_urls.add(url)
+
+        resolved = [s for s in sources if s.get("url")]
+        primary = resolved[0] if resolved else (sources[0] if sources else None)
+        enriched[name] = {
+            "evidence_ids": evidence_ids,
+            "source_count": len(sources),
+            "resolved_source_count": len(resolved),
+            "unresolved_source_count": len(sources) - len(resolved),
+            "primary_source_title": primary.get("title") if primary else None,
+            "primary_source_url": primary.get("url") if primary else None,
+            "sources": sources,
+        }
+    return enriched
+
+
 def attach_mechanistic_evidence_source_traceability(report_df, evidence_df):
     """Append mechanistic/target-evidence source fields to a candidate/report DataFrame.
 
@@ -434,6 +498,11 @@ def attach_mechanistic_evidence_source_traceability(report_df, evidence_df):
     resolver used for human/safety evidence. Reads only IDs the mechanistic
     layer itself attached to the candidate, so a target/mechanism claim can
     never be traced to an unrelated plant paper.
+
+    Target_Source_Map / Mechanism_Source_Map are enriched here (see
+    _enrich_named_source_map) into clickable per-target/per-mechanism
+    structures -- an internal evidence-record ID alone is not sufficient;
+    every genuinely available Source_URL/DOI/PMID is surfaced.
     """
     if not isinstance(report_df, pd.DataFrame) or report_df.empty:
         return report_df
@@ -444,38 +513,57 @@ def attach_mechanistic_evidence_source_traceability(report_df, evidence_df):
         ids = normalize_evidence_ids(row.get("Mechanistic_Evidence_Record_IDs"))
         bundle = build_source_bundle(ids, evidence_df)
 
-        if not ids:
-            resolution_status = "NO_MECHANISTIC_EVIDENCE_IDS"
-        elif bundle["unresolved_source_count"] > 0 and bundle["resolved_source_count"] > 0:
-            resolution_status = "PARTIAL_SOURCE_LINKAGE"
-        elif bundle["unresolved_source_count"] > 0:
-            resolution_status = "SOURCE_LINKAGE_INCOMPLETE"
-        else:
-            resolution_status = "ALL_RECORDS_RESOLVED"
-
-        # Target_Source_Map / Mechanism_Source_Map already carry exact
-        # per-target/per-mechanism evidence-record IDs from
-        # candidate_shortlisting.py (row-level pairing, no laundering).
-        # JSON-encode here for safe CSV export / Claim_Source_Map reuse --
-        # the ID vocabulary itself is not re-resolved (spec example shape
-        # is {"target name": ["E1", "E2"]}, i.e. IDs, not URLs).
         target_map = row.get("Target_Source_Map")
         mechanism_map = row.get("Mechanism_Source_Map")
         target_map = target_map if isinstance(target_map, dict) else {}
         mechanism_map = mechanism_map if isinstance(mechanism_map, dict) else {}
+        enriched_targets = _enrich_named_source_map(target_map, evidence_df)
+        enriched_mechanisms = _enrich_named_source_map(mechanism_map, evidence_df)
+
+        # Candidate-level union: every clickable URL found anywhere above,
+        # including reference-only sources with no Evidence_Record_ID, so
+        # the compact Mechanistic_Primary_Source_URL is never blank merely
+        # because the only real source came from a compound-target link
+        # rather than evidence_df.
+        all_urls = list(bundle["source_urls"])
+        all_titles = list(bundle["source_titles"])
+        for named_map in (enriched_targets, enriched_mechanisms):
+            for entry in named_map.values():
+                for s in entry["sources"]:
+                    if s.get("url") and s["url"] not in all_urls:
+                        all_urls.append(s["url"])
+                        if s.get("title"):
+                            all_titles.append(s["title"])
+        primary_title = bundle["primary_source_title"]
+        primary_url = bundle["primary_source_url"]
+        if not primary_url and all_urls:
+            primary_url = all_urls[0]
+            primary_title = all_titles[0] if all_titles else primary_title
+
+        has_any_reference = any(
+            entry["sources"] for entry in {**enriched_targets, **enriched_mechanisms}.values()
+        )
+        if not ids and not has_any_reference:
+            resolution_status = "NO_MECHANISTIC_EVIDENCE_IDS"
+        elif bundle["unresolved_source_count"] > 0 and bundle["resolved_source_count"] > 0:
+            resolution_status = "PARTIAL_SOURCE_LINKAGE"
+        elif ids and bundle["unresolved_source_count"] > 0 and not primary_url:
+            resolution_status = "SOURCE_LINKAGE_INCOMPLETE"
+        else:
+            resolution_status = "ALL_RECORDS_RESOLVED"
 
         payloads.append({
             "Mechanistic_Evidence_Record_IDs": json.dumps(bundle["record_ids"], ensure_ascii=False),
             "Mechanistic_Source_Count": bundle["source_count"],
             "Mechanistic_Resolved_Source_Count": bundle["resolved_source_count"],
             "Mechanistic_Unresolved_Source_Count": bundle["unresolved_source_count"],
-            "Mechanistic_Primary_Source_Title": bundle["primary_source_title"],
-            "Mechanistic_Primary_Source_URL": bundle["primary_source_url"],
-            "Mechanistic_Source_URLs": json.dumps(bundle["source_urls"], ensure_ascii=False),
+            "Mechanistic_Primary_Source_Title": primary_title,
+            "Mechanistic_Primary_Source_URL": primary_url,
+            "Mechanistic_Source_URLs": json.dumps(all_urls, ensure_ascii=False),
             "Mechanistic_Sources_JSON": json.dumps(bundle["sources"], ensure_ascii=False),
             "Mechanistic_Source_Resolution_Status": resolution_status,
-            "Target_Source_Map": json.dumps(target_map, ensure_ascii=False),
-            "Mechanism_Source_Map": json.dumps(mechanism_map, ensure_ascii=False),
+            "Target_Source_Map": json.dumps(enriched_targets, ensure_ascii=False),
+            "Mechanism_Source_Map": json.dumps(enriched_mechanisms, ensure_ascii=False),
         })
 
     payload_df = pd.DataFrame(payloads, index=out.index)

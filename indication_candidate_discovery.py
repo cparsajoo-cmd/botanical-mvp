@@ -170,6 +170,15 @@ _MECHANISTIC_DISCOVERY_COLUMNS = (
     "Mechanistic_Linked_Mechanisms",
     "Mechanistic_Compound_Specificity",
     "Mechanistic_Profile_Match_Score",
+    # Source-traceability corrective pass (2026-09-10): the per-target/
+    # per-mechanism/per-compound reference_title+reference_url pairs read
+    # directly off the matched plant-compound link row. Without listing
+    # these here, .reindex() below silently drops them before raw_df ever
+    # reaches candidate_shortlisting.py -- the same class of bug that lost
+    # Mechanistic_Evidence_Record_IDs downstream.
+    "Mechanistic_Target_Reference_Map",
+    "Mechanistic_Mechanism_Reference_Map",
+    "Mechanistic_Compound_Reference_Map",
 )
 
 INDICATION_CENTRIC_REFERENCE_LABEL = "Indication-centric discovery"
@@ -1056,7 +1065,7 @@ def _mechanistic_field_atoms(value: object) -> list[str]:
 
 def _score_mechanistic_links(
     links: list[dict], relevance_profile, direct_terms, mechanistic_terms,
-) -> tuple[bool, float, list[str], list[str], list[str]]:
+) -> tuple[bool, float, list[str], list[str], list[str], dict, dict, dict]:
     """Return only indication-relevant *atomic* mechanistic provenance.
 
     Target and mechanism are evaluated separately and, critically, each
@@ -1066,12 +1075,25 @@ def _score_mechanistic_links(
     two labels merely because they share the same database row/cell.  Likewise,
     a relevant mechanism may justify retaining the row's compound without
     laundering an unrelated target label into ``Discovery_Linked_Targets``.
+
+    Also returns (target_references, mechanism_references, compound_references):
+    per-atom/per-compound {"title", "url"} pairs read directly from the SAME
+    matched link row's own reference_title/reference_url -- this is the exact
+    citation the plant-compound database row already carries (see
+    botanical_rd_candidate_engine.py's Mechanistic_Links /
+    _mechanistic_links_from_database()'s "reference_title"/"reference_url"
+    fields), never a different/unrelated evidence record. Previously these
+    fields were read off each link and then silently dropped here -- the
+    exact provenance-loss bug this return value fixes.
     """
     relevant = False
     best_score = 0.0
     compounds: list[str] = []
     targets: list[str] = []
     mechanisms: list[str] = []
+    target_references: dict[str, list[dict]] = {}
+    mechanism_references: dict[str, list[dict]] = {}
+    compound_references: dict[str, dict] = {}
     for link in links or []:
         target_atoms = _mechanistic_field_atoms(link.get("target"))
         mechanism_atoms = _mechanistic_field_atoms(link.get("mechanism"))
@@ -1106,13 +1128,34 @@ def _score_mechanistic_links(
         compound = str(link.get("compound_name") or link.get("compound") or "").strip()
         if compound and compound not in compounds:
             compounds.append(compound)
+
+        # This link row's own citation -- only kept when a real title/url is
+        # actually present on the row; never fabricated for a row that has
+        # neither.
+        _title = str(link.get("reference_title") or "").strip()
+        _url = str(link.get("reference_url") or "").strip()
+        _has_reference = bool(_title or _url)
+
         for target in matched_targets:
             if target not in targets:
                 targets.append(target)
+            if _has_reference:
+                target_references.setdefault(target, []).append(
+                    {"compound": compound, "title": _title or None, "url": _url or None}
+                )
         for mechanism in matched_mechanisms:
             if mechanism not in mechanisms:
                 mechanisms.append(mechanism)
-    return relevant, best_score, compounds, targets, mechanisms
+            if _has_reference:
+                mechanism_references.setdefault(mechanism, []).append(
+                    {"compound": compound, "title": _title or None, "url": _url or None}
+                )
+        if compound and _has_reference and compound not in compound_references:
+            compound_references[compound] = {"title": _title or None, "url": _url or None}
+    return (
+        relevant, best_score, compounds, targets, mechanisms,
+        target_references, mechanism_references, compound_references,
+    )
 
 
 def _catalogue_prescreen_before_expensive_loop(
@@ -1274,10 +1317,14 @@ def _catalogue_prescreen_before_expensive_loop(
                 _plant_compounds_df, plant
             )
 
+        target_reference_map: dict[str, list[dict]] = {}
+        mechanism_reference_map: dict[str, list[dict]] = {}
+        compound_reference_map: dict[str, dict] = {}
         if mechanistic_links:
             (
                 profile_relevant, profile_match_score,
                 linked_compounds, linked_targets, linked_mechanisms,
+                target_reference_map, mechanism_reference_map, compound_reference_map,
             ) = _score_mechanistic_links(
                 mechanistic_links, relevance_profile,
                 direct_profile_terms, mechanistic_profile_terms,
@@ -1326,6 +1373,9 @@ def _catalogue_prescreen_before_expensive_loop(
             "linked_mechanistic_compounds": linked_compounds,
             "linked_mechanistic_targets": linked_targets,
             "linked_mechanistic_mechanisms": linked_mechanisms,
+            "target_reference_map": target_reference_map,
+            "mechanism_reference_map": mechanism_reference_map,
+            "compound_reference_map": compound_reference_map,
         })
 
     mandatory = [r for r in rows if r["has_direct"] or r["is_stage2_novel"]]
@@ -1385,6 +1435,13 @@ def _catalogue_prescreen_before_expensive_loop(
             "Mechanistic_Linked_Mechanisms": "; ".join(r.get("linked_mechanistic_mechanisms", [])),
             "Mechanistic_Compound_Specificity": r.get("specificity_score", 0.0),
             "Mechanistic_Profile_Match_Score": r.get("profile_match_score", 0.0),
+            # Provenance-loss fix (2026-09-10): carry the actual per-target/
+            # per-mechanism/per-compound reference_title+reference_url pairs
+            # through the prescreen audit frame instead of discarding them
+            # after admission scoring.
+            "Mechanistic_Target_Reference_Map": json.dumps(r.get("target_reference_map") or {}, ensure_ascii=False),
+            "Mechanistic_Mechanism_Reference_Map": json.dumps(r.get("mechanism_reference_map") or {}, ensure_ascii=False),
+            "Mechanistic_Compound_Reference_Map": json.dumps(r.get("compound_reference_map") or {}, ensure_ascii=False),
         }
         for r in rows
     ])
@@ -1518,6 +1575,9 @@ def discover_indication_candidates(
                     "Mechanistic_Linked_Mechanisms": str(_audit_row.get("Mechanistic_Linked_Mechanisms", "") or ""),
                     "Mechanistic_Compound_Specificity": _audit_float("Mechanistic_Compound_Specificity"),
                     "Mechanistic_Profile_Match_Score": _audit_float("Mechanistic_Profile_Match_Score"),
+                    "Mechanistic_Target_Reference_Map": str(_audit_row.get("Mechanistic_Target_Reference_Map", "") or "{}"),
+                    "Mechanistic_Mechanism_Reference_Map": str(_audit_row.get("Mechanistic_Mechanism_Reference_Map", "") or "{}"),
+                    "Mechanistic_Compound_Reference_Map": str(_audit_row.get("Mechanistic_Compound_Reference_Map", "") or "{}"),
                 }
         _perf(
             f"Stage5 catalogue prescreen start input_plants={original_candidate_count}; "
@@ -2135,6 +2195,9 @@ def discover_indication_candidates(
                 "Mechanistic_Linked_Mechanisms": _mech_discovery_meta.get("Mechanistic_Linked_Mechanisms", ""),
                 "Mechanistic_Compound_Specificity": _mech_discovery_meta.get("Mechanistic_Compound_Specificity", 0.0),
                 "Mechanistic_Profile_Match_Score": _mech_discovery_meta.get("Mechanistic_Profile_Match_Score", 0.0),
+                "Mechanistic_Target_Reference_Map": _mech_discovery_meta.get("Mechanistic_Target_Reference_Map", "{}"),
+                "Mechanistic_Mechanism_Reference_Map": _mech_discovery_meta.get("Mechanistic_Mechanism_Reference_Map", "{}"),
+                "Mechanistic_Compound_Reference_Map": _mech_discovery_meta.get("Mechanistic_Compound_Reference_Map", "{}"),
                 "Normalization_Summary": normalization_summary,
                 "Validation_Status": validation_status,
                 "Validation_Summary": validation_summary,

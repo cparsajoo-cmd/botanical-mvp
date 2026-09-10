@@ -115,6 +115,196 @@ _HISTORICAL_OR_BACKGROUND_CUES = (
     "in the past", "historically used", "historically administered",
 )
 
+# ======================================================================
+# LOCAL INTERVENTION-RELATION CHECK (replaces "admin cue anywhere in
+# sentence + name anywhere in sentence" as the actual verification basis
+# for verify_pubmed_intervention_attribution -- see that function's
+# docstring for the full rationale). _ADMINISTRATION_CUES/
+# _NEGATION_OR_EXCLUSION_CUES/_HISTORICAL_OR_BACKGROUND_CUES/
+# administration_context_text above remain as a coarse, sentence-level
+# diagnostic helper other callers may still use, but are no longer the
+# basis of verification by themselves.
+#
+# Every vocabulary set below is closed-class STUDY-DESIGN/GRAMMATICAL
+# vocabulary -- prepositions, auxiliary verbs, dosage-form nouns, and a
+# handful of administration-construction verbs -- never a botanical,
+# compound, or indication name, and never an attempt to enumerate every
+# way an administration statement could be negated or historicized. A
+# bounded relation that requires ONLY these closed-class tokens between
+# the cue and the candidate is what makes this general: any novel
+# negation/concomitant-use/history phrasing already fails by inserting a
+# non-whitelisted word into that gap, with no new phrase ever needed.
+# ======================================================================
+
+_CONNECTOR_WORDS = {
+    "of", "with", "to", "the", "a", "an", "and", "or",
+    "standardized", "standardised", "dry", "aqueous", "ethanolic",
+    "hydroalcoholic", "extract", "extracts", "preparation",
+    "daily", "twice", "once", "per", "day",
+    "mg", "g", "ml", "mcg", "iu", "capsules", "capsule",
+    "tablets", "tablet", "dose", "doses",
+}
+
+# Forward cues: CUE (+ up to 3 connector tokens) + BOTANICAL.
+_FORWARD_CUES = (
+    ("received",), ("receiving",), ("administered",), ("given",),
+    ("treated", "with"),
+    ("randomized", "to"), ("randomised", "to"),
+    ("randomized", "to", "receive"), ("randomised", "to", "receive"),
+    ("assigned", "to"), ("assigned", "to", "receive"),
+    ("supplementation", "with"), ("supplemented", "with"),
+)
+
+# Reverse cues: BOTANICAL (+ up to 3 connector tokens) + AUX + VERB.
+_REVERSE_AUX = {"was", "were"}
+_REVERSE_VERBS = {"administered", "given"}
+
+# Direct compound: BOTANICAL (+ up to 3 connector tokens) + this noun.
+_DIRECT_COMPOUND_NOUNS = {"treatment", "intervention", "supplementation"}
+
+# Pluperfect auxiliary immediately before a forward cue verb ("had
+# received", "had administered") marks an action completed before the
+# narrated reference point -- prior/historical exposure, not the present
+# study's own arm. Closed-class grammar, not a phrase blacklist.
+_PLUPERFECT_MARKER = "had"
+
+# A review/meta-analysis describing what OTHER studies did ("Several
+# trials administered CANDIDATE") is not this record's own participants.
+# Closed, study-design-meta vocabulary -- the same category already used
+# elsewhere in this codebase (evidence_extractor.py's Publication_Type
+# classifier) to recognize review/meta-analysis language -- never
+# botanical- or indication-specific.
+_AGGREGATE_SUBJECT_WORDS = {
+    "trials", "studies", "rcts", "reports", "papers", "articles", "reviews",
+}
+
+_MAX_CONNECTOR_SPAN = 3
+
+
+# A forward match must also not be immediately undone by a trailing
+# exclusion verb describing the SAME occurrence ("Participants receiving
+# CANDIDATE were excluded.") -- closed-class study-design vocabulary,
+# checked with the same bounded-connector-span logic as every other
+# relation here, not a botanical/indication-specific phrase.
+_EXCLUSION_VERBS = {"excluded", "ineligible"}
+
+
+def _tokenize(text: object) -> list[str]:
+    return normalize_text(text).split()
+
+
+def _is_connector_token(token: str) -> bool:
+    return token in _CONNECTOR_WORDS or token.isdigit()
+
+
+def _botanical_token_spans(
+    tokens: list[str], scientific_name: object, common_name: object
+) -> list[tuple[int, int, str]]:
+    """Every (start, end, basis) span where the candidate's name occurs in
+    ``tokens`` as a contiguous whole-word run -- the anchor points the
+    local-relation check scans outward from.
+    """
+    spans: list[tuple[int, int, str]] = []
+
+    sci_tokens = _name_tokens(scientific_name)
+    if len(sci_tokens) >= 2:
+        genus, epithet = sci_tokens[0], sci_tokens[1]
+        for i in range(len(tokens) - 1):
+            if tokens[i] == genus and tokens[i + 1] == epithet:
+                spans.append((i, i + 2, "full_binomial"))
+    elif len(sci_tokens) == 1:
+        token = sci_tokens[0]
+        if token not in _GENERIC_EPITHETS:
+            for i, t in enumerate(tokens):
+                if t == token:
+                    spans.append((i, i + 1, "genus_only"))
+
+    common_tokens = _name_tokens(common_name)
+    if common_tokens:
+        n = len(common_tokens)
+        for i in range(len(tokens) - n + 1):
+            if tokens[i:i + n] == common_tokens:
+                spans.append((i, i + n, "common_name"))
+
+    return spans
+
+
+def _forward_relation_at(tokens: list[str], start: int) -> bool:
+    """True when a forward cue (CUE [+ connectors] + BOTANICAL) ends
+    exactly at ``start``, and is not disqualified by a pluperfect
+    auxiliary or an aggregate/review-level subject immediately before it.
+    """
+    for skip in range(0, _MAX_CONNECTOR_SPAN + 1):
+        idx = start - skip
+        if idx < 0:
+            break
+        if skip and not all(_is_connector_token(t) for t in tokens[idx:start]):
+            continue
+        for cue in _FORWARD_CUES:
+            cue_start = idx - len(cue)
+            if cue_start < 0:
+                continue
+            if tuple(tokens[cue_start:idx]) != cue:
+                continue
+            if cue_start > 0 and tokens[cue_start - 1] == _PLUPERFECT_MARKER:
+                continue
+            if cue_start > 0 and tokens[cue_start - 1] in _AGGREGATE_SUBJECT_WORDS:
+                continue
+            return True
+    return False
+
+
+def _reverse_relation_at(tokens: list[str], end: int) -> bool:
+    """True when BOTANICAL (+ connectors) is followed by AUX+VERB
+    (``was``/``were`` administered/given) or a direct treatment/
+    intervention/supplementation compound, starting exactly at ``end``.
+    """
+    n = len(tokens)
+    for skip in range(0, _MAX_CONNECTOR_SPAN + 1):
+        idx = end + skip
+        if idx >= n:
+            break
+        if skip and not all(_is_connector_token(t) for t in tokens[end:idx]):
+            continue
+        if tokens[idx] in _DIRECT_COMPOUND_NOUNS:
+            return True
+        if (
+            idx + 1 < n
+            and tokens[idx] in _REVERSE_AUX
+            and tokens[idx + 1] in _REVERSE_VERBS
+        ):
+            return True
+    return False
+
+
+def _has_trailing_exclusion(tokens: list[str], end: int) -> bool:
+    """True when BOTANICAL (+ connectors) is immediately followed by
+    AUX + an exclusion verb (``were excluded`` / ``was ineligible``) --
+    disqualifies an otherwise-matching relation for THIS occurrence
+    (e.g. "Participants receiving CANDIDATE were excluded.", where
+    "receiving" would otherwise satisfy the forward relation).
+    """
+    n = len(tokens)
+    for skip in range(0, _MAX_CONNECTOR_SPAN + 1):
+        idx = end + skip
+        if idx >= n:
+            break
+        if skip and not all(_is_connector_token(t) for t in tokens[end:idx]):
+            continue
+        if (
+            idx + 1 < n
+            and tokens[idx] in _REVERSE_AUX
+            and tokens[idx + 1] in _EXCLUSION_VERBS
+        ):
+            return True
+    return False
+
+
+def _has_local_intervention_relation(tokens: list[str], start: int, end: int) -> bool:
+    if _has_trailing_exclusion(tokens, end):
+        return False
+    return _forward_relation_at(tokens, start) or _reverse_relation_at(tokens, end)
+
 
 def _name_tokens(name: object) -> list[str]:
     """Whole-word tokens (>=3 chars) for a scientific or common name."""
@@ -243,23 +433,60 @@ def verify_pubmed_intervention_attribution(
 ) -> dict:
     """Verify candidate attribution for unstructured literature (PubMed).
 
-    PubMed abstracts carry no structured intervention field, so a
-    deterministic, general, non-plant-specific heuristic is used instead of
-    an unscoped full-text search: only sentences that themselves contain a
-    generic administration/exposure cue (see _ADMINISTRATION_CUES) are
-    considered, and the candidate's name must appear within THAT narrowed
-    text. A record whose only botanical mention sits in a background,
-    eligibility, discussion, or different-arm sentence -- with no
-    administration-cue sentence naming the candidate -- fails closed.
+    REMAINING DEFECT (this pass): the prior implementation kept a whole
+    sentence the moment it contained ANY administration cue, then checked
+    whether the candidate's name appeared anywhere in that sentence.
+    "Administration word somewhere in sentence + botanical name somewhere
+    in sentence" is not sufficient -- both still appear together in
+    discontinuation ("received placebo after discontinuing CANDIDATE"),
+    baseline/concomitant-use ("using CANDIDATE at baseline received CBT"),
+    and pre-enrollment-history ("had received CANDIDATE before enrollment
+    but received placebo during the study") sentences, none of which
+    establish that the candidate was the actual STUDY intervention.
 
-    No LLM call. No fact is invented: this only re-scopes which existing
-    text is eligible for the same whole-word/binomial matching already
-    used for structured sources.
+    THE FIX: a bounded, general, deterministic LOCAL RELATION check (see
+    _has_local_intervention_relation) instead of sentence-wide
+    co-occurrence. The candidate's name must sit immediately adjacent
+    (allowing only a short run of closed-class connector/dosage tokens --
+    see _CONNECTOR_WORDS) to one of a small, closed set of
+    administration-construction cues (received/administered/treated
+    with/randomized-assigned to/supplementation with, in either
+    cue-then-botanical or botanical-then-was/were-administered order, or
+    a direct "CANDIDATE treatment/intervention/supplementation" compound).
+    Two further general (not botanical/indication-specific) checks
+    disqualify an otherwise-matching local relation:
+
+    - a pluperfect auxiliary ("had") immediately before the cue verb --
+      the closed-class grammatical marker for an action completed before
+      the narrated reference point, i.e. prior/historical exposure rather
+      than the present study's own arm;
+    - an aggregate/meta-vocabulary subject ("trials", "studies", "RCTs",
+      "reports", "papers", "articles", "reviews") immediately before the
+      cue verb -- a review/meta-analysis describing what OTHER studies did,
+      not this record's own participants.
+
+    This is a bounded relation check, not an ever-growing phrase
+    blacklist: any novel negation/history/concomitant-use wording that
+    inserts even one non-connector word between the cue and the candidate
+    (or a "had" / aggregate-subject marker before the cue) already fails
+    to establish the relation by construction, with no new phrase needed.
+
+    No LLM call. No fact is invented. Fails closed (verified False, basis
+    "") when the relation cannot be established from any sentence in
+    ``raw_text`` at all.
     """
-    context_text = administration_context_text(raw_text)
-    if not context_text:
+    scientific_tokens = _name_tokens(scientific_name)
+    common_tokens = _name_tokens(common_name)
+    if not scientific_tokens and not common_tokens:
         return {"verified": False, "basis": ""}
-    return _name_present_in_text(normalize_text(context_text), scientific_name, common_name)
+
+    for sentence in _split_sentences(str(raw_text or "")):
+        tokens = _tokenize(sentence)
+        for start, end, basis in _botanical_token_spans(tokens, scientific_name, common_name):
+            if _has_local_intervention_relation(tokens, start, end):
+                return {"verified": True, "basis": basis}
+
+    return {"verified": False, "basis": ""}
 
 
 def combined_record_text(*parts: object) -> str:
@@ -269,7 +496,7 @@ def combined_record_text(*parts: object) -> str:
     purposes OTHER than intervention/exposure attribution (e.g. general
     relevance diagnostics). Must NOT be used to build the text passed to
     verify_intervention_attribution / verify_pubmed_intervention_attribution
-    -- those require intervention-scoped or administration-cue-scoped text
+    -- those require intervention-scoped text or the local relation check
     specifically, not an arbitrary field blob (see module docstring).
     """
     return " \n ".join(str(p) for p in parts if p)

@@ -26,6 +26,20 @@ def test_new_commercial_modules_are_in_the_commercial_file_list():
         assert expected in pf.COMMERCIAL_FINGERPRINT_FILES
 
 
+def test_source_traceability_presentation_modules_are_in_the_commercial_file_list():
+    """Corrective pass (2026-09-10, gap 4): the new presentation/provenance
+    modules Stage 6 now calls must invalidate the commercial/presentation
+    fingerprint on change, never the scientific one."""
+    for expected in (
+        "commercial_source_traceability.py",
+        "compound_source_traceability.py",
+        "claim_source_map.py",
+        "source_linkage_consistency.py",
+    ):
+        assert expected in pf.COMMERCIAL_FINGERPRINT_FILES
+        assert expected not in pf.SCIENTIFIC_FINGERPRINT_FILES
+
+
 def test_scientific_and_commercial_file_lists_do_not_overlap():
     assert set(pf.SCIENTIFIC_FINGERPRINT_FILES).isdisjoint(set(pf.COMMERCIAL_FINGERPRINT_FILES))
 

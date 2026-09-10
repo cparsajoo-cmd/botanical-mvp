@@ -19,10 +19,27 @@ source-traceability pass requires:
 from __future__ import annotations
 
 import json
+import re
 
 import pandas as pd
 
 from evidence_source_resolver import _clean
+
+_URL_RE = re.compile(r"https?://[^\s()]+")
+
+
+def _extract_url(text) -> str | None:
+    """Pull a URL substring out of a descriptive regulatory-source string
+    (e.g. "EMA HMPC monograph notes (https://www.ema.europa.eu/...)") without
+    inventing one when none is embedded."""
+    text = _clean(text)
+    if not text:
+        return None
+    match = _URL_RE.search(text)
+    if not match:
+        return None
+    from evidence_source_resolver import _valid_http_url
+    return _valid_http_url(match.group(0).rstrip(").,;"))
 
 
 def _json_list(value) -> list:
@@ -38,20 +55,90 @@ def _json_list(value) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
-def attach_regulatory_patent_source_traceability(report_df: pd.DataFrame) -> pd.DataFrame:
-    """Append Regulatory_* / Patent_* source fields, honestly, to a Stage-6 frame.
+def _json_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    text = _clean(value)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _regulatory_landscape_lookup(regulatory_landscape_df) -> dict:
+    """Index an already-computed market/regulatory landscape frame by plant.
+
+    ``regulatory_landscape_df`` is expected to be
+    st.session_state["rd_candidates_df_enriched"] (see
+    botanical_rd_candidate_engine.enrich_candidates_with_market_landscape())
+    or the equivalent market_landscape_df() output -- both already computed
+    THIS session by an explicit opt-in action, never fetched fresh here.
+    """
+    if not isinstance(regulatory_landscape_df, pd.DataFrame) or regulatory_landscape_df.empty:
+        return {}
+    plant_col = "Alternative_Plant" if "Alternative_Plant" in regulatory_landscape_df.columns else (
+        "Plant" if "Plant" in regulatory_landscape_df.columns else None
+    )
+    if plant_col is None:
+        return {}
+    source_col = next(
+        (c for c in ("Market_Landscape_Regulatory_Source", "Regulatory_Source", "EMA_Source") if c in regulatory_landscape_df.columns),
+        None,
+    )
+    detail_col = next(
+        (c for c in ("Market_Landscape_EMA_HMPC_Detail", "EMA_HMPC_Detail") if c in regulatory_landscape_df.columns),
+        None,
+    )
+    status_col = next(
+        (c for c in ("Market_Landscape_EMA_HMPC_Status", "EMA_HMPC_Status") if c in regulatory_landscape_df.columns),
+        None,
+    )
+    if source_col is None:
+        return {}
+    lookup = {}
+    for _, r in regulatory_landscape_df.iterrows():
+        plant = _clean(r.get(plant_col))
+        if not plant or plant in lookup:
+            continue
+        lookup[plant] = {
+            "source_text": r.get(source_col),
+            "detail": _clean(r.get(detail_col)) if detail_col else None,
+            "status": _clean(r.get(status_col)) if status_col else None,
+        }
+    return lookup
+
+
+def attach_regulatory_patent_source_traceability(
+    report_df: pd.DataFrame, regulatory_landscape_df=None,
+) -> pd.DataFrame:
+    """Append Regulatory_* / Patent_* source fields to a Stage-6 frame.
 
     Regulatory_Assessment_Status / Patent_Assessment_Status already encode
     whether a genuine assessment exists (see post_discovery_investor_view.py
-    -- both are "NOT_INTEGRATED" in the current architecture). Only when a
-    row's status is the real "ASSESSED" value AND it already carries a
-    resolvable URL/authority/ID column does this expose a source; otherwise
-    it reports zero rather than fabricating a regulator or patent-office link.
+    -- both are "NOT_INTEGRATED" by default). Two ways a real regulatory
+    source can be exposed instead of the honest zero default:
+      1. the row itself already carries a resolvable Regulatory_Source_URL
+         (a future upstream pass could populate this directly), or
+      2. ``regulatory_landscape_df`` -- an ALREADY-COMPUTED session frame
+         (st.session_state["rd_candidates_df_enriched"], populated only
+         when the person explicitly ran "Enrich with market/patent
+         landscape" this session) -- carries a real EMA/HMPC source string
+         with an embedded URL for this candidate's plant. No new network
+         call is made in either case.
+    Patent stays NOT_INTEGRATED unless the row already carries real
+    Patent_IDs/Patent_Primary_Source_URL -- the report-ready architecture
+    does not currently retain patent records, so this module does not
+    force one.
     """
     if not isinstance(report_df, pd.DataFrame) or report_df.empty:
         return report_df
 
     out = report_df.copy()
+    landscape_lookup = _regulatory_landscape_lookup(regulatory_landscape_df)
+    plant_col = next((c for c in ("Alternative_Plant", "Plant", "Scientific_Name") if c in out.columns), None)
     payloads = []
     for _, row in out.iterrows():
         reg_status = _clean(row.get("Regulatory_Assessment_Status")) or "NOT_INTEGRATED"
@@ -62,6 +149,17 @@ def attach_regulatory_patent_source_traceability(report_df: pd.DataFrame) -> pd.
             from evidence_source_resolver import _valid_http_url
             reg_url = _valid_http_url(row.get("Regulatory_Source_URL"))
             reg_title = _clean(row.get("Regulatory_Primary_Source_Title"))
+
+        if not reg_url and plant_col:
+            landscape_entry = landscape_lookup.get(_clean(row.get(plant_col)))
+            if landscape_entry:
+                landscape_url = _extract_url(landscape_entry.get("source_text"))
+                if landscape_url:
+                    reg_url = landscape_url
+                    reg_title = landscape_entry.get("detail") or landscape_entry.get("status")
+                    reg_authority = reg_authority or "EMA / HMPC"
+                    reg_status = "ASSESSED"
+
         reg_count = 1 if reg_url else 0
 
         pat_status = _clean(row.get("Patent_Assessment_Status")) or "NOT_INTEGRATED"
@@ -174,9 +272,33 @@ def build_claim_source_map(row) -> dict:
         if ids:
             result[category] = ids
 
-    commercial_titles = _json_list(row.get("Commercial_Source_Titles"))
-    if commercial_titles:
-        result["commercial"] = commercial_titles
+    target_map = _json_dict(row.get("Target_Source_Map"))
+    if target_map:
+        result["targets"] = target_map
+
+    mechanism_map = _json_dict(row.get("Mechanism_Source_Map"))
+    if mechanism_map:
+        result["mechanisms"] = mechanism_map
+
+    compound_map = _json_dict(row.get("Compound_Source_Map"))
+    if compound_map:
+        result["compounds"] = compound_map
+
+    commercial_sources = _json_list(row.get("Commercial_Sources_JSON"))
+    if commercial_sources:
+        # Prefer a structured identity (URL + title/source) over a bare
+        # title string, per spec §6 -- reuse whatever
+        # commercial_source_traceability.py already resolved rather than
+        # re-deriving a weaker identity here.
+        result["commercial"] = [
+            {k: v for k, v in {
+                "title": s.get("Title"),
+                "url": s.get("Resolved_URL"),
+                "source": s.get("Source_Organization"),
+            }.items() if v}
+            for s in commercial_sources
+            if s.get("Resolved_URL") or s.get("Title")
+        ]
 
     regulatory_url = _clean(row.get("Regulatory_Primary_Source_URL"))
     if regulatory_url:

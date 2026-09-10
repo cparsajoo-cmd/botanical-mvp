@@ -464,6 +464,13 @@ INVESTOR_VIEW_COMPACT_COLUMNS = [
     "What_Is_New", "Key_Evidence_Gap", "Mechanistic_Rationale",
     "Human_Evidence_Status", "Human_Evidence_Source_Count",
     "Human_Evidence_Primary_Source_Title", "Human_Evidence_Primary_Source_URL",
+    # Source-traceability pass (2026-09-10, corrective §5): concise
+    # scientific/safety source visibility for the compact investor table.
+    # Scientific_Source_Count deterministically unions human + mechanistic
+    # evidence-record IDs without double-counting (see evidence_source_
+    # resolver.attach_scientific_source_summary()) -- not a new score.
+    "Scientific_Source_Count", "Primary_Scientific_Source_URL",
+    "Safety_Source_Count", "Safety_Primary_Source_URL",
     "Commercial_Whitespace", "Safety_Risk",
     "Regulatory_Status", "Patent_Status", "Key_Risk", "Next_R&D_Step",
 ]

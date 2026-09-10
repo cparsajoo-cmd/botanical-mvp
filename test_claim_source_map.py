@@ -69,7 +69,6 @@ def test_build_claim_source_map_unions_only_actual_ids():
     claim_map = build_claim_source_map(row)
     assert claim_map == {"human_evidence": ["E1", "E2"], "safety": ["S1"]}
 
-
 def test_build_claim_source_map_empty_when_nothing_resolved():
     row = pd.Series({
         "Human_Evidence_Record_IDs": json.dumps([]),
@@ -106,3 +105,66 @@ def test_empty_report_df_returns_unchanged():
     empty = pd.DataFrame()
     assert attach_claim_source_map(empty).empty
     assert attach_regulatory_patent_source_traceability(empty).empty
+
+
+# ---------------------------------------------------------------------------
+# Corrective pass (2026-09-10, gap 6): Claim_Source_Map must include
+# targets/mechanisms/compounds/structured-commercial when available.
+# ---------------------------------------------------------------------------
+
+def test_claim_source_map_includes_targets_and_mechanisms_when_available():
+    row = pd.Series({
+        "Target_Source_Map": json.dumps({"GABA-A receptor": ["M-1"]}),
+        "Mechanism_Source_Map": json.dumps({"GABAergic modulation": ["M-1"]}),
+    })
+    claim_map = build_claim_source_map(row)
+    assert claim_map["targets"] == {"GABA-A receptor": ["M-1"]}
+    assert claim_map["mechanisms"] == {"GABAergic modulation": ["M-1"]}
+
+
+def test_claim_source_map_includes_compounds_with_provenance_type():
+    row = pd.Series({
+        "Compound_Source_Map": json.dumps({
+            "Apigenin": {"provenance_type": "INTERNAL_CURATED_PROVENANCE", "source": "internal db", "url": None},
+        }),
+    })
+    claim_map = build_claim_source_map(row)
+    assert claim_map["compounds"]["Apigenin"]["provenance_type"] == "INTERNAL_CURATED_PROVENANCE"
+
+
+def test_claim_source_map_commercial_uses_structured_identity_not_bare_title():
+    row = pd.Series({
+        "Commercial_Sources_JSON": json.dumps([
+            {"Title": "Botanical X Extract", "Resolved_URL": "https://example.com/p1", "Source_Organization": "RetailerCo"},
+        ]),
+    })
+    claim_map = build_claim_source_map(row)
+    assert claim_map["commercial"] == [{
+        "title": "Botanical X Extract", "url": "https://example.com/p1", "source": "RetailerCo",
+    }]
+
+
+def test_claim_source_map_empty_when_nothing_available_for_new_categories():
+    row = pd.Series({"Human_Evidence_Record_IDs": "[]", "Safety_Evidence_Record_IDs": "[]"})
+    claim_map = build_claim_source_map(row)
+    assert "targets" not in claim_map
+    assert "mechanisms" not in claim_map
+    assert "compounds" not in claim_map
+    assert "commercial" not in claim_map
+
+
+def test_attach_claim_source_map_end_to_end_all_categories():
+    report_df = pd.DataFrame([{
+        "Human_Evidence_Record_IDs": json.dumps(["E1"]),
+        "Safety_Evidence_Record_IDs": json.dumps(["S1"]),
+        "Target_Source_Map": json.dumps({"GABA-A receptor": ["M-1"]}),
+        "Mechanism_Source_Map": json.dumps({"GABAergic modulation": ["M-1"]}),
+        "Compound_Source_Map": json.dumps({"Apigenin": {"provenance_type": "INTERNAL_CURATED_PROVENANCE"}}),
+        "Commercial_Sources_JSON": json.dumps([{"Title": "P", "Resolved_URL": "https://x.com/p"}]),
+        "Regulatory_Primary_Source_URL": "https://www.ema.europa.eu/x",
+    }])
+    out = attach_claim_source_map(report_df)
+    claim_map = parse_claim_source_map(out.iloc[0]["Claim_Source_Map"])
+    assert set(claim_map.keys()) == {
+        "human_evidence", "safety", "targets", "mechanisms", "compounds", "commercial", "regulatory",
+    }

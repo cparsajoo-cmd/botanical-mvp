@@ -33,15 +33,19 @@ from post_discovery_investor_view import build_investor_opportunity_view
 from evidence_source_resolver import (
     attach_human_evidence_source_traceability,
     attach_safety_evidence_source_traceability,
+    attach_mechanistic_evidence_source_traceability,
+    attach_scientific_source_summary,
     parse_sources_json,
 )
 from commercial_source_traceability import (
     attach_commercial_source_traceability,
     parse_commercial_sources_json,
 )
+from compound_source_traceability import attach_compound_source_traceability
 from claim_source_map import (
     attach_regulatory_patent_source_traceability,
     attach_claim_source_map,
+    parse_claim_source_map,
 )
 from source_linkage_consistency import attach_source_linkage_consistency
 from sensitivity_display_adapter import prepare_sensitivity_payload
@@ -2103,6 +2107,16 @@ def _human_source_column_config():
                 help="Open the strongest directly linked human-evidence source available for this candidate.",
                 display_text="View source",
             ),
+            "Mechanistic_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary mechanistic source",
+                help="Open the evidence record supporting the primary target/mechanism claim.",
+                display_text="View source",
+            ),
+            "Primary_Scientific_Source_URL": st.column_config.LinkColumn(
+                "Primary scientific source",
+                help="Prefers direct human evidence, falls back to mechanistic evidence.",
+                display_text="View source",
+            ),
             "Safety_Primary_Source_URL": st.column_config.LinkColumn(
                 "Primary safety source",
                 help="Open the evidence record actually supporting the safety assertion for this candidate.",
@@ -2128,52 +2142,43 @@ def _human_source_column_config():
         return {}
 
 
-def _render_human_evidence_source_details(df, *, section_key):
-    """Collapsed, audit-friendly list of every linked human source per candidate."""
-    if not isinstance(df, pd.DataFrame) or df.empty or "Human_Evidence_Sources_JSON" not in df.columns:
+def _render_stage6_reference_detail_section(df, *, section_key, label):
+    """Wire the universal grouped reference-detail renderer
+    (render_candidate_reference_detail) into a real production Stage-6
+    section.
+
+    Retires the old human-only "_render_human_evidence_source_details" --
+    that function is gone; this is the single reference-detail system for
+    Priority Validation, Expert Review, and R&D Discovery alike, so there
+    is never a second, conflicting detail view to keep in sync.
+
+    Uses one candidate selector per section (not one expander per row) --
+    a run can list dozens of candidates in Expert Review/Discovery, and an
+    expander per row there would be unusable. The selected candidate's
+    detail itself renders inside render_candidate_reference_detail()'s own
+    single expander, so nothing here nests an expander inside another.
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
         return
-    rows_with_sources = []
     plant_col = _resolve_report_plant_column(df)
     if plant_col is None:
         return
-    for _, row in df.iterrows():
-        sources = parse_sources_json(row.get("Human_Evidence_Sources_JSON"))
-        _unresolved_value = pd.to_numeric(
-            row.get("Human_Evidence_Unresolved_Source_Count", 0), errors="coerce"
-        )
-        unresolved = 0 if pd.isna(_unresolved_value) else int(_unresolved_value)
-        if sources or unresolved:
-            rows_with_sources.append((str(row.get(plant_col) or "Unknown candidate"), sources, unresolved))
-    if not rows_with_sources:
+    plants = [str(p) for p in df[plant_col].dropna().tolist() if str(p).strip()]
+    if not plants:
         return
-
-    with st.expander("Human evidence sources — record-level details", expanded=False):
-        for plant_name, sources, unresolved in rows_with_sources:
-            st.markdown(f"**{plant_name}**")
-            if sources:
-                detail_df = pd.DataFrame([{
-                    "Evidence Record ID": src.get("Evidence_Record_ID"),
-                    "Title": src.get("Title"),
-                    "Study Type": src.get("Study_Type"),
-                    "Year": src.get("Year"),
-                    "Population": src.get("Population"),
-                    "Source": src.get("Resolved_URL"),
-                    "Resolution": src.get("Resolution_Status"),
-                } for src in sources])
-                try:
-                    config = {
-                        "Source": st.column_config.LinkColumn(
-                            "Source", display_text="View source"
-                        )
-                    }
-                except Exception:
-                    config = {}
-                st.dataframe(detail_df, width="stretch", column_config=config)
-            if unresolved:
-                st.warning(
-                    f"{unresolved} expected/identified human evidence source(s) are not fully "
-                    "linked to a resolvable evidence record. Internal IDs/counts remain in the audit export."
-                )
+    st.caption(f"Select a candidate to inspect its full source references ({label}):")
+    selected = st.selectbox(
+        "Candidate", plants, key=f"rd_reference_detail_select_{section_key}",
+    )
+    # Streamlit's real selectbox always returns one of the options passed
+    # in; a non-string/unrecognized return (e.g. a wholesale-mocked `st` in
+    # a unit test that doesn't emulate widget selection) means there is no
+    # real selection to render against -- skip rather than raise.
+    if not isinstance(selected, str) or selected not in plants:
+        return
+    selected_rows = df[df[plant_col].astype(str) == selected]
+    if not selected_rows.empty:
+        render_candidate_reference_detail(selected_rows.iloc[0])
 
 
 def _reference_detail_source_table(sources, *, empty_note):
@@ -2221,6 +2226,32 @@ def render_candidate_reference_detail(row):
             if _reference_detail_clean(row.get("Safety_Source_Resolution_Status")) == "SOURCE_LINKAGE_INCOMPLETE":
                 st.warning("Safety source linkage incomplete")
 
+        mechanistic_sources = parse_sources_json(row.get("Mechanistic_Sources_JSON"))
+        target_map = parse_claim_source_map(row.get("Target_Source_Map"))
+        mechanism_map = parse_claim_source_map(row.get("Mechanism_Source_Map"))
+        if mechanistic_sources or target_map or mechanism_map or "Mechanistic_Source_Count" in row:
+            st.markdown("**🧬 Mechanisms / targets**")
+            _reference_detail_source_table(mechanistic_sources, empty_note="No mechanistic sources linked.")
+            if target_map:
+                st.caption("Target → source records: " + "; ".join(
+                    f"{name}: {', '.join(ids)}" for name, ids in target_map.items()
+                ))
+            if mechanism_map:
+                st.caption("Mechanism → source records: " + "; ".join(
+                    f"{name}: {', '.join(ids)}" for name, ids in mechanism_map.items()
+                ))
+
+        compound_map = parse_claim_source_map(row.get("Compound_Source_Map"))
+        if compound_map or "Compound_Source_Count" in row:
+            st.markdown("**🧪 Compounds**")
+            if not compound_map:
+                st.caption("No linked compounds.")
+            for name, entry in compound_map.items():
+                if entry.get("provenance_type") == "EXTERNALLY_LINKED" and entry.get("url"):
+                    st.markdown(f"- **{name}**: [{entry.get('source') or 'View source'}]({entry['url']})")
+                else:
+                    st.caption(f"- {name}: Internal curated provenance — external URL unavailable")
+
         commercial_sources = parse_commercial_sources_json(row.get("Commercial_Sources_JSON"))
         if commercial_sources or "Commercial_Source_Count" in row:
             st.markdown("**🛒 Commercial**")
@@ -2250,7 +2281,9 @@ def _reference_detail_clean(value):
     return "" if text.lower() in {"", "nan", "none", "null"} else text
 
 
-def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
+def _recommendation_block(
+    result_df, report_ready_df=None, evidence_df=None, regulatory_landscape_df=None,
+):
     # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
     # one-row-per-plant frame (merge_authoritative_scores()'s output) so
     # this block's picks can never disagree with the Step 5 shortlist or
@@ -2272,8 +2305,11 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
         if isinstance(evidence_df, pd.DataFrame):
             df = attach_human_evidence_source_traceability(df, evidence_df)
             df = attach_safety_evidence_source_traceability(df, evidence_df)
+            df = attach_mechanistic_evidence_source_traceability(df, evidence_df)
+        df = attach_scientific_source_summary(df)
+        df = attach_compound_source_traceability(df)
         df = attach_commercial_source_traceability(df)
-        df = attach_regulatory_patent_source_traceability(df)
+        df = attach_regulatory_patent_source_traceability(df, regulatory_landscape_df)
         df = attach_claim_source_map(df)
         df = attach_source_linkage_consistency(df)
         # Apply the deterministic investor/audit adapter to the entire Stage-6
@@ -2425,6 +2461,9 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
                 "Evidence_Adjudication_Evidence_Count",
                 "AI_Direct_Outcome_Evidence_Count",
                 "AI_Direct_Human_Outcome_Evidence_Count",
+                "Scientific_Source_Count",
+                "Primary_Scientific_Source_Title",
+                "Primary_Scientific_Source_URL",
                 "Human_Evidence_Source_Count",
                 "Human_Evidence_Resolved_Source_Count",
                 "Human_Evidence_Unresolved_Source_Count",
@@ -2432,6 +2471,9 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
                 "Human_Evidence_Primary_Source_URL",
                 "Human_Evidence_Source_Resolution_Status",
                 "Human_Evidence_Status",
+                "Mechanistic_Source_Count",
+                "Mechanistic_Primary_Source_URL",
+                "Compound_Source_Count",
                 "Safety_Source_Count",
                 "Safety_Primary_Source_Title",
                 "Safety_Primary_Source_URL",
@@ -2559,8 +2601,8 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
             width="stretch",
             column_config=_human_source_column_config(),
         )
-        _render_human_evidence_source_details(
-            _recommended_display.head(10), section_key="priority"
+        _render_stage6_reference_detail_section(
+            _recommended_display.head(10), section_key="priority", label="Priority candidates"
         )
 
         # Unresolved candidates get their own amber section.  They are not
@@ -2591,8 +2633,8 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
                 width="stretch",
                 column_config=_human_source_column_config(),
             )
-            _render_human_evidence_source_details(
-                _review_display.head(20), section_key="expert_review"
+            _render_stage6_reference_detail_section(
+                _review_display.head(20), section_key="expert_review", label="Expert review"
             )
 
         # The red section is reserved for genuinely non-actionable scientific
@@ -2683,8 +2725,8 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
                     width="stretch",
                     column_config=_human_source_column_config(),
                 )
-                _render_human_evidence_source_details(
-                    _discovery_full_df.head(20), section_key="discovery"
+                _render_stage6_reference_detail_section(
+                    _discovery_full_df.head(20), section_key="discovery", label="R&D Discovery"
                 )
             else:
                 st.caption(
@@ -4163,11 +4205,21 @@ def render_rd_candidates_step(inputs):
             _decision_table_source_df = attach_safety_evidence_source_traceability(
                 _decision_table_source_df, _evidence_df_for_export
             )
+            _decision_table_source_df = attach_mechanistic_evidence_source_traceability(
+                _decision_table_source_df, _evidence_df_for_export
+            )
+            _decision_table_source_df = attach_scientific_source_summary(
+                _decision_table_source_df
+            )
+            _decision_table_source_df = attach_compound_source_traceability(
+                _decision_table_source_df
+            )
             _decision_table_source_df = attach_commercial_source_traceability(
                 _decision_table_source_df
             )
             _decision_table_source_df = attach_regulatory_patent_source_traceability(
-                _decision_table_source_df
+                _decision_table_source_df,
+                st.session_state.get("rd_candidates_df_enriched"),
             )
             _decision_table_source_df = attach_claim_source_map(_decision_table_source_df)
             _decision_table_source_df = attach_source_linkage_consistency(
@@ -4244,7 +4296,8 @@ def render_rd_candidates_step(inputs):
             st.warning(_stale_warning)
         else:
             _recommendation_block(
-                result_df, _session_report_ready_df, evidence_df=_get_evidence_df()
+                result_df, _session_report_ready_df, evidence_df=_get_evidence_df(),
+                regulatory_landscape_df=st.session_state.get("rd_candidates_df_enriched"),
             )
 
     _render_ai_rd_insights()

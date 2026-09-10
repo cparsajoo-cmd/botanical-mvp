@@ -425,6 +425,108 @@ def attach_safety_evidence_source_traceability(report_df, evidence_df):
     return out
 
 
+def attach_mechanistic_evidence_source_traceability(report_df, evidence_df):
+    """Append mechanistic/target-evidence source fields to a candidate/report DataFrame.
+
+    Resolves ``Mechanistic_Evidence_Record_IDs`` (candidate_shortlisting.py's
+    ``mechanistic_source_ids`` -- previously computed and then discarded
+    down to a bare count; now persisted) through the same evidence source
+    resolver used for human/safety evidence. Reads only IDs the mechanistic
+    layer itself attached to the candidate, so a target/mechanism claim can
+    never be traced to an unrelated plant paper.
+    """
+    if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+        return report_df
+
+    out = report_df.copy()
+    payloads = []
+    for _, row in out.iterrows():
+        ids = normalize_evidence_ids(row.get("Mechanistic_Evidence_Record_IDs"))
+        bundle = build_source_bundle(ids, evidence_df)
+
+        if not ids:
+            resolution_status = "NO_MECHANISTIC_EVIDENCE_IDS"
+        elif bundle["unresolved_source_count"] > 0 and bundle["resolved_source_count"] > 0:
+            resolution_status = "PARTIAL_SOURCE_LINKAGE"
+        elif bundle["unresolved_source_count"] > 0:
+            resolution_status = "SOURCE_LINKAGE_INCOMPLETE"
+        else:
+            resolution_status = "ALL_RECORDS_RESOLVED"
+
+        # Target_Source_Map / Mechanism_Source_Map already carry exact
+        # per-target/per-mechanism evidence-record IDs from
+        # candidate_shortlisting.py (row-level pairing, no laundering).
+        # JSON-encode here for safe CSV export / Claim_Source_Map reuse --
+        # the ID vocabulary itself is not re-resolved (spec example shape
+        # is {"target name": ["E1", "E2"]}, i.e. IDs, not URLs).
+        target_map = row.get("Target_Source_Map")
+        mechanism_map = row.get("Mechanism_Source_Map")
+        target_map = target_map if isinstance(target_map, dict) else {}
+        mechanism_map = mechanism_map if isinstance(mechanism_map, dict) else {}
+
+        payloads.append({
+            "Mechanistic_Evidence_Record_IDs": json.dumps(bundle["record_ids"], ensure_ascii=False),
+            "Mechanistic_Source_Count": bundle["source_count"],
+            "Mechanistic_Resolved_Source_Count": bundle["resolved_source_count"],
+            "Mechanistic_Unresolved_Source_Count": bundle["unresolved_source_count"],
+            "Mechanistic_Primary_Source_Title": bundle["primary_source_title"],
+            "Mechanistic_Primary_Source_URL": bundle["primary_source_url"],
+            "Mechanistic_Source_URLs": json.dumps(bundle["source_urls"], ensure_ascii=False),
+            "Mechanistic_Sources_JSON": json.dumps(bundle["sources"], ensure_ascii=False),
+            "Mechanistic_Source_Resolution_Status": resolution_status,
+            "Target_Source_Map": json.dumps(target_map, ensure_ascii=False),
+            "Mechanism_Source_Map": json.dumps(mechanism_map, ensure_ascii=False),
+        })
+
+    payload_df = pd.DataFrame(payloads, index=out.index)
+    for column in payload_df.columns:
+        out[column] = payload_df[column]
+    return out
+
+
+def attach_scientific_source_summary(report_df):
+    """Append a compact Scientific_Source_Count / Primary_Scientific_Source_*
+    summary that unions human + mechanistic evidence-record IDs WITHOUT
+    double-counting a record that supports both (spec, compact investor
+    table §5). Must run after attach_human_evidence_source_traceability()
+    and attach_mechanistic_evidence_source_traceability(). No new scoring
+    model: this is a deterministic count/union + existing precedence
+    (direct human evidence first, then mechanistic), never a re-ranking of
+    individual sources.
+    """
+    if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+        return report_df
+
+    out = report_df.copy()
+    payloads = []
+    for _, row in out.iterrows():
+        human_ids = set(normalize_evidence_ids(row.get("Human_Evidence_Record_IDs")))
+        mech_ids = set(normalize_evidence_ids(row.get("Mechanistic_Evidence_Record_IDs")))
+        union_ids = human_ids | mech_ids
+
+        human_url = _clean(row.get("Human_Evidence_Primary_Source_URL"))
+        human_title = _clean(row.get("Human_Evidence_Primary_Source_Title"))
+        mech_url = _clean(row.get("Mechanistic_Primary_Source_URL"))
+        mech_title = _clean(row.get("Mechanistic_Primary_Source_Title"))
+
+        # Precedence: direct human evidence first, then mechanistic --
+        # matches the existing evidence-type/quality hierarchy used
+        # elsewhere (human > mechanistic-only), not a new scoring model.
+        primary_url = human_url or mech_url
+        primary_title = human_title if human_url else (mech_title or human_title)
+
+        payloads.append({
+            "Scientific_Source_Count": len(union_ids),
+            "Primary_Scientific_Source_URL": primary_url,
+            "Primary_Scientific_Source_Title": primary_title,
+        })
+
+    payload_df = pd.DataFrame(payloads, index=out.index)
+    for column in payload_df.columns:
+        out[column] = payload_df[column]
+    return out
+
+
 def parse_sources_json(value) -> list[dict]:
     """Safe inverse for UI/detail rendering of Human_Evidence_Sources_JSON."""
     if isinstance(value, list):

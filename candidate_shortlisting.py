@@ -3218,6 +3218,61 @@ def build_plant_candidate_shortlist(
                 if _norm(source_id)
             }
             mechanistic_evidence_count = len(mechanistic_source_ids)
+
+            # Source-traceability pass (2026-09-10, corrective): the IDs
+            # above were being discarded after computing only their COUNT
+            # (Mechanistic_Evidence_Count). Persist the actual IDs.
+            # mechanistic_source_ids itself is normalized (_norm() lower-
+            # cases) -- correct for a dedup/count set, but a real
+            # Evidence_Record_ID is case-sensitive, so lowercasing it here
+            # would silently break resolution against evidence_df later.
+            # Recompute the SAME row/condition filter but keep raw-case
+            # IDs for what actually gets persisted and resolved.
+            mechanistic_evidence_record_ids = sorted({
+                source_id
+                for _, r in group.iterrows()
+                if (
+                    _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                    and _row_has_traceable_source(r)
+                    and _row_has_candidate_specific_empirical_support(r)
+                )
+                for source_id in _split_values([r.get("Source_Record_IDs", "")])
+                if _norm(source_id)
+            })
+
+            # Pair each supportive row's own Source_Record_IDs with that
+            # SAME row's own Mechanistic_Linked_Targets/_Mechanisms atoms
+            # (not the whole-group aggregate used for
+            # discovery_linked_targets above), so a target/mechanism is
+            # never attributed to an unrelated row's source -- the same
+            # no-laundering discipline indication_candidate_discovery.py's
+            # _mechanistic_field_atoms()/_score_mechanistic_links() already
+            # apply to admission, applied here to provenance instead.
+            target_source_map: dict[str, set[str]] = {}
+            mechanism_source_map: dict[str, set[str]] = {}
+            for _, r in group.iterrows():
+                if not (
+                    _row_authoritative_relevance(r)[0] in _MATCH_SUPPORTIVE
+                    and _row_has_traceable_source(r)
+                    and _row_has_candidate_specific_empirical_support(r)
+                ):
+                    continue
+                _row_ids = [
+                    sid for sid in _split_values([r.get("Source_Record_IDs", "")])
+                    if _norm(sid)
+                ]
+                if not _row_ids:
+                    continue
+                for _target in _split_values([r.get("Mechanistic_Linked_Targets", "")]):
+                    target_source_map.setdefault(_target, set()).update(_row_ids)
+                for _mechanism in _split_values([r.get("Mechanistic_Linked_Mechanisms", "")]):
+                    mechanism_source_map.setdefault(_mechanism, set()).update(_row_ids)
+            target_source_map = {
+                name: sorted(ids) for name, ids in target_source_map.items()
+            }
+            mechanism_source_map = {
+                name: sorted(ids) for name, ids in mechanism_source_map.items()
+            }
         else:
             direct_evidence_count = int(group["Direct_Evidence_Present"].sum())
             outcome_specific_direct_evidence_count = int(
@@ -3238,6 +3293,11 @@ def build_plant_candidate_shortlist(
             mechanistic_evidence_count = max(
                 0, int(group["Supported_Target_or_Mechanism"].sum()) - direct_evidence_count
             )
+            # No authoritative per-row relevance available on this legacy
+            # path -- honestly empty rather than guessing at provenance.
+            mechanistic_evidence_record_ids = []
+            target_source_map = {}
+            mechanism_source_map = {}
 
         # Discovery ranking must use the exact indication-linked mechanistic
         # path when Stage 5 supplied it. Whole-plant Known_Targets and compound
@@ -3621,6 +3681,9 @@ def build_plant_candidate_shortlist(
             "Outcome_Specific_Direct_Evidence_Count": outcome_specific_direct_evidence_count,
             "Outcome_Specific_Human_Evidence_Count": outcome_specific_human_evidence_count,
             "Mechanistic_Evidence_Count": mechanistic_evidence_count,
+            "Mechanistic_Evidence_Record_IDs": mechanistic_evidence_record_ids,
+            "Target_Source_Map": target_source_map,
+            "Mechanism_Source_Map": mechanism_source_map,
             "Preparation_Specific_Evidence_Count": preparation_specific_evidence_count,
             "Preparation_Applicability_Class": preparation_applicability_class,
             "Triage_Gate_Reasons": triage_gate_reasons,
@@ -3958,6 +4021,13 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Indication_Evidence_Mode", "Indication_Supporting_Source_Count",
         "Relevance_Gate_Result", "Evidence_Route",
         "Direct_Indication_Evidence_Count", "Outcome_Specific_Direct_Evidence_Count", "Outcome_Specific_Human_Evidence_Count", "Mechanistic_Evidence_Count",
+        # Source-traceability pass (2026-09-10, corrective): mechanistic
+        # source IDs were computed above (mechanistic_source_ids) but only
+        # their count survived past this point -- adding these here is the
+        # actual root-cause fix, matching the RD_Discovery_Lane precedent
+        # (computed-but-invisible fields must be in this tuple or they are
+        # silently dropped before ever reaching rd_report_ready_df/Stage 6).
+        "Mechanistic_Evidence_Record_IDs", "Target_Source_Map", "Mechanism_Source_Map",
         "Preparation_Specific_Evidence_Count", "Preparation_Applicability_Class",
         "Triage_Gate_Reasons", "Supported_Targets_or_Mechanisms",
         # Plant-level, attribution-cleaned safety fields must override the

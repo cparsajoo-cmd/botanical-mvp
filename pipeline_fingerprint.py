@@ -78,6 +78,15 @@ COMMERCIAL_FINGERPRINT_FILES = (
     "post_discovery_investor_view.py",
     "evidence_id_parsing.py",
     "evidence_source_resolver.py",
+    # Source-traceability corrective pass (2026-09-10): these are all
+    # presentation/provenance modules Stage 6 now calls (resolving,
+    # bundling, and rendering already-computed source metadata) -- never
+    # scientific decision logic, so they belong in the commercial/
+    # presentation fingerprint, not the scientific one.
+    "commercial_source_traceability.py",
+    "compound_source_traceability.py",
+    "claim_source_map.py",
+    "source_linkage_consistency.py",
 )
 
 

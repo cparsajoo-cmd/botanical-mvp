@@ -823,7 +823,16 @@ def _enforce_bundle_consistency(structured: dict, evidence_items: Sequence[dict]
     ):
         if _id_field in out:
             _normalized_ids = _safe_id_sequence(out.get(_id_field))
-            out[_id_field] = [] if _normalized_ids is None else _normalized_ids
+            # ``None`` on the two direct-outcome fields is meaningful: it
+            # identifies a legacy/pre-v11 adjudication response whose schema
+            # did not expose explicit direct-outcome IDs.  Preserve that
+            # sentinel so the backward-compatible lineage reconstruction below
+            # can run.  For ordinary list-valued ID fields, missing values still
+            # normalize to an empty list.
+            if _id_field in {"Direct_Outcome_Evidence_IDs", "Direct_Human_Outcome_Evidence_IDs"} and _normalized_ids is None:
+                out[_id_field] = None
+            else:
+                out[_id_field] = [] if _normalized_ids is None else _normalized_ids
 
     raw_direct_outcome_ids = _safe_id_sequence(out.get("Direct_Outcome_Evidence_IDs"))
     raw_direct_human_ids_initial = _safe_id_sequence(out.get("Direct_Human_Outcome_Evidence_IDs"))

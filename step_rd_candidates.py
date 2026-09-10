@@ -1775,7 +1775,7 @@ def _cached_plant_compounds_df():
     parameter for what this now feeds into."""
     from supabase_data import load_plant_compounds_df
     try:
-        return load_plant_compounds_df(), True
+        return load_plant_compounds_df(strict=True), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1785,7 +1785,7 @@ def _cached_compound_profiles_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_compound_profiles_df
     try:
-        return load_compound_profiles_df(), True
+        return load_compound_profiles_df(strict=True), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1795,7 +1795,7 @@ def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_scientific_evidence_df
     try:
-        return load_scientific_evidence_df(), True
+        return load_scientific_evidence_df(strict=True), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1810,7 +1810,7 @@ def _cached_evidence_records_df():
     """
     from supabase_data import load_evidence_records_df
     try:
-        return load_evidence_records_df(), True
+        return load_evidence_records_df(strict=True), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1903,7 +1903,7 @@ def _pipeline_implementation_fingerprint() -> str:
     return digest.hexdigest()[:16]
 
 
-ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v2"
+ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v3_demo_safe"
 
 
 def _discovered_candidates_fingerprint(discovered_candidates):
@@ -3538,6 +3538,13 @@ def render_rd_candidates_step(inputs):
                     f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f} "
                     f"novel_discovered_candidates={len(novel_discovered_candidates)}"
                 )
+                if not getattr(engine, "data_source_reliable", True):
+                    st.warning(
+                        "⚠️ Core scientific database connectivity is incomplete. "
+                        "The run will continue in degraded mode using available/fallback data, "
+                        "but final recommendations are capped at Investigate/Hold and must not "
+                        "be interpreted as a complete evidence assessment."
+                    )
 
                 with st.spinner("Discovering and scoring R&D candidates..."):
                     _perf_t_run = time.perf_counter()

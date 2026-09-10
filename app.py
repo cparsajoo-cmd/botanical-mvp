@@ -37,6 +37,22 @@ evidence_df, evidence_meta = _cached_evidence_with_meta()
 st.session_state["evidence_df"] = evidence_df
 st.session_state["evidence_meta"] = evidence_meta
 
+# Demo-safe visibility: database outages/partial loads must be obvious before
+# a user starts evidence discovery or candidate scoring, not hidden at the
+# bottom of the page. The downstream engine remains available in degraded
+# mode and caps final recommendations when its core sources are unreliable.
+if evidence_meta.get("data_source_mode") == "Unavailable":
+    st.error(
+        "⚠️ Evidence database is currently unavailable. The app can remain open, "
+        "but any analysis performed now is a degraded/fallback analysis and must "
+        "not be presented as complete evidence coverage."
+    )
+elif evidence_meta.get("data_source_mode") == "Partial Supabase data":
+    st.warning(
+        "⚠️ Evidence database was only partially verified/loaded. Results may be "
+        "generated from incomplete coverage and should be treated as provisional."
+    )
+
 render_question_step(inputs)
 render_evidence_step(inputs)
 render_rd_candidates_step(inputs)

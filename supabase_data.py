@@ -139,27 +139,33 @@ def _fetch_table_df(
     return pd.DataFrame(all_rows)
 
 
-def load_plant_compounds_df():
+def load_plant_compounds_df(strict: bool = False):
     try:
-        return _fetch_table_df("plant_compounds")
+        return _fetch_table_df("plant_compounds", strict=strict)
     except Exception as exc:
         print(f"[supabase_data] load_plant_compounds_df failed entirely: {exc}")
+        if strict:
+            raise
         return pd.DataFrame()
 
 
-def load_compound_profiles_df():
+def load_compound_profiles_df(strict: bool = False):
     try:
-        return _fetch_table_df("compound_profiles")
+        return _fetch_table_df("compound_profiles", strict=strict)
     except Exception as exc:
         print(f"[supabase_data] load_compound_profiles_df failed entirely: {exc}")
+        if strict:
+            raise
         return pd.DataFrame()
 
 
-def load_scientific_evidence_df():
+def load_scientific_evidence_df(strict: bool = False):
     try:
-        return _fetch_table_df("scientific_evidence")
+        return _fetch_table_df("scientific_evidence", strict=strict)
     except Exception as exc:
         print(f"[supabase_data] load_scientific_evidence_df failed entirely: {exc}")
+        if strict:
+            raise
         return pd.DataFrame()
 
 
@@ -248,6 +254,8 @@ def load_evidence_records_df(strict: bool = False):
         raise
     except Exception as exc:
         print(f"[supabase_data] load_evidence_records_df failed entirely: {exc}")
+        if strict:
+            raise
         return pd.DataFrame()
 
 

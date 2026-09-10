@@ -23,31 +23,6 @@ from rd_discovery_classification import (
     DISCOVERY_LANE_HYPOTHESIS,
     DISCOVERY_LANE_CATALOGUE_HYPOTHESIS,
 )
-from commercial_opportunity_classification import add_commercial_opportunity_class
-from commercial_evidence_import import normalize_commercial_evidence_import
-from pipeline_fingerprint import (
-    scientific_implementation_fingerprint,
-    commercial_implementation_fingerprint,
-)
-from post_discovery_investor_view import build_investor_opportunity_view
-from evidence_source_resolver import (
-    attach_human_evidence_source_traceability,
-    attach_safety_evidence_source_traceability,
-    attach_mechanistic_evidence_source_traceability,
-    attach_scientific_source_summary,
-    parse_sources_json,
-)
-from commercial_source_traceability import (
-    attach_commercial_source_traceability,
-    parse_commercial_sources_json,
-)
-from compound_source_traceability import attach_compound_source_traceability
-from claim_source_map import (
-    attach_regulatory_patent_source_traceability,
-    attach_claim_source_map,
-    parse_claim_source_map,
-)
-from source_linkage_consistency import attach_source_linkage_consistency
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -75,78 +50,12 @@ def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
 
 
-def _final_canonical_evidence_direction(evidence_consistency_class, ai_direction) -> tuple[str, str]:
-    """DEFECT 9 FIX (final pre-demo reliability pass) -- ONE canonical
-    final evidence-direction field, with an explicit, documented authority
-    hierarchy across every field that represents efficacy/direction for a
-    candidate:
-
-      1. Source-grounded, candidate-specific, OUTCOME-specific structured
-         evidence (the records themselves -- Result_Direction, etc.)
-      2. Structured, deterministic classification derived directly from
-         those records: Evidence_Consistency_Class
-         (evidence_consistency.classify_evidence_consistency(), computed
-         in candidate_shortlisting.py from this candidate's own
-         primary-tier evidence records). This is what Phase-5 scoring
-         itself already consumes (Direction_Factor/Consistency_Factor).
-      3. Semantic/AI inference used for discovery or to interpret
-         otherwise-unresolved extraction: Indication_Evidence_Direction
-         (evidence_adjudication_engine.py's LLM-adjudicated field).
-      4. Broad mechanism/compound plausibility (never a direction signal
-         by itself -- not represented in this field at all).
-
-    A lower-authority source never silently overwrites a higher-authority
-    one. Level 2 (verified, deterministic) is used whenever it reflects an
-    actual resolved classification. Level 3 (AI) is used ONLY as a
-    secondary, clearly-labeled fallback when level 2 is itself
-    uninformative (INSUFFICIENT / INSUFFICIENT_DIRECTION_DATA -- i.e. no
-    evidence, or evidence with genuinely no resolved direction) -- it is
-    discovery/interpretation support, never an override of a resolved
-    verified classification, and disagreement between the two is not
-    silently resolved: both fields remain independently visible as
-    provenance (Evidence_Consistency_Class, Indication_Evidence_Direction)
-    alongside this canonical field and its companion
-    Final_Canonical_Evidence_Direction_Source ("VERIFIED"/"AI_FALLBACK"/
-    "UNKNOWN"), so a reviewer can always see when the two disagreed.
-
-    Consumed by _reconcile_final_decision_status()/_evidence_coherence_
-    status() as the single field final decision logic should be read as
-    following; Phase-5 scoring already follows level 2 directly (see
-    candidate_shortlisting.py's evidence_direction_profile).
-    """
-    verified = str(evidence_consistency_class or "").strip().upper()
-    if verified and verified not in {"INSUFFICIENT", "INSUFFICIENT_DIRECTION_DATA"}:
-        return verified, "VERIFIED"
-    ai = str(ai_direction or "").strip().upper()
-    if ai and ai not in {"UNKNOWN", "NONE", ""}:
-        return ai, "AI_FALLBACK"
-    return "UNKNOWN", "UNKNOWN"
-
-
 def _reconcile_final_decision_status(row) -> str:
     """Produce one populated scientific decision from deterministic + AI facts.
 
     The AI may only make the result more conservative.  Hard safety/regulatory
     statuses are never weakened.  Missing or contradictory AI evidence cannot
     coexist with an unqualified green recommendation.
-
-    DEFECT 9 NOTE (final pre-demo reliability pass): this function already
-    implements the effect of the documented authority hierarchy (see
-    _final_canonical_evidence_direction() above) through several
-    independent, hand-verified gates below -- most importantly, every
-    "Direct human/clinical"-branch check is keyed off indication_mode
-    (Indication_Evidence_Mode), which is itself now a verified-evidence-
-    gated field (see candidate_shortlisting.py's Defect-2 fix,
-    UNVERIFIED_DIRECT_HUMAN_SIGNAL): an AI adjudication that reads
-    CONSISTENT_POSITIVE/STRONG cannot promote an unverified candidate past
-    "GO WITH CAUTION" to an unqualified "GO", because decision_class_ah
-    itself already requires indication_mode == "Direct human/clinical" to
-    reach "B" (see the Defect-8 fix). Verified evidence therefore already
-    controls the outcome here even though this function does not read
-    Final_Canonical_Evidence_Direction by name; that field exists
-    primarily to make the authority hierarchy explicit and inspectable
-    (Evidence_Consistency_Class vs. Indication_Evidence_Direction) rather
-    than to replace this function's existing, extensively-tested gates.
     """
     def clean(key):
         value = row.get(key, "") if hasattr(row, "get") else ""
@@ -431,124 +340,7 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
         merged["Final_Rationale"] = [
             build_final_rationale(row) for _, row in merged.iterrows()
         ]
-    # Section 11 (investor commercial-opportunity classification): a single
-    # scannable label built only from fields already finalized above
-    # (Commercial_Status_Overall/For_Indication, safety, regulatory).
-    # Additive column; never touches scoring/ranking/Decision_Class_AH.
-    if isinstance(merged, pd.DataFrame) and not merged.empty:
-        merged = add_commercial_opportunity_class(merged)
     return merged
-
-
-def refresh_commercial_and_investor_view(
-    result_df, plant_summary_df, *, indication, dosage_form, market,
-    commercial_evidence_df=None, market_plants=None,
-):
-    """Mandatory Section 6 feature: rerun ONLY commercial enrichment,
-    commercial classification, and the report-ready merge/investor-view
-    build, starting from an EXISTING valid Stage-5 scientific result.
-
-    Deliberately calls NONE of: MarketIntelligenceEngine... no, wait --
-    it DOES call MarketIntelligenceEngine (that's the commercial part,
-    always local/deterministic, never AI). What it deliberately never
-    calls: engine.run() / indication_candidate_discovery() /
-    build_plant_candidate_shortlist() -- i.e. nothing that performs
-    scientific evidence retrieval, mechanistic discovery, scientific
-    scoring, or AI evidence adjudication. Every one of those is expensive
-    and/or AI-calling; every function this DOES call
-    (_attach_commercial_market_intelligence, rescore_commercial_component,
-    _finalize_step5_summary, _merge_and_sync_final_decision_status) is
-    local, deterministic, and network/AI-free.
-
-    ``result_df``/``plant_summary_df`` are the caller's ALREADY-COMPUTED
-    Stage-5 frames (e.g. from st.session_state["rd_candidates_df"] /
-    ["rd_candidate_plant_summary_df"]) -- this function does not create
-    them, only re-derives commercial/presentation state from them.
-
-    Returns (result_df, plant_summary_df, report_ready_df) -- report_ready_df
-    already carries Commercial_Opportunity_Class (via
-    _merge_and_sync_final_decision_status) and the refreshed
-    Commercial_Implementation_Fingerprint / unchanged
-    Scientific_Implementation_Fingerprint.
-    """
-    if not isinstance(result_df, pd.DataFrame) or result_df.empty:
-        return result_df, plant_summary_df, pd.DataFrame()
-    if not isinstance(plant_summary_df, pd.DataFrame) or plant_summary_df.empty:
-        return result_df, plant_summary_df, pd.DataFrame()
-
-    if market_plants is None:
-        market_plants = _step5_commercial_enrichment_plants(plant_summary_df)
-
-    result_df = _attach_commercial_market_intelligence(
-        result_df,
-        evidence_df=pd.DataFrame(),  # no scientific evidence re-read here --
-        # the caller's existing result_df already carries everything
-        # scientific from the original run; only commercial_evidence_df
-        # (structured import / cache) is a real input to this refresh.
-        indication=indication,
-        dosage_form=dosage_form,
-        market=market,
-        candidate_plants=market_plants,
-        commercial_evidence_df=commercial_evidence_df,
-    )
-
-    if market_plants:
-        plant_summary_df = rescore_commercial_component(
-            plant_summary_df, result_df, market_plants,
-        )
-    plant_summary_df = _finalize_step5_summary(plant_summary_df)
-
-    scientific_fingerprint = scientific_implementation_fingerprint()
-    commercial_fingerprint = commercial_implementation_fingerprint()
-    result_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-    result_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
-    plant_summary_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-    plant_summary_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
-
-    report_ready_df = _merge_and_sync_final_decision_status(result_df, plant_summary_df)
-    if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
-        report_ready_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-        report_ready_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
-
-    return result_df, plant_summary_df, report_ready_df
-
-
-def _handle_commercial_refresh_button_click(
-    result_df, plant_summary_df, *, indication, dosage_form, market,
-):
-    """The real production body of the "Refresh Commercial Intelligence /
-    Investor View" button click (Issue 1, 2026-09-09 second follow-up).
-    Extracted from the button's inline body so the actual click-to-
-    session-state sequence is directly unit-testable (mock
-    st.session_state as a plain dict) without needing to drive the whole
-    render_rd_candidates_step() Streamlit form -- see
-    test_commercial_refresh_ui_path.py.
-
-    Calls refresh_commercial_and_investor_view() (zero scientific/AI calls
-    -- see that function's own docstring and
-    test_commercial_only_refresh_no_ai_calls.py) and writes its outputs to
-    the exact three session-state keys the rest of this module reads:
-    "rd_candidates_df", "rd_candidate_plant_summary_df",
-    "rd_report_ready_df", plus a refreshed "rd_decision_metadata".
-    """
-    refreshed_result_df, refreshed_plant_summary_df, refreshed_report_ready_df = (
-        refresh_commercial_and_investor_view(
-            result_df,
-            plant_summary_df,
-            indication=indication,
-            dosage_form=dosage_form,
-            market=market,
-            commercial_evidence_df=_get_commercial_evidence_df(),
-        )
-    )
-    st.session_state["rd_candidates_df"] = refreshed_result_df
-    st.session_state["rd_candidate_plant_summary_df"] = refreshed_plant_summary_df
-    st.session_state["rd_report_ready_df"] = refreshed_report_ready_df
-    st.session_state["rd_decision_metadata"] = build_decision_metadata(
-        refreshed_report_ready_df, indication=indication, dosage_form=dosage_form,
-        market=market, discovery_mode=_detect_discovery_mode(refreshed_result_df),
-    )
-    return refreshed_result_df, refreshed_plant_summary_df, refreshed_report_ready_df
 
 
 def _resolve_report_plant_column(df):
@@ -817,27 +609,10 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
             "Evidence_Adjudication_Rationale", "Evidence_Adjudication_Fallback_Reason",
         ):
             new_columns[key][idx] = adjudication.get(key)
-        def _safe_count_ids(value):
-            if value is None:
-                return 0
-            if isinstance(value, (list, tuple, set, pd.Series, pd.Index)):
-                return len(value)
-            try:
-                if pd.isna(value):
-                    return 0
-            except Exception:
-                pass
-            # tolerate one legacy scalar ID; malformed scalars must not crash Stage 5
-            return 1 if str(value).strip() else 0
-
         new_columns.setdefault("AI_Direct_Outcome_Evidence_Count", [0] * len(plant_summary_df))
         new_columns.setdefault("AI_Direct_Human_Outcome_Evidence_Count", [0] * len(plant_summary_df))
-        new_columns["AI_Direct_Outcome_Evidence_Count"][idx] = _safe_count_ids(
-            adjudication.get("Direct_Outcome_Evidence_IDs")
-        )
-        new_columns["AI_Direct_Human_Outcome_Evidence_Count"][idx] = _safe_count_ids(
-            adjudication.get("Direct_Human_Outcome_Evidence_IDs")
-        )
+        new_columns["AI_Direct_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Outcome_Evidence_IDs") or [])
+        new_columns["AI_Direct_Human_Outcome_Evidence_Count"][idx] = len(adjudication.get("Direct_Human_Outcome_Evidence_IDs") or [])
 
         for key in (
             "Evidence_Adjudication_Adjustment", "Negative_Human_Evidence_Adjustment",
@@ -849,35 +624,6 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
 
     for col, values in new_columns.items():
         plant_summary_df[col] = values
-
-    # DEFECT 9 FIX (final pre-demo reliability pass): one clearly
-    # identifiable canonical final direction field, with an explicit,
-    # documented authority hierarchy (see _final_canonical_evidence_
-    # direction() docstring below). Neither existing field is deleted or
-    # overwritten -- Evidence_Consistency_Class (verified, deterministic)
-    # and Indication_Evidence_Direction (AI-adjudicated) both remain as
-    # provenance/diagnostics. This new field is what Phase-5 scoring
-    # already effectively follows (Evidence_Consistency_Class drives
-    # Direction_Factor/Consistency_Factor in candidate_shortlisting.py)
-    # and what final decision logic should be read as following too.
-    plant_summary_df["Final_Canonical_Evidence_Direction"] = [
-        _final_canonical_evidence_direction(
-            plant_summary_df.at[idx, "Evidence_Consistency_Class"]
-            if "Evidence_Consistency_Class" in plant_summary_df.columns else "",
-            plant_summary_df.at[idx, "Indication_Evidence_Direction"]
-            if "Indication_Evidence_Direction" in plant_summary_df.columns else "",
-        )[0]
-        for idx in plant_summary_df.index
-    ]
-    plant_summary_df["Final_Canonical_Evidence_Direction_Source"] = [
-        _final_canonical_evidence_direction(
-            plant_summary_df.at[idx, "Evidence_Consistency_Class"]
-            if "Evidence_Consistency_Class" in plant_summary_df.columns else "",
-            plant_summary_df.at[idx, "Indication_Evidence_Direction"]
-            if "Indication_Evidence_Direction" in plant_summary_df.columns else "",
-        )[1]
-        for idx in plant_summary_df.index
-    ]
 
     # part B2 (ghost-score fix) -- Overall_Score becomes THIS module's
     # single authoritative post-adjudication score, in place, for every
@@ -1306,55 +1052,8 @@ def _get_evidence_df():
     return None
 
 
-def _get_commercial_evidence_df():
-    """The dedicated commercial-evidence dataframe (Section 10), kept
-    conceptually separate from the scientific ``evidence_df``. Populated
-    today only by a structured import (see commercial_evidence_import.py
-    and the "Import commercial evidence" panel below); a future live
-    provider result would also land in this same session-state key.
-    Returns None (not an empty DataFrame) when nothing has been imported,
-    so callers can tell "no commercial evidence source at all" apart from
-    "an import ran and legitimately matched nothing".
-    """
-    commercial_evidence_df = st.session_state.get("commercial_evidence_df")
-    if isinstance(commercial_evidence_df, pd.DataFrame) and not commercial_evidence_df.empty:
-        return commercial_evidence_df
-    return None
-
-
-def _combine_scientific_and_commercial_evidence(evidence_df, commercial_evidence_df):
-    """Root-cause fix (2026-09-09 investor-view pass, Section 2): the
-    scientific ``evidence_df`` collected in Stage 2 essentially never
-    contains structured market/product rows (it is PubMed/DailyMed/EMA/etc.
-    evidence, not retail data) -- so MarketIntelligenceEngine's
-    ``_market_rows`` was empty in production runs regardless of the
-    selector fix, and every candidate fell into the honest-but-unhelpful
-    "Search not performed" branch below. This concatenates any real,
-    separately-sourced ``commercial_evidence_df`` (session-state import,
-    see commercial_evidence_import.py, or a future live provider) onto the
-    scientific evidence WITHOUT altering either frame's own semantics:
-    market_intelligence_engine.py's own row classifier
-    (_market_row_mask()/_is_market_row()) still decides, row by row, which
-    rows count as market evidence -- scientific rows are simply never
-    market-shaped and are ignored by that classifier exactly as before.
-    Column-set mismatches between the two frames are handled by
-    ``pd.concat``'s normal outer-join behavior (missing columns become
-    NaN, which the engine's ``_clean()`` already treats as blank).
-    """
-    frames = [
-        df for df in (evidence_df, commercial_evidence_df)
-        if isinstance(df, pd.DataFrame) and not df.empty
-    ]
-    if not frames:
-        return evidence_df
-    if len(frames) == 1:
-        return frames[0]
-    return pd.concat(frames, ignore_index=True, sort=False)
-
-
 def _attach_commercial_market_intelligence(
-    result_df, *, evidence_df, indication, dosage_form, market, candidate_plants=None,
-    commercial_evidence_df=None,
+    result_df, *, evidence_df, indication, dosage_form, market, candidate_plants=None
 ):
     """Attach one indication-aware commercial snapshot per candidate plant.
 
@@ -1364,14 +1063,6 @@ def _attach_commercial_market_intelligence(
     ``Market_Status``/``Novelty_Status`` columns remain untouched for backward
     compatibility; new ``Commercial_*`` and ``Chemical_Differentiation_Status``
     columns make the two concepts explicit.
-
-    ``commercial_evidence_df`` (new, optional, default None -- fully
-    backward compatible): a SEPARATE, dedicated commercial-evidence
-    dataframe (see _combine_scientific_and_commercial_evidence() above and
-    commercial_evidence_import.py). When provided and non-empty, it is
-    combined with ``evidence_df`` before market-row detection, so real
-    imported/cached commercial data is actually used instead of always
-    falling through to "Search not performed".
     """
     if not isinstance(result_df, pd.DataFrame) or result_df.empty:
         return result_df
@@ -1383,10 +1074,7 @@ def _attach_commercial_market_intelligence(
     if "Alternative_Plant" not in out.columns:
         return out
 
-    combined_evidence_df = _combine_scientific_and_commercial_evidence(
-        evidence_df, commercial_evidence_df
-    )
-    engine = MarketIntelligenceEngine(combined_evidence_df)
+    engine = MarketIntelligenceEngine(evidence_df)
 
     # IMPORTANT PERFORMANCE RULE: Step 5 passes a bounded pre-shortlist here.
     # Never silently expand that back to every raw candidate plant.
@@ -1432,7 +1120,6 @@ def _attach_commercial_market_intelligence(
             "Indication_Matched_Terms": None,
             "Indication_Unclear_Product_Count": None,
             "Indication_Explicit_Nonmatch_Product_Count": None,
-            "Commercial_Market_Evidence": [],
         }
         plant_mask = out["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(
             {p.lower() for p in plants}
@@ -1441,16 +1128,7 @@ def _attach_commercial_market_intelligence(
             if column not in out.columns:
                 out[column] = None
             if isinstance(value, (list, dict, set)):
-                # Assign via an explicit object-dtype Series so pandas
-                # never tries to broadcast a list-of-lists as a 2D array
-                # (that raised "Must have equal len keys and value" for
-                # any list-valued default, e.g. Commercial_Market_Evidence).
-                fill_series = pd.Series(
-                    [value] * int(plant_mask.sum()),
-                    index=out.index[plant_mask],
-                    dtype="object",
-                )
-                out.loc[plant_mask, column] = fill_series
+                out.loc[plant_mask, column] = [value] * int(plant_mask.sum())
             else:
                 out.loc[plant_mask, column] = value
         return out
@@ -1463,20 +1141,12 @@ def _attach_commercial_market_intelligence(
         "Market_Saturation": "Commercial_Market_Saturation",
         "Market_Evidence_Source_IDs": "Commercial_Market_Source_IDs",
         "Market_Retrieval_Timestamp": "Commercial_Market_Retrieval_Timestamp",
-        # Source-traceability pass (2026-09-09): carry the per-record market
-        # evidence list itself (product/brand/retailer/source_url_or_id per
-        # MarketEvidence row) through to Stage 6, not just the aggregate
-        # counts, so commercial claims can be traced to a clickable source
-        # instead of only a numeric hit count. No new data is fetched here;
-        # engine.evaluate() already builds this list from evidence already
-        # loaded this session.
-        "Market_Evidence": "Commercial_Market_Evidence",
     }
     keep = {
         "Commercial_Market_Status", "Commercial_Search_Status",
         "Commercial_Market_Data_Usable", "Commercial_Market_Score",
         "Commercial_Market_Saturation", "Commercial_Market_Source_IDs",
-        "Commercial_Market_Retrieval_Timestamp", "Commercial_Market_Evidence",
+        "Commercial_Market_Retrieval_Timestamp",
         "Commercial_Status_Overall", "Commercial_Status_For_Indication",
         "Commercial_Novelty_Status", "Commercial_Positioning",
         "Overall_Product_Hits", "Indication_Product_Hits",
@@ -1792,7 +1462,7 @@ def _cached_plant_compounds_df():
     parameter for what this now feeds into."""
     from supabase_data import load_plant_compounds_df
     try:
-        return load_plant_compounds_df(strict=True), True
+        return load_plant_compounds_df(), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1802,7 +1472,7 @@ def _cached_compound_profiles_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_compound_profiles_df
     try:
-        return load_compound_profiles_df(strict=True), True
+        return load_compound_profiles_df(), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1812,7 +1482,7 @@ def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_scientific_evidence_df
     try:
-        return load_scientific_evidence_df(strict=True), True
+        return load_scientific_evidence_df(), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1827,7 +1497,7 @@ def _cached_evidence_records_df():
     """
     from supabase_data import load_evidence_records_df
     try:
-        return load_evidence_records_df(strict=True), True
+        return load_evidence_records_df(), True
     except Exception:
         return pd.DataFrame(), False
 
@@ -1920,7 +1590,7 @@ def _pipeline_implementation_fingerprint() -> str:
     return digest.hexdigest()[:16]
 
 
-ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v3_demo_safe"
+ENGINE_CACHE_VERSION = "step5_runtime_egress_guard_v2"
 
 
 def _discovered_candidates_fingerprint(discovered_candidates):
@@ -2130,47 +1800,30 @@ def _no_go_mask(df: pd.DataFrame) -> pd.Series:
 
 
 def _report_ready_matches_current_pipeline(df: pd.DataFrame) -> bool:
-    """True iff every fingerprinted row in ``df`` was produced by the Stage 5
-    SCIENTIFIC code currently on disk.
-
-    Section 6 fix (2026-09-09): this now keys off
-    ``Scientific_Implementation_Fingerprint`` (pipeline_fingerprint.py)
-    rather than the old combined ``Pipeline_Implementation_Fingerprint``,
-    so a commercial/investor-view-only code change no longer marks a
-    scientifically valid Stage-5 result as stale. Falls back to the legacy
-    ``Pipeline_Implementation_Fingerprint`` column for older
-    report-ready frames written before this column existed, so an
-    in-progress session isn't punished mid-migration.
+    """True iff every fingerprinted row in ``df`` was produced by the Stage 5/6
+    code currently on disk.
 
     Pure/side-effect-free by design (no Streamlit calls) so it can be tested
     directly and reused at any real call site. An empty ``df`` or a frame with
-    no fingerprint column at all trivially has no fingerprints to disagree
-    with the current one, so it is treated as matching here -- callers that
-    need "no fingerprint at all" to count as stale (the real production
-    session-state path) decide that themselves, since a synthetic/unit-test
-    frame legitimately has no fingerprint and must not be penalized for it.
+    no ``Pipeline_Implementation_Fingerprint`` column at all trivially has no
+    fingerprints to disagree with the current one, so it is treated as
+    matching here -- callers that need "no fingerprint at all" to count as
+    stale (the real production session-state path) decide that themselves,
+    since a synthetic/unit-test frame legitimately has no fingerprint and
+    must not be penalized for it.
     """
     if not isinstance(df, pd.DataFrame) or df.empty:
         return True
-    fingerprint_column = (
-        "Scientific_Implementation_Fingerprint"
-        if "Scientific_Implementation_Fingerprint" in df.columns
-        else "Pipeline_Implementation_Fingerprint"
-    )
-    if fingerprint_column not in df.columns:
+    if "Pipeline_Implementation_Fingerprint" not in df.columns:
         return True
-    current_fingerprint = (
-        scientific_implementation_fingerprint()
-        if fingerprint_column == "Scientific_Implementation_Fingerprint"
-        else _pipeline_implementation_fingerprint()
-    )
+    current_pipeline_fingerprint = _pipeline_implementation_fingerprint()
     report_fingerprints = set(
-        df[fingerprint_column]
+        df["Pipeline_Implementation_Fingerprint"]
         .dropna().astype(str).str.strip().tolist()
     )
     if not report_fingerprints:
         return True
-    return report_fingerprints == {current_fingerprint}
+    return report_fingerprints == {current_pipeline_fingerprint}
 
 
 _STAGE6_STALE_PIPELINE_MESSAGE = (
@@ -2194,228 +1847,14 @@ def _stage6_stale_pipeline_warning(session_report_ready_df) -> str | None:
     """
     if not isinstance(session_report_ready_df, pd.DataFrame) or session_report_ready_df.empty:
         return None
-    has_scientific_column = "Scientific_Implementation_Fingerprint" in session_report_ready_df.columns
-    has_legacy_column = "Pipeline_Implementation_Fingerprint" in session_report_ready_df.columns
-    if not has_scientific_column and not has_legacy_column:
+    if "Pipeline_Implementation_Fingerprint" not in session_report_ready_df.columns:
         return _STAGE6_STALE_PIPELINE_MESSAGE
     if not _report_ready_matches_current_pipeline(session_report_ready_df):
         return _STAGE6_STALE_PIPELINE_MESSAGE
     return None
 
 
-def _human_source_column_config():
-    """Native Streamlit clickable-link configuration for Stage-6 primary sources.
-
-    Covers human, safety, commercial, regulatory and patent primary-source
-    columns (kept under this name for call-site backward compatibility).
-    Only columns actually present in a given table are configured by
-    Streamlit -- passing extra keys for columns a table doesn't have is a
-    no-op, so one shared config is safe to reuse everywhere.
-    """
-    try:
-        return {
-            "Human_Evidence_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary human source",
-                help="Open the strongest directly linked human-evidence source available for this candidate.",
-                display_text="View source",
-            ),
-            "Mechanistic_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary mechanistic source",
-                help="Open the evidence record supporting the primary target/mechanism claim.",
-                display_text="View source",
-            ),
-            "Primary_Scientific_Source_URL": st.column_config.LinkColumn(
-                "Primary scientific source",
-                help="Prefers direct human evidence, falls back to mechanistic evidence.",
-                display_text="View source",
-            ),
-            "Safety_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary safety source",
-                help="Open the evidence record actually supporting the safety assertion for this candidate.",
-                display_text="View source",
-            ),
-            "Commercial_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary commercial source",
-                help="Open the strongest verified direct market source for this candidate.",
-                display_text="View source",
-            ),
-            "Regulatory_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary regulatory source",
-                help="Open the official regulatory authority source, when assessed.",
-                display_text="View source",
-            ),
-            "Patent_Primary_Source_URL": st.column_config.LinkColumn(
-                "Primary patent source",
-                help="Open the official patent record, when assessed.",
-                display_text="View source",
-            ),
-        }
-    except Exception:
-        return {}
-
-
-def _render_stage6_reference_detail_section(df, *, section_key, label):
-    """Wire the universal grouped reference-detail renderer
-    (render_candidate_reference_detail) into a real production Stage-6
-    section.
-
-    Retires the old human-only "_render_human_evidence_source_details" --
-    that function is gone; this is the single reference-detail system for
-    Priority Validation, Expert Review, and R&D Discovery alike, so there
-    is never a second, conflicting detail view to keep in sync.
-
-    Uses one candidate selector per section (not one expander per row) --
-    a run can list dozens of candidates in Expert Review/Discovery, and an
-    expander per row there would be unusable. The selected candidate's
-    detail itself renders inside render_candidate_reference_detail()'s own
-    single expander, so nothing here nests an expander inside another.
-    """
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return
-    plant_col = _resolve_report_plant_column(df)
-    if plant_col is None:
-        return
-    plants = [str(p) for p in df[plant_col].dropna().tolist() if str(p).strip()]
-    if not plants:
-        return
-    st.caption(f"Select a candidate to inspect its full source references ({label}):")
-    selected = st.selectbox(
-        "Candidate", plants, key=f"rd_reference_detail_select_{section_key}",
-    )
-    # Streamlit's real selectbox always returns one of the options passed
-    # in; a non-string/unrecognized return (e.g. a wholesale-mocked `st` in
-    # a unit test that doesn't emulate widget selection) means there is no
-    # real selection to render against -- skip rather than raise.
-    if not isinstance(selected, str) or selected not in plants:
-        return
-    selected_rows = df[df[plant_col].astype(str) == selected]
-    if not selected_rows.empty:
-        render_candidate_reference_detail(selected_rows.iloc[0])
-
-
-def _reference_detail_source_table(sources, *, empty_note):
-    """Render one category's resolved sources as a compact, clickable table."""
-    if not sources:
-        st.caption(empty_note)
-        return
-    detail_rows = []
-    for src in sources:
-        detail_rows.append({
-            "Title": src.get("Title") or src.get("Product_Name"),
-            "Type": src.get("Source_Type") or src.get("Study_Type"),
-            "Year": src.get("Year"),
-            "Record / Org": src.get("Evidence_Record_ID") or src.get("Source_Organization"),
-            "Source": src.get("Resolved_URL"),
-        })
-    detail_df = pd.DataFrame(detail_rows)
-    try:
-        config = {"Source": st.column_config.LinkColumn("Source", display_text="View source")}
-    except Exception:
-        config = {}
-    st.dataframe(detail_df, width="stretch", column_config=config)
-    if any(not d.get("Source") for d in detail_rows):
-        st.caption("Internal record — external URL unavailable")
-
-
-def render_candidate_reference_detail(row):
-    """Grouped, per-candidate reference-detail view (spec §18).
-
-    Only renders a section when the row actually carries a record or an
-    explicit assessment status for that category -- an absent category is
-    left out entirely rather than shown as a misleading empty block.
-    """
-    plant = row.get("Alternative_Plant") or row.get("Plant") or row.get("Scientific_Name") or "Candidate"
-    with st.expander(f"📚 Reference detail — {plant}", expanded=False):
-        human_sources = parse_sources_json(row.get("Human_Evidence_Sources_JSON"))
-        if human_sources or "Human_Evidence_Source_Count" in row:
-            st.markdown("**📚 Human evidence**")
-            _reference_detail_source_table(human_sources, empty_note="No human evidence sources linked.")
-
-        safety_sources = parse_sources_json(row.get("Safety_Sources_JSON"))
-        if safety_sources or "Safety_Source_Count" in row:
-            st.markdown("**🛡 Safety**")
-            _reference_detail_source_table(safety_sources, empty_note="No safety sources linked.")
-            if _reference_detail_clean(row.get("Safety_Source_Resolution_Status")) == "SOURCE_LINKAGE_INCOMPLETE":
-                st.warning("Safety source linkage incomplete")
-
-        mechanistic_sources = parse_sources_json(row.get("Mechanistic_Sources_JSON"))
-        target_map = parse_claim_source_map(row.get("Target_Source_Map"))
-        mechanism_map = parse_claim_source_map(row.get("Mechanism_Source_Map"))
-        if mechanistic_sources or target_map or mechanism_map or "Mechanistic_Source_Count" in row:
-            st.markdown("**🧬 Mechanisms / targets**")
-            if not target_map and not mechanism_map:
-                _reference_detail_source_table(mechanistic_sources, empty_note="No mechanistic sources linked.")
-            for label, named_map in (("Target", target_map), ("Mechanism", mechanism_map)):
-                for name, entry in named_map.items():
-                    if not isinstance(entry, dict):
-                        continue
-                    evidence_ids = entry.get("evidence_ids") or []
-                    sources = entry.get("sources") or []
-                    st.markdown(f"**{label}: {name}**")
-                    if evidence_ids:
-                        st.caption(f"Evidence records: {', '.join(evidence_ids)}")
-                    if sources:
-                        for src in sources:
-                            if src.get("url"):
-                                st.markdown(f"- [{src.get('title') or 'View source'}]({src['url']})")
-                            elif src.get("title"):
-                                st.caption(f"- {src['title']} — internal record, no external URL")
-                    else:
-                        st.caption("No clickable source available for this claim.")
-
-        compound_map = parse_claim_source_map(row.get("Compound_Source_Map"))
-        if compound_map or "Compound_Source_Count" in row:
-            st.markdown("**🧪 Compounds**")
-            if not compound_map:
-                st.caption("No linked compounds.")
-            for name, entry in compound_map.items():
-                st.markdown(f"**{name}**")
-                plant_source = entry.get("plant_compound_source") or {}
-                if plant_source.get("url"):
-                    st.markdown(f"- Plant-compound source: [{plant_source.get('title') or 'View source'}]({plant_source['url']})")
-                elif plant_source.get("title"):
-                    st.caption(f"- Plant-compound source: {plant_source['title']}")
-                else:
-                    st.caption("- Plant-compound source: Internal curated provenance — external URL unavailable")
-                for target_name, refs in (entry.get("target_sources") or {}).items():
-                    for ref in refs:
-                        if ref.get("url"):
-                            st.markdown(f"  - Compound-target evidence ({target_name}): [{ref.get('title') or 'View source'}]({ref['url']})")
-                        elif ref.get("title"):
-                            st.caption(f"  - Compound-target evidence ({target_name}): {ref['title']}")
-
-        commercial_sources = parse_commercial_sources_json(row.get("Commercial_Sources_JSON"))
-        if commercial_sources or "Commercial_Source_Count" in row:
-            st.markdown("**🛒 Commercial**")
-            _reference_detail_source_table(commercial_sources, empty_note="No commercial sources linked.")
-
-        reg_status = row.get("Regulatory_Source_Status")
-        if reg_status is not None:
-            st.markdown("**⚖ Regulatory**")
-            if row.get("Regulatory_Primary_Source_URL"):
-                st.markdown(f"[{row.get('Regulatory_Primary_Source_Title') or 'View source'}]({row.get('Regulatory_Primary_Source_URL')})")
-            else:
-                st.caption(f"Not assessed ({reg_status}) — no fabricated regulatory citation.")
-
-        pat_status = row.get("Patent_Source_Status")
-        if pat_status is not None:
-            st.markdown("**📄 Patents**")
-            if row.get("Patent_Primary_Source_URL"):
-                st.markdown(f"[{row.get('Patent_Primary_Source_Title') or 'View source'}]({row.get('Patent_Primary_Source_URL')})")
-            else:
-                st.caption(f"Not assessed ({pat_status}) — no fabricated patent citation.")
-
-
-def _reference_detail_clean(value):
-    if value is None:
-        return ""
-    text = str(value).strip()
-    return "" if text.lower() in {"", "nan", "none", "null"} else text
-
-
-def _recommendation_block(
-    result_df, report_ready_df=None, evidence_df=None, regulatory_landscape_df=None,
-):
+def _recommendation_block(result_df, report_ready_df=None):
     # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
     # one-row-per-plant frame (merge_authoritative_scores()'s output) so
     # this block's picks can never disagree with the Step 5 shortlist or
@@ -2434,22 +1873,6 @@ def _recommendation_block(
     # render_rd_candidates_step() for the real freshness guard.
     if isinstance(report_ready_df, pd.DataFrame) and not report_ready_df.empty:
         df = report_ready_df.copy()
-        if isinstance(evidence_df, pd.DataFrame):
-            df = attach_human_evidence_source_traceability(df, evidence_df)
-            df = attach_safety_evidence_source_traceability(df, evidence_df)
-            df = attach_mechanistic_evidence_source_traceability(df, evidence_df)
-        df = attach_scientific_source_summary(df)
-        df = attach_compound_source_traceability(df)
-        df = attach_commercial_source_traceability(df)
-        df = attach_regulatory_patent_source_traceability(df, regulatory_landscape_df)
-        df = attach_claim_source_map(df)
-        df = attach_source_linkage_consistency(df)
-        # Apply the deterministic investor/audit adapter to the entire Stage-6
-        # frame (not only the orange Discovery subsection) so consistency and
-        # source-linkage diagnostics are visible in Priority and Expert Review
-        # as well. This appends presentation fields only; no rows/scores/decisions
-        # are changed.
-        df, _ = build_investor_opportunity_view(df, exclude_non_defensible=False)
 
         call_col = "Go_Investigate_Hold_NoGo" if "Go_Investigate_Hold_NoGo" in df.columns else None
 
@@ -2593,37 +2016,6 @@ def _recommendation_block(
                 "Evidence_Adjudication_Evidence_Count",
                 "AI_Direct_Outcome_Evidence_Count",
                 "AI_Direct_Human_Outcome_Evidence_Count",
-                "Scientific_Source_Count",
-                "Primary_Scientific_Source_Title",
-                "Primary_Scientific_Source_URL",
-                "Human_Evidence_Source_Count",
-                "Human_Evidence_Resolved_Source_Count",
-                "Human_Evidence_Unresolved_Source_Count",
-                "Human_Evidence_Primary_Source_Title",
-                "Human_Evidence_Primary_Source_URL",
-                "Human_Evidence_Source_Resolution_Status",
-                "Human_Evidence_Status",
-                "Mechanistic_Source_Count",
-                "Mechanistic_Primary_Source_URL",
-                "Compound_Source_Count",
-                "Safety_Source_Count",
-                "Safety_Primary_Source_Title",
-                "Safety_Primary_Source_URL",
-                "Safety_Source_Resolution_Status",
-                "Commercial_Source_Count",
-                "Commercial_Primary_Source_Title",
-                "Commercial_Primary_Source_URL",
-                "Commercial_Source_Resolution_Status",
-                "Regulatory_Source_Count",
-                "Regulatory_Primary_Source_URL",
-                "Patent_Source_Count",
-                "Patent_Primary_Source_URL",
-                "Evidence_Source_Linkage_Status",
-                "Evidence_Source_Linkage_Issues",
-                "Claim_Source_Map",
-                "Derived_Claim_Provenance",
-                "Evidence_Consistency_Status",
-                "Evidence_Consistency_Issues",
                 "Evidence_Coherence_Status",
                 "Evidence_Adjudication_Fallback_Reason",
                 "Indication_Evidence_Direction",
@@ -2728,14 +2120,7 @@ def _recommendation_block(
             c for c in ["Stage_6_Section"] + display_cols
             if c in _recommended_display.columns
         ]
-        st.dataframe(
-            _recommended_display[_primary_cols].head(10),
-            width="stretch",
-            column_config=_human_source_column_config(),
-        )
-        _render_stage6_reference_detail_section(
-            _recommended_display.head(10), section_key="priority", label="Priority candidates"
-        )
+        st.dataframe(_recommended_display[_primary_cols].head(10), width="stretch")
 
         # Unresolved candidates get their own amber section.  They are not
         # labelled weak/rejected because EXPERT REVIEW REQUIRED means the
@@ -2760,14 +2145,7 @@ def _recommendation_block(
                 ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
                 if c in _review_display.columns
             ]
-            st.dataframe(
-                _review_display[_review_cols].head(20),
-                width="stretch",
-                column_config=_human_source_column_config(),
-            )
-            _render_stage6_reference_detail_section(
-                _review_display.head(20), section_key="expert_review", label="Expert review"
-            )
+            st.dataframe(_review_display[_review_cols].head(20), width="stretch")
 
         # The red section is reserved for genuinely non-actionable scientific
         # outcomes (insufficient evidence / Hold / hard No-Go / excluded), not
@@ -2785,11 +2163,7 @@ def _recommendation_block(
                 ["Why_Selected_or_Rejected", "Triage_Gate_Reasons"]
                 if c in _weak_display.columns
             ]
-            st.dataframe(
-                _weak_display[_weak_cols].head(20),
-                width="stretch",
-                column_config=_human_source_column_config(),
-            )
+            st.dataframe(_weak_display[_weak_cols].head(20), width="stretch")
 
         # RD Discovery Hypotheses -- a THIRD, positively-framed lane
         # (external review, 2026-09-08): a mechanism-only, under-studied
@@ -2839,58 +2213,21 @@ def _recommendation_block(
                 "research question, not because the safety concern is "
                 "resolved; see Safety_Flags / Safety_Concern_Level."
             )
-            # Investor/R&D decision view (Sections 1/13/31 of the 2026-09-09
-            # follow-up): the compact table below is built from
-            # post_discovery_investor_view.py, not from raw pipeline
-            # columns -- every candidate shown gets a deterministic
-            # Why_Interesting / What_Is_New / Key_Evidence_Gap / Next_R&D_
-            # Step / Commercial_Opportunity(_Class) rather than a bare
-            # score. Candidates with no defensible admission provenance
-            # (Section 8/22) are excluded from THIS compact view but remain
-            # in the full audit export below.
-            _discovery_full_df, _discovery_compact_df = build_investor_opportunity_view(
-                _discovery_view
-            )
-            if not _discovery_compact_df.empty:
-                st.dataframe(
-                    _discovery_compact_df.head(20),
-                    width="stretch",
-                    column_config=_human_source_column_config(),
+            _discovery_cols = [
+                c for c in (
+                    ["Alternative_Plant", "RD_Discovery_Lane",
+                     "Discovery_Potential_Score", "Evidence_Maturity_Score",
+                     "Discovery_Linked_Targets", "Discovery_Linked_Mechanisms",
+                     "Discovery_Linked_Compounds", "Discovery_Compound_Specificity",
+                     "Pipeline_Implementation_Fingerprint"]
+                    + display_cols + ["Why_Selected_or_Rejected"]
                 )
-                _render_stage6_reference_detail_section(
-                    _discovery_full_df.head(20), section_key="discovery", label="R&D Discovery"
-                )
-            else:
-                st.caption(
-                    "No candidate in this run has a defensible admission "
-                    "rationale for the compact investor view; see the full "
-                    "audit export for details."
-                )
-
-            with st.expander("Full scientific/audit columns for this section"):
-                _discovery_cols = [
-                    c for c in (
-                        ["Alternative_Plant", "RD_Discovery_Lane",
-                         "Discovery_Potential_Score", "Evidence_Maturity_Score",
-                         "Discovery_Linked_Targets", "Discovery_Linked_Mechanisms",
-                         "Discovery_Linked_Compounds", "Discovery_Compound_Specificity",
-                         "Pipeline_Implementation_Fingerprint",
-                         "Scientific_Implementation_Fingerprint",
-                         "Commercial_Implementation_Fingerprint"]
-                        + display_cols + ["Why_Selected_or_Rejected"]
-                    )
-                    if c in _discovery_full_df.columns
-                ]
-                # De-duplicate while preserving the Discovery_Potential_Score
-                # ordering build_rd_discovery_hypothesis_view() already applied.
-                _discovery_cols = list(dict.fromkeys(_discovery_cols))
-                st.dataframe(
-                    _discovery_full_df[_discovery_cols].head(20),
-                    width="stretch",
-                    column_config=_human_source_column_config(),
-                )
-
-            st.session_state["rd_discovery_investor_view_full_df"] = _discovery_full_df
+                if c in _discovery_view.columns
+            ]
+            # De-duplicate while preserving the Discovery_Potential_Score
+            # ordering build_rd_discovery_hypothesis_view() already applied.
+            _discovery_cols = list(dict.fromkeys(_discovery_cols))
+            st.dataframe(_discovery_view[_discovery_cols].head(20), width="stretch")
 
         return
 
@@ -2998,57 +2335,6 @@ def render_rd_candidates_step(inputs):
         "known plants, regulatory status, patent readiness, retail/brand search readiness, "
         "and market saturation signals."
     )
-
-    with st.expander("Import structured commercial evidence (optional)", expanded=False):
-        st.caption(
-            "No live retail/brand search provider is configured for this "
-            "deployment (Commercial_Opportunity stays 'not assessed' without "
-            "one -- see commercial_evidence_provider.py). If you already have "
-            "a spreadsheet of known products/brands/retailers per plant, "
-            "import it here instead -- no code edits needed. Minimum columns: "
-            "Scientific_Name (or Plant), Product_Name, and Brand or "
-            "Retailer_or_Seller. Optional: Market_Source_Type, Country_Market, "
-            "Indication, Dosage_Form, Preparation, Source_URL_or_ID, "
-            "Retrieval_Timestamp."
-        )
-        uploaded_commercial_file = st.file_uploader(
-            "Commercial evidence file (.csv or .xlsx)",
-            type=["csv", "xlsx", "xls"],
-            key="rd_commercial_evidence_uploader",
-        )
-        if uploaded_commercial_file is not None:
-            try:
-                if uploaded_commercial_file.name.lower().endswith((".xlsx", ".xls")):
-                    raw_import_df = pd.read_excel(uploaded_commercial_file)
-                else:
-                    raw_import_df = pd.read_csv(uploaded_commercial_file)
-            except Exception as exc:
-                st.error(f"Could not read that file: {exc}")
-                raw_import_df = None
-
-            if raw_import_df is not None:
-                normalized_df, rejected_rows = normalize_commercial_evidence_import(raw_import_df)
-                if not normalized_df.empty:
-                    st.session_state["commercial_evidence_df"] = normalized_df
-                    st.success(
-                        f"Imported {len(normalized_df)} commercial evidence row(s) "
-                        f"covering {normalized_df['Scientific_Name'].nunique()} plant(s)."
-                    )
-                if rejected_rows:
-                    st.warning(f"{len(rejected_rows)} row(s) were not usable and were skipped:")
-                    st.dataframe(pd.DataFrame(rejected_rows), use_container_width=True)
-                if normalized_df.empty and not rejected_rows:
-                    st.info("No rows found in that file.")
-
-        existing_commercial_df = _get_commercial_evidence_df()
-        if isinstance(existing_commercial_df, pd.DataFrame) and not existing_commercial_df.empty:
-            st.caption(
-                f"Active commercial evidence: {len(existing_commercial_df)} row(s), "
-                f"{existing_commercial_df['Scientific_Name'].nunique() if 'Scientific_Name' in existing_commercial_df.columns else '?'} plant(s)."
-            )
-            if st.button("Clear imported commercial evidence", key="rd_clear_commercial_evidence"):
-                st.session_state.pop("commercial_evidence_df", None)
-                st.rerun()
 
     live_market = st.checkbox(
         "Include live patent / retail search if API keys are configured",
@@ -3468,8 +2754,6 @@ def render_rd_candidates_step(inputs):
 
     evidence_df_for_run = _get_evidence_df()
     pipeline_fingerprint = _pipeline_implementation_fingerprint()
-    scientific_fingerprint = scientific_implementation_fingerprint()
-    commercial_fingerprint = commercial_implementation_fingerprint()
     run_key = _candidate_discovery_run_key(
         indication=indication,
         dosage_form=dosage_form,
@@ -3555,13 +2839,6 @@ def render_rd_candidates_step(inputs):
                     f"build_engine done elapsed={time.perf_counter() - _perf_t0:.3f} "
                     f"novel_discovered_candidates={len(novel_discovered_candidates)}"
                 )
-                if not getattr(engine, "data_source_reliable", True):
-                    st.warning(
-                        "⚠️ Core scientific database connectivity is incomplete. "
-                        "The run will continue in degraded mode using available/fallback data, "
-                        "but final recommendations are capped at Investigate/Hold and must not "
-                        "be interpreted as a complete evidence assessment."
-                    )
 
                 with st.spinner("Discovering and scoring R&D candidates..."):
                     _perf_t_run = time.perf_counter()
@@ -3591,8 +2868,6 @@ def render_rd_candidates_step(inputs):
                     # lets a CSV prove which code implementation generated it,
                     # eliminating ambiguity after Streamlit hot reloads.
                     result_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                    result_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                    result_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
 
                 # The authoritative Stage-5 catalogue pre-screen now runs INSIDE
                 # indication_candidate_discovery, before its expensive per-plant
@@ -3637,8 +2912,6 @@ def render_rd_candidates_step(inputs):
                     )
                     if isinstance(plant_summary_df, pd.DataFrame) and not plant_summary_df.empty:
                         plant_summary_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                        plant_summary_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                        plant_summary_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
                     market_plants = _step5_commercial_enrichment_plants(plant_summary_df)
                     _perf(
                         f"shortlist done plants={len(plant_summary_df)} "
@@ -3655,7 +2928,6 @@ def render_rd_candidates_step(inputs):
                         dosage_form=dosage_form,
                         market=market,
                         candidate_plants=market_plants,
-                        commercial_evidence_df=_get_commercial_evidence_df(),
                     )
                     _perf(
                         f"commercial enrichment done plants={len(market_plants)} "
@@ -3674,42 +2946,14 @@ def render_rd_candidates_step(inputs):
                     progress.progress(0.95, text="Updating scores with commercial data…")
                     if market_plants:
                         _perf_t_rescore = time.perf_counter()
-                        # Live-demo reliability: commercial intelligence is an
-                        # additive/optional layer.  A malformed commercial field
-                        # must never discard the already-computed scientific
-                        # shortlist.  Preserve the pre-commercial scores and
-                        # continue in a clearly degraded state if this refresh
-                        # fails for any reason.
-                        try:
-                            plant_summary_df = rescore_commercial_component(
-                                plant_summary_df, result_df, market_plants,
-                            )
-                            _perf(
-                                f"commercial rescore done plants={len(market_plants)} "
-                                f"elapsed={time.perf_counter() - _perf_t_rescore:.3f}"
-                            )
-                        except Exception as _commercial_rescore_exc:
-                            st.session_state["rd_commercial_rescore_status"] = "COMPLETE_WITH_LIMITATIONS"
-                            st.session_state["rd_commercial_rescore_error"] = (
-                                f"{type(_commercial_rescore_exc).__name__}: {_commercial_rescore_exc}"
-                            )
-                            _perf(
-                                "commercial rescore skipped; scientific shortlist preserved "
-                                f"({type(_commercial_rescore_exc).__name__}: {_commercial_rescore_exc})"
-                            )
-                            st.warning(
-                                "Commercial score refresh was unavailable for this run. "
-                                "The scientific shortlist is still valid and is being shown without "
-                                "commercial re-scoring."
-                            )
+                        plant_summary_df = rescore_commercial_component(
+                            plant_summary_df, result_df, market_plants,
+                        )
+                        _perf(
+                            f"commercial rescore done plants={len(market_plants)} "
+                            f"elapsed={time.perf_counter() - _perf_t_rescore:.3f}"
+                        )
                     plant_summary_df = _finalize_step5_summary(plant_summary_df)
-                    # Live-demo fail-safe: from this point the deterministic
-                    # scientific shortlist is a valid Stage-5 output. Persist it
-                    # immediately, before optional AI adjudication / reporting
-                    # layers run, so a downstream enhancement failure can never
-                    # make the UI fall back to "Scientific shortlist — 0".
-                    st.session_state["rd_candidate_plant_summary_df"] = plant_summary_df
-                    st.session_state["rd_candidate_triage_audit_df"] = triage_audit_df
                 else:
                     plant_summary_df, triage_audit_df = pd.DataFrame(), pd.DataFrame()
 
@@ -3748,27 +2992,10 @@ def render_rd_candidates_step(inputs):
                     _adjudication_evidence_df = _authoritative_ai_evidence_df(
                         result_df, triage_audit_df
                     )
-                    try:
-                        plant_summary_df = _run_evidence_adjudication(
-                            plant_summary_df, _adjudication_evidence_df, indication,
-                            transferability_target_context,
-                        )
-                    except Exception as _adjudication_exc:
-                        # AI adjudication is additive.  Never discard a valid
-                        # deterministic scientific shortlist because one cached
-                        # or malformed adjudication field has the wrong shape.
-                        st.session_state["rd_adjudication_status"] = "COMPLETE_WITH_LIMITATIONS"
-                        st.session_state["rd_adjudication_error"] = (
-                            f"{type(_adjudication_exc).__name__}: {_adjudication_exc}"
-                        )
-                        _perf(
-                            "evidence adjudication skipped; deterministic shortlist preserved "
-                            f"({type(_adjudication_exc).__name__}: {_adjudication_exc})"
-                        )
-                        st.warning(
-                            "AI evidence adjudication was unavailable for this run. "
-                            "The deterministic scientific shortlist is still valid and is being shown."
-                        )
+                    plant_summary_df = _run_evidence_adjudication(
+                        plant_summary_df, _adjudication_evidence_df, indication,
+                        transferability_target_context,
+                    )
                     _perf(
                         f"evidence adjudication done "
                         f"elapsed={time.perf_counter() - _perf_t_adjudication:.3f} "
@@ -3786,53 +3013,40 @@ def render_rd_candidates_step(inputs):
                     # directly, so they can never disagree with the shortlist
                     # above about which plant is the top candidate.
                     _perf_t_merge = time.perf_counter()
-                    try:
-                        st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
-                            result_df, plant_summary_df
-                        )
-                        if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
-                            st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                            st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                            st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
-                        _perf(
-                            f"merge_authoritative_scores() done "
-                            f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
-                            f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                        )
-                        _perf_t_decision = time.perf_counter()
-                        st.session_state["rd_decision_metadata"] = build_decision_metadata(
-                            st.session_state["rd_report_ready_df"],
-                            indication=indication, dosage_form=dosage_form, market=market,
-                            discovery_mode=_detect_discovery_mode(result_df),
-                        )
-                        _perf(
-                            f"build_decision_metadata() done "
-                            f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
-                            f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
-                        )
-                        st.session_state["rd_report_ready_df"] = attach_decision_explanations(
-                            st.session_state["rd_report_ready_df"],
-                            triage_audit_df,
-                            decision_metadata=st.session_state["rd_decision_metadata"],
-                        )
-                    except Exception as _reporting_exc:
-                        # Reporting/explainability is downstream of the scientific
-                        # shortlist. Never sacrifice Stage 5 results because an
-                        # optional report field has a malformed cached value.
-                        st.session_state["rd_reporting_status"] = "COMPLETE_WITH_LIMITATIONS"
-                        st.session_state["rd_reporting_error"] = (
-                            f"{type(_reporting_exc).__name__}: {_reporting_exc}"
-                        )
-                        st.session_state["rd_report_ready_df"] = plant_summary_df.copy()
-                        st.session_state["rd_decision_metadata"] = {}
-                        _perf(
-                            "report/explainability layer skipped; scientific shortlist preserved "
-                            f"({type(_reporting_exc).__name__}: {_reporting_exc})"
-                        )
-                        st.warning(
-                            "Detailed report enrichment was unavailable for this run. "
-                            "The scientific shortlist and scores are still shown."
-                        )
+                    st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
+                        result_df, plant_summary_df
+                    )
+                    if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
+                        st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
+                    _perf(
+                        f"merge_authoritative_scores() done "
+                        f"elapsed={time.perf_counter() - _perf_t_merge:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+                    # Phase 4 (IMPLEMENTATION_PLAN.md) — computed ONCE per
+                    # decision run, from the same report_ready_df just built.
+                    # Both the downloaded report and the persisted decision
+                    # record read this exact dict — see build_decision_metadata()'s
+                    # own docstring.
+                    _perf_t_decision = time.perf_counter()
+                    st.session_state["rd_decision_metadata"] = build_decision_metadata(
+                        st.session_state["rd_report_ready_df"],
+                        indication=indication, dosage_form=dosage_form, market=market,
+                        discovery_mode=_detect_discovery_mode(result_df),
+                    )
+                    _perf(
+                        f"build_decision_metadata() done "
+                        f"elapsed={time.perf_counter() - _perf_t_decision:.3f} "
+                        f"(cumulative={time.perf_counter() - _perf_t0:.3f})"
+                    )
+                    # PHASE 6 — additive structured causal trace.  This reads the
+                    # authoritative score/gate outputs and triage audit only; it never
+                    # changes scoring, gating, ranking, connectors, or UI behaviour.
+                    st.session_state["rd_report_ready_df"] = attach_decision_explanations(
+                        st.session_state["rd_report_ready_df"],
+                        triage_audit_df,
+                        decision_metadata=st.session_state["rd_decision_metadata"],
+                    )
 
                     counts = (
                         plant_summary_df["Scientific_Triage_Status"].value_counts()
@@ -4012,26 +3226,6 @@ def render_rd_candidates_step(inputs):
             st.session_state["rd_report_ready_df"] = _merge_and_sync_final_decision_status(
                 result_df, plant_summary_df
             )
-            # Diagnosis fix (2026-09-09 production-integration pass): this
-            # fallback path (session lost rd_candidate_plant_summary_df but
-            # kept result_df -- e.g. a Streamlit restart/partial-state
-            # session) rebuilds report_ready_df exactly like the main path
-            # above, but was never stamping the three implementation
-            # fingerprints onto it. _report_ready_matches_current_pipeline()/
-            # _stage6_stale_pipeline_warning() then found NO fingerprint
-            # column at all on this frame and unconditionally treated it as
-            # stale, blocking Stage 6 and telling the user to rerun the full
-            # (expensive, potentially AI-calling) Candidate Discovery
-            # pipeline -- defeating the entire point of this fallback path
-            # existing. Stamped identically to the main path (same
-            # pipeline_fingerprint/scientific_fingerprint/commercial_fingerprint
-            # already computed once above in this function) so a
-            # fallback-path result renders/exports normally instead of being
-            # spuriously blocked.
-            if isinstance(st.session_state["rd_report_ready_df"], pd.DataFrame):
-                st.session_state["rd_report_ready_df"]["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                st.session_state["rd_report_ready_df"]["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                st.session_state["rd_report_ready_df"]["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
             _perf(f"fallback-path merge_authoritative_scores() done elapsed={time.perf_counter() - _perf_t_merge_fallback:.3f}")
             _perf_t_decision_fallback = time.perf_counter()
             st.session_state["rd_decision_metadata"] = build_decision_metadata(
@@ -4043,10 +3237,6 @@ def render_rd_candidates_step(inputs):
         report_ready_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(report_ready_df, pd.DataFrame):
             report_ready_df = _merge_and_sync_final_decision_status(result_df, plant_summary_df)
-            if isinstance(report_ready_df, pd.DataFrame):
-                report_ready_df["Pipeline_Implementation_Fingerprint"] = pipeline_fingerprint
-                report_ready_df["Scientific_Implementation_Fingerprint"] = scientific_fingerprint
-                report_ready_df["Commercial_Implementation_Fingerprint"] = commercial_fingerprint
             st.session_state["rd_report_ready_df"] = report_ready_df
         decision_metadata = st.session_state.get("rd_decision_metadata")
         if not decision_metadata:
@@ -4056,38 +3246,7 @@ def render_rd_candidates_step(inputs):
             )
             st.session_state["rd_decision_metadata"] = decision_metadata
 
-        # Issue 1 (2026-09-09 second follow-up): commercial-only refresh,
-        # wired into the actual production UI. refresh_commercial_and_
-        # investor_view() already existed and was already tested
-        # (test_commercial_only_refresh_no_ai_calls.py), but nothing called
-        # it from a real user action -- this button is that missing call
-        # site. It reuses the ALREADY-COMPUTED result_df/plant_summary_df
-        # in session state; it does not call engine.run(),
-        # build_plant_candidate_shortlist(), evidence adjudication, or any
-        # AI service (see refresh_commercial_and_investor_view()'s own
-        # docstring for the exact guarantee). The button body itself is a
-        # thin call into _handle_commercial_refresh_button_click() so the
-        # real click-to-session-state sequence is directly unit-testable
-        # (see test_commercial_refresh_ui_path.py) without needing to
-        # drive the whole render_rd_candidates_step() Streamlit form.
-        if st.button(
-            "🔄 Refresh Commercial Intelligence / Investor View",
-            key="rd_refresh_commercial_view_btn",
-            help=(
-                "Re-runs ONLY commercial enrichment, commercial "
-                "classification, and the investor-view build from the "
-                "existing Stage-5 scientific result. Does not rerun "
-                "scientific discovery, scoring, or any AI evidence "
-                "adjudication -- no OpenAI/Anthropic calls."
-            ),
-        ):
-            with st.spinner("Refreshing commercial intelligence and investor view..."):
-                _handle_commercial_refresh_button_click(
-                    result_df, plant_summary_df,
-                    indication=indication, dosage_form=dosage_form, market=market,
-                )
-            st.success("Commercial intelligence and investor view refreshed.")
-            st.rerun()        # Additive AI R&D insight layer -- rendered here, clearly separated
+        # Additive AI R&D insight layer -- rendered here, clearly separated
         # from the deterministic score/evidence/safety/regulatory/commercial
         # sections below. Renders nothing if no insights were computed for
         # this run (e.g. AI was unavailable) -- see _render_ai_rd_insights().
@@ -4384,45 +3543,6 @@ def render_rd_candidates_step(inputs):
         _decision_table_source_df = st.session_state.get("rd_report_ready_df")
         if not isinstance(_decision_table_source_df, pd.DataFrame) or _decision_table_source_df.empty:
             _decision_table_source_df = result_df
-        # Export requirement (2026-09-09 follow-up): the downloadable
-        # decision table must be audit-rich, including the investor/audit
-        # fields (Why_Interesting, What_Is_New, Key_Evidence_Gap,
-        # Next_R&D_Step, Discovery_Admission_Path/Rationale,
-        # Commercial_Opportunity_Score/Class/Assessment_*, Development_
-        # Readiness_Score, both fingerprints) -- not just the compact
-        # on-screen columns. build_investor_opportunity_view()'s full_df
-        # is exactly report_ready_df with those columns appended.
-        if isinstance(_decision_table_source_df, pd.DataFrame) and not _decision_table_source_df.empty:
-            _evidence_df_for_export = _get_evidence_df()
-            _decision_table_source_df = attach_human_evidence_source_traceability(
-                _decision_table_source_df, _evidence_df_for_export
-            )
-            _decision_table_source_df = attach_safety_evidence_source_traceability(
-                _decision_table_source_df, _evidence_df_for_export
-            )
-            _decision_table_source_df = attach_mechanistic_evidence_source_traceability(
-                _decision_table_source_df, _evidence_df_for_export
-            )
-            _decision_table_source_df = attach_scientific_source_summary(
-                _decision_table_source_df
-            )
-            _decision_table_source_df = attach_compound_source_traceability(
-                _decision_table_source_df
-            )
-            _decision_table_source_df = attach_commercial_source_traceability(
-                _decision_table_source_df
-            )
-            _decision_table_source_df = attach_regulatory_patent_source_traceability(
-                _decision_table_source_df,
-                st.session_state.get("rd_candidates_df_enriched"),
-            )
-            _decision_table_source_df = attach_claim_source_map(_decision_table_source_df)
-            _decision_table_source_df = attach_source_linkage_consistency(
-                _decision_table_source_df
-            )
-            _decision_table_source_df, _ = build_investor_opportunity_view(
-                _decision_table_source_df,
-            )
         st.download_button(
             "Download decision table (CSV)",
             data=_decision_table_source_df.to_csv(index=False).encode("utf-8"),
@@ -4490,10 +3610,7 @@ def render_rd_candidates_step(inputs):
         if _stale_warning:
             st.warning(_stale_warning)
         else:
-            _recommendation_block(
-                result_df, _session_report_ready_df, evidence_df=_get_evidence_df(),
-                regulatory_landscape_df=st.session_state.get("rd_candidates_df_enriched"),
-            )
+            _recommendation_block(result_df, _session_report_ready_df)
 
     _render_ai_rd_insights()
     _render_ai_status_summary()

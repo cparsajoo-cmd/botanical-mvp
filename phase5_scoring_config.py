@@ -74,13 +74,6 @@ MOSTLY_NULL = "MOSTLY_NULL"
 CONSISTENT_NULL = "CONSISTENT_NULL"
 MOSTLY_NEGATIVE = "MOSTLY_NEGATIVE"
 INSUFFICIENT = "INSUFFICIENT"
-# DEFECT 1 FIX (pre-investor reliability repair): a distinct state for
-# "evidence records exist in this tier, but none of them has a resolved
-# result direction" (e.g. Result_Direction was never extracted). This is
-# honestly different from INSUFFICIENT (no evidence at all) and must never
-# be reported as MIXED (a genuine positive/negative disagreement) or
-# silently folded into a positive classification. See evidence_consistency.py.
-INSUFFICIENT_DIRECTION_DATA = "INSUFFICIENT_DIRECTION_DATA"
 
 DIRECTION_FACTORS = {
     CONSISTENT_POSITIVE: 1.00,
@@ -90,9 +83,6 @@ DIRECTION_FACTORS = {
     CONSISTENT_NULL: 0.00,
     MOSTLY_NEGATIVE: -0.20,
     INSUFFICIENT: 0.00,
-    # No positive direction credit for unknown-direction evidence (defect 1,
-    # requirement C) -- same treatment as INSUFFICIENT.
-    INSUFFICIENT_DIRECTION_DATA: 0.00,
 }
 
 CONSISTENCY_FACTORS = {
@@ -103,7 +93,6 @@ CONSISTENCY_FACTORS = {
     CONSISTENT_NULL: 1.00,
     MOSTLY_NEGATIVE: 0.85,
     INSUFFICIENT: 0.70,
-    INSUFFICIENT_DIRECTION_DATA: 0.70,
 }
 
 # ---------------------------------------------------------------------------
@@ -114,30 +103,14 @@ PARTIAL = "PARTIAL"
 UNKNOWN = "UNKNOWN"
 MISMATCH = "MISMATCH"
 NOT_APPLICABLE = "NOT_APPLICABLE"
-# DEFECT 3 FIX (pre-investor reliability repair): a dimension the TARGET
-# PRODUCT itself never specified (e.g. no route was entered for this
-# project) is a different fact from a dimension the EVIDENCE record fails
-# to report when the target DID specify it. The former is incompleteness
-# in the product definition; the latter is genuine scientific uncertainty
-# about transferability. Both used to collapse to UNKNOWN and get
-# multiplied into Scientific_Evidence_Score via the same min() -- this is
-# what drove Plant_Applicability_Factor to ~0.60 for nearly every
-# candidate regardless of how well-matched the evidence actually was.
-# TARGET_UNSPECIFIED is excluded from aggregation entirely (like
-# NOT_APPLICABLE) so an incomplete target/product definition no longer
-# penalizes the scientific evidence score; it is surfaced instead via
-# Target_Definition_Completeness so it can still block a "fully
-# transferable"/Go conclusion downstream without corrupting the score.
-TARGET_UNSPECIFIED = "TARGET_UNSPECIFIED"
 
 APPLICABILITY_FACTORS = {
     MATCH: 1.00,
     PARTIAL: 0.80,
     UNKNOWN: 0.60,
     MISMATCH: 0.25,
-    # NOT_APPLICABLE and TARGET_UNSPECIFIED are intentionally absent: both
-    # are excluded from aggregation entirely (never contribute a factor).
-    # NOT_APPLICABLE per §3.5; TARGET_UNSPECIFIED per the defect-3 fix above.
+    # NOT_APPLICABLE is intentionally absent: it is excluded from
+    # aggregation entirely (never contributes a factor), per §3.5.
 }
 
 # When NO dimension is evaluable at all (every dimension NOT_APPLICABLE,
@@ -178,14 +151,7 @@ MARKET_STATUS_POINTS = {
     "Commercial evidence reported": 2.0,
     "No verified product found": 6.0,
     "Conflicting evidence": -2.0,
-    # DEFECT 6 FIX (pre-investor reliability repair): this used to be +3.0,
-    # a positive market-opportunity reward for a search that did not
-    # actually complete -- contradicting the neutral treatment described in
-    # the comment directly above this table's only call site
-    # (botanical_rd_candidate_engine.py::_score_candidate(), "same neutral
-    # treatment as not performed, not a bonus"). An incomplete search must
-    # not outscore "not performed"; both are now identically neutral.
-    "Search incomplete": 0.0,
+    "Search incomplete": 3.0,
     "Unknown": 0.0,
     "Search not performed": 0.0,
     "Source unavailable": 0.0,

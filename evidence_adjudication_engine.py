@@ -112,6 +112,7 @@ from general_indication_relevance import (
 )
 from indication_semantics import resolve_indication_semantics, normalize_indication_text
 from scientific_phrase_matcher import phrase_present
+from candidate_attribution import combined_record_text, verify_candidate_attribution
 
 # ---------------------------------------------------------------------
 # Controlled vocabularies (part 5 of the request)
@@ -563,6 +564,40 @@ def build_adjudication_evidence_items(
         if not outcome_specific and match_type.strip().upper() == "EXPLICIT_FIELD":
             outcome_specific = True
 
+        # PROBLEM 1 FIX (evidence attribution / source relevance) --
+        # candidate attribution. outcome_specific above establishes that the
+        # record's own reported outcome concerns the queried indication, but
+        # nothing previously checked that the record is actually ABOUT the
+        # candidate botanical rather than merely stamped with its name by a
+        # collector's search-query context (root cause: connectors set
+        # Scientific_Name from the query, not from verified source content
+        # -- see candidate_attribution.py and clinicaltrials_connector.py /
+        # evidence_collector.py). A record can only become verified,
+        # outcome-specific, DIRECT human evidence when BOTH candidate
+        # attribution and outcome attribution are established -- neither
+        # one alone is sufficient (the cahier's explicit requirement).
+        #
+        # Canonical-field-first, exactly mirroring Canonical_Study_Context /
+        # Outcome_Specific_Direct_Evidence above: when a connector or an
+        # earlier pipeline stage already computed and persisted
+        # Candidate_Attribution_Verified, that verified judgment is
+        # authoritative. When the field is ABSENT (every pre-existing
+        # record ingested before this fix, and every synthetic fixture in
+        # the existing test suite that never populated it), behavior is
+        # unchanged from before this fix -- this is an additive, opt-in
+        # gate, not a retroactive re-verification of the entire historical
+        # corpus (a documented remaining limitation; see the deliverables
+        # report). When the field IS present and False, this fails closed
+        # regardless of anything else, per the cahier's explicit
+        # fail-safe-behavior requirement.
+        canonical_attribution = row.get("Candidate_Attribution_Verified") if hasattr(row, "get") else None
+        if canonical_attribution is not None and str(canonical_attribution).strip().lower() not in {"", "nan", "none"}:
+            candidate_specific = str(canonical_attribution).strip().lower() in {"true", "1", "yes"}
+        else:
+            candidate_specific = True
+        if not candidate_specific:
+            outcome_specific = False
+
         item = {
             "evidence_id": evidence_id,
             "scientific_name": plant_name,
@@ -578,6 +613,7 @@ def build_adjudication_evidence_items(
             "population": population or None,
             "endpoint_outcome": outcome_text or _row_get(row, "Indication_Match_Reason") or None,
             "outcome_specific": outcome_specific,
+            "candidate_specific": candidate_specific,
             "sample_size": _row_get(row, "Sample_Size", "sample_size") or None,
             "plant_part": _row_get(row, "Plant_Part", "plant_part") or None,
             "preparation": _row_get(row, "Evidence_Preparation", "Preparation", "preparation") or None,

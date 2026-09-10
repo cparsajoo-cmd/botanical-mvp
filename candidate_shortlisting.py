@@ -91,6 +91,7 @@ from general_indication_relevance import (
     MATCH_CURATED_ASSIST_FALLBACK,
     MATCH_NO_MATCH,
 )
+from candidate_attribution import verify_candidate_attribution as _verify_candidate_attribution_text
 
 # Same strength grouping used by indication_candidate_discovery.py's own
 # gating (_MATCH_STRONG / _MATCH_SUPPORTIVE there). Duplicated as plain
@@ -888,6 +889,40 @@ def _concept_family(indication: str) -> dict[str, tuple[str, ...]] | None:
 
 
 
+def _row_has_verified_candidate_attribution(row: pd.Series) -> bool:
+    """Whether this row is actually verified to be ABOUT the candidate plant.
+
+    PROBLEM 1 FIX (evidence attribution / source relevance) -- companion
+    gate to ``_row_has_indication_specific_outcome`` below. That function
+    verifies OUTCOME attribution (the record's own reported outcome
+    concerns the queried indication); nothing previously verified CANDIDATE
+    attribution (the record is actually about the candidate botanical,
+    rather than merely stamped with its name from a collector's search-
+    query context -- the confirmed root cause behind cross-plant
+    contamination and unrelated sources being counted as direct evidence).
+
+    Canonical-field-first: when a connector already computed and persisted
+    ``Candidate_Attribution_Verified`` (see candidate_attribution.py,
+    clinicaltrials_connector.py, evidence_collector.py), that verified
+    judgment is authoritative and is read here exactly the same way
+    ``Outcome_Specific_Direct_Evidence`` is read in
+    evidence_adjudication_engine.py. When the field is absent -- every
+    pre-existing record ingested before this fix and every synthetic
+    fixture in the existing test suite that never populated it -- this is
+    an additive, opt-in gate: it returns True (unchanged prior behavior),
+    not a retroactive re-verification of the whole historical corpus. This
+    keeps the huge existing regression suite, which relies on
+    Alternative_Plant/Scientific_Name group membership alone as its
+    fixture convention, unaffected while still closing the gap for every
+    newly-collected record going forward.
+    """
+    value = row.get("Candidate_Attribution_Verified", None)
+    text = str(value if value is not None else "").strip().lower()
+    if text in {"", "nan", "none"}:
+        return True
+    return text in {"true", "1", "yes"}
+
+
 def _row_has_indication_specific_outcome(row: pd.Series, indication: str) -> bool:
     """Whether a direct-relevance record is genuinely indication-specific.
 
@@ -907,7 +942,20 @@ def _row_has_indication_specific_outcome(row: pd.Series, indication: str) -> boo
     enough. Generated R&D rationale is intentionally excluded. The authoritative
     match reason is used only as a legacy fallback when older rows do not carry
     the new source-transport columns.
+
+    PROBLEM 1 FIX (evidence attribution / source relevance): every call
+    site treats a True result here as "genuinely direct, outcome-specific
+    evidence" -- the same status the cahier requires BOTH candidate and
+    outcome attribution for. This single choke point is therefore also
+    where candidate attribution is enforced (see
+    _row_has_verified_candidate_attribution), rather than duplicating the
+    check at each of this function's eight call sites individually. Fails
+    closed immediately when a connector has explicitly marked the row's
+    candidate attribution unverified; unchanged (True/legacy behavior) when
+    that field is simply absent, as documented on that helper.
     """
+    if not _row_has_verified_candidate_attribution(row):
+        return False
     family = _concept_family(indication) or {}
     terms = list(dict.fromkeys([
         str(indication or "").strip(),

@@ -73,6 +73,12 @@ def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
         # this only stops the silent drop before storage; it does not by
         # itself add a new evidence_records column.
         "Source_Authority_Weight", "Source_Priority", "Source_Category",
+        # Evidence-attribution fix (Problem 1) — same silent-drop class as
+        # the fields above: connectors now compute these from the source's
+        # OWN content (see candidate_attribution.py) and must not have them
+        # stripped before storage, or the whole verification becomes a
+        # no-op the moment a record reaches evidence_adjudication_engine.py.
+        "Candidate_Attribution_Verified", "Candidate_Attribution_Basis",
     ):
         if record.get(_source_field) not in (None, "", [], {}):
             normalized[_source_field] = record[_source_field]

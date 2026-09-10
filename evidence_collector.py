@@ -2,6 +2,7 @@ from pubmed_connector import search_and_fetch_pubmed
 from evidence_extractor import extract_evidence_from_text
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
+from candidate_attribution import combined_record_text, verify_candidate_attribution
 
 import time
 
@@ -247,7 +248,22 @@ def collect_pubmed_evidence(
     for article in articles:
         extracted = extract_evidence_from_text(article["Raw_Text"])
 
+        # ROOT-CAUSE FIX: Scientific_Name was previously stamped onto every
+        # returned article purely from the search-query context, regardless
+        # of whether the article's own title/abstract actually names the
+        # candidate botanical. PubMed's query terms are AND-scoped already
+        # (build_pubmed_queries), but automatic term mapping / MeSH
+        # expansion can still surface an article that matches only loosely.
+        # Verify attribution from the article's OWN text (never the query)
+        # so downstream consumers no longer have to trust this field
+        # blindly. General/species-agnostic -- see candidate_attribution.py.
+        attribution = verify_candidate_attribution(
+            combined_record_text(article["Title"], article["Raw_Text"]),
+            scientific_name=scientific_name,
+        )
         extracted["Scientific_Name"] = scientific_name
+        extracted["Candidate_Attribution_Verified"] = attribution["verified"]
+        extracted["Candidate_Attribution_Basis"] = attribution["basis"]
         # Search/product context must never overwrite facts extracted from the
         # study itself.  Keep the requested indication/form under dedicated
         # transient keys; build_standard_evidence() can use them for contextual

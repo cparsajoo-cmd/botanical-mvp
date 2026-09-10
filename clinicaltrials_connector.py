@@ -1,5 +1,7 @@
 import requests
 
+from candidate_attribution import combined_record_text, verify_candidate_attribution
+
 
 def search_clinicaltrials(
     scientific_name,
@@ -8,7 +10,23 @@ def search_clinicaltrials(
     market="European Union",
     max_results=5,
 ):
-    query = f"{scientific_name} {indication}"
+    # ROOT-CAUSE FIX: the previous unquoted, un-ANDed query
+    # (f"{scientific_name} {indication}") is a loose free-text relevance
+    # search across ClinicalTrials.gov's ENTIRE record (title, sponsor,
+    # eligibility criteria, etc.), not scoped to studies that actually test
+    # the candidate botanical. It could -- and in production did -- return
+    # trials with no real relationship to either the plant or the queried
+    # indication (e.g. a congenital-heart-disease education trial for a
+    # Melissa officinalis + sleep query). Quoting each term keeps this an
+    # AND-style match on the literal phrases, matching the scoping already
+    # used by the project's other connectors (see europepmc_connector.py /
+    # evidence_collector.py's PubMed query builder). This narrows recall
+    # (a documented, accepted trade-off -- see the deliverables report) but
+    # every remaining hit is far more likely to genuinely mention both
+    # terms. It does NOT by itself guarantee relevance -- see the
+    # candidate-attribution verification below, which is what actually
+    # gates whether a returned record can count as plant-specific evidence.
+    query = f'"{scientific_name}" AND "{indication}"'
 
     url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -64,8 +82,26 @@ def search_clinicaltrials(
             " ".join(phase_list),
         ])
 
+        # ROOT-CAUSE FIX: verify candidate attribution from the trial's OWN
+        # content (title/conditions/interventions -- never the search query
+        # context) instead of assuming the returned study is about
+        # scientific_name merely because it was returned for that query.
+        # This is a general, species-agnostic check (see
+        # candidate_attribution.py) that works for arbitrary botanicals,
+        # indications, and future datasets. Fail-safe: when the trial's own
+        # text does not establish attribution, the record is still saved
+        # (so a reviewer can see it and so retrieval-coverage accounting
+        # stays honest) but is explicitly marked unverified rather than
+        # silently trusted as direct plant-specific evidence.
+        attribution = verify_candidate_attribution(
+            combined_record_text(title, " ".join(condition_list), " ".join(intervention_names)),
+            scientific_name=scientific_name,
+        )
+
         record = {
             "Scientific_Name": scientific_name,
+            "Candidate_Attribution_Verified": attribution["verified"],
+            "Candidate_Attribution_Basis": attribution["basis"],
             "Common_Name": "",
             "Product_Type": "Herbal product",
             "Dosage_Form": dosage_form,

@@ -1808,7 +1808,25 @@ def _scientific_evidence_components(
         if result.get("Target_Definition_Completeness") == "incomplete":
             any_target_incomplete = True
         for dim, status in result["Dimension_Status"].items():
-            if status == NOT_APPLICABLE:
+            # BUG FIX (2026-09-10, found via real production data: 150/151
+            # candidates in a live Sleep run were silently falling into the
+            # Defect-10 per-plant crash guard with
+            # ValueError("tuple.index(x): x not in tuple")). This loop only
+            # skipped NOT_APPLICABLE, but evaluate_applicability() can also
+            # report TARGET_UNSPECIFIED (Defect 3 fix) for any dimension the
+            # target/project itself never specified -- extremely common in
+            # real projects (most don't specify every one of plant_part/
+            # route/dose). TARGET_UNSPECIFIED was never added to
+            # APPLICABILITY_CLASSIFICATION_PRECEDENCE (by design -- it must
+            # never win or lose a worst-status-wins comparison, since it is
+            # not evidence-side information at all), so any run with 2+
+            # primary-tier records reaching this aggregation with a
+            # TARGET_UNSPECIFIED dimension crashed here. It must be skipped
+            # here exactly like NOT_APPLICABLE, matching the identical
+            # exclusion already applied via `evaluable` in
+            # _scientific_evidence_components() and inside
+            # evaluate_applicability() itself.
+            if status in (NOT_APPLICABLE, "TARGET_UNSPECIFIED"):
                 continue
             existing = aggregate_dimension_status.get(dim)
             if existing is None:
@@ -4102,6 +4120,17 @@ def build_plant_candidate_shortlist(
                 ),
                 "Processing_Status": "INCOMPLETE",
                 "Processing_Error": repr(_plant_scoring_exc),
+                # BUG FIX (2026-09-10, found via real production data): the
+                # post-loop sort below unconditionally reads Traceable_
+                # Source_Count/Distinctive_Compound_Count on every row. When
+                # every single plant in a batch hits this fallback (no
+                # successful row survives to establish the column), pd.
+                # DataFrame(rows) never creates these columns at all and the
+                # sort raises KeyError, turning a partial-failure into a
+                # total one. Always present with a safe, honest default so
+                # sorting never depends on another row's success.
+                "Traceable_Source_Count": 0,
+                "Distinctive_Compound_Count": 0,
             })
             continue
 

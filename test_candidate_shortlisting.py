@@ -889,3 +889,60 @@ def test_evidence_adjudication_ids_tolerate_scalar_nan_values():
     assert _as_id_list(["E1", "E2"]) == ["E1", "E2"]
     assert _as_id_list(("E1",)) == ["E1"]
     assert _as_id_list(3.5) == []
+
+
+def test_target_unspecified_dimension_does_not_crash_multi_record_applicability_aggregation():
+    # BUG FIX (2026-09-10): found via real production data -- 150/151
+    # candidates in a live Sleep run were silently falling into the
+    # Defect-10 crash guard with ValueError("tuple.index(x): x not in
+    # tuple"). Root cause: the per-record applicability aggregation loop in
+    # _scientific_evidence_components() only skipped NOT_APPLICABLE, not
+    # the newer TARGET_UNSPECIFIED status (Defect 3 fix) -- which is
+    # extremely common in real projects (most don't specify every one of
+    # plant_part/route/dose). Any candidate with 2+ primary-tier records
+    # crashed here. This reproduces the exact real-world shape: two
+    # primary-tier records, a target_context built the same way production
+    # builds it (via build_transferability_target_context), leaving
+    # route/dose/plant_part unspecified.
+    from standard_evidence_builder import build_transferability_target_context
+
+    rows = [_row(
+        Alternative_Plant="Humulus lupulus",
+        Source_Record_IDs=f"PMID:{500+i}",
+        Clinical_Rationale="human randomized controlled trial reported significant improvement in sleep quality",
+        Evidence_Level="Clinical / human evidence", Evidence_Hierarchy_Detail="randomized controlled trial",
+        Indication_Match_Type="exact_indication", Indication_Match_Terms="sleep",
+    ) for i in range(2)]
+    target_context = build_transferability_target_context(
+        "sleep", "Infusion", {"target_indication": "sleep", "dosage_form": "Infusion"}
+    )
+    summary, audit = build_plant_candidate_shortlist(
+        pd.DataFrame(rows), indication="sleep", dosage_form="Infusion", target_context=target_context
+    )
+    row = summary.iloc[0]
+    assert row.get("Processing_Status") != "INCOMPLETE"
+    assert pd.isna(row.get("Processing_Error")) or not row.get("Processing_Error")
+    assert row["Scientific_Triage_Status"] in {"Shortlist", "Exploratory"}
+
+
+def test_crash_guard_row_alone_never_breaks_the_post_loop_sort():
+    # BUG FIX (2026-09-10): if every single plant in a batch hits the
+    # Defect-10 crash guard (no successful row survives), pd.DataFrame(rows)
+    # never creates Traceable_Source_Count/Distinctive_Compound_Count at
+    # all, and the post-loop sort raised KeyError -- turning a partial
+    # failure into a total one. Force the crash guard for the only plant in
+    # the batch and confirm the run still completes and returns a row.
+    import candidate_shortlisting as cs_mod
+
+    def _boom(group, indication=""):
+        raise ValueError("simulated malformed-evidence processing failure")
+
+    df = pd.DataFrame([_row(Alternative_Plant="Only candidate")])
+    original = cs_mod._mechanism_support
+    cs_mod._mechanism_support = _boom
+    try:
+        summary, audit = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    finally:
+        cs_mod._mechanism_support = original
+    assert len(summary) == 1
+    assert summary.iloc[0]["Processing_Status"] == "INCOMPLETE"

@@ -2831,10 +2831,16 @@ def _derive_go_call(
     safety_tier: str = "Safety not adequately assessed",
     outcome_label: str = "Results not reported",
     target_definition_completeness: str = "complete",
+    indication_mode: str = "",
 ) -> str:
     if status == "Excluded":
         return "No-Go" if "safety" in _norm(reason) else "Hold"
     if status == "Exploratory":
+        return "Investigate — verify before proceeding"
+    # A provisional shortlist built from a traceable human-study signal whose
+    # indication-specific outcome has not yet been verified is useful for R&D
+    # triage, but it must never be silently promoted to a development Go.
+    if indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
         return "Investigate — verify before proceeding"
     # A high numeric score alone cannot justify Go. Product-form applicability,
     # explicit safety information, and demonstrated benefit must all be present.
@@ -2928,6 +2934,8 @@ def _explain_candidate(
     if not bullets:
         bullets.append("a limited but traceable scientific signal remains")
 
+    if status == "Shortlist" and rejection_reason:
+        bullets.append(str(rejection_reason))
     prefix = "Selected because: " if status == "Shortlist" else "Kept for further investigation because: "
     return prefix + "; ".join(bullets)
 
@@ -3346,23 +3354,39 @@ def build_plant_candidate_shortlist(
                     plant_status = "Exploratory"
                     reasons_note = "direct indication relevance is present, but the evidence base is not yet sufficient"
             elif indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
-                # DEFECT 2 FIX (final pre-demo reliability pass): an upstream
-                # indication/AI signal looked direct and human-study-design-
-                # related, but no record cleared the stricter outcome-specific-
-                # evidence bar (Outcome_Specific_Human_Evidence_Count == 0 for
-                # this signal). Never eligible for the primary Shortlist on this
-                # signal alone, however high indication_points/evq_points look --
-                # that would just re-launder the same unverified signal through a
-                # numeric threshold. Always routed to Exploratory (discoverable,
-                # not discarded, not silently promoted) with explicit provenance.
-                plant_status = "Exploratory"
-                reasons_note = (
-                    "indication relevance looked direct and human-related, but no record "
-                    "carries a verified, indication-specific reported outcome "
-                    "(Outcome_Specific_Human_Evidence_Count == 0) -- flagged as an "
-                    "unverified direct-human signal requiring expert review before "
-                    "it can be treated as clinical evidence"
-                )
+                # DEMO/PRODUCTION TRIAGE FIX (2026-09-10): the prior hardening
+                # correctly prevented an unverified semantic/human-study signal
+                # from being called verified clinical evidence, but it also forced
+                # *every* such plant to Exploratory. In live production data the
+                # strict outcome parser can legitimately be incomplete even when
+                # multiple traceable human records and adequate evidence quality
+                # exist. That made the primary scientific shortlist collapse to
+                # zero despite a useful evidence-backed candidate set.
+                #
+                # A Shortlist is an R&D TRIAGE state, not a clinical-efficacy
+                # claim. Therefore a strong, traceable but outcome-unverified human
+                # signal may enter a *provisional* shortlist. The relevance score
+                # remains capped below verified-direct-human evidence (<=24), and
+                # _derive_go_call() explicitly prevents this mode from ever becoming
+                # Go until the indication-specific human outcome is verified.
+                if (
+                    indication_points >= 20.0
+                    and evq_points >= 12.0
+                    and primary_record_count >= 1
+                    and primary_traceable_count >= 1
+                ):
+                    plant_status = "Shortlist"
+                    reasons_note = (
+                        "provisional shortlist: traceable human-study evidence is present, "
+                        "but indication-specific outcome verification is still required"
+                    )
+                else:
+                    plant_status = "Exploratory"
+                    reasons_note = (
+                        "human-related indication relevance is present, but outcome-specific "
+                        "verification and/or evidence depth is insufficient for provisional "
+                        "shortlisting"
+                    )
             elif indication_mode in {"Mechanistic empirical", "Mechanistic inference only"}:
                 # PROBLEM 2 fix: indication relevance is a TRIAGE GATE, not
                 # merely one additive score among several. Both of these modes
@@ -3828,7 +3852,7 @@ def build_plant_candidate_shortlist(
 
             if plant_status == "Excluded":
                 explanation_reason = reasons_note or _join(group.get("Scientific_Triage_Reasons", []), 10)
-            elif plant_status == "Exploratory" and reasons_note:
+            elif plant_status in {"Exploratory", "Shortlist"} and reasons_note:
                 explanation_reason = reasons_note
             else:
                 explanation_reason = ""
@@ -3852,6 +3876,7 @@ def build_plant_candidate_shortlist(
                 safety_tier=safety_reg_tier,
                 outcome_label=str(outcome_profile["label"]),
                 target_definition_completeness=sci_evidence["Target_Definition_Completeness"],
+                indication_mode=indication_mode,
             )
             decision_class_ah = _derive_decision_class_ah(
                 plant_status, overall_score, explanation_reason,
@@ -4233,6 +4258,7 @@ def rescore_commercial_component(
             safety_tier=str(row.get("Safety_Regulatory_Tier", "Safety not adequately assessed")),
             outcome_label=str(row.get("Outcome_Consistency", "Results not reported")),
             target_definition_completeness=str(row.get("Target_Definition_Completeness", "complete")),
+            indication_mode=str(row.get("Indication_Evidence_Mode", "")),
         )
         decision_class_ah = _derive_decision_class_ah(
             status, new_overall_score,

@@ -32,6 +32,12 @@ def _row(plant="Plant A", source="PMID:1", direction="positive", preparation="Co
         "Regulatory_Barriers": "Traditional use monograph",
         "Market_Status": "Search not performed",
         "R&D_Opportunity_Score": 50,
+        # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified
+        # now fails CLOSED when absent. This fixture already models a
+        # genuine "Direct human evidence" / "Randomized clinical trial"
+        # record (see Candidate_Evidence_Strength_Tier/Evidence_Level
+        # above), so True is the honest default for what it represents.
+        "Candidate_Attribution_Verified": True,
     }
 
 

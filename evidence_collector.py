@@ -2,7 +2,7 @@ from pubmed_connector import search_and_fetch_pubmed
 from evidence_extractor import extract_evidence_from_text
 from evidence_standardizer import standardize_extracted_record
 from database import save_evidence_record
-from candidate_attribution import combined_record_text, verify_candidate_attribution
+from candidate_attribution import verify_pubmed_intervention_attribution
 
 import time
 
@@ -248,17 +248,21 @@ def collect_pubmed_evidence(
     for article in articles:
         extracted = extract_evidence_from_text(article["Raw_Text"])
 
-        # ROOT-CAUSE FIX: Scientific_Name was previously stamped onto every
-        # returned article purely from the search-query context, regardless
-        # of whether the article's own title/abstract actually names the
-        # candidate botanical. PubMed's query terms are AND-scoped already
-        # (build_pubmed_queries), but automatic term mapping / MeSH
-        # expansion can still surface an article that matches only loosely.
-        # Verify attribution from the article's OWN text (never the query)
-        # so downstream consumers no longer have to trust this field
-        # blindly. General/species-agnostic -- see candidate_attribution.py.
-        attribution = verify_candidate_attribution(
-            combined_record_text(article["Title"], article["Raw_Text"]),
+        # REMAINING DEFECT 1 FIX: the article's own name appearing anywhere
+        # in the title/abstract is not intervention attribution -- a plant
+        # can be named in background, eligibility criteria, discussion, or
+        # a different arm without being what was actually administered
+        # (e.g. "Ficticus alpinum is traditionally used for sleep. Patients
+        # received cognitive behavioral therapy versus placebo." must NOT
+        # verify). PubMed abstracts carry no structured intervention field,
+        # so verify_pubmed_intervention_attribution deterministically
+        # narrows the text to sentences that themselves contain a generic
+        # administration/exposure cue before checking for the candidate's
+        # name -- general, non-LLM, no invented facts (see
+        # candidate_attribution.py). Fails closed when no such sentence
+        # exists at all.
+        attribution = verify_pubmed_intervention_attribution(
+            article["Raw_Text"],
             scientific_name=scientific_name,
         )
         extracted["Scientific_Name"] = scientific_name

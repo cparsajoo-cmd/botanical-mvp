@@ -91,7 +91,6 @@ from general_indication_relevance import (
     MATCH_CURATED_ASSIST_FALLBACK,
     MATCH_NO_MATCH,
 )
-from candidate_attribution import verify_candidate_attribution as _verify_candidate_attribution_text
 
 # Same strength grouping used by indication_candidate_discovery.py's own
 # gating (_MATCH_STRONG / _MATCH_SUPPORTIVE there). Duplicated as plain
@@ -906,20 +905,23 @@ def _row_has_verified_candidate_attribution(row: pd.Series) -> bool:
     clinicaltrials_connector.py, evidence_collector.py), that verified
     judgment is authoritative and is read here exactly the same way
     ``Outcome_Specific_Direct_Evidence`` is read in
-    evidence_adjudication_engine.py. When the field is absent -- every
-    pre-existing record ingested before this fix and every synthetic
-    fixture in the existing test suite that never populated it -- this is
-    an additive, opt-in gate: it returns True (unchanged prior behavior),
-    not a retroactive re-verification of the whole historical corpus. This
-    keeps the huge existing regression suite, which relies on
-    Alternative_Plant/Scientific_Name group membership alone as its
-    fixture convention, unaffected while still closing the gap for every
-    newly-collected record going forward.
+    evidence_adjudication_engine.py.
+
+    FAIL-CLOSED (remaining defect 2 fix): a MISSING/unknown field returns
+    False, not True. Absence of verification is not verification -- a
+    legacy record ingested before this fix, or any record whose connector
+    could not establish intervention attribution, must not silently keep
+    counting as verified direct/outcome-specific human evidence merely
+    because nobody has re-checked it. Such a row remains fully available to
+    every OTHER classification this pipeline already has (mechanistic,
+    indirect, review-required, R&D-discovery-lane, etc.) -- this gate only
+    withholds the strongest, decision-facing "verified direct human
+    evidence" status until attribution is actually established.
     """
     value = row.get("Candidate_Attribution_Verified", None)
     text = str(value if value is not None else "").strip().lower()
     if text in {"", "nan", "none"}:
-        return True
+        return False
     return text in {"true", "1", "yes"}
 
 

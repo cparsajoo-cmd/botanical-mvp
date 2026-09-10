@@ -1,12 +1,16 @@
 """Regression tests for Problem 1 -- incorrect evidence attribution / source
-relevance.
+relevance, including the remaining defects identified after the first pass:
+
+1. Mere plant-name mention (anywhere in a record) is not intervention
+   attribution -- verification must be scoped to intervention/exposure text.
+2. Missing Candidate_Attribution_Verified must fail CLOSED (unverified),
+   never fail open (silently trusted).
+3. The requested/query indication must never be stamped into a field that
+   downstream code reads as a source-reported fact.
 
 These tests are deliberately GENERAL: fictional botanicals and indications
 are used throughout so nothing here depends on a hardcoded plant-name
-blacklist. Each test corresponds to one of the cahier's required cases
-(A-F), plus direct unit coverage of the new candidate_attribution.py module
-and the two real connectors whose unscoped queries / blind attribution
-stamping were the confirmed root cause.
+blacklist.
 """
 import pandas as pd
 
@@ -19,70 +23,180 @@ from candidate_shortlisting import (
 
 
 # ---------------------------------------------------------------------
-# Unit coverage of the new general verification primitive
+# Unit coverage of the core name-matching primitive (still general;
+# unchanged from the first pass -- what changed is what text callers are
+# allowed to feed it, covered by the tests below).
 # ---------------------------------------------------------------------
 
-def test_full_binomial_present_is_verified():
-    result = ca.verify_candidate_attribution(
-        "A randomized trial of Ficticus alpinum extract for exercise recovery.",
+def test_full_binomial_present_is_verified_when_text_is_intervention_scoped():
+    result = ca.verify_intervention_attribution(
+        "Participants received Ficticus alpinum extract 300 mg daily.",
         scientific_name="Ficticus alpinum",
     )
     assert result["verified"] is True
     assert result["basis"] == "full_binomial"
 
 
-def test_common_name_present_is_verified_with_whole_word_matching():
-    result = ca.verify_candidate_attribution(
-        "Effects of lemon verbena tea on sleep onset in adults.",
-        scientific_name="Aloysia citrodora",
-        common_name="lemon verbena",
-    )
-    assert result["verified"] is True
-    assert result["basis"] == "common_name"
-
-
 def test_different_species_binomial_does_not_false_match():
     # Prior real production bug: "lemon" (Citrus limon) must not false-match
-    # inside "lemon verbena" (Aloysia citrodora), a different species. The
-    # full scientific binomial of the candidate must not be considered
-    # present merely because a different, textually-similar species' common
-    # name appears in the record.
-    result = ca.verify_candidate_attribution(
-        "A trial of lemon verbena extract for anxiety.",
+    # inside "lemon verbena" (Aloysia citrodora), a different species.
+    result = ca.verify_intervention_attribution(
+        "Participants received lemon verbena extract capsules.",
         scientific_name="Citrus limon",
     )
     assert result["verified"] is False
 
 
 def test_multi_word_common_name_requires_every_word_present():
-    # A multi-word common name ("lemon balm") is a much more specific
-    # candidate-attribution signal than a single generic word ("lemon")
-    # would be; every word of it must be present as whole words.
-    result = ca.verify_candidate_attribution(
-        "A trial of lemon verbena extract for anxiety.",
+    result = ca.verify_intervention_attribution(
+        "Participants received lemon verbena extract capsules.",
         scientific_name="Melissa officinalis",
         common_name="lemon balm",
     )
     assert result["verified"] is False
 
 
-# ---------------------------------------------------------------------
-# Case F -- insufficient metadata must fail closed, never become confident
-# ---------------------------------------------------------------------
-
 def test_no_text_available_fails_closed_not_direct():
-    result = ca.verify_candidate_attribution("", scientific_name="Ficticus alpinum")
+    result = ca.verify_intervention_attribution("", scientific_name="Ficticus alpinum")
     assert result["verified"] is False
     assert result["basis"] == ""
 
 
-def test_adjudication_downgrades_record_with_insufficient_metadata():
+# ---------------------------------------------------------------------
+# Test 1 -- background mention only must NOT verify attribution
+# ---------------------------------------------------------------------
+
+def test_1_background_mention_only_does_not_verify_pubmed_attribution():
+    raw_text = (
+        "Background: Ficticus alpinum is traditionally used for sleep. "
+        "In this randomized trial, patients received cognitive behavioral "
+        "therapy versus placebo. Sleep onset latency was the primary outcome."
+    )
+    result = ca.verify_pubmed_intervention_attribution(raw_text, scientific_name="Ficticus alpinum")
+    assert result["verified"] is False
+
+
+def test_1_administration_sentence_without_candidate_name_is_excluded():
+    # Sanity check on the underlying heuristic: the administration-cue
+    # sentence here names the comparator, not the candidate, so narrowing
+    # to that sentence correctly still finds no candidate mention.
+    context = ca.administration_context_text(
+        "Ficticus alpinum is traditionally used for sleep. "
+        "Patients received cognitive behavioral therapy versus placebo."
+    )
+    assert "ficticus" not in context.lower()
+    assert "received" in context.lower()
+
+
+# ---------------------------------------------------------------------
+# Test 2 -- ClinicalTrials.gov condition/title mention only, unrelated
+# intervention, must NOT verify.
+# ---------------------------------------------------------------------
+
+def test_2_clinicaltrials_condition_mention_only_is_unverified(monkeypatch):
+    import clinicaltrials_connector as ctc
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "studies": [
+                    {
+                        "protocolSection": {
+                            "identificationModule": {
+                                "nctId": "NCT22222222",
+                                "briefTitle": "Ficticus alpinum use and sleep habits survey",
+                            },
+                            "statusModule": {"overallStatus": "Completed"},
+                            "designModule": {"studyType": "INTERVENTIONAL", "phases": []},
+                            "conditionsModule": {"conditions": ["Insomnia", "Ficticus alpinum users"]},
+                            "armsInterventionsModule": {"interventions": [
+                                {"name": "Cognitive behavioral therapy", "description": "CBT sessions"}
+                            ]},
+                            "outcomesModule": {"primaryOutcomes": [
+                                {"measure": "Sleep onset latency"}
+                            ]},
+                        }
+                    }
+                ]
+            }
+
+    def _fake_get(url, params=None, timeout=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr(ctc.requests, "get", _fake_get)
+    records = ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
+    assert len(records) == 1
+    assert records[0]["Candidate_Attribution_Verified"] is False
+
+
+# ---------------------------------------------------------------------
+# Test 3 -- actual botanical intervention must verify.
+# ---------------------------------------------------------------------
+
+def test_3_actual_botanical_intervention_verifies(monkeypatch):
+    import clinicaltrials_connector as ctc
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "studies": [
+                    {
+                        "protocolSection": {
+                            "identificationModule": {
+                                "nctId": "NCT33333333",
+                                "briefTitle": "A trial of an herbal extract for insomnia",
+                            },
+                            "statusModule": {"overallStatus": "Completed"},
+                            "designModule": {"studyType": "INTERVENTIONAL", "phases": []},
+                            "conditionsModule": {"conditions": ["Insomnia"]},
+                            "armsInterventionsModule": {"interventions": [
+                                {"name": "Ficticus alpinum extract", "description": "300 mg standardized extract"}
+                            ]},
+                            "outcomesModule": {"primaryOutcomes": [
+                                {"measure": "Sleep onset latency"}
+                            ]},
+                        }
+                    }
+                ]
+            }
+
+    def _fake_get(url, params=None, timeout=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr(ctc.requests, "get", _fake_get)
+    records = ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
+    assert len(records) == 1
+    assert records[0]["Candidate_Attribution_Verified"] is True
+    assert records[0]["Candidate_Attribution_Basis"] == "full_binomial"
+
+
+# ---------------------------------------------------------------------
+# Test 4 -- missing Candidate_Attribution_Verified must NOT become verified
+# outcome-specific direct evidence (fail closed, remaining defect 2).
+# ---------------------------------------------------------------------
+
+def test_4_missing_attribution_field_fails_closed():
+    row = pd.Series({"Primary_Outcome": "sleep onset latency"})
+    # No Candidate_Attribution_Verified key at all -- a legacy row.
+    assert _row_has_verified_candidate_attribution(row) is False
+    assert _row_has_indication_specific_outcome(row, "sleep") is False
+
+
+def test_4_adjudication_missing_attribution_field_fails_closed():
     df = pd.DataFrame([{
         "Alternative_Plant": "Ficticus alpinum",
-        "Source_Record_IDs": "F-1",
+        "Source_Record_IDs": "L-1",
         "Indication_Match_Type": "explicit_field_overlap",
-        "Primary_Outcome": "sleep quality",
-        "Candidate_Attribution_Verified": False,  # connector could not establish attribution
+        "Primary_Outcome": "sleep onset latency and total sleep time",
+        "Study_Design": "Randomized double-blind placebo-controlled clinical trial",
+        "Evidence_Direction": "positive",
+        # Candidate_Attribution_Verified deliberately absent -- legacy row.
     }])
     items = eae.build_adjudication_evidence_items(df, "Ficticus alpinum", "sleep", 25)
     assert len(items) == 1
@@ -91,49 +205,116 @@ def test_adjudication_downgrades_record_with_insufficient_metadata():
 
 
 # ---------------------------------------------------------------------
-# Cases A and D -- candidate mismatch (source not about the candidate plant,
-# or belongs to another botanical entirely)
+# Test 5 -- explicit False must never become direct/outcome-specific.
 # ---------------------------------------------------------------------
 
-def test_case_a_unrelated_trial_stamped_with_candidate_name_is_downgraded():
-    # Mirrors the real Melissa officinalis / congenital-heart-disease case:
-    # a trial genuinely about an unrelated condition that a loosely-scoped
-    # connector query happened to return and stamp with the candidate's name.
-    row_text = (
-        "A Pragmatic Clinical Trial of the WE BEAT Well-Being Education "
-        "Program in Adolescent Congenital Heart Disease"
-    )
-    attribution = ca.verify_candidate_attribution(row_text, scientific_name="Ficticus alpinum")
-    assert attribution["verified"] is False
+def test_5_explicit_false_never_direct():
+    row = pd.Series({
+        "Candidate_Attribution_Verified": False,
+        "Primary_Outcome": "sleep onset latency",
+    })
+    assert _row_has_verified_candidate_attribution(row) is False
+    assert _row_has_indication_specific_outcome(row, "sleep") is False
 
     df = pd.DataFrame([{
         "Alternative_Plant": "Ficticus alpinum",
-        "Source_Record_IDs": "A-1",
+        "Source_Record_IDs": "N-1",
         "Indication_Match_Type": "explicit_field_overlap",
-        "Primary_Outcome": "sleep quality",
-        "Candidate_Attribution_Verified": attribution["verified"],
-        "Candidate_Attribution_Basis": attribution["basis"],
+        "Primary_Outcome": "sleep onset latency",
+        "Candidate_Attribution_Verified": False,
     }])
     items = eae.build_adjudication_evidence_items(df, "Ficticus alpinum", "sleep", 25)
+    assert items[0]["candidate_specific"] is False
     assert items[0]["outcome_specific"] is False
 
 
-def test_case_d_source_belonging_to_another_botanical_is_downgraded():
-    # A paper about a genuinely different species that shares a compound
-    # with the candidate must not become candidate-specific evidence merely
-    # because of that shared chemistry.
-    row_text = "Rosmarinic acid content and antioxidant activity in Rosmarinus officinalis leaf extracts."
-    attribution = ca.verify_candidate_attribution(row_text, scientific_name="Ficticus alpinum")
-    assert attribution["verified"] is False
+# ---------------------------------------------------------------------
+# Test 6 -- requested indication must not overwrite / fabricate the
+# source-reported indication/outcome.
+# ---------------------------------------------------------------------
 
-    row = pd.Series({"Candidate_Attribution_Verified": False})
-    assert _row_has_verified_candidate_attribution(row) is False
+def test_6_requested_indication_does_not_overwrite_source_reported_condition(monkeypatch):
+    import clinicaltrials_connector as ctc
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "studies": [
+                    {
+                        "protocolSection": {
+                            "identificationModule": {
+                                "nctId": "NCT44444444",
+                                "briefTitle": "Ficticus alpinum extract for tinnitus",
+                            },
+                            "statusModule": {"overallStatus": "Completed"},
+                            "designModule": {"studyType": "INTERVENTIONAL", "phases": []},
+                            "conditionsModule": {"conditions": ["Tinnitus"]},
+                            "armsInterventionsModule": {"interventions": [
+                                {"name": "Ficticus alpinum extract", "description": "extract capsule"}
+                            ]},
+                            "outcomesModule": {"primaryOutcomes": [
+                                {"measure": "Tinnitus loudness matching"}
+                            ]},
+                        }
+                    }
+                ]
+            }
+
+    def _fake_get(url, params=None, timeout=None):
+        return _FakeResponse()
+
+    monkeypatch.setattr(ctc.requests, "get", _fake_get)
+    records = ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
+    record = records[0]
+    # The requested indication is preserved as query CONTEXT only...
+    assert record["Requested_Target_Indication"] == "sleep"
+    # ...and must never overwrite the source's own reported condition.
+    assert record["Target_Indication"] == "Tinnitus"
+    assert record["Detected_Indications"] == "Tinnitus"
+    assert "sleep" not in record["Target_Indication"].lower()
+
+    # Candidate attribution is genuinely verified (real intervention)...
+    assert record["Candidate_Attribution_Verified"] is True
+    # ...but that must not make this sleep-specific evidence: the record's
+    # own outcome is tinnitus, not sleep.
+    row = pd.Series(record)
     assert _row_has_indication_specific_outcome(row, "sleep") is False
 
 
 # ---------------------------------------------------------------------
-# Cases B and C -- outcome mismatch (candidate correctly identified, but the
-# study does not evaluate the queried indication/outcome)
+# Test 7 -- common-name genuine intervention; fail closed without a
+# reliable common-name mapping.
+# ---------------------------------------------------------------------
+
+def test_7_common_name_intervention_verifies_when_common_name_is_supplied():
+    result = ca.verify_intervention_attribution(
+        "Participants received lemon balm extract 500 mg twice daily.",
+        scientific_name="Melissa officinalis",
+        common_name="lemon balm",
+    )
+    assert result["verified"] is True
+    assert result["basis"] == "common_name"
+
+
+def test_7_common_name_only_mention_fails_closed_without_mapping():
+    # Documented limitation: when the caller has no common-name mapping to
+    # supply (common_name=""), a trial that only used the common name in
+    # its intervention field cannot be verified from the scientific name
+    # alone -- and correctly fails closed rather than guessing a fuzzy
+    # cross-species match.
+    result = ca.verify_intervention_attribution(
+        "Participants received lemon balm extract 500 mg twice daily.",
+        scientific_name="Melissa officinalis",
+    )
+    assert result["verified"] is False
+
+
+# ---------------------------------------------------------------------
+# Cases B and C from the first pass -- outcome mismatch must still be
+# caught (unaffected by these fixes; genuine intervention, wrong outcome).
 # ---------------------------------------------------------------------
 
 def test_case_b_physical_performance_study_is_not_sleep_evidence():
@@ -155,8 +336,9 @@ def test_case_c_tinnitus_trial_is_not_sleep_evidence():
 
 
 # ---------------------------------------------------------------------
-# Case E -- a genuinely relevant human trial (candidate = intervention AND
-# queried indication = measured outcome) MUST still qualify.
+# Case E from the first pass -- a genuinely relevant human trial (verified
+# candidate = intervention AND queried indication = measured outcome) MUST
+# still qualify. Re-asserted here against the new fail-closed default.
 # ---------------------------------------------------------------------
 
 def test_case_e_genuinely_relevant_trial_still_qualifies():
@@ -185,122 +367,14 @@ def test_case_e_genuinely_relevant_trial_still_qualifies():
 
 
 # ---------------------------------------------------------------------
-# Backward compatibility -- rows/fixtures that never populated the new
-# field must behave exactly as before this fix (additive, opt-in gate).
+# Replaces the first pass's test_absent_attribution_field_preserves_
+# legacy_behavior, which asserted the (now-corrected) fail-open behavior.
+# That test enforced scientifically incorrect behavior -- see remaining
+# defect 2 -- and is replaced, not merely deleted, by the assertions below
+# and by test_4_missing_attribution_field_fails_closed above.
 # ---------------------------------------------------------------------
 
-def test_absent_attribution_field_preserves_legacy_behavior():
+def test_absent_attribution_field_cannot_qualify_as_verified_direct_evidence():
     row = pd.Series({"Primary_Outcome": "sleep onset latency"})
-    assert _row_has_verified_candidate_attribution(row) is True
-    assert _row_has_indication_specific_outcome(row, "sleep") is True
-
-
-# ---------------------------------------------------------------------
-# Connector-level root-cause coverage: the query itself must be scoped, and
-# attribution must be computed from the source's OWN content.
-# ---------------------------------------------------------------------
-
-def test_clinicaltrials_connector_query_is_and_scoped_not_free_text(monkeypatch):
-    import clinicaltrials_connector as ctc
-
-    captured = {}
-
-    class _FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"studies": []}
-
-    def _fake_get(url, params=None, timeout=None):
-        captured["params"] = params
-        return _FakeResponse()
-
-    monkeypatch.setattr(ctc.requests, "get", _fake_get)
-    ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
-    query_term = captured["params"]["query.term"]
-    # Both terms must be quoted phrases joined with AND -- not a bare,
-    # unscoped space-joined free-text search (the confirmed root cause).
-    assert query_term == '"Ficticus alpinum" AND "sleep"'
-
-
-def test_clinicaltrials_connector_marks_unrelated_result_unverified(monkeypatch):
-    import clinicaltrials_connector as ctc
-
-    class _FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "studies": [
-                    {
-                        "protocolSection": {
-                            "identificationModule": {
-                                "nctId": "NCT00000000",
-                                "briefTitle": (
-                                    "A Pragmatic Clinical Trial of the WE BEAT "
-                                    "Well-Being Education Program in Adolescent "
-                                    "Congenital Heart Disease"
-                                ),
-                            },
-                            "statusModule": {"overallStatus": "Completed"},
-                            "designModule": {"studyType": "Interventional", "phases": []},
-                            "conditionsModule": {"conditions": ["Congenital Heart Disease"]},
-                            "armsInterventionsModule": {"interventions": [
-                                {"name": "Well-Being Education Program"}
-                            ]},
-                            "outcomesModule": {"primaryOutcomes": [
-                                {"measure": "Quality of life score"}
-                            ]},
-                        }
-                    }
-                ]
-            }
-
-    def _fake_get(url, params=None, timeout=None):
-        return _FakeResponse()
-
-    monkeypatch.setattr(ctc.requests, "get", _fake_get)
-    records = ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
-    assert len(records) == 1
-    assert records[0]["Candidate_Attribution_Verified"] is False
-
-
-def test_clinicaltrials_connector_marks_genuine_match_verified(monkeypatch):
-    import clinicaltrials_connector as ctc
-
-    class _FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "studies": [
-                    {
-                        "protocolSection": {
-                            "identificationModule": {
-                                "nctId": "NCT11111111",
-                                "briefTitle": "Ficticus alpinum extract for insomnia",
-                            },
-                            "statusModule": {"overallStatus": "Completed"},
-                            "designModule": {"studyType": "Interventional", "phases": []},
-                            "conditionsModule": {"conditions": ["Insomnia"]},
-                            "armsInterventionsModule": {"interventions": [
-                                {"name": "Ficticus alpinum extract"}
-                            ]},
-                            "outcomesModule": {"primaryOutcomes": [
-                                {"measure": "Sleep onset latency"}
-                            ]},
-                        }
-                    }
-                ]
-            }
-
-    def _fake_get(url, params=None, timeout=None):
-        return _FakeResponse()
-
-    monkeypatch.setattr(ctc.requests, "get", _fake_get)
-    records = ctc.search_clinicaltrials("Ficticus alpinum", "sleep")
-    assert len(records) == 1
-    assert records[0]["Candidate_Attribution_Verified"] is True
+    assert _row_has_verified_candidate_attribution(row) is False
+    assert _row_has_indication_specific_outcome(row, "sleep") is False

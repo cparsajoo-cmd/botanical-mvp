@@ -112,7 +112,6 @@ from general_indication_relevance import (
 )
 from indication_semantics import resolve_indication_semantics, normalize_indication_text
 from scientific_phrase_matcher import phrase_present
-from candidate_attribution import combined_record_text, verify_candidate_attribution
 
 # ---------------------------------------------------------------------
 # Controlled vocabularies (part 5 of the request)
@@ -568,33 +567,43 @@ def build_adjudication_evidence_items(
         # candidate attribution. outcome_specific above establishes that the
         # record's own reported outcome concerns the queried indication, but
         # nothing previously checked that the record is actually ABOUT the
-        # candidate botanical rather than merely stamped with its name by a
-        # collector's search-query context (root cause: connectors set
-        # Scientific_Name from the query, not from verified source content
-        # -- see candidate_attribution.py and clinicaltrials_connector.py /
-        # evidence_collector.py). A record can only become verified,
-        # outcome-specific, DIRECT human evidence when BOTH candidate
-        # attribution and outcome attribution are established -- neither
-        # one alone is sufficient (the cahier's explicit requirement).
+        # candidate botanical as its INTERVENTION/EXPOSURE, rather than
+        # merely stamped with its name by a collector's search-query
+        # context, or merely mentioned somewhere in the record (root cause:
+        # connectors set Scientific_Name from the query, not from verified
+        # source content -- see candidate_attribution.py and
+        # clinicaltrials_connector.py / evidence_collector.py). A record can
+        # only become verified, outcome-specific, DIRECT human evidence when
+        # BOTH candidate attribution and outcome attribution are
+        # established -- neither one alone is sufficient (the cahier's
+        # explicit requirement).
         #
         # Canonical-field-first, exactly mirroring Canonical_Study_Context /
         # Outcome_Specific_Direct_Evidence above: when a connector or an
         # earlier pipeline stage already computed and persisted
         # Candidate_Attribution_Verified, that verified judgment is
-        # authoritative. When the field is ABSENT (every pre-existing
-        # record ingested before this fix, and every synthetic fixture in
-        # the existing test suite that never populated it), behavior is
-        # unchanged from before this fix -- this is an additive, opt-in
-        # gate, not a retroactive re-verification of the entire historical
-        # corpus (a documented remaining limitation; see the deliverables
-        # report). When the field IS present and False, this fails closed
-        # regardless of anything else, per the cahier's explicit
-        # fail-safe-behavior requirement.
+        # authoritative.
+        #
+        # FAIL-CLOSED (remaining defect 2 fix): a MISSING/unknown field is
+        # UNVERIFIED, not verified. The original pass here defaulted a
+        # missing field to True ("fail open"), which meant every
+        # pre-existing/legacy evidence_records row -- and every record from
+        # any connector not yet updated to compute this field -- silently
+        # kept counting as verified direct human evidence purely because
+        # nobody had ever checked it. That is exactly the "manufacture
+        # confidence from missing metadata" behavior the cahier prohibits.
+        # Absence of verification is not verification: a legacy record can
+        # still be surfaced as mechanistic/indirect/review-required evidence
+        # elsewhere in the pipeline (unaffected by this field), but it must
+        # not contribute to a verified direct/outcome-specific human count
+        # until attribution is actually established -- by re-running
+        # collection through the updated connectors, or by an explicit
+        # backfill (see the deliverables report's remaining limitations).
         canonical_attribution = row.get("Candidate_Attribution_Verified") if hasattr(row, "get") else None
         if canonical_attribution is not None and str(canonical_attribution).strip().lower() not in {"", "nan", "none"}:
             candidate_specific = str(canonical_attribution).strip().lower() in {"true", "1", "yes"}
         else:
-            candidate_specific = True
+            candidate_specific = False
         if not candidate_specific:
             outcome_specific = False
 

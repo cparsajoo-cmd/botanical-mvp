@@ -26,6 +26,16 @@ def _row(**overrides):
         "Has_Negative_Evidence": False,
         "Negative_Evidence_Types": "",
         "R&D_Opportunity_Score": 70,
+        # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified
+        # now fails CLOSED when absent (see candidate_shortlisting.py's
+        # _row_has_verified_candidate_attribution). This fixture models a
+        # complete, genuinely direct-evidence-bearing row (it already
+        # asserts "Clinical / human evidence" / "Direct evidence" above),
+        # so it correctly represents a record whose intervention
+        # attribution WOULD have been established by a connector; True is
+        # the honest default for what this fixture is modeling, not a
+        # weakening of the new fail-closed rule.
+        "Candidate_Attribution_Verified": True,
     }
     row.update(overrides)
     return row

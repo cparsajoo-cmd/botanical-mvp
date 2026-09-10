@@ -340,10 +340,15 @@ def test_authoritative_fields_include_adjudication_columns():
 # literal word "human" to appear in free-text Population.
 # ---------------------------------------------------------------------
 def test_human_evidence_recognized_without_literal_word_human():
+    # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified now
+    # fails CLOSED when absent. This test is about HUMAN-context
+    # recognition, not candidate attribution, so an explicit True keeps it
+    # testing what it was always meant to test.
     df = _evidence_df([
         {"Evidence_Record_ID": "E1", "Scientific_Name": "Valeriana officinalis",
          "Indication_Match_Type": "EXPLICIT_FIELD", "Result_Direction": "positive",
-         "Population": "adults with insomnia", "Study_Type": "randomized controlled trial"},
+         "Population": "adults with insomnia", "Study_Type": "randomized controlled trial",
+         "Candidate_Attribution_Verified": True},
     ])
     items = ea.build_adjudication_evidence_items(df, "Valeriana officinalis", "sleep")
     assert items[0]["human_animal_in_vitro"] == "HUMAN"

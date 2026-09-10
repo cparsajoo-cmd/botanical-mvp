@@ -12,6 +12,11 @@ def test_adjudication_prefers_stage5_canonical_human_context():
         "Evidence_Hierarchy_Detail": "",
         "Canonical_Study_Context": "HUMAN",
         "Outcome_Specific_Direct_Evidence": True,
+        # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified
+        # now fails CLOSED when absent. This test is about canonical HUMAN-
+        # context preference, not candidate attribution, so an explicit
+        # True keeps it testing what it was always meant to test.
+        "Candidate_Attribution_Verified": True,
     }])
     items = eae.build_adjudication_evidence_items(df, "Example plant", "sleep")
     assert len(items) == 1

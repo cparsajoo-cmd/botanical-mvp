@@ -160,6 +160,11 @@ def test_adjudication_consumes_transported_source_text_and_canonical_context():
         "Source_Evidence_Text": f"Randomized trial: treatment improved {indication} versus placebo.",
         "Result_Direction": "positive",
         "Study_Type": "Randomized placebo-controlled clinical trial",
+        # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified
+        # now fails CLOSED when absent. This test exercises canonical
+        # OUTCOME-text transport, not candidate attribution, so an explicit
+        # True keeps it testing what it was always meant to test.
+        "Candidate_Attribution_Verified": True,
     }])
     items = eae.build_adjudication_evidence_items(audit, "Fictus alpha", indication)
     assert len(items) == 1

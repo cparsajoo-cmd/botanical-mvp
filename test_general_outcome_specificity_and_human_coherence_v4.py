@@ -30,9 +30,21 @@ def test_human_design_is_recognized_without_population_field():
 
 
 def test_direct_count_requires_indication_specific_outcome_generic():
-    row = pd.Series({"Primary_Outcome": "glycemic control and HbA1c"})
+    # Problem 1 (remaining defect 2) -- Candidate_Attribution_Verified now
+    # fails CLOSED when absent, and _row_has_indication_specific_outcome()
+    # gates on it too (single choke point for every caller). This test is
+    # specifically about the OUTCOME dimension, so row1 supplies an
+    # explicit True to isolate that; row2 is expected False regardless
+    # (a wrong outcome fails the check even with verified attribution).
+    row = pd.Series({
+        "Primary_Outcome": "glycemic control and HbA1c",
+        "Candidate_Attribution_Verified": True,
+    })
     assert cs._row_has_indication_specific_outcome(row, "diabetes") is True
-    row2 = pd.Series({"Primary_Outcome": "exercise fatigue and recovery"})
+    row2 = pd.Series({
+        "Primary_Outcome": "exercise fatigue and recovery",
+        "Candidate_Attribution_Verified": True,
+    })
     assert cs._row_has_indication_specific_outcome(row2, "diabetes") is False
 
 

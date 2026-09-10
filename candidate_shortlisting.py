@@ -2640,10 +2640,22 @@ def _derive_go_call(
     dosage_compatibility: str = "Unknown",
     safety_tier: str = "Safety not adequately assessed",
     outcome_label: str = "Results not reported",
+    indication_mode: str = "",
+    outcome_specific_human_evidence_count: int | float = 0,
 ) -> str:
     if status == "Excluded":
         return "No-Go" if "safety" in _norm(reason) else "Hold"
     if status == "Exploratory":
+        return "Investigate — verify before proceeding"
+    # Source-traceable human evidence whose indication-specific outcome has
+    # not yet been verified may remain on the shortlist, but cannot justify Go.
+    if indication_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL":
+        return "Investigate — verify before proceeding"
+    # Backward-compatible authority guard: older discovery code may still label
+    # a candidate "Direct human/clinical" from upstream matching even when no
+    # source-grounded outcome-specific human record has been verified. Such a
+    # candidate may remain on the shortlist, but cannot be promoted to Go.
+    if str(indication_mode).startswith("Direct") and int(float(outcome_specific_human_evidence_count or 0)) <= 0:
         return "Investigate — verify before proceeding"
     # A high numeric score alone cannot justify Go. Product-form applicability,
     # explicit safety information, and demonstrated benefit must all be present.
@@ -3471,6 +3483,8 @@ def build_plant_candidate_shortlist(
             dosage_compatibility=dosage_summary,
             safety_tier=safety_reg_tier,
             outcome_label=str(outcome_profile["label"]),
+            indication_mode=indication_mode,
+            outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
         )
         decision_class_ah = _derive_decision_class_ah(plant_status, overall_score, explanation_reason)
         commercial_summary = _commercial_summary_fields(group)
@@ -3777,6 +3791,8 @@ def rescore_commercial_component(
             dosage_compatibility=str(row.get("Dosage_Form_Compatibility", "Unknown")),
             safety_tier=str(row.get("Safety_Regulatory_Tier", "Safety not adequately assessed")),
             outcome_label=str(row.get("Outcome_Consistency", "Results not reported")),
+            indication_mode=str(row.get("Indication_Evidence_Mode", "")),
+            outcome_specific_human_evidence_count=row.get("Outcome_Specific_Human_Evidence_Count", 0),
         )
         decision_class_ah = _derive_decision_class_ah(status, new_overall_score)
 

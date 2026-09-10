@@ -310,6 +310,121 @@ def attach_human_evidence_source_traceability(report_df, evidence_df):
     return out
 
 
+def build_source_bundle(ids, evidence_df, *, rank_fn=None) -> dict:
+    """Generic, category-agnostic source-bundle builder.
+
+    This is the single reusable abstraction every category-specific
+    ``attach_*_source_traceability`` function is built on (human, safety,
+    commercial, ...). It performs no scientific judgment: it normalizes
+    whatever evidence IDs the caller already has for one candidate/claim
+    into the shared bundle shape:
+
+        {
+            "record_ids": [...],
+            "source_count": ...,
+            "resolved_source_count": ...,
+            "unresolved_source_count": ...,
+            "primary_source_title": ...,
+            "primary_source_url": ...,
+            "source_titles": [...],
+            "source_urls": [...],
+            "sources": [...],
+        }
+
+    ``rank_fn`` lets a category pick a different deterministic primary-
+    source rule than the default (which prefers RCT > systematic review /
+    meta-analysis > other human evidence > everything else). Categories
+    with their own precedence rule (e.g. "the record actually carrying the
+    safety assertion") should pass their own ``rank_fn`` rather than
+    reordering ``sources`` themselves, so the bundle's ``primary_source_*``
+    fields and its ``sources`` list never disagree about which record is
+    primary.
+    """
+    normalized_ids = normalize_evidence_ids(ids)
+    sources = resolve_evidence_sources(normalized_ids, evidence_df)
+    found = [s for s in sources if s["Resolution_Status"] != "UNRESOLVED_RECORD"]
+    unresolved = len(sources) - len(found)
+    urls = [s["Resolved_URL"] for s in sources if s.get("Resolved_URL")]
+    titles = [s["Title"] for s in sources if s.get("Title")]
+
+    primary = None
+    if found:
+        primary = sorted(found, key=rank_fn or _source_rank)[0]
+
+    return {
+        "record_ids": normalized_ids,
+        "source_count": len(normalized_ids),
+        "resolved_source_count": len(found),
+        "unresolved_source_count": unresolved,
+        "primary_source_title": primary.get("Title") if primary else None,
+        "primary_source_url": primary.get("Resolved_URL") if primary else None,
+        "source_titles": titles,
+        "source_urls": urls,
+        "sources": sources,
+    }
+
+
+def _safety_source_rank(source: dict) -> tuple[int, str]:
+    """Primary-source rule for safety: the record actually carrying the
+    safety assertion has no independent quality hierarchy of its own (per
+    spec §19 -- "prefer the actual evidence record supporting the active
+    safety assertion"), so all resolved safety records rank equally and the
+    deterministic tiebreaker is the evidence record ID itself.
+    """
+    return (0, str(source.get("Evidence_Record_ID") or ""))
+
+
+def attach_safety_evidence_source_traceability(report_df, evidence_df):
+    """Append safety-evidence source fields to a candidate/report DataFrame.
+
+    Resolves ``Safety_Evidence_IDs`` (already computed by
+    safety_assertion_engine and pooled by candidate_shortlisting -- this
+    function recomputes no safety judgment) through the same evidence
+    source resolver used for human evidence, so a safety source can never
+    be laundered from an unrelated efficacy paper: only IDs the safety
+    layer itself attached to the candidate are resolved here.
+    """
+    if not isinstance(report_df, pd.DataFrame) or report_df.empty:
+        return report_df
+
+    out = report_df.copy()
+    payloads = []
+    for _, row in out.iterrows():
+        ids = normalize_evidence_ids(row.get("Safety_Evidence_IDs"))
+        bundle = build_source_bundle(ids, evidence_df, rank_fn=_safety_source_rank)
+        concern_level = _clean(row.get("Safety_Concern_Level"))
+        is_serious = bool(concern_level) and concern_level.strip().upper() == "SERIOUS"
+
+        if not ids:
+            resolution_status = (
+                "SOURCE_LINKAGE_INCOMPLETE" if is_serious else "NO_SAFETY_EVIDENCE_IDS"
+            )
+        elif bundle["unresolved_source_count"] > 0 and bundle["resolved_source_count"] > 0:
+            resolution_status = "PARTIAL_SOURCE_LINKAGE"
+        elif bundle["unresolved_source_count"] > 0:
+            resolution_status = "SOURCE_LINKAGE_INCOMPLETE"
+        else:
+            resolution_status = "ALL_RECORDS_RESOLVED"
+
+        payloads.append({
+            "Safety_Evidence_Record_IDs": json.dumps(bundle["record_ids"], ensure_ascii=False),
+            "Safety_Source_Count": bundle["source_count"],
+            "Safety_Resolved_Source_Count": bundle["resolved_source_count"],
+            "Safety_Unresolved_Source_Count": bundle["unresolved_source_count"],
+            "Safety_Primary_Source_Title": bundle["primary_source_title"],
+            "Safety_Primary_Source_URL": bundle["primary_source_url"],
+            "Safety_Source_Titles": json.dumps(bundle["source_titles"], ensure_ascii=False),
+            "Safety_Source_URLs": json.dumps(bundle["source_urls"], ensure_ascii=False),
+            "Safety_Sources_JSON": json.dumps(bundle["sources"], ensure_ascii=False),
+            "Safety_Source_Resolution_Status": resolution_status,
+        })
+
+    payload_df = pd.DataFrame(payloads, index=out.index)
+    for column in payload_df.columns:
+        out[column] = payload_df[column]
+    return out
+
+
 def parse_sources_json(value) -> list[dict]:
     """Safe inverse for UI/detail rendering of Human_Evidence_Sources_JSON."""
     if isinstance(value, list):

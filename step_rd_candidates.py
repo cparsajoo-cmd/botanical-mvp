@@ -32,8 +32,18 @@ from pipeline_fingerprint import (
 from post_discovery_investor_view import build_investor_opportunity_view
 from evidence_source_resolver import (
     attach_human_evidence_source_traceability,
+    attach_safety_evidence_source_traceability,
     parse_sources_json,
 )
+from commercial_source_traceability import (
+    attach_commercial_source_traceability,
+    parse_commercial_sources_json,
+)
+from claim_source_map import (
+    attach_regulatory_patent_source_traceability,
+    attach_claim_source_map,
+)
+from source_linkage_consistency import attach_source_linkage_consistency
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -1306,6 +1316,7 @@ def _attach_commercial_market_intelligence(
             "Indication_Matched_Terms": None,
             "Indication_Unclear_Product_Count": None,
             "Indication_Explicit_Nonmatch_Product_Count": None,
+            "Commercial_Market_Evidence": [],
         }
         plant_mask = out["Alternative_Plant"].fillna("").astype(str).str.strip().str.lower().isin(
             {p.lower() for p in plants}
@@ -1314,7 +1325,16 @@ def _attach_commercial_market_intelligence(
             if column not in out.columns:
                 out[column] = None
             if isinstance(value, (list, dict, set)):
-                out.loc[plant_mask, column] = [value] * int(plant_mask.sum())
+                # Assign via an explicit object-dtype Series so pandas
+                # never tries to broadcast a list-of-lists as a 2D array
+                # (that raised "Must have equal len keys and value" for
+                # any list-valued default, e.g. Commercial_Market_Evidence).
+                fill_series = pd.Series(
+                    [value] * int(plant_mask.sum()),
+                    index=out.index[plant_mask],
+                    dtype="object",
+                )
+                out.loc[plant_mask, column] = fill_series
             else:
                 out.loc[plant_mask, column] = value
         return out
@@ -1327,12 +1347,20 @@ def _attach_commercial_market_intelligence(
         "Market_Saturation": "Commercial_Market_Saturation",
         "Market_Evidence_Source_IDs": "Commercial_Market_Source_IDs",
         "Market_Retrieval_Timestamp": "Commercial_Market_Retrieval_Timestamp",
+        # Source-traceability pass (2026-09-09): carry the per-record market
+        # evidence list itself (product/brand/retailer/source_url_or_id per
+        # MarketEvidence row) through to Stage 6, not just the aggregate
+        # counts, so commercial claims can be traced to a clickable source
+        # instead of only a numeric hit count. No new data is fetched here;
+        # engine.evaluate() already builds this list from evidence already
+        # loaded this session.
+        "Market_Evidence": "Commercial_Market_Evidence",
     }
     keep = {
         "Commercial_Market_Status", "Commercial_Search_Status",
         "Commercial_Market_Data_Usable", "Commercial_Market_Score",
         "Commercial_Market_Saturation", "Commercial_Market_Source_IDs",
-        "Commercial_Market_Retrieval_Timestamp",
+        "Commercial_Market_Retrieval_Timestamp", "Commercial_Market_Evidence",
         "Commercial_Status_Overall", "Commercial_Status_For_Indication",
         "Commercial_Novelty_Status", "Commercial_Positioning",
         "Overall_Product_Hits", "Indication_Product_Hits",
@@ -2060,14 +2088,41 @@ def _stage6_stale_pipeline_warning(session_report_ready_df) -> str | None:
 
 
 def _human_source_column_config():
-    """Native Streamlit clickable-link configuration for human evidence."""
+    """Native Streamlit clickable-link configuration for Stage-6 primary sources.
+
+    Covers human, safety, commercial, regulatory and patent primary-source
+    columns (kept under this name for call-site backward compatibility).
+    Only columns actually present in a given table are configured by
+    Streamlit -- passing extra keys for columns a table doesn't have is a
+    no-op, so one shared config is safe to reuse everywhere.
+    """
     try:
         return {
             "Human_Evidence_Primary_Source_URL": st.column_config.LinkColumn(
                 "Primary human source",
                 help="Open the strongest directly linked human-evidence source available for this candidate.",
                 display_text="View source",
-            )
+            ),
+            "Safety_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary safety source",
+                help="Open the evidence record actually supporting the safety assertion for this candidate.",
+                display_text="View source",
+            ),
+            "Commercial_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary commercial source",
+                help="Open the strongest verified direct market source for this candidate.",
+                display_text="View source",
+            ),
+            "Regulatory_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary regulatory source",
+                help="Open the official regulatory authority source, when assessed.",
+                display_text="View source",
+            ),
+            "Patent_Primary_Source_URL": st.column_config.LinkColumn(
+                "Primary patent source",
+                help="Open the official patent record, when assessed.",
+                display_text="View source",
+            ),
         }
     except Exception:
         return {}
@@ -2121,6 +2176,80 @@ def _render_human_evidence_source_details(df, *, section_key):
                 )
 
 
+def _reference_detail_source_table(sources, *, empty_note):
+    """Render one category's resolved sources as a compact, clickable table."""
+    if not sources:
+        st.caption(empty_note)
+        return
+    detail_rows = []
+    for src in sources:
+        detail_rows.append({
+            "Title": src.get("Title") or src.get("Product_Name"),
+            "Type": src.get("Source_Type") or src.get("Study_Type"),
+            "Year": src.get("Year"),
+            "Record / Org": src.get("Evidence_Record_ID") or src.get("Source_Organization"),
+            "Source": src.get("Resolved_URL"),
+        })
+    detail_df = pd.DataFrame(detail_rows)
+    try:
+        config = {"Source": st.column_config.LinkColumn("Source", display_text="View source")}
+    except Exception:
+        config = {}
+    st.dataframe(detail_df, width="stretch", column_config=config)
+    if any(not d.get("Source") for d in detail_rows):
+        st.caption("Internal record — external URL unavailable")
+
+
+def render_candidate_reference_detail(row):
+    """Grouped, per-candidate reference-detail view (spec §18).
+
+    Only renders a section when the row actually carries a record or an
+    explicit assessment status for that category -- an absent category is
+    left out entirely rather than shown as a misleading empty block.
+    """
+    plant = row.get("Alternative_Plant") or row.get("Plant") or row.get("Scientific_Name") or "Candidate"
+    with st.expander(f"📚 Reference detail — {plant}", expanded=False):
+        human_sources = parse_sources_json(row.get("Human_Evidence_Sources_JSON"))
+        if human_sources or "Human_Evidence_Source_Count" in row:
+            st.markdown("**📚 Human evidence**")
+            _reference_detail_source_table(human_sources, empty_note="No human evidence sources linked.")
+
+        safety_sources = parse_sources_json(row.get("Safety_Sources_JSON"))
+        if safety_sources or "Safety_Source_Count" in row:
+            st.markdown("**🛡 Safety**")
+            _reference_detail_source_table(safety_sources, empty_note="No safety sources linked.")
+            if _reference_detail_clean(row.get("Safety_Source_Resolution_Status")) == "SOURCE_LINKAGE_INCOMPLETE":
+                st.warning("Safety source linkage incomplete")
+
+        commercial_sources = parse_commercial_sources_json(row.get("Commercial_Sources_JSON"))
+        if commercial_sources or "Commercial_Source_Count" in row:
+            st.markdown("**🛒 Commercial**")
+            _reference_detail_source_table(commercial_sources, empty_note="No commercial sources linked.")
+
+        reg_status = row.get("Regulatory_Source_Status")
+        if reg_status is not None:
+            st.markdown("**⚖ Regulatory**")
+            if row.get("Regulatory_Primary_Source_URL"):
+                st.markdown(f"[{row.get('Regulatory_Primary_Source_Title') or 'View source'}]({row.get('Regulatory_Primary_Source_URL')})")
+            else:
+                st.caption(f"Not assessed ({reg_status}) — no fabricated regulatory citation.")
+
+        pat_status = row.get("Patent_Source_Status")
+        if pat_status is not None:
+            st.markdown("**📄 Patents**")
+            if row.get("Patent_Primary_Source_URL"):
+                st.markdown(f"[{row.get('Patent_Primary_Source_Title') or 'View source'}]({row.get('Patent_Primary_Source_URL')})")
+            else:
+                st.caption(f"Not assessed ({pat_status}) — no fabricated patent citation.")
+
+
+def _reference_detail_clean(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in {"", "nan", "none", "null"} else text
+
+
 def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
     # Phase 3 (IMPLEMENTATION_PLAN.md) — prefer the authoritative,
     # one-row-per-plant frame (merge_authoritative_scores()'s output) so
@@ -2142,6 +2271,11 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
         df = report_ready_df.copy()
         if isinstance(evidence_df, pd.DataFrame):
             df = attach_human_evidence_source_traceability(df, evidence_df)
+            df = attach_safety_evidence_source_traceability(df, evidence_df)
+        df = attach_commercial_source_traceability(df)
+        df = attach_regulatory_patent_source_traceability(df)
+        df = attach_claim_source_map(df)
+        df = attach_source_linkage_consistency(df)
         # Apply the deterministic investor/audit adapter to the entire Stage-6
         # frame (not only the orange Discovery subsection) so consistency and
         # source-linkage diagnostics are visible in Priority and Expert Review
@@ -2298,6 +2432,22 @@ def _recommendation_block(result_df, report_ready_df=None, evidence_df=None):
                 "Human_Evidence_Primary_Source_URL",
                 "Human_Evidence_Source_Resolution_Status",
                 "Human_Evidence_Status",
+                "Safety_Source_Count",
+                "Safety_Primary_Source_Title",
+                "Safety_Primary_Source_URL",
+                "Safety_Source_Resolution_Status",
+                "Commercial_Source_Count",
+                "Commercial_Primary_Source_Title",
+                "Commercial_Primary_Source_URL",
+                "Commercial_Source_Resolution_Status",
+                "Regulatory_Source_Count",
+                "Regulatory_Primary_Source_URL",
+                "Patent_Source_Count",
+                "Patent_Primary_Source_URL",
+                "Evidence_Source_Linkage_Status",
+                "Evidence_Source_Linkage_Issues",
+                "Claim_Source_Map",
+                "Derived_Claim_Provenance",
                 "Evidence_Consistency_Status",
                 "Evidence_Consistency_Issues",
                 "Evidence_Coherence_Status",
@@ -4006,8 +4156,22 @@ def render_rd_candidates_step(inputs):
         # on-screen columns. build_investor_opportunity_view()'s full_df
         # is exactly report_ready_df with those columns appended.
         if isinstance(_decision_table_source_df, pd.DataFrame) and not _decision_table_source_df.empty:
+            _evidence_df_for_export = _get_evidence_df()
             _decision_table_source_df = attach_human_evidence_source_traceability(
-                _decision_table_source_df, _get_evidence_df()
+                _decision_table_source_df, _evidence_df_for_export
+            )
+            _decision_table_source_df = attach_safety_evidence_source_traceability(
+                _decision_table_source_df, _evidence_df_for_export
+            )
+            _decision_table_source_df = attach_commercial_source_traceability(
+                _decision_table_source_df
+            )
+            _decision_table_source_df = attach_regulatory_patent_source_traceability(
+                _decision_table_source_df
+            )
+            _decision_table_source_df = attach_claim_source_map(_decision_table_source_df)
+            _decision_table_source_df = attach_source_linkage_consistency(
+                _decision_table_source_df
             )
             _decision_table_source_df, _ = build_investor_opportunity_view(
                 _decision_table_source_df,

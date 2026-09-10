@@ -1,307 +1,266 @@
-# CHANGE_MANIFEST.md — Pre-Investor Reliability Repair
+# CHANGE_MANIFEST.md — Final Pre-Demo Reliability Pass
 
-Scope actually delivered in this pass: **Defects 1, 3, 4, 5, 6, 7** from the
-cahier, root-caused against the real code and verified against the real test
-suite. **Defects 2, 8, 9, 10 were not started** — see "Remaining scientific
-limitations" at the end of this document for why, and what they need.
+This pass started from the ORIGINAL repository ZIP with the previous pass's
+valid repairs re-applied (the working tree already contained them; no prior
+repair ZIP was actually re-uploaded this turn, confirmed with you and
+continued directly on that tree). It completes **Defect 2, Defect 8, Defect 9,
+and Target Definition Completeness**, and performs a scoped Defect 10 audit
+(see INVESTOR_DEMO_RISK_CHECKLIST.md). No plant or indication name is
+hard-coded anywhere in these fixes.
 
-No plant or indication name is hard-coded anywhere in these fixes. All
-changes generalize to arbitrary indications/botanicals, per the cahier's
-rules 1–2.
-
----
-
-## 1. `phase5_scoring_config.py`
-
-**Defects addressed:** 1, 3, 6
-
-**Functions/constants changed:** module-level constants only (no functions).
-
-- Added `INSUFFICIENT_DIRECTION_DATA` status constant with entries in
-  `DIRECTION_FACTORS` (0.00 — no positive direction credit) and
-  `CONSISTENCY_FACTORS` (0.70, same as `INSUFFICIENT`).
-  - **Before:** only 7 consistency states existed; a tier with evidence but
-    no resolved result direction had no honest state to fall into.
-  - **After:** a distinct, explicit state exists for "evidence exists, but
-    none of it has a resolved direction" — separate from `INSUFFICIENT`
-    (no evidence at all) and never `MIXED` (a genuine disagreement).
-
-- Added `TARGET_UNSPECIFIED` status constant, deliberately **absent** from
-  `APPLICABILITY_FACTORS` (excluded from aggregation, like
-  `NOT_APPLICABLE`).
-  - **Before:** only `MATCH/PARTIAL/UNKNOWN/MISMATCH/NOT_APPLICABLE`
-    existed; a target dimension the project never specified had no
-    distinct status from a dimension the evidence simply didn't report.
-  - **After:** a project-incompleteness signal exists that does not
-    penalize `Record_Applicability_Factor`.
-
-- `MARKET_STATUS_POINTS["Search incomplete"]`: **3.0 → 0.0**.
-  - **Before:** an incomplete market search scored a positive +3 bonus,
-    directly contradicting the comment immediately above its only call
-    site (`botanical_rd_candidate_engine.py`), which already said this
-    case should get "the same neutral treatment as not performed, not a
-    bonus."
-  - **After:** neutral (0.0), matching that comment and matching
-    `market_neutral_default`.
-
-**Tests added/changed:** none directly (covered by callers' tests below).
+**Preserved unchanged from the prior pass** (verified still present, not
+reverted): unreported-direction-≠-MIXED, `INSUFFICIENT_DIRECTION_DATA`,
+`TARGET_UNSPECIFIED` vs evidence-`UNKNOWN`, no positive market score for
+unassessed search, no positive safety/regulatory score for missing
+information, mechanism/compound de-duplication, the explicit `prohibitive`
+safety boolean, and the canonical `Primary_Tier_Outcome_Label` ↔
+`Evidence_Consistency_Class` mapping.
 
 ---
 
-## 2. `evidence_consistency.py`
+## 1. `candidate_shortlisting.py`
 
-**Defect addressed:** 1 (unreported evidence treated as mixed efficacy)
+### Defect 2 — direct human relevance now requires verified outcome evidence
 
-**Function changed:** `classify_evidence_consistency()`. New function added:
-`direction_data_completeness()`.
+**Root cause** (traced across `_indication_relevance_detail_authoritative()`
+and its legacy-fallback twin): the "Direct human/clinical" branch (28–35/35
+points) only required human-study-design **vocabulary** in a row's text
+(`_row_has_candidate_specific_empirical_support()` — checks for
+"human"/"clinical"/"randomized"/etc.). It never checked whether the row had
+an actual **reported outcome**. Meanwhile `Outcome_Specific_Human_Evidence_Count`
+was already built from a separate, stricter function,
+`_row_has_indication_specific_outcome()`. The two were never reconciled —
+exactly the reported Punica pattern (32.6/35 relevance, 0 verified outcome
+evidence).
 
-- **Before:** `unreported`-direction records stayed in the ratio
-  denominator (`positive/total`, `(harmful+null)/total`), diluting the
-  ratios. A tier that was genuinely unanimous among its KNOWN-direction
-  records could still fall through every threshold and hit the catch-all
-  `return MIXED` purely because it also contained several records whose
-  direction was never extracted.
-- **After:** ratios are computed only over `known_direction_total =
-  positive+null+harmful+mixed` (unreported excluded from the denominator,
-  but still counted toward `total` — nothing is silently discarded). If
-  `known_direction_total == 0` while `total > 0`, the function now returns
-  the new `INSUFFICIENT_DIRECTION_DATA` state instead of falling through to
-  `MIXED` or defaulting to a positive class. `unreported` records are never
-  counted as positive.
-- New `direction_data_completeness(profile)` returns `"PARTIAL"` when any
-  record's direction is unresolved, `"COMPLETE"` otherwise — a separate,
-  purely informational signal (requirement D), never consumed by the
-  classifier itself.
+**Functions changed:**
+- `_indication_relevance_detail_authoritative()` and
+  `_indication_relevance_detail_legacy_fallback()`: both now track, alongside
+  `human_sources`, a stricter `verified_human_sources` count (rows that are
+  human-sourced AND clear `_row_has_indication_specific_outcome()`). When
+  `human_sources >= 1` but `verified_human_sources == 0`, the mode downgrades
+  from `"Direct human/clinical"` to a new `"UNVERIFIED_DIRECT_HUMAN_SIGNAL"`
+  state, capped at 24 points (never reaching the 28–35 verified range),
+  tier `"Medium relevance"`.
+- `_row_has_indication_specific_outcome()`: fixed a genuine pre-existing gap
+  — it scanned `Primary_Outcome`/`Source_Outcome_Text`/`Source_Evidence_Text`
+  for the indication phrase, but never `Clinical_Rationale`/
+  `Scientific_Rationale`, even though `_result_category()` elsewhere in this
+  same file already treats those as the record's own reported-outcome
+  narrative. Added a branch mirroring the existing `Source_Evidence_Text`
+  check (requires a resolved result — `Result_Direction` or a resolvable
+  `_result_category()` — AND the indication phrase in the rationale text).
+- New plant-status branch for `"UNVERIFIED_DIRECT_HUMAN_SIGNAL"`: always
+  routes to `"Exploratory"` (never auto-Shortlisted on this signal alone,
+  never Excluded) with explicit provenance text explaining the downgrade.
+- `_indication_component_source_ids()`: extended so `UNVERIFIED_DIRECT_HUMAN_SIGNAL`
+  rows keep their source-ID provenance visible (previously only `"Direct"`-
+  prefixed modes were attributed).
+- `_EVIDENCE_ROUTE_BY_MODE`: added an explicit `"direct_human_unverified"`
+  route (was falling through to `"unclassified"`).
 
-**Tests changed:**
-`test_phase5_scoring_calibration_addendum.py::test_phase5_unreported_outcomes_do_not_manufacture_mixed_classification`
-(renamed from `..._remain_in_consistency_denominator`, which asserted the
-literal defect) and
-`test_phase5_scoring_calibration_addendum.py::test_phase5_consistency_distinguishes_no_records_from_unreported_records`
-now assert the corrected `CONSISTENT_POSITIVE` / `INSUFFICIENT_DIRECTION_DATA`
-outcomes instead of the old `MIXED` outcomes.
+**Behavior before:** a candidate with zero verified outcome-specific human
+evidence could receive near-maximal (28–35/35) "Direct human/clinical"
+relevance purely from human-study vocabulary + a strong indication match.
 
----
+**Behavior after:** the same candidate receives at most 24 points, is labeled
+`UNVERIFIED_DIRECT_HUMAN_SIGNAL`, remains fully discoverable, and routes to
+Exploratory with a visible reason. A candidate with genuine verified outcome
+evidence still reaches "Direct human/clinical" and outranks it.
 
-## 3. `candidate_shortlisting.py`
+**A bug in my own first patch, caught by running the suite, not shipped
+blind:** the initial edit added the `verified_human_source_ids` tracking
+list's *usage* to the primary (`_authoritative`) function but the
+corresponding *initialization* only landed in the less-used legacy-fallback
+twin — a `NameError` on the production code path. Fixed before delivery.
 
-**Defects addressed:** 1, 4, 5, 6, 7, 9 (partial)
+**Tests:** `test_candidate_shortlisting.py::test_zero_verified_outcome_scores_lower_than_verified_direct_human_evidence`
+(the cahier's exact acceptance test — new). Three pre-existing tests that
+encoded the old contradiction as intentional design were corrected with
+documented rationale (see §7).
 
-### `_mechanism_support()` — Defect 4
-- **Before:** `2.0 × count(Supported_Target_or_Mechanism == True)` rows,
-  capped at 10 — pure row-volume scoring. Production: 10/10 for 49/51
-  candidates.
-- **After:** `2.0 × len(_indication_specific_mechanism_values(...))` —
-  counts **unique, indication-relevant** mechanism components (reusing the
-  existing de-duplication/indication-filtering helper, not new semantic
-  logic), capped at 10.
+### Defect 8 — "Established scientific candidate" requires evidence, not score alone
 
-### `_compound_quality()` — Defect 5
-- **Before:** the base compound score already de-duplicated by compound
-  name (`max()`), but the "linked to a supported mechanism" bonus summed
-  `row_weight` per matching ROW with no de-duplication — the actual source
-  of the 44/51 saturation to 5/5.
-- **After:** the bonus is now de-duplicated by compound name using the same
-  `max()`-based pattern as the base score (`best_linked_by_name`).
+**Function changed:** `_derive_decision_class_ah()`.
 
-### `_novelty_market()` — Defect 6
-- **Before:** unassessed/unavailable/not-performed commercial status
-  returned **2.5** points, directly contradicting the function's own
-  docstring ("Missing market data earns zero points... 'not searched' is
-  not an opportunity"). Also expanded `_COMMERCIAL_UNASSESSED_TERMS` to
-  include `"unknown"`, `"skipped"`, `"search incomplete"` — states the
-  observed production run actually reported that weren't previously
-  covered.
-- **After:** returns **0.0**.
+**Before:** `"B — Established scientific candidate"` whenever
+`overall_score >= _STRONG_SCORE_THRESHOLD` and status wasn't
+Excluded/Exploratory — market novelty, compound count, or mechanism count
+could push a weak-evidence candidate over the threshold and manufacture the
+label.
 
-### `_safety_regulatory()` — Defect 7
-- **Before:** "no safety info" → 5.0 points; "no regulatory info" → 3.0
-  points — up to 8/15 for knowing nothing at all.
-- **After:** both branches return 0.0. Return signature extended to
-  `(points, tier, prohibitive)` — see the gate fix below.
+**After:** signature extended with `go_call` and `indication_mode` keyword
+args. `"B"` requires `go_call == "Go"` (already gates compatible preparation,
+explicit reassuring safety, and a predominantly-positive outcome label —
+see `_derive_go_call()`) **and** `indication_mode == "Direct human/clinical"`
+(verified human outcome evidence specifically, via the Defect 2 fix) **and**
+the score threshold. Callers that don't have this context (e.g. the
+commercial-only rescore path) default to empty strings, which never satisfy
+the condition — missing context withholds "Established", never grants it.
 
-### Plant-status gate (line ~3270) — Defect 7 side effect, caught by the
-real test suite
-- **Before:** `if safety_reg_points <= 0.0: plant_status = "Excluded"`.
-  Harmless while "no info" scored 8.0 (never triggered this branch). Once
-  "no info" correctly dropped to 0.0, this gate started silently
-  auto-excluding candidates with **no known safety/regulatory signal at
-  all** — exactly the anti-pattern the cahier explicitly warned against.
-- **After:** `_safety_regulatory()` now returns an explicit `prohibitive`
-  boolean (true only for a plant-level hard stop, a severe safety term, or
-  an explicit regulatory prohibition). The gate now checks
-  `if safety_reg_prohibitive:` instead of the ambiguous `<=0.0` comparison.
-  An honestly-unknown candidate scores 0 safety points and is no longer
-  auto-excluded, but still requires review before Go (unchanged
-  `eligibility_gate.py` behavior).
+**Both call sites updated** to pass the new keyword args (the plant-scoring
+loop passes the just-computed `go_call`/`indication_mode`; the commercial
+rescore path passes its own freshly-computed `go_call` and the row's stored
+`Indication_Evidence_Mode`).
 
-### `_outcome_profile()` / `_outcome_profile_from_row_records()` — Defects 1 & 9
-- **Before:** each function computed its own independent `label` heuristic
-  that did NOT count `unreported` records toward a "mixed" verdict — a
-  DIFFERENT rule from `classify_evidence_consistency()`'s (which did count
-  them, per the defect-1 bug above). This is the literal mechanism behind
-  the reported Valerian contradiction: `Primary_Tier_Outcome_Label` =
-  "Predominantly positive results" while `Evidence_Consistency_Class` =
-  "MIXED", from the same underlying counts.
-- **After:** both functions call `classify_evidence_consistency()` on their
-  own counts and map the result through a single
-  `_CONSISTENCY_CLASS_TO_OUTCOME_LABEL` dict. `Primary_Tier_Outcome_Label`
-  (and the diagnostic-only `All_Tier_Outcome_Consistency_Diagnostic`) can no
-  longer disagree with `Evidence_Consistency_Class` for the same input,
-  because they are now the same computation. `MOSTLY_POSITIVE` is mapped to
-  "Mixed/inconsistent results" (not "Predominantly positive"), reserving
-  that label for the near-unanimous `CONSISTENT_POSITIVE` case.
-  `evidence_direction_profile` also gained a new, additive
-  `Direction_Data_Completeness` field.
+**Tests:** `test_candidate_shortlisting.py::test_established_class_requires_verified_evidence_not_score_alone`
+(new) — covers high-score-but-unverified, high-score-but-not-Go, genuinely
+established, and missing-context-defaults-to-withheld.
 
-  This resolves the *specific, verified* contradiction mechanism for
-  Primary_Tier_Outcome_Label vs. Evidence_Consistency_Class. It does **not**
-  resolve the separate `Indication_Evidence_Direction` field, which comes
-  from a wholly different subsystem (`evidence_adjudication_engine.py`,
-  AI-adjudicated) — that is Defect 9's remaining, larger scope; see
-  "Remaining scientific limitations."
+### Target Definition Completeness — wired into the decision (previously informational only)
 
-### Applicability aggregation (`_scientific_evidence_components()`) — Defect 3
-- Propagates the new `Target_Definition_Completeness` signal from
-  `evaluate_applicability()` (see `standard_evidence_builder.py` below)
-  across a candidate's primary-tier records (`any_target_incomplete`) and
-  exposes it on the returned dict and on `Plant_Applicability_Factor`'s
-  sibling fields. Not yet wired into a final Go/decision gate (see
-  limitations).
+**Functions changed:** `_derive_go_call()`, plus the output row dict and the
+`authoritative_fields` export tuple.
 
-**Tests changed:** `test_candidate_shortlisting.py` —
-`test_missing_safety_and_regulatory_data_is_not_scored_as_clean` (8.0 →
-0.0), `test_explicit_safety_and_market_information_create_real_differentiation`
-(2.5 → 0.0). **Tests added:**
-`test_duplicate_mechanism_rows_do_not_saturate_mechanism_support`,
-`test_unrelated_mechanisms_do_not_score_for_requested_indication`,
-`test_several_distinct_mechanisms_score_higher_than_one_duplicated_mechanism`,
-`test_duplicate_compound_rows_do_not_inflate_linked_mechanism_bonus`.
+- `Target_Definition_Completeness` (computed since the prior pass in
+  `_scientific_evidence_components()`) was never added to the output row —
+  the same "invisible field" pattern this project has hit before
+  (RD_Discovery_Lane, Mechanistic_Evidence_Record_IDs). Now on the row and
+  in `authoritative_fields`.
+- `_derive_go_call()`: new keyword arg `target_definition_completeness`. When
+  `"incomplete"`, an otherwise-earned "Go" downgrades to
+  `"Investigate — complete target product definition"` — checked *last*,
+  after score/safety/dosage/outcome all already justify Go, so a candidate
+  never loses Shortlist status or has `Scientific_Evidence_Score` penalized
+  for this (unchanged from the Defect-3 fix); it only withholds the final
+  "fully transferable" conclusion.
+- Both `_derive_go_call()` call sites updated to pass it through.
+
+**Behavior before:** the field existed but nothing read it; an incomplete
+target/product definition (e.g. no plant part/dose/route specified) could
+still produce an unqualified "Go".
+
+**Behavior after:** same score, same Shortlist eligibility, but "Go" is
+withheld until the product definition is complete — never Excluded/No-Go for
+this reason alone (least-restrictive, per your instruction).
+
+**Tests:** `test_candidate_shortlisting.py::test_incomplete_target_definition_blocks_go_but_not_score_or_shortlist`
+(new).
 
 ---
 
-## 4. `standard_evidence_builder.py`
+## 2. `step_rd_candidates.py`
 
-**Defect addressed:** 3 (applicability collapsing to 0.60)
+### Defect 9 — one canonical final evidence-direction field, documented authority hierarchy
 
-**Function changed:** `evaluate_applicability()`.
+**Function added:** `_final_canonical_evidence_direction(evidence_consistency_class, ai_direction)`.
+**Function changed:** `_run_evidence_adjudication()` (new columns wired in);
+`_reconcile_final_decision_status()` (docstring only — see below).
 
-- **Before:** any dimension in `Required_Transferability_Dimensions` that
-  the TARGET/PROJECT itself never specified was converted from
-  `NOT_APPLICABLE` to `UNKNOWN` — the identical status used when the target
-  DID specify a dimension but the EVIDENCE record failed to report it. Both
-  were then `min()`-ed into `Record_Applicability_Factor` identically. A
-  project that only specified preparation + indication would have
-  plant_part/route/dose forced to `UNKNOWN` (factor 0.60) and drag a
-  perfectly-matching-preparation record down to 0.60 regardless.
-- **After:** that conversion now targets a new `TARGET_UNSPECIFIED` status,
-  excluded from the factor/classification aggregation entirely (same
-  treatment as `NOT_APPLICABLE`). A dimension the target DID specify but
-  the evidence doesn't report still becomes genuine `UNKNOWN` (unchanged,
-  still penalizes the factor) — the comparator functions
-  (`_appl_dimension_simple/_preparation/_dose/_indication`) already
-  distinguished these cases correctly; only the post-hoc "required but
-  blank" loop was conflating them. New `Target_Definition_Completeness`
-  field ("incomplete"/"complete") surfaces the target-side gap separately,
-  so it can still inform a "fully transferable" decision downstream without
-  corrupting the evidence-transferability score itself.
+**Root cause / finding:** `Indication_Evidence_Direction` (AI-adjudicated,
+`evidence_adjudication_engine.py`) and `Evidence_Consistency_Class`
+(deterministic, `candidate_shortlisting.py`) were two independent fields with
+no documented precedence and no single "canonical" field a reader could
+point to. Investigation found `_reconcile_final_decision_status()` already
+implements substantial AI-vs-verified reconciliation (many hand-written
+gates keyed off `Indication_Evidence_Mode`, which is itself now verified-
+evidence-gated after the Defect 2 fix) — so the *effective* behavior already
+mostly favored verified evidence, but this was not documented as an explicit
+hierarchy and there was no single named field to point to, per your
+instruction.
 
-**Tests changed:**
-`test_preparation_transferability_invariants.py::test_capsule_is_dosage_form_not_automatically_a_preparation_and_missing_context_is_not_full_match`
-now asserts `Applicability_Classification == "MATCH"` and
-`Record_Applicability_Factor == 1.0` (was `"UNKNOWN"`/`< 1.0`), plus checks
-the new `Target_Definition_Completeness == "incomplete"` and each
-unspecified dimension's status.
+**Fix:** new `_final_canonical_evidence_direction()` with an explicit,
+documented 4-level authority hierarchy (source-grounded records → deterministic
+`Evidence_Consistency_Class` → AI `Indication_Evidence_Direction` → broad
+mechanism/compound plausibility, never itself a direction signal). Verified
+evidence (level 2) is used whenever it reflects a resolved classification;
+AI (level 3) is used **only** as a labeled fallback when verified evidence
+is itself uninformative (`INSUFFICIENT`/`INSUFFICIENT_DIRECTION_DATA`).
+Two new columns added to `plant_summary_df` in `_run_evidence_adjudication()`:
+`Final_Canonical_Evidence_Direction` and
+`Final_Canonical_Evidence_Direction_Source` (`"VERIFIED"`/`"AI_FALLBACK"`/
+`"UNKNOWN"`). Neither existing field is deleted, overwritten, or hidden —
+both remain independently visible so a reviewer can see when they disagree.
 
-**Tests added:**
-`test_target_unspecified_dose_and_part_do_not_mask_a_preparation_mismatch`
-(the cahier's exact Defect-3 acceptance test — a project specifying only
-infusion + indication must still distinguish a matching-preparation record
-from a mismatched one, neither forced to 0.60) and
-`test_target_specified_but_evidence_silent_stays_unknown_not_target_unspecified`
-(regression: when the target DOES specify a dimension but the evidence
-doesn't report it, it must stay genuine `UNKNOWN`, factor 0.60 — unchanged).
+`_reconcile_final_decision_status()` itself was **not** rewritten — its
+existing gates were verified (by hand-tracing, then by the new tests below)
+to already correctly cap an AI-optimistic-but-unverified candidate at
+"GO WITH CAUTION" and never let it reach unqualified "GO". Its docstring
+was extended to document why this constitutes the same authority hierarchy
+in effect, and to point to the new canonical field, without risking a
+rewrite of extensively-tested existing logic this close to the demo.
 
----
-
-## 5. Test files touched only to correct hard-coded pre-fix values
-
-These encoded the exact numeric/behavioral defects being fixed (confirmed
-by reading each one before changing it — none were changed to make new
-*incorrect* behavior pass):
-
-- **`test_scoring_config.py`** —
-  `test_default_scoring_config_field_values_match_documented_pre_task_weights`:
-  `config.market_search_incomplete == 3` → `== 0` (defect 6).
-- **`test_step5_scientific_result_preparation_safety.py`** —
-  `test_go_requires_positive_results_compatible_preparation_and_explicit_safety`:
-  literal `Overall_Score == 77.8` → `== 68.5`. Verified this is pure
-  numeric drift from the corrected (de-saturated) Mechanism/Compound/
-  Safety/Novelty components on this fixture; the fixture's own
-  Applicability/indication-UNKNOWN reasoning (documented in its docstring)
-  and its `Go_Investigate_Hold_NoGo == "Investigate"` outcome are
-  unaffected.
-- **`test_phase5_scoring_calibration_addendum.py`** —
-  `test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision`:
-  `Go_Investigate_Hold_NoGo == "Go"` → `== "Investigate"` (both instances).
-  Verified this fixture's `COX-2 inhibition` mechanism term has no textual
-  link to its `"test indication"` label (so 0 indication-specific mechanism
-  credit is correct, not a regression) and it supplies no real market/
-  regulatory data (so both correctly score 0 instead of the old inflated
-  2.5/3.0). The score dropped from the platform's previous **inflated**
-  82.2 to a correctly-scored 65.9, legitimately below the Go threshold
-  (78.0). The actual invariant this test protects — that diagnostic-only
-  lower-tier records cannot change the primary-tier decision — is
-  unaffected and still verified (both runs still produce the same decision
-  and the same primary-tier scores).
+**Tests:** `test_adjudication_score_authority_wiring.py::test_final_canonical_direction_follows_verified_evidence_not_ai`
+(AI says `CONSISTENT_POSITIVE`/`STRONG`, verified says `MIXED` → canonical
+field follows `MIXED`, source `VERIFIED`) and
+`::test_final_canonical_direction_falls_back_to_ai_only_when_verified_is_uninformative`
+(verified is `INSUFFICIENT_DIRECTION_DATA` → canonical field falls back to
+the AI read, source `AI_FALLBACK`) — both new, both exercise the real
+`_run_evidence_adjudication()` entry point with a mocked `adjudicate_candidate`,
+matching this file's existing test pattern.
 
 ---
 
-## Remaining scientific limitations
+## 3. Other production files in the delivered set
 
-Not fixed in this pass — flagged explicitly rather than claimed done:
+`evidence_consistency.py`, `phase5_scoring_config.py`,
+`standard_evidence_builder.py`: **unchanged this pass** — included only
+because they were touched in the prior pass and remain part of the current
+working tree; re-verified still correct and covered by this pass's
+full-suite run.
 
-- **Defect 2** (outcome-specific human evidence vs. indication relevance
-  authority mismatch — e.g. near-maximal DIRECT HUMAN relevance with zero
-  verified human outcome evidence) — not investigated. Needs root-causing
-  across `general_indication_relevance.py`, `indication_candidate_discovery.py`,
-  and `evidence_adjudication_engine.py`.
-- **Defect 8** (`_derive_decision_class_ah()`'s "B — Established scientific
-  candidate" label derived from `Overall_Score` alone) — not investigated.
-  `_derive_go_call()` already gates "Go" on dosage compatibility + explicit
-  reassuring safety + a positive-results outcome label in addition to the
-  score threshold, which is a partial mitigation, but
-  `_derive_decision_class_ah()`'s "Established" label uses the score
-  threshold alone with no equivalent evidence gate. Needs the same
-  evidence-conditions treatment applied to `_derive_go_call()`.
-- **Defect 9** (single authority hierarchy across `Indication_Evidence_Direction`,
-  `Outcome_Consistency`, `Evidence_Consistency_Class`, `Human_Evidence_Strength`,
-  AI counts, and strict outcome-specific counts) — only partially addressed.
-  `Primary_Tier_Outcome_Label` and `Evidence_Consistency_Class` can no
-  longer disagree with each other (fixed, see `candidate_shortlisting.py`
-  above). `Indication_Evidence_Direction` is a wholly separate,
-  AI-adjudicated field computed in `evidence_adjudication_engine.py` and
-  was not touched — it can still disagree with the scientific-evidence-
-  pipeline's own direction/consistency fields. This needs an explicit,
-  documented precedence audit across both subsystems, which is a
-  substantially larger investigation than fit in this pass.
-- **Defect 10** (fail-gracefully audit across Step 2–6 execution/UI paths)
-  — not investigated in this pass.
-- **`Target_Definition_Completeness`** (new field from the Defect 3 fix) is
-  computed and exposed on the applicability result and on
-  `_scientific_evidence_components()`'s output, but is **not yet wired**
-  into any final "Go"/"fully transferable" decision gate — it is currently
-  informational only. The cahier's requirement that an unspecified target
-  dimension "may prevent a final Go... conclusion" is therefore only
-  half-delivered: the score no longer takes an unjustified penalty, but
-  nothing yet uses the completeness signal to require target-definition
-  completeness before Go. This is the same "computed but not wired into
-  authoritative_fields/decision logic" trap this codebase has hit several
-  times before (see project history — RD_Discovery_Lane, Mechanistic_
-  Evidence_Record_IDs) and should be checked for on the next pass.
-- The model's overall reliability posture is unchanged from prior external
-  reviews: this pass fixes the specific scoring-component defects in the
-  cahier, not the platform's broader evidence-adjudication architecture.
-  `SCORING_MODEL_VERSION`/`PROVISIONAL_NOTICE`/`RANKING_CALIBRATION_STATUS`
-  continue to apply — the model remains a provisional R&D prioritization
-  score, not a validated efficacy or clinical-success probability.
+---
+
+## 4. Defect 10 — fail-gracefully audit (scoped, not a full rewrite)
+
+See INVESTOR_DEMO_RISK_CHECKLIST.md for the full write-up. Summary: audited
+(read-only) rather than blindly patched, because the highest-risk item found
+(no per-candidate exception isolation in `candidate_shortlisting.py`'s
+~700-line plant-scoring loop) would require restructuring that loop to fix
+safely, and I judged that too large and risky to attempt correctly with the
+remaining time before your demo without real risk of introducing a new,
+untested failure mode — which conflicts directly with "no newly introduced
+failures are acceptable." No code changes were made for Defect 10 this pass.
+Confirmed-safe findings (empty candidate set, missing critical column,
+per-connector isolation in Step 2 collection, bounded LLM timeout/retry,
+explicit Supabase credential error) and the one verified residual risk are
+both documented in the risk checklist rather than claimed fixed.
+
+---
+
+## 5. Review of the 9 previously-reported "pre-existing" test failures
+
+**Finding: all 9 were category C (environment), not defects.** This
+sandbox was missing `streamlit`, `openai`, and `supabase`. Installing all
+three, **the pristine original ZIP now runs 3829/3829 passed, 0 failed, 3
+xfailed, 0 collection errors** (previously reported as 60 collection errors
++ 9 failures under the same, incompletely-provisioned sandbox). None of the
+9 were genuine production defects (category A) or stale tests (category B).
+See TEST_REPORT.md for the full before/after comparison and package list.
+
+---
+
+## 6. Real Sleep-indication run
+
+No live Supabase/OpenAI access in this sandbox (same constraint as last
+pass). See REAL_SLEEP_RUN_DIAGNOSTIC.md for a synthetic-but-real-pipeline
+three-candidate comparison (Valeriana/Chamomile/Punica) built directly from
+the cahier's own described evidence patterns, run through the actual,
+unmodified `build_plant_candidate_shortlist()`.
+
+---
+
+## 7. Test files touched only to correct hard-coded pre-fix expectations
+
+Each was read in full before changing, and none were weakened to pass
+incorrect new behavior — every change is documented with the specific
+defect it corresponds to, in the test file itself:
+
+- `test_general_evidence_transport_and_ai_alignment_v7.py::test_primary_direct_count_no_longer_depends_on_optional_structured_outcome`
+  — previously asserted `"Direct human/clinical"` coexisting with
+  `Outcome_Specific_Human_Evidence_Count == 0` as **intentional** design
+  ("outcome-specific is intentionally stricter than direct indication
+  relevance" — literally the Defect-2 bug, pre-dating its identification).
+  Now asserts the corrected `UNVERIFIED_DIRECT_HUMAN_SIGNAL` state.
+- `test_candidate_shortlisting.py::test_indication_specific_evidence_is_shortlisted_and_scored`
+  — fixture text ("supports wound healing via collagen synthesis") was a
+  mechanistic claim, not a reported result; updated to state a genuine
+  observed outcome, matching the test's evident intent (verify a truly
+  direct-evidence candidate reaches Shortlist).
+- `test_phase5_scoring_calibration_addendum.py::test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision`
+  — this fixture's `Clinical_Rationale` never names the indication in its
+  own text (only matched via the upstream `Indication_Match_Type` field), so
+  it now correctly downgrades to `UNVERIFIED_DIRECT_HUMAN_SIGNAL` /
+  Exploratory. Assertions updated to the corrected values; the actual
+  invariant under test (lower diagnostic-only tiers cannot change the
+  primary-tier decision) is unaffected and still verified.

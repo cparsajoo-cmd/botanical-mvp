@@ -97,9 +97,23 @@ def test_primary_direct_count_no_longer_depends_on_optional_structured_outcome()
     }])
     summary, audit = cs.build_plant_candidate_shortlist(raw, indication=indication, dosage_form="oral")
     row = summary.iloc[0]
-    assert row["Indication_Evidence_Mode"] == "Direct human/clinical"
+    # DEFECT 2 FIX (final pre-demo reliability pass): this test previously
+    # asserted "Direct human/clinical" (near-maximal indication relevance)
+    # coexisting with Outcome_Specific_Human_Evidence_Count == 0 as
+    # deliberate, intentional behavior ("outcome-specific is intentionally
+    # stricter than direct indication relevance"). That is exactly the
+    # authority-mismatch defect the cahier identified from real production
+    # data (Punica granatum: 32.6/35 relevance, 0 verified outcome-specific
+    # human evidence) and requires reconciling: a record whose own reported
+    # result direction is explicitly "unknown" and whose only indication
+    # mention is in raw source text (not its own outcome/rationale) must not
+    # be scored as verified direct human/clinical evidence. It remains
+    # discoverable at a reduced, explicitly-provisional relevance ceiling.
+    assert row["Indication_Evidence_Mode"] == "UNVERIFIED_DIRECT_HUMAN_SIGNAL"
     assert row["Direct_Indication_Evidence_Count"] == 1
-    # Outcome-specific is intentionally stricter than direct indication relevance.
+    # Outcome-specific remains stricter than direct indication relevance --
+    # that gap is now reflected in the relevance MODE itself (above), not
+    # papered over by scoring this as verified clinical evidence anyway.
     assert row["Outcome_Specific_Direct_Evidence_Count"] == 0
     assert row["Outcome_Specific_Human_Evidence_Count"] == 0
     assert bool(audit.iloc[0]["Outcome_Specific_Direct_Evidence"]) is False

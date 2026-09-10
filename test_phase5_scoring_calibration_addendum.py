@@ -1924,17 +1924,28 @@ def test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision():
 
     DEFECT 4/5/6/7 FIX NOTE (pre-investor reliability repair): this
     fixture's Overall_Score dropped from the platform's previous
-    (inflated) 82.2 to a correctly-scored 65.9 once mechanism/compound/
+    (inflated) 82.2 to a correctly-scored value once mechanism/compound/
     market/safety saturation was fixed -- COX-2 inhibition here has no
     textual link to "test indication" (so 0 indication-specific mechanism
     support is correct, not a regression), and the fixture supplies no
     real market or regulatory data (so both now correctly score 0 rather
-    than the old inflated 2.5/3.0). That legitimately moves this
-    synthetic fixture below the Go score threshold to Investigate. The
-    invariant this test actually protects -- that diagnostic-only lower-
-    tier (Tier-B) records cannot change the primary-tier decision -- is
-    unaffected and still verified below (both runs still produce the same
-    decision and the same primary-tier scores).
+    than the old inflated 2.5/3.0).
+
+    DEFECT 2 FIX NOTE (final pre-demo reliability pass): this fixture's
+    Clinical_Rationale text ("significant positive effect reported;
+    improvement in symptoms") never actually names "test indication" in
+    the record's own outcome/rationale text -- it is matched to the
+    indication only via the upstream Indication_Match_Type field, not via
+    its own reported-outcome text. Under the corrected authority rule this
+    is exactly an unverified direct-human signal (a real, common shape:
+    record matched to the right indication upstream, but its own text
+    doesn't state the result for that specific indication), so the mode
+    correctly downgrades to UNVERIFIED_DIRECT_HUMAN_SIGNAL and the status
+    correctly moves from Shortlist to Exploratory. The invariant this test
+    actually protects -- that diagnostic-only lower-tier (Tier-B) records
+    cannot change the primary-tier decision -- is unaffected and still
+    verified below (both runs still produce the same decision and the same
+    primary-tier scores).
     """
     primary_rows = [
         plant_row(
@@ -1955,8 +1966,8 @@ def test_phase5_lower_tiers_cannot_change_a_primary_tier_go_decision():
     )
 
     assert primary_only is not None and with_lower is not None
-    assert primary_only["Go_Investigate_Hold_NoGo"] == "Investigate"
-    assert with_lower["Go_Investigate_Hold_NoGo"] == "Investigate"
+    assert primary_only["Go_Investigate_Hold_NoGo"] == "Investigate — verify before proceeding"
+    assert with_lower["Go_Investigate_Hold_NoGo"] == "Investigate — verify before proceeding"
     assert with_lower["Overall_Score"] == primary_only["Overall_Score"]
     assert with_lower["Scientific_Evidence_Score"] == primary_only["Scientific_Evidence_Score"]
     assert with_lower["Primary_Tier_Outcome_Profile"] == primary_only["Primary_Tier_Outcome_Profile"]

@@ -79,7 +79,16 @@ def test_plant_with_no_indication_specific_evidence_is_excluded():
 
 def test_indication_specific_evidence_is_shortlisted_and_scored():
     df = pd.DataFrame([_row(
-        Scientific_Rationale="supports wound healing via collagen synthesis",
+        # DEFECT 2 FIX (final pre-demo reliability pass): the original text
+        # ("supports wound healing via collagen synthesis") is a mechanistic
+        # claim, not a reported result -- it never states that an outcome
+        # was actually observed. Under the corrected authority rule this
+        # correctly no longer qualifies as verified direct human/clinical
+        # evidence (it would score as UNVERIFIED_DIRECT_HUMAN_SIGNAL
+        # instead). This test's purpose is to exercise a genuinely
+        # verified direct-evidence candidate, so the fixture now states an
+        # actual observed result for the requested indication.
+        Scientific_Rationale="significant improvement in wound healing observed in a human clinical trial",
         Applicability_Summary='{"critical_mismatches":[],"evidence_items":[]}',
     )])
     summary, audit = build_plant_candidate_shortlist(
@@ -690,3 +699,154 @@ def test_duplicate_compound_rows_do_not_inflate_linked_mechanism_bonus():
     one_total, _ = _compound_quality(one_row, [])
     dup_total, _ = _compound_quality(duplicate_rows, [])
     assert one_total == dup_total
+
+
+def test_zero_verified_outcome_scores_lower_than_verified_direct_human_evidence():
+    # DEFECT 2 FIX (final pre-demo reliability pass), cahier acceptance
+    # test: a candidate with strong indication-match/AI-semantic relevance
+    # but zero verified outcome-specific human evidence must score lower
+    # on direct clinical relevance than an otherwise-equivalent candidate
+    # with verified direct human outcome evidence, and must not be
+    # represented as verified direct clinical evidence.
+    from candidate_shortlisting import _indication_relevance_detail
+
+    unverified = pd.DataFrame([_row(
+        Alternative_Plant="Unverified candidate",
+        Scientific_Rationale="human clinical trial", Clinical_Rationale="clinical evidence",
+        Evidence_Level="Clinical / human evidence", Evidence_Hierarchy_Detail="Clinical trial",
+        Indication_Match_Type="exact_indication", Indication_Match_Terms="Metabolic & blood sugar support",
+        Source_Record_IDs="PMID:201",
+    )])
+    verified = pd.DataFrame([_row(
+        Alternative_Plant="Verified candidate",
+        Scientific_Rationale="clinical trial reported improved fasting glucose",
+        Clinical_Rationale="human clinical trial reported significant improvement in fasting glucose",
+        Evidence_Level="Clinical / human evidence", Evidence_Hierarchy_Detail="Clinical trial",
+        Indication_Match_Type="exact_indication", Indication_Match_Terms="Metabolic & blood sugar support",
+        Source_Record_IDs="PMID:202",
+    )])
+    unverified_points, _, unverified_mode, _ = _indication_relevance_detail(
+        unverified, "Metabolic & blood sugar support"
+    )
+    verified_points, _, verified_mode, _ = _indication_relevance_detail(
+        verified, "Metabolic & blood sugar support"
+    )
+    assert verified_mode == "Direct human/clinical"
+    assert unverified_mode == "UNVERIFIED_DIRECT_HUMAN_SIGNAL"
+    assert unverified_points < verified_points
+    # Never allowed to reach the verified-direct-human score range.
+    assert unverified_points < 28.0
+
+    summary, _ = build_plant_candidate_shortlist(
+        pd.concat([unverified, verified], ignore_index=True),
+        indication="Metabolic & blood sugar support", dosage_form="Infusion",
+    )
+    indexed = summary.set_index("Alternative_Plant")
+    assert indexed.loc["Verified candidate", "Indication_Evidence_Mode"] == "Direct human/clinical"
+    assert indexed.loc["Unverified candidate", "Indication_Evidence_Mode"] == "UNVERIFIED_DIRECT_HUMAN_SIGNAL"
+    assert indexed.loc["Verified candidate", "Indication_Relevance_Score"] > indexed.loc["Unverified candidate", "Indication_Relevance_Score"]
+    assert indexed.loc["Unverified candidate", "Outcome_Specific_Human_Evidence_Count"] == 0
+    assert indexed.loc["Verified candidate", "Outcome_Specific_Human_Evidence_Count"] >= 1
+
+
+def test_established_class_requires_verified_evidence_not_score_alone():
+    # DEFECT 8 FIX (final pre-demo reliability pass): a high Overall_Score
+    # built from market/compound/mechanism support -- but with an
+    # unverified direct-human signal, not verified outcome-specific human
+    # evidence -- must not be labelled "B - Established scientific
+    # candidate". Only a candidate whose evidence actually clears go_call
+    # == "Go" AND carries verified ("Direct human/clinical") indication
+    # evidence may receive that label.
+    from candidate_shortlisting import _derive_decision_class_ah, _STRONG_SCORE_THRESHOLD
+
+    high_score_unverified = _derive_decision_class_ah(
+        "Shortlist", _STRONG_SCORE_THRESHOLD + 10.0,
+        go_call="Investigate — verify before proceeding",
+        indication_mode="UNVERIFIED_DIRECT_HUMAN_SIGNAL",
+    )
+    assert high_score_unverified != "B — Established scientific candidate"
+
+    high_score_verified_but_not_go = _derive_decision_class_ah(
+        "Shortlist", _STRONG_SCORE_THRESHOLD + 10.0,
+        go_call="Investigate — complete safety/interaction review",
+        indication_mode="Direct human/clinical",
+    )
+    assert high_score_verified_but_not_go != "B — Established scientific candidate"
+
+    genuinely_established = _derive_decision_class_ah(
+        "Shortlist", _STRONG_SCORE_THRESHOLD + 10.0,
+        go_call="Go",
+        indication_mode="Direct human/clinical",
+    )
+    assert genuinely_established == "B — Established scientific candidate"
+
+    # Legacy callers that don't pass go_call/indication_mode (e.g. a
+    # commercial-only rescore with reduced context) must never default to
+    # "Established" on missing context.
+    no_context = _derive_decision_class_ah("Shortlist", _STRONG_SCORE_THRESHOLD + 10.0)
+    assert no_context != "B — Established scientific candidate"
+
+
+def test_incomplete_target_definition_blocks_go_but_not_score_or_shortlist():
+    # TARGET DEFINITION COMPLETENESS FIX (final pre-demo reliability
+    # pass): a project that only specifies indication + preparation (no
+    # target dose/plant part/route) must not have its Scientific_Evidence_
+    # Score penalized (Defect 3 fix), must still be able to reach
+    # Shortlist, but must NOT receive an unjustified final "Go" -- the
+    # product definition itself is incomplete. This must be the least
+    # restrictive behavior: Investigate, never Excluded/No-Go/Hold.
+    from candidate_shortlisting import _derive_go_call, _STRONG_SCORE_THRESHOLD
+
+    complete = _derive_go_call(
+        "Shortlist", _STRONG_SCORE_THRESHOLD + 5.0,
+        dosage_compatibility="Compatible", safety_tier="Explicit reassuring evidence",
+        outcome_label="Predominantly positive results",
+        target_definition_completeness="complete",
+    )
+    assert complete == "Go"
+
+    incomplete = _derive_go_call(
+        "Shortlist", _STRONG_SCORE_THRESHOLD + 5.0,
+        dosage_compatibility="Compatible", safety_tier="Explicit reassuring evidence",
+        outcome_label="Predominantly positive results",
+        target_definition_completeness="incomplete",
+    )
+    assert incomplete != "Go"
+    assert incomplete.startswith("Investigate")
+    assert "target product definition" in incomplete.lower()
+
+
+def test_one_malformed_candidate_does_not_crash_the_whole_batch(monkeypatch):
+    # DEFECT 10 FIX (final pre-demo reliability pass): a single candidate
+    # whose evidence causes an internal processing exception must not take
+    # down the whole run -- the remaining, well-formed candidates must
+    # still be scored and returned. The per-plant scoring path is already
+    # fairly defensive against odd input shapes, so this forces a genuine
+    # exception deterministically (monkeypatching a function the loop body
+    # calls for every plant) rather than relying on a specific malformed
+    # value that might already be handled elsewhere.
+    import candidate_shortlisting as cs_mod
+
+    good_row = _row(Alternative_Plant="Well-formed candidate")
+    bad_row = _row(Alternative_Plant="Malformed candidate")
+    df = pd.DataFrame([good_row, bad_row])
+
+    real_mechanism_support = cs_mod._mechanism_support
+
+    def _boom(group, indication=""):
+        plant_name = str(group["Alternative_Plant"].iloc[0])
+        if plant_name == "Malformed candidate":
+            raise ValueError("simulated malformed-evidence processing failure")
+        return real_mechanism_support(group, indication)
+
+    monkeypatch.setattr(cs_mod, "_mechanism_support", _boom)
+
+    summary, audit = build_plant_candidate_shortlist(df, dosage_form="Infusion")
+    plants = set(summary["Alternative_Plant"])
+    assert "Well-formed candidate" in plants
+    assert "Malformed candidate" in plants
+    good_summary = summary[summary["Alternative_Plant"] == "Well-formed candidate"].iloc[0]
+    assert good_summary["Scientific_Triage_Status"] in {"Shortlist", "Exploratory"}
+    malformed_summary = summary[summary["Alternative_Plant"] == "Malformed candidate"].iloc[0]
+    assert malformed_summary["Scientific_Triage_Status"] == "Excluded"
+    assert malformed_summary.get("Processing_Status") == "INCOMPLETE"

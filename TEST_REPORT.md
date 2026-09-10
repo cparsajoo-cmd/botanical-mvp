@@ -1,109 +1,105 @@
-# TEST_REPORT.md — Pre-Investor Reliability Repair
+# TEST_REPORT.md — Final Pre-Demo Reliability Pass
+
+## Environment correction (important — changes the 9-failure story)
+
+This sandbox was previously missing three optional dependencies:
+`streamlit`, `openai`, `supabase`. Installed this pass:
+`streamlit==1.63.0`, `openai==3.11.0`, `supabase==2.31.0`.
+
+**With these installed, the pristine ORIGINAL repository ZIP (never
+modified) now runs:**
+
+```
+3829 passed, 0 failed, 3 xfailed, 0 collection errors
+```
+
+versus the previously-reported (under the incompletely-provisioned sandbox)
+"3352 passed, 9 failed, 3 xfailed, 60 collection errors." **All 60 previously-
+reported collection errors and all 9 previously-reported failures were
+category C (environment), not genuine defects, tests, or code issues.**
+None required a production fix or a test correction. This is a direct,
+verified answer to "review the 9 pre-existing test failures": category C
+across the board, confirmed by re-running the untouched original ZIP with
+full dependencies rather than asserted from memory.
+
+If your real CI/deployment environment already has these three packages
+(likely, since this is a working production platform), this was never a
+live issue there — it was specific to this sandbox's setup in earlier
+turns.
 
 ## Method
 
-Every change was verified against a **pristine baseline copy** of the exact
-uploaded ZIP (extracted separately, never modified), run through the same
-commands, so that every reported pass/fail delta is attributable to this
-pass's changes and nothing else (sandbox environment gaps included).
+Same discipline as the prior pass: a pristine, untouched copy of the
+original ZIP is kept alongside the working tree, and every reported
+pass/fail delta is the working tree's results **minus** the baseline's own
+results on the same command — so any residual failure count reflects only
+this pass's changes.
 
-## Targeted regression runs (during development)
-
-```
-pytest -q test_candidate_shortlisting.py test_preparation_transferability_invariants.py test_phase5_scoring_calibration_addendum.py
-```
-Final result: **106 passed, 1 failed** (the 1 failure is the pre-existing
-`streamlit`-import collection issue below, confirmed present in the
-untouched baseline too).
-
-## Full repository suite
+## Full repository suite, this pass's final state
 
 ```
 pytest -q -p no:cacheprovider --continue-on-collection-errors
 ```
 
-| | Baseline (untouched ZIP) | After this pass |
+| | Original ZIP, full deps | This pass's final tree |
 |---|---|---|
-| Passed | 3352 | 3358 |
-| Failed | 9 | 9 |
+| Passed | 3829 | 3840 |
+| Failed | 0 | 0 |
 | xfailed | 3 | 3 |
-| Collection errors | 60 | 60 |
+| Collection errors | 0 | 0 |
 
-**The 9 failing tests and 60 collection errors are byte-identical sets in
-both runs** (diffed explicitly — see below). Nothing in this pass changed
-which tests fail or error.
+**Zero failures, zero newly-introduced collection errors.** The +11
+passed count is exactly this pass's new/corrected tests (7 new regression
+tests for Defects 2/8/9/Target-Completeness, plus the net effect of
+correcting 3 pre-existing tests that encoded now-fixed defects as
+intentional behavior — each corrected test still counts once).
 
-### Collection errors (60, environment-only, both runs identical)
+## Regression path (what actually happened while fixing Defect 2)
 
-All 60 are `ModuleNotFoundError` at import time for optional dependencies
-not installed in this sandbox — principally `streamlit` (imported by
-`llm_client.py`, which many AI-integration test files import transitively),
-plus a handful of similarly-shaped missing-package errors. These are
-**environment gaps, not code defects** — per the cahier's instruction, they
-are reported explicitly rather than treated as failures. Representative
-files: `test_step5_runtime_egress_guards.py`,
-`test_structured_safety_status_and_decision_sync.py`,
-`test_task6_pilot_scope.py`, `test_validation_matrix.py`,
-`test_stage5_candidate_prescreen.py`, and 55 others in the same shape.
-Installing `streamlit` (and whatever else these files transitively import)
-in a real CI/deployment environment should resolve all 60.
+Wiring the Defect 2 fix surfaced real, expected breakage along the way —
+reported here rather than hidden, per your instruction not to hide
+failures:
 
-### The 9 pre-existing test failures (unrelated to this pass, present in the untouched ZIP)
+1. First full-suite run after the initial Defect 2 wiring: **35 new
+   failures.** Root-caused: most were legitimate test fixtures that
+   established "direct human clinical" evidence via `Clinical_Rationale`/
+   `Scientific_Rationale` text (the module's own standard pattern elsewhere)
+   but never populated the separate, narrower `Primary_Outcome`/
+   `Source_Evidence_Text` fields my new check was reading — exposing a real,
+   independent pre-existing gap in `_row_has_indication_specific_outcome()`
+   itself (documented in CHANGE_MANIFEST.md). Fixing that gap directly
+   (not just working around it) dropped this to **24 failures.**
+2. Of those 24, one was a genuine `NameError` — a bug in my own patch (a
+   missing variable initialization on the primary code path), not a test
+   issue. Fixed immediately; dropped to **3 failures.**
+3. The remaining 3 were tests that explicitly encoded the pre-Defect-2
+   contradiction as intentional ("outcome-specific is intentionally
+   stricter than direct indication relevance" — a direct quote from one
+   test's own comment). Each was corrected individually with a documented
+   rationale (see CHANGE_MANIFEST.md §7). Final: **0 failures.**
 
-```
-test_ai_run_cost_ceiling.py::test_ai_rd_insights_phase_budget_default_and_override
-test_ai_run_cost_ceiling.py::test_ai_rd_insights_phase_budget_invalid_value_falls_back
-test_indication_mode_safety_status_and_adjudication_priority.py::test_adjudication_priority_favors_evidence_depth_over_composite_score
-test_phase4_eligibility_gate_desired_behavior.py::test_legacy_recommendation_fallback_excludes_no_go
-test_phase4_eligibility_gate_desired_behavior.py::test_modern_recommendation_path_excludes_no_go
-test_phase4_eligibility_gate_desired_behavior.py::test_no_go_high_raw_score_never_outranks_eligible_in_normal_ranking
-test_phase8_market_intelligence.py::test_vectorized_no_market_rows_shortcut_uses_nullable_hit_counts
-test_preparation_transferability_invariants.py::test_llm_transferability_postprocess_recovers_only_explicit_missing_fields
-test_step5_market_intelligence_performance.py::test_commercial_attach_is_additive_and_preserves_scientific_columns
-```
-
-Not investigated further — out of this pass's scope (none touch the
-defects being fixed), and confirmed pre-existing so fixing them was not
-part of this repair's mandate. Flagging them here rather than silently
-ignoring them, per the cahier's instructions.
-
-## Regression path for each fixed defect (net-new failures caught and resolved during this pass)
-
-The first full-suite run after the scoring-component fixes (defects 4/5/6/7)
-surfaced **12 new failures**, all traced to real, legitimate consequences of
-removing score inflation — not regressions in the fix logic itself:
-
-1. **11 failures** were downstream `Scientific_Triage_Status`/`Go_Investigate_Hold_NoGo`
-   assertions that depended on the now-corrected (lower, de-inflated)
-   component scores. Root cause investigated for each: `_safety_regulatory()`
-   correctly zeroing "no info" exposed an unrelated pre-existing gate bug
-   (`if safety_reg_points <= 0.0: Excluded`) that could no longer distinguish
-   "nothing known" from "genuinely prohibited" once "nothing known" stopped
-   scoring positively — fixed by adding an explicit `prohibitive` boolean to
-   `_safety_regulatory()`'s return value (see CHANGE_MANIFEST.md). After
-   that fix, re-running dropped this to 2 failures (both pure literal-value
-   drift, corrected — see CHANGE_MANIFEST.md item 5).
-2. **1 failure** (`test_scoring_config.py`) was a test hard-coding the
-   exact literal Defect-6 bug value (`market_search_incomplete == 3`) as a
-   "documented" weight — corrected to `== 0`.
-
-Final state: all identified net-new failures resolved; remaining failures
-are the 9 pre-existing ones confirmed unrelated (see above).
+Defects 8, 9, and Target Definition Completeness were each verified with a
+full-suite run immediately after implementation — zero regressions in any
+of the three.
 
 ## New regression tests added this pass
 
-- `test_candidate_shortlisting.py`: `test_duplicate_mechanism_rows_do_not_saturate_mechanism_support`,
-  `test_unrelated_mechanisms_do_not_score_for_requested_indication`,
-  `test_several_distinct_mechanisms_score_higher_than_one_duplicated_mechanism`,
-  `test_duplicate_compound_rows_do_not_inflate_linked_mechanism_bonus`
-  (defects 4 & 5, matching the cahier's explicit acceptance criteria).
-- `test_preparation_transferability_invariants.py`:
-  `test_target_unspecified_dose_and_part_do_not_mask_a_preparation_mismatch`
-  (the cahier's exact Defect-3 acceptance test),
-  `test_target_specified_but_evidence_silent_stays_unknown_not_target_unspecified`
-  (regression guard for the TARGET_UNSPECIFIED/UNKNOWN distinction).
-- `test_phase5_scoring_calibration_addendum.py`: corrected two existing
-  tests to assert the scientifically-intended defect-1 behavior (see
-  CHANGE_MANIFEST.md item 2).
+- `test_candidate_shortlisting.py`:
+  `test_zero_verified_outcome_scores_lower_than_verified_direct_human_evidence`
+  (Defect 2's exact cahier acceptance test),
+  `test_established_class_requires_verified_evidence_not_score_alone`
+  (Defect 8),
+  `test_incomplete_target_definition_blocks_go_but_not_score_or_shortlist`
+  (Target Definition Completeness).
+- `test_adjudication_score_authority_wiring.py`:
+  `test_final_canonical_direction_follows_verified_evidence_not_ai`,
+  `test_final_canonical_direction_falls_back_to_ai_only_when_verified_is_uninformative`
+  (Defect 9's exact cahier acceptance scenario — AI says positive/direct,
+  verified evidence says otherwise, and the reverse).
 
-All listed above pass in the current tree.
+All pass in the current tree, individually and as part of the full suite.
+
+## Skipped / not run
+
+None skipped. `xfailed: 3` is unchanged from the original ZIP's own
+baseline (pre-existing, expected-fail markers unrelated to this pass).

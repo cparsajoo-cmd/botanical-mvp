@@ -75,12 +75,78 @@ def _perf(msg):
     print(f"[PERF] {msg}", flush=True)
 
 
+def _final_canonical_evidence_direction(evidence_consistency_class, ai_direction) -> tuple[str, str]:
+    """DEFECT 9 FIX (final pre-demo reliability pass) -- ONE canonical
+    final evidence-direction field, with an explicit, documented authority
+    hierarchy across every field that represents efficacy/direction for a
+    candidate:
+
+      1. Source-grounded, candidate-specific, OUTCOME-specific structured
+         evidence (the records themselves -- Result_Direction, etc.)
+      2. Structured, deterministic classification derived directly from
+         those records: Evidence_Consistency_Class
+         (evidence_consistency.classify_evidence_consistency(), computed
+         in candidate_shortlisting.py from this candidate's own
+         primary-tier evidence records). This is what Phase-5 scoring
+         itself already consumes (Direction_Factor/Consistency_Factor).
+      3. Semantic/AI inference used for discovery or to interpret
+         otherwise-unresolved extraction: Indication_Evidence_Direction
+         (evidence_adjudication_engine.py's LLM-adjudicated field).
+      4. Broad mechanism/compound plausibility (never a direction signal
+         by itself -- not represented in this field at all).
+
+    A lower-authority source never silently overwrites a higher-authority
+    one. Level 2 (verified, deterministic) is used whenever it reflects an
+    actual resolved classification. Level 3 (AI) is used ONLY as a
+    secondary, clearly-labeled fallback when level 2 is itself
+    uninformative (INSUFFICIENT / INSUFFICIENT_DIRECTION_DATA -- i.e. no
+    evidence, or evidence with genuinely no resolved direction) -- it is
+    discovery/interpretation support, never an override of a resolved
+    verified classification, and disagreement between the two is not
+    silently resolved: both fields remain independently visible as
+    provenance (Evidence_Consistency_Class, Indication_Evidence_Direction)
+    alongside this canonical field and its companion
+    Final_Canonical_Evidence_Direction_Source ("VERIFIED"/"AI_FALLBACK"/
+    "UNKNOWN"), so a reviewer can always see when the two disagreed.
+
+    Consumed by _reconcile_final_decision_status()/_evidence_coherence_
+    status() as the single field final decision logic should be read as
+    following; Phase-5 scoring already follows level 2 directly (see
+    candidate_shortlisting.py's evidence_direction_profile).
+    """
+    verified = str(evidence_consistency_class or "").strip().upper()
+    if verified and verified not in {"INSUFFICIENT", "INSUFFICIENT_DIRECTION_DATA"}:
+        return verified, "VERIFIED"
+    ai = str(ai_direction or "").strip().upper()
+    if ai and ai not in {"UNKNOWN", "NONE", ""}:
+        return ai, "AI_FALLBACK"
+    return "UNKNOWN", "UNKNOWN"
+
+
 def _reconcile_final_decision_status(row) -> str:
     """Produce one populated scientific decision from deterministic + AI facts.
 
     The AI may only make the result more conservative.  Hard safety/regulatory
     statuses are never weakened.  Missing or contradictory AI evidence cannot
     coexist with an unqualified green recommendation.
+
+    DEFECT 9 NOTE (final pre-demo reliability pass): this function already
+    implements the effect of the documented authority hierarchy (see
+    _final_canonical_evidence_direction() above) through several
+    independent, hand-verified gates below -- most importantly, every
+    "Direct human/clinical"-branch check is keyed off indication_mode
+    (Indication_Evidence_Mode), which is itself now a verified-evidence-
+    gated field (see candidate_shortlisting.py's Defect-2 fix,
+    UNVERIFIED_DIRECT_HUMAN_SIGNAL): an AI adjudication that reads
+    CONSISTENT_POSITIVE/STRONG cannot promote an unverified candidate past
+    "GO WITH CAUTION" to an unqualified "GO", because decision_class_ah
+    itself already requires indication_mode == "Direct human/clinical" to
+    reach "B" (see the Defect-8 fix). Verified evidence therefore already
+    controls the outcome here even though this function does not read
+    Final_Canonical_Evidence_Direction by name; that field exists
+    primarily to make the authority hierarchy explicit and inspectable
+    (Evidence_Consistency_Class vs. Indication_Evidence_Direction) rather
+    than to replace this function's existing, extensively-tested gates.
     """
     def clean(key):
         value = row.get(key, "") if hasattr(row, "get") else ""
@@ -766,6 +832,35 @@ def _run_evidence_adjudication(plant_summary_df, evidence_df, indication, target
 
     for col, values in new_columns.items():
         plant_summary_df[col] = values
+
+    # DEFECT 9 FIX (final pre-demo reliability pass): one clearly
+    # identifiable canonical final direction field, with an explicit,
+    # documented authority hierarchy (see _final_canonical_evidence_
+    # direction() docstring below). Neither existing field is deleted or
+    # overwritten -- Evidence_Consistency_Class (verified, deterministic)
+    # and Indication_Evidence_Direction (AI-adjudicated) both remain as
+    # provenance/diagnostics. This new field is what Phase-5 scoring
+    # already effectively follows (Evidence_Consistency_Class drives
+    # Direction_Factor/Consistency_Factor in candidate_shortlisting.py)
+    # and what final decision logic should be read as following too.
+    plant_summary_df["Final_Canonical_Evidence_Direction"] = [
+        _final_canonical_evidence_direction(
+            plant_summary_df.at[idx, "Evidence_Consistency_Class"]
+            if "Evidence_Consistency_Class" in plant_summary_df.columns else "",
+            plant_summary_df.at[idx, "Indication_Evidence_Direction"]
+            if "Indication_Evidence_Direction" in plant_summary_df.columns else "",
+        )[0]
+        for idx in plant_summary_df.index
+    ]
+    plant_summary_df["Final_Canonical_Evidence_Direction_Source"] = [
+        _final_canonical_evidence_direction(
+            plant_summary_df.at[idx, "Evidence_Consistency_Class"]
+            if "Evidence_Consistency_Class" in plant_summary_df.columns else "",
+            plant_summary_df.at[idx, "Indication_Evidence_Direction"]
+            if "Indication_Evidence_Direction" in plant_summary_df.columns else "",
+        )[1]
+        for idx in plant_summary_df.index
+    ]
 
     # part B2 (ghost-score fix) -- Overall_Score becomes THIS module's
     # single authoritative post-adjudication score, in place, for every

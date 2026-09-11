@@ -451,6 +451,22 @@ def _aggregate_toxicity(
     }
 
 
+def _completeness_label(dimensions_resolved: int) -> str:
+    """Categorical band for the ADMET data-completeness score. V1
+    CORRECTION (2026-09-11): more conservative thresholds -- 0-2 resolved
+    dimensions (out of 5) is LOW, 3-4 is MODERATE, all 5 is HIGH. Extracted
+    as its own function so the label logic is directly testable even while
+    the current V1 architecture (Distribution/Metabolism/Excretion always
+    INSUFFICIENT_DATA) can never itself produce more than 2 resolved
+    dimensions.
+    """
+    if dimensions_resolved <= 2:
+        return "LOW"
+    if dimensions_resolved <= 4:
+        return "MODERATE"
+    return "HIGH"
+
+
 def _overall_status(absorption: dict[str, Any], toxicity: dict[str, Any], compound_coverage: float) -> tuple[str, list[str]]:
     """Deterministic, documented precedence -- see module docstring.
     Returns (status, reasons).
@@ -473,8 +489,19 @@ def _overall_status(absorption: dict[str, Any], toxicity: dict[str, Any], compou
         return OVERALL_REVIEW, reasons
 
     if absorption["status"] == ABSORPTION_FAVORABLE and toxicity["status"] == TOXICITY_LIMITED_REASSURANCE:
-        reasons.append("Favorable absorption-related profile combined with genuine (study-specific) safety reassurance evidence.")
-        return OVERALL_FAVORABLE, reasons
+        # V1 CORRECTION (2026-09-11, scientific calibration pass): do not
+        # emit overall FAVORABLE while Distribution/Metabolism/Excretion
+        # remain INSUFFICIENT_DATA -- three of five ADME dimensions
+        # unassessed is not enough coverage for a favorable developability
+        # label, even when Absorption and Toxicity look good on their own.
+        # Underlying absorption/toxicity statuses are unchanged; only the
+        # OVERALL interpretation is made more conservative. OVERALL_FAVORABLE
+        # is kept as a constant for a future version with genuine D/M/E data.
+        reasons.append(
+            "Favorable absorption-related profile with limited study-specific safety "
+            "reassurance; major ADME dimensions remain unassessed."
+        )
+        return OVERALL_REVIEW, reasons
 
     if absorption["status"] in (ABSORPTION_REVIEW,) or (absorption["status"] == ABSORPTION_FAVORABLE and toxicity["status"] == TOXICITY_INSUFFICIENT):
         reasons.append("Partial developability signal available; not enough evidence for a confident label either way.")
@@ -521,12 +548,10 @@ def aggregate_plant_admet(
     )
     dims_total = 5
     completeness_score = round(dimensions_resolved / dims_total, 3)
-    if dimensions_resolved == 0:
-        completeness_label = "LOW"
-    elif dimensions_resolved <= 2:
-        completeness_label = "MODERATE"
-    else:
-        completeness_label = "HIGH"
+    # V1 CORRECTION (2026-09-11, scientific calibration pass): more
+    # conservative label thresholds -- the underlying dimensions_resolved/5
+    # numeric calculation above is unchanged, only the categorical band.
+    completeness_label = _completeness_label(dimensions_resolved)
 
     key_flags: list[str] = []
     if absorption["compounds_flagged"]:

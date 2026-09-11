@@ -163,11 +163,15 @@ def test_plant_reassurance_only_never_becomes_favorable_without_good_absorption(
     assert agg["overall_developability_status"] != OVERALL_FAVORABLE
 
 
-def test_plant_favorable_requires_both_good_absorption_and_genuine_reassurance():
+def test_plant_favorable_absorption_plus_reassurance_is_review_not_favorable_in_v1():
+    # CORRECTION 1 (2026-09-11): V1 must not emit overall FAVORABLE while
+    # Distribution/Metabolism/Excretion remain INSUFFICIENT_DATA, even when
+    # absorption is favorable and safety evidence is reassuring.
     favorable_compound = assess_compound_admet(
         "Favorable Compound",
         pubchem_properties={"MolecularWeight": 220, "XLogP": 1, "TPSA": 40, "HBondDonorCount": 1, "HBondAcceptorCount": 2, "RotatableBondCount": 1},
     )
+    assert favorable_compound["absorption"]["status"] == ABSORPTION_FAVORABLE
     agg = aggregate_plant_admet(
         "Genuinely Favorable Plant", [favorable_compound],
         safety_fields={
@@ -177,7 +181,15 @@ def test_plant_favorable_requires_both_good_absorption_and_genuine_reassurance()
             "Safety_Evidence_IDs": ["E5"],
         },
     )
-    assert agg["overall_developability_status"] == OVERALL_FAVORABLE
+    # Test 1: overall must be REVIEW, not FAVORABLE.
+    assert agg["overall_developability_status"] == OVERALL_REVIEW
+    assert agg["overall_developability_status"] != OVERALL_FAVORABLE
+    # The underlying dimension statuses must be unchanged by this correction.
+    assert agg["absorption"]["status"] == ABSORPTION_FAVORABLE
+    assert agg["toxicity"]["status"] == ad.TOXICITY_LIMITED_REASSURANCE
+    # Test 2: rationale must explicitly say major ADME dimensions are unassessed.
+    reasons_text = " ".join(agg["overall_status_reasons"])
+    assert "major ADME dimensions remain unassessed" in reasons_text
 
 
 def test_plant_single_compound_concern_does_not_blanket_condemn_whole_plant_summary_text():
@@ -200,6 +212,61 @@ def test_plant_aggregation_is_deterministic():
     results = [aggregate_plant_admet("Det Plant", [compound], safety_fields=safety) for _ in range(5)]
     statuses = {r["overall_developability_status"] for r in results}
     assert len(statuses) == 1
+
+
+# ---------------------------------------------------------------------------
+# Correction 2 (2026-09-11): conservative data-completeness label thresholds.
+# The current V1 architecture (Distribution/Metabolism/Excretion always
+# INSUFFICIENT_DATA) can never itself resolve more than 2/5 dimensions, so
+# tests 6/7 exercise the completeness-label helper directly rather than
+# fabricating ADMET evidence, per the correction's own instruction.
+# ---------------------------------------------------------------------------
+
+def test_completeness_label_zero_resolved_is_low():
+    assert ad._completeness_label(0) == "LOW"
+
+
+def test_completeness_label_one_resolved_is_low():
+    assert ad._completeness_label(1) == "LOW"
+
+
+def test_completeness_label_two_resolved_is_low():
+    assert ad._completeness_label(2) == "LOW"
+
+
+def test_completeness_label_three_or_four_resolved_is_moderate():
+    assert ad._completeness_label(3) == "MODERATE"
+    assert ad._completeness_label(4) == "MODERATE"
+
+
+def test_completeness_label_five_resolved_is_high():
+    assert ad._completeness_label(5) == "HIGH"
+
+
+def test_completeness_numeric_score_calculation_is_unchanged():
+    # The dimensions_resolved/5 calculation itself must be untouched by
+    # Correction 2 -- only the categorical label thresholds changed.
+    compound = assess_compound_admet(
+        "Coverage Compound",
+        pubchem_properties={"MolecularWeight": 250, "XLogP": 2, "TPSA": 50, "HBondDonorCount": 1, "HBondAcceptorCount": 3, "RotatableBondCount": 2},
+    )
+    agg = aggregate_plant_admet("Coverage Plant", [compound], safety_fields={
+        "Safety_Assertion_Status": "STUDY_SPECIFIC_REASSURANCE_ONLY", "Safety_Concern_Level": "NONE",
+    })
+    # Absorption + toxicity (reassurance) resolved -> 2/5 = 0.4
+    assert agg["data_completeness_score"] == 0.4
+    assert agg["data_completeness_label"] == "LOW"
+
+
+def test_v1_typical_case_absorption_and_toxicity_only_is_low_completeness():
+    compound = assess_compound_admet(
+        "Typical Compound",
+        pubchem_properties={"MolecularWeight": 300, "XLogP": 2, "TPSA": 60, "HBondDonorCount": 2, "HBondAcceptorCount": 4, "RotatableBondCount": 3},
+    )
+    agg = aggregate_plant_admet("Typical Plant", [compound], safety_fields={
+        "Safety_Assertion_Status": "SAFETY_CONCERN_RETRIEVED", "Safety_Concern_Level": "MODERATE",
+    })
+    assert agg["data_completeness_label"] == "LOW"
 
 
 # ---------------------------------------------------------------------------

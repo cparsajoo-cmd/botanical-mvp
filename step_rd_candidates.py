@@ -48,6 +48,13 @@ from claim_source_map import (
     parse_claim_source_map,
 )
 from source_linkage_consistency import attach_source_linkage_consistency
+from admet_developability import (
+    attach_admet_developability,
+    collect_linked_compound_names,
+    parse_admet_summary,
+    parse_admet_key_flags,
+)
+from pubchem_connector import resolve_compound_properties as _pubchem_resolve_compound_properties
 from sensitivity_display_adapter import prepare_sensitivity_payload
 from decision_record_persistence import persist_decision_record
 from decision_metadata import build_decision_metadata
@@ -2002,6 +2009,51 @@ def _cached_compound_profiles_df():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _cached_admet_compound_properties(compound_names: tuple):
+    """Batched PubChem molecular-descriptor lookup for the ADMET/
+    Developability layer (admet_developability.py) -- resolves the UNION
+    of linked compounds across every candidate ONCE per distinct compound
+    set and caches the result, so a Streamlit rerun never re-issues these
+    network calls (same @st.cache_data convention as _cached_plant_
+    compounds_df/_cached_compound_profiles_df above). Network/timeout
+    failures already degrade to {} inside pubchem_connector.resolve_
+    compound_properties() (never raises) -- caught again here purely as a
+    second isolation layer so a PubChem outage can never surface as a
+    Stage-6 error; ADMET simply falls back to its curated-database-only
+    signal for that run.
+    """
+    try:
+        return _pubchem_resolve_compound_properties(list(compound_names))
+    except Exception:
+        return {}
+
+
+def _apply_admet_developability(df):
+    """Attach the ADMET/Developability decision-support layer to a Stage-6
+    report-ready frame. Deliberately isolated in its own try/except: any
+    failure here (Supabase load, PubChem, malformed data) leaves ``df``
+    completely unchanged -- ADMET is additive-only and non-blocking, never
+    able to affect ranking, scoring, or candidate inclusion.
+    """
+    try:
+        plant_compounds_df, _ = _cached_plant_compounds_df()
+        compound_profiles_df, _ = _cached_compound_profiles_df()
+        compound_names = collect_linked_compound_names(df, plant_compounds_df)
+        property_map = (
+            _cached_admet_compound_properties(tuple(sorted(compound_names)))
+            if compound_names else {}
+        )
+        return attach_admet_developability(
+            df,
+            plant_compounds_df=plant_compounds_df,
+            compound_profiles_df=compound_profiles_df,
+            compound_property_map=property_map,
+        )
+    except Exception:
+        return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _cached_scientific_evidence_df():
     """See _cached_plant_compounds_df's docstring — same (df, succeeded) contract."""
     from supabase_data import load_scientific_evidence_df
@@ -2599,6 +2651,43 @@ def render_candidate_reference_detail(row):
             else:
                 st.caption(f"Not assessed ({pat_status}) — no fabricated patent citation.")
 
+        admet_status = row.get("ADMET_Overall_Status")
+        if admet_status is not None:
+            st.markdown("**💊 Developability & ADMET**")
+            st.caption(
+                "Compound-driven, aggregated decision-support interpretation — "
+                "does not represent the pharmacokinetics of the whole botanical extract."
+            )
+            summary = parse_admet_summary(row.get("ADMET_Summary"))
+            completeness = row.get("ADMET_Data_Completeness_Label")
+            st.markdown(f"- **Overall:** {admet_status}" + (f" (data completeness: {completeness})" if completeness else ""))
+            for dim_key, dim_label in (
+                ("absorption", "Absorption"), ("distribution", "Distribution"),
+                ("metabolism", "Metabolism"), ("excretion", "Excretion"),
+                ("toxicity", "Toxicity"),
+            ):
+                dim = summary.get(dim_key) or {}
+                if dim.get("status"):
+                    st.markdown(f"- **{dim_label}:** {dim['status']}")
+            flags = parse_admet_key_flags(row.get("ADMET_Key_Flags"))
+            if flags:
+                st.caption("Key flags: " + " | ".join(flags))
+            with st.expander("Compound-level ADMET detail", expanded=False):
+                detail = parse_admet_summary(row.get("ADMET_Detail"))
+                compounds = detail.get("compound_level_detail") or []
+                if not compounds:
+                    st.caption("No linked compounds had sufficient data for a compound-level ADMET assessment.")
+                for c in compounds:
+                    st.markdown(f"**{c.get('compound', 'Unknown compound')}**")
+                    for dim_key, dim_label in (
+                        ("absorption", "Absorption"), ("compound_toxicity_signal", "Curated toxicity signal"),
+                    ):
+                        cdim = c.get(dim_key) or {}
+                        if cdim.get("status"):
+                            st.caption(f"{dim_label}: {cdim['status']} — {'; '.join(cdim.get('details') or [])}")
+                if row.get("ADMET_Disclaimer"):
+                    st.caption(row.get("ADMET_Disclaimer"))
+
 
 def _reference_detail_clean(value):
     if value is None:
@@ -2638,6 +2727,13 @@ def _recommendation_block(
         df = attach_regulatory_patent_source_traceability(df, regulatory_landscape_df)
         df = attach_claim_source_map(df)
         df = attach_source_linkage_consistency(df)
+        # ADMET/Developability (2026-09-11) -- runs AFTER every authoritative
+        # scoring/ranking/attach step above and is deliberately NOT folded
+        # into merge_authoritative_scores()'s authoritative_fields: it is a
+        # downstream decision-support annotation, not part of the validated
+        # ranking architecture. Purely additive columns; see
+        # admet_developability.py's module docstring.
+        df = _apply_admet_developability(df)
         # Apply the deterministic investor/audit adapter to the entire Stage-6
         # frame (not only the orange Discovery subsection) so consistency and
         # source-linkage diagnostics are visible in Priority and Expert Review
@@ -2868,6 +2964,13 @@ def _recommendation_block(
                 "Pipeline_Implementation_Fingerprint",
                 "Final_Rationale",
                 "Rationale",
+                # ADMET/Developability (2026-09-11) -- compact columns only;
+                # full per-dimension/compound detail lives in the
+                # "📚 Reference detail" expander (render_candidate_reference_
+                # detail) via ADMET_Summary/ADMET_Detail. Additive, presentation
+                # only -- no score/gate/decision logic reads these.
+                "ADMET_Overall_Status",
+                "ADMET_Data_Completeness_Label",
             ] if col in recommended.columns
         ]
         weak_display_cols = [
@@ -4585,6 +4688,13 @@ def render_rd_candidates_step(inputs):
             )
             _decision_table_source_df = attach_claim_source_map(_decision_table_source_df)
             _decision_table_source_df = attach_source_linkage_consistency(
+                _decision_table_source_df
+            )
+            # ADMET/Developability (2026-09-11) -- export-parity call: same
+            # attach_admet_developability() function as the on-screen
+            # _recommendation_block() path, so the CSV export can never
+            # disagree with what is shown in the UI. Additive columns only.
+            _decision_table_source_df = _apply_admet_developability(
                 _decision_table_source_df
             )
             _decision_table_source_df, _ = build_investor_opportunity_view(

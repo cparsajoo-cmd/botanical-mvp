@@ -124,5 +124,10 @@ def test_final_priority_can_remain_cautious_with_verified_direct_human_outcome()
         Human_Evidence_Strength="WEAK",
         Scientific_Evidence_Confidence="LOW",
         Outcome_Specific_Human_Evidence_Count=1,
+        # PROBLEM 5 FIX: this test is about the verified/unverified
+        # (Problem 2) distinction, not formulation compatibility -- the
+        # one verified record here is formulation-compatible, so the
+        # sequential Problem-5 gate must not additionally block it.
+        Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count=1,
     )
     assert step._reconcile_final_decision_status(row) == "GO WITH CAUTION"

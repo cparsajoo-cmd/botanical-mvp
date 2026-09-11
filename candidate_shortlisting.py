@@ -12,7 +12,7 @@ import re
 import json
 import time
 from collections import Counter
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 import pandas as pd
 
@@ -543,6 +543,163 @@ def _explicit_preparation_applicability_row(row: Mapping[str, Any], dosage_form:
         # explicit MISMATCH result above.
         return PREP_COMPATIBLE_BUT_INDIRECT
     return PREP_COMPATIBLE_BUT_INDIRECT
+
+
+# ---------------------------------------------------------------------
+# PROBLEM 5 FIX -- strict, record-level formulation-compatibility gate.
+#
+# ROOT CAUSE: Outcome_Specific_Human_Evidence_Count (below, and its
+# consumer step_rd_candidates._verified_outcome_specific_human_evidence_
+# count / the Problem-2 evidence-sufficiency gate) is, and remains,
+# preparation-agnostic by design (Problem 2 asks only "is there verified
+# outcome-specific HUMAN evidence", never "for the requested product
+# form"). Nothing downstream of it re-checked preparation/route
+# compatibility before treating that count as support for an actionable
+# recommendation for the REQUESTED dosage form specifically. The plant-
+# level Dosage_Form_Compatibility/Preparation_Applicability_Class/
+# Preparation_Compatibility/Route_Compatibility fields elsewhere in this
+# module are all summaries over the PRIMARY evidence tier as a whole (or,
+# for Dosage_Form_Compatibility, an "any row compatible wins" aggregate)
+# -- none of them are scoped to the specific human, outcome-specific
+# records that actually satisfy the Problem-2 gate, so a single
+# compatible mechanistic/animal/other-record could make the plant look
+# formulation-compatible while every human outcome study was for a
+# different preparation or route entirely.
+#
+# _row_formulation_compatible() below answers a narrower, stricter
+# question -- "does THIS record count as DIRECT evidence for the
+# requested formulation" -- reusing the SAME authoritative Dimension_
+# Status vocabulary (MATCH/PARTIAL/MISMATCH/UNKNOWN/NOT_APPLICABLE,
+# evaluate_applicability() in standard_evidence_builder.py) already
+# computed per evidence record; no parallel formulation ontology is
+# introduced. It is used only to build
+# Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count
+# below, never to change Outcome_Specific_Human_Evidence_Count's own,
+# unchanged, Problem-2 meaning.
+# ---------------------------------------------------------------------
+def _dimension_status_formulation_compatible(dimension_status: Optional[Mapping[str, Any]]) -> bool:
+    """Core PROBLEM 5 predicate over a single evidence record's Dimension_
+    Status mapping (evaluate_applicability()'s per-dimension MATCH/
+    PARTIAL/MISMATCH/UNKNOWN/NOT_APPLICABLE/TARGET_UNSPECIFIED vocabulary
+    -- see standard_evidence_builder.py). Isolated from _row_formulation_
+    compatible() below so it can be unit-tested directly against a plain
+    dict, independent of any row/group/target_context plumbing.
+
+    Fail-closed: PARTIAL, MISMATCH and UNKNOWN on EITHER the preparation
+    OR the route dimension both return False -- a preparation match must
+    not hide a route mismatch (independent checks, never collapsed into
+    one heuristic), and an unresolved/missing dimension never silently
+    counts as a match. A dimension the requested product form itself
+    never specified (NOT_APPLICABLE / TARGET_UNSPECIFIED) is not a
+    mismatch and does not fail this check on its own -- there is nothing
+    to be incompatible WITH.
+    """
+    if not isinstance(dimension_status, Mapping):
+        return False
+    prep_status = str(dimension_status.get("preparation") or "").upper()
+    route_status = str(dimension_status.get("route") or "").upper()
+    plant_part_status = str(dimension_status.get("plant_part") or "").upper()
+    if prep_status not in {"MATCH", "NOT_APPLICABLE"}:
+        return False
+    if route_status not in {"MATCH", "NOT_APPLICABLE", "TARGET_UNSPECIFIED"}:
+        return False
+    # Problem-5 scope does not create a new plant-part ontology, but an
+    # already-established HARD plant-part mismatch must never be ignored
+    # when deciding whether a record is directly transferable to the
+    # requested formulation. UNKNOWN/PARTIAL plant-part states remain under
+    # the existing plant-part policy; only an explicit MISMATCH blocks here.
+    if plant_part_status == "MISMATCH":
+        return False
+    return True
+
+
+def _row_formulation_compatible(
+    row: Mapping[str, Any],
+    dosage_form: str,
+    *,
+    dimension_status: Optional[Mapping[str, Any]] = None,
+    target_route: str = "",
+    target_plant_part: str = "",
+) -> bool:
+    """True only when this record may count as DIRECT formulation
+    evidence for the requested ``dosage_form``. See
+    _dimension_status_formulation_compatible() above for the exact
+    pass/fail rule once a Dimension_Status mapping is available.
+
+    ``dimension_status`` is the per-RECORD (never the plant-level
+    aggregate) Dimension_Status for this specific row -- the caller
+    (candidate_shortlisting's primary-tier loop) looks this up from
+    ``sci_evidence["Record_Applicability_Summary"]`` (evaluate_
+    applicability()'s own per-record output, already computed once for
+    every primary-tier record -- never recomputed here) and passes it
+    in explicitly, because a raw evidence row itself does not carry a
+    "Dimension_Status" field of its own. When the caller has no
+    per-record summary to supply, this also accepts a "Dimension_Status"
+    key directly on ``row`` as a fallback (some test fixtures and
+    standalone callers set it there directly), before finally falling
+    back to _explicit_preparation_applicability_row() for rows with
+    neither.
+
+    No requested dosage form at all (``dosage_form`` blank) means there
+    is nothing to be formulation-incompatible WITH, so every record
+    trivially passes -- this predicate is a no-op in that case, exactly
+    like every other preparation-applicability helper in this module.
+
+    Legacy rows with no Dimension_Status available from any source (no
+    Evidence_Preparation/target-context-driven applicability was ever
+    computed for them) fall back, in order, to:
+      1. the SAME legacy-adapter signal already trusted for Applicability_
+         Factor/scoring purposes elsewhere in this pipeline (see
+         standard_evidence_builder._appl_dimension_preparation()'s own
+         "LEGACY ADAPTER" paragraph) -- an explicit, stated
+         Preparation_Applicability/Applicability_Summary/Extraction_Method
+         signal that resolves to "Compatible" via _dosage_compatibility()
+         is real, declared compatibility metadata, not missing data, so it
+         counts here too. This is evaluated per RECORD (this function is
+         always called once per evidence row), so a genuinely mismatched
+         record among a plant's evidence never borrows another record's
+         "Compatible" flag the way the coarser plant-level Dosage_Form_
+         Compatibility aggregate could.
+      2. _explicit_preparation_applicability_row(), requiring an exact
+         PREP_DIRECT_MATCH (never the family-level, indirect PREP_
+         COMPATIBLE_BUT_INDIRECT), for rows with an explicit preparation
+         text field but no legacy Compatible signal.
+    Neither fallback has an independent route signal to check -- there is
+    none available on these rows -- so a resolved "Compatible"/direct
+    match is the strictest available fail-closed proxy; anything else
+    (Mismatch/Unknown/Not evaluated/no signal at all) fails closed.
+    """
+    if not _norm(dosage_form):
+        return True
+
+    if dimension_status is None:
+        dimension_status = row.get("Dimension_Status") if hasattr(row, "get") else None
+    if isinstance(dimension_status, Mapping):
+        return _dimension_status_formulation_compatible(dimension_status)
+
+    # Legacy/no-Dimension_Status fallback.  Reuse any explicit route/plant-
+    # part facts that DO exist instead of silently throwing them away.  This
+    # closes the case where a legacy row says the same preparation name but
+    # explicitly reports a different route (e.g. inhalation vs oral).
+    # Missing route remains fail-closed when the target route is explicit.
+    target_route_n = _norm(target_route)
+    if target_route_n:
+        evidence_route_n = _norm(row.get("Evidence_Route", ""))
+        if not evidence_route_n or evidence_route_n != target_route_n:
+            return False
+
+    # Plant-part handling stays deliberately narrow: Problem 5 does not
+    # redesign plant-part transferability, but an explicit known mismatch
+    # cannot be called directly transferable. Missing plant-part data does
+    # not create a new block here.
+    target_part_n = _norm(target_plant_part)
+    evidence_part_n = _norm(row.get("Evidence_Plant_Part", ""))
+    if target_part_n and evidence_part_n and evidence_part_n != target_part_n:
+        return False
+
+    if _dosage_compatibility(row, dosage_form) == "Compatible":
+        return True
+    return _explicit_preparation_applicability_row(row, dosage_form) == PREP_DIRECT_MATCH
 
 
 def _row_classification(row: pd.Series, dosage_form: str) -> tuple[str, list[str], dict[str, bool | str]]:
@@ -2899,6 +3056,8 @@ def _derive_go_call(
     safety_tier: str = "Safety not adequately assessed",
     outcome_label: str = "Results not reported",
     target_definition_completeness: str = "complete",
+    outcome_specific_human_evidence_count: int = 0,
+    verified_formulation_compatible_outcome_specific_human_evidence_count: int = 0,
 ) -> str:
     if status == "Excluded":
         return "No-Go" if "safety" in _norm(reason) else "Hold"
@@ -2907,6 +3066,24 @@ def _derive_go_call(
     # A high numeric score alone cannot justify Go. Product-form applicability,
     # explicit safety information, and demonstrated benefit must all be present.
     if _norm(dosage_compatibility) != "compatible":
+        return "Investigate — verify preparation applicability"
+    # PROBLEM 5 FIX: dosage_compatibility above is a plant-level "any row
+    # compatible wins" summary -- it can read "compatible" from a single
+    # unrelated (e.g. mechanistic/animal) record even when every verified,
+    # outcome-specific HUMAN study is for a different preparation or
+    # route. Evidence that the botanical may work is not the same claim
+    # as evidence that the REQUESTED formulation is supported (see
+    # candidate_shortlisting._row_formulation_compatible()). When verified
+    # human outcome evidence exists but none of it clears that stricter,
+    # record-level bar, the same conservative status used above for the
+    # coarser plant-level mismatch applies here too -- never "Go", and
+    # never escalated to a safety-style No-Go/Hold (the botanical is not
+    # thereby judged unsafe or ineffective, only unverified for this
+    # specific product form).
+    if (
+        outcome_specific_human_evidence_count > 0
+        and verified_formulation_compatible_outcome_specific_human_evidence_count <= 0
+    ):
         return "Investigate — verify preparation applicability"
     if safety_tier != "Explicit reassuring evidence":
         return "Investigate — complete safety/interaction review"
@@ -3560,6 +3737,11 @@ def build_plant_candidate_shortlist(
                 _primary_direct_records = []
                 _primary_outcome_direct_records = []
                 _primary_outcome_human_records = []
+                # PROBLEM 5 FIX: the compatibility-aware subset of
+                # _primary_outcome_human_records -- see
+                # _row_formulation_compatible()'s module note above.
+                _primary_outcome_human_compatible_records = []
+                _primary_record_applicability_summary = sci_evidence.get("Record_Applicability_Summary") or {}
                 for _idx, _r in group.iterrows():
                     if _idx not in _primary_row_ids:
                         continue
@@ -3577,9 +3759,32 @@ def build_plant_candidate_shortlist(
                         _is_human, _ = _evidence_context_row(_r)
                         if _is_human:
                             _primary_outcome_human_records.append(_idx)
+                            # Same source_id key evaluate_applicability()'s
+                            # per-record output is stored under (see
+                            # _evidence_context_row()'s sibling row_records
+                            # builder above: source_record_ids = Source_
+                            # Record_IDs or Evidence_Source, falling back to
+                            # the row's own id).
+                            _source_id = str(
+                                _r.get("Source_Record_IDs", "") or _r.get("Evidence_Source", "") or _idx
+                            )
+                            _record_dimension_status = (
+                                _primary_record_applicability_summary.get(_source_id, {}) or {}
+                            ).get("Dimension_Status")
+                            if _row_formulation_compatible(
+                                _r,
+                                dosage_form,
+                                dimension_status=_record_dimension_status,
+                                target_route=str(resolved_target_context.get("Target_Route", "") or ""),
+                                target_plant_part=str(resolved_target_context.get("Target_Plant_Part", "") or ""),
+                            ):
+                                _primary_outcome_human_compatible_records.append(_idx)
                 direct_evidence_count = len(_primary_direct_records)
                 outcome_specific_direct_evidence_count = len(_primary_outcome_direct_records)
                 outcome_specific_human_evidence_count = len(_primary_outcome_human_records)
+                verified_formulation_compatible_outcome_specific_human_evidence_count = len(
+                    _primary_outcome_human_compatible_records
+                )
                 mechanistic_source_ids = {
                     _norm(source_id)
                     for _, r in group.iterrows()
@@ -3710,6 +3915,23 @@ def build_plant_candidate_shortlist(
                         bool(r.get("Direct_Evidence_Present", False))
                         and _row_has_indication_specific_outcome(r, indication)
                         and _evidence_context_row(r)[0]
+                        for _, r in group.iterrows()
+                    )
+                )
+                # PROBLEM 5 FIX: same compatibility-aware subset as the
+                # authoritative-relevance path above, computed here for the
+                # legacy (no per-row authoritative relevance) fallback.
+                verified_formulation_compatible_outcome_specific_human_evidence_count = int(
+                    sum(
+                        bool(r.get("Direct_Evidence_Present", False))
+                        and _row_has_indication_specific_outcome(r, indication)
+                        and _evidence_context_row(r)[0]
+                        and _row_formulation_compatible(
+                            r,
+                            dosage_form,
+                            target_route=str(resolved_target_context.get("Target_Route", "") or ""),
+                            target_plant_part=str(resolved_target_context.get("Target_Plant_Part", "") or ""),
+                        )
                         for _, r in group.iterrows()
                     )
                 )
@@ -3961,6 +4183,10 @@ def build_plant_candidate_shortlist(
                 safety_tier=safety_reg_tier,
                 outcome_label=str(outcome_profile["label"]),
                 target_definition_completeness=sci_evidence["Target_Definition_Completeness"],
+                outcome_specific_human_evidence_count=outcome_specific_human_evidence_count,
+                verified_formulation_compatible_outcome_specific_human_evidence_count=(
+                    verified_formulation_compatible_outcome_specific_human_evidence_count
+                ),
             )
             decision_class_ah = _derive_decision_class_ah(
                 plant_status, overall_score, explanation_reason,
@@ -4119,6 +4345,20 @@ def build_plant_candidate_shortlist(
                 "Direct_Indication_Evidence_Count": direct_evidence_count,
                 "Outcome_Specific_Direct_Evidence_Count": outcome_specific_direct_evidence_count,
                 "Outcome_Specific_Human_Evidence_Count": outcome_specific_human_evidence_count,
+                # PROBLEM 5 FIX -- the authoritative, compatibility-aware
+                # subset of the count above: verified, outcome-specific,
+                # HUMAN evidence records that are ALSO preparation- and
+                # route-compatible with Selected_Dosage_Form. Never used
+                # to redefine Outcome_Specific_Human_Evidence_Count
+                # itself (Problem 2 stays preparation-agnostic, per
+                # scope) -- this is a separate, additive, clearly-named
+                # field consumed by the Problem-5 actionable-decision
+                # gate (see _derive_go_call() below and
+                # step_rd_candidates._formulation_compatibility_gate_
+                # triggered()).
+                "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": (
+                    verified_formulation_compatible_outcome_specific_human_evidence_count
+                ),
                 "Mechanistic_Evidence_Count": mechanistic_evidence_count,
                 "Mechanistic_Evidence_Record_IDs": mechanistic_evidence_record_ids,
                 "Target_Source_Map": target_source_map,
@@ -4347,12 +4587,29 @@ def rescore_commercial_component(
         ])
 
         status = str(row.get("Scientific_Triage_Status", ""))
+        # PROBLEM 5 FIX: this is a commercial-only rescore -- it must not
+        # recompute evidence/formulation compatibility (that would rerun
+        # scientific scoring, which this function is explicitly forbidden
+        # from doing). Read the already-computed counts straight back off
+        # the row, same pattern as every other field here.
+        try:
+            _outcome_human_count = int(float(row.get("Outcome_Specific_Human_Evidence_Count", 0) or 0))
+        except (TypeError, ValueError):
+            _outcome_human_count = 0
+        try:
+            _verified_compatible_count = int(float(
+                row.get("Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count", 0) or 0
+            ))
+        except (TypeError, ValueError):
+            _verified_compatible_count = 0
         go_call = _derive_go_call(
             status, new_overall_score,
             dosage_compatibility=str(row.get("Dosage_Form_Compatibility", "Unknown")),
             safety_tier=str(row.get("Safety_Regulatory_Tier", "Safety not adequately assessed")),
             outcome_label=str(row.get("Outcome_Consistency", "Results not reported")),
             target_definition_completeness=str(row.get("Target_Definition_Completeness", "complete")),
+            outcome_specific_human_evidence_count=_outcome_human_count,
+            verified_formulation_compatible_outcome_specific_human_evidence_count=_verified_compatible_count,
         )
         decision_class_ah = _derive_decision_class_ah(
             status, new_overall_score,
@@ -4536,7 +4793,13 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Indication_Relevance", "Indication_Relevance_Score",
         "Indication_Evidence_Mode", "Indication_Supporting_Source_Count",
         "Relevance_Gate_Result", "Evidence_Route",
-        "Direct_Indication_Evidence_Count", "Outcome_Specific_Direct_Evidence_Count", "Outcome_Specific_Human_Evidence_Count", "Mechanistic_Evidence_Count",
+        "Direct_Indication_Evidence_Count", "Outcome_Specific_Direct_Evidence_Count", "Outcome_Specific_Human_Evidence_Count",
+        # PROBLEM 5 FIX: computed-but-invisible-field trap (same class of
+        # bug as RD_Discovery_Lane/Mechanistic_Evidence_Record_IDs before
+        # it) -- must be listed here or it silently disappears before
+        # reaching rd_report_ready_df/Stage 6 and the step_rd_candidates
+        # gate that reads it.
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count", "Mechanistic_Evidence_Count",
         # Source-traceability pass (2026-09-10, corrective): mechanistic
         # source IDs were computed above (mechanistic_source_ids) but only
         # their count survived past this point -- adding these here is the

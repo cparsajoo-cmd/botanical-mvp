@@ -64,6 +64,13 @@ def _load_reconcile_function_without_importing_streamlit():
     four function defs must be present in the isolated exec namespace, not
     just the top-level one, or the extracted function raises NameError as
     soon as it tries to call them.
+
+    PROBLEM 5 FIX: _reconcile_final_decision_status() also now applies the
+    sequential formulation-compatibility gate via
+    _formulation_compatibility_gate_triggered() (which in turn calls
+    _verified_formulation_compatible_outcome_specific_human_evidence_
+    count()) -- both new function defs must be present here too, for the
+    exact same reason.
     """
     path = Path(__file__).with_name("step_rd_candidates.py")
     tree = ast.parse(path.read_text())
@@ -71,6 +78,8 @@ def _load_reconcile_function_without_importing_streamlit():
         "_pre_gate_final_decision_status",
         "_verified_outcome_specific_human_evidence_count",
         "_evidence_sufficiency_gate_triggered",
+        "_verified_formulation_compatible_outcome_specific_human_evidence_count",
+        "_formulation_compatibility_gate_triggered",
         "_reconcile_final_decision_status",
     }
     targets = [
@@ -111,6 +120,13 @@ def _actionable_row(**overrides):
         # EXPERT REVIEW REQUIRED on the moderate-interaction case for an
         # unrelated reason, masking exactly what that test checks.
         "Outcome_Specific_Human_Evidence_Count": 1,
+        # PROBLEM 5 FIX: same reasoning as the Problem-2 comment above --
+        # this fixture is for SAFETY-focused assertions, not formulation
+        # compatibility, so its one verified record must be marked
+        # formulation-compatible or the new sequential gate would itself
+        # force EXPERT REVIEW REQUIRED on the moderate-interaction case
+        # for an unrelated reason.
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": 1,
         "Outcome_Specific_Direct_Evidence_Count": 1,
         "Evidence_Adjudication_Evidence_Count": 25,
         "Safety_Flags": "No attributable adverse-event narrative was extracted.",

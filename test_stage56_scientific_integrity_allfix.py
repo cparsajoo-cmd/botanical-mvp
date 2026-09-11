@@ -191,6 +191,9 @@ def test_final_decision_reconciliation_never_leaves_ai_no_evidence_green():
         "Scientific_Evidence_Confidence": "MODERATE",
         "Evidence_Conflict_Level": "LOW",
         "Outcome_Specific_Human_Evidence_Count": 1,
+        # PROBLEM 5 FIX: Problem-2 verified/unverified positive control --
+        # the one verified record here is formulation-compatible.
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": 1,
     })) == "GO WITH CAUTION"
     assert src._reconcile_final_decision_status(pd.Series({
         **common, "Final_Decision_Status": "NO GO REGULATORY",

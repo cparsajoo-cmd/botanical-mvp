@@ -164,10 +164,20 @@ def test_5_zero_verified_count_with_positive_adjudication_is_non_actionable():
 # ---------------------------------------------------------------------
 
 def test_6_one_verified_outcome_specific_human_record_gate_does_not_block():
-    go_row = _go_row(Outcome_Specific_Human_Evidence_Count=1)
+    # PROBLEM 5 FIX: this is a Problem-2 positive control (verified vs.
+    # unverified evidence), not a formulation-compatibility test -- the
+    # one verified record is formulation-compatible in both rows below,
+    # so the sequential Problem-5 gate must not additionally block them.
+    go_row = _go_row(
+        Outcome_Specific_Human_Evidence_Count=1,
+        Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count=1,
+    )
     assert _reconcile_final_decision_status(go_row) == "GO"
 
-    caution_row = _go_with_caution_row(Outcome_Specific_Human_Evidence_Count=1)
+    caution_row = _go_with_caution_row(
+        Outcome_Specific_Human_Evidence_Count=1,
+        Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count=1,
+    )
     assert _reconcile_final_decision_status(caution_row) == "GO WITH CAUTION"
 
     # Necessary condition, not sufficient: the gate merely stops blocking.
@@ -177,6 +187,7 @@ def test_6_one_verified_outcome_specific_human_record_gate_does_not_block():
         "Decision_Class_AH": "G — Hold / insufficient evidence",
         "Relevance_Gate_Result": "passed_direct",
         "Outcome_Specific_Human_Evidence_Count": 1,
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": 1,
     }
     assert _reconcile_final_decision_status(insufficient_row) == "INSUFFICIENT EVIDENCE"
 
@@ -384,6 +395,12 @@ def test_end_to_end_positive_control_one_verified_record_survives_gate():
         "Direct_Indication_Evidence_Count": 3,
         "Outcome_Specific_Direct_Evidence_Count": 3,
         "Outcome_Specific_Human_Evidence_Count": 1,
+        # PROBLEM 5 FIX: this end-to-end positive control is about the
+        # Problem-2 verified/unverified distinction, not formulation
+        # compatibility -- the one verified record here is formulation-
+        # compatible, so the sequential Problem-5 gate must not
+        # additionally block it.
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": 1,
         "Evidence_Adjudication_Evidence_Count": 3,
         "Indication_Evidence_Direction": "CONSISTENT_POSITIVE",
         "Evidence_Conflict_Level": "NONE",

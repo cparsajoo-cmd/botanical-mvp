@@ -1375,6 +1375,29 @@ def _evidence_claim_clause(row) -> str:
     )
 
 
+def _explicit_int_field_present(row, key: str) -> tuple[bool, int]:
+    """Return (present, conservative_int_value) for an additive canonical field.
+
+    Presence matters for Problem 5 because older/direct unit-test rows created
+    before the formulation-compatible count existed must not be reinterpreted
+    as a proven formulation mismatch merely because the new field is absent.
+    When the field IS present, _int_field() supplies the same fail-closed integer
+    semantics used by the rest of this module.
+    """
+    try:
+        if hasattr(row, "get"):
+            raw = row.get(key, None)
+            present = key in row if hasattr(row, "__contains__") else raw is not None
+        else:
+            present = key in row
+            raw = row[key] if present else None
+    except Exception:
+        return False, 0
+    if not present or raw is None:
+        return False, 0
+    return True, _int_field(row, key)
+
+
 def build_final_rationale(row) -> str:
     """Returns a deterministic final rationale string for one report-ready
     row. Never raises -- a field that is missing/UNKNOWN simply omits its
@@ -1416,7 +1439,71 @@ def build_final_rationale(row) -> str:
             "actionable recommendation."
         )
 
+    # PROBLEM 5 FIX: a distinct third rationale state, sequential after and
+    # never collapsed into the Problem-2 case immediately above. Problem 2's
+    # gate answers "does verified outcome-specific human evidence exist at
+    # all"; this flag (Formulation_Compatibility_Gate_Triggered, computed by
+    # step_rd_candidates._formulation_compatibility_gate_triggered() only
+    # when Problem 2's own gate did NOT trigger) answers the separate
+    # question "does it apply to the REQUESTED product form". Verified human
+    # evidence genuinely exists here -- reporting "no human evidence exists"
+    # would be as scientifically wrong as reporting that it "supports" the
+    # requested formulation, so this case gets its own sentence rather than
+    # falling through to _evidence_claim_clause()'s normal verified-count
+    # wording (which would describe the mismatched records as if they
+    # supported the requested form) or the case-A sentence above (which
+    # would falsely claim no human evidence exists at all).
+    try:
+        formulation_gate_triggered = bool(row.get("Formulation_Compatibility_Gate_Triggered"))
+    except AttributeError:
+        formulation_gate_triggered = (
+            bool(row["Formulation_Compatibility_Gate_Triggered"])
+            if "Formulation_Compatibility_Gate_Triggered" in row else False
+        )
+
+    verified_human_count = _int_field(row, "Outcome_Specific_Human_Evidence_Count")
+    compatible_count_present, compatible_human_count = _explicit_int_field_present(
+        row, "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count"
+    )
+
+    # Evidence state, not merely "which gate happened to change the status",
+    # owns the formulation wording. A row can already be non-actionable for a
+    # coarser applicability reason before the sequential Problem-5 gate runs;
+    # its rationale still must say that verified human evidence exists but is
+    # not directly transferable to the requested form. Missing new-field data
+    # on legacy/unit-test rows is NOT silently interpreted as a mismatch here.
+    formulation_mismatch_state = (
+        compatible_count_present
+        and verified_human_count > 0
+        and compatible_human_count <= 0
+    )
+    if formulation_gate_triggered or formulation_mismatch_state:
+        return (
+            "Verified human evidence was identified for the botanical, but the "
+            "studied preparation and/or route does not directly match the "
+            "requested product form; transferability remains uncertain and "
+            "expert review is required before an actionable recommendation "
+            "for this specific formulation."
+        )
+
     clauses = [_evidence_claim_clause(row)]
+
+    # Mixed transferability state: at least one verified human record directly
+    # matches the requested preparation/route, but some other verified human
+    # records do not. Keep the botanical-level evidence count from Problem 2,
+    # while making the formulation-specific subset explicit so mismatched
+    # studies cannot be read as direct support for the requested product form.
+    if (
+        compatible_count_present
+        and verified_human_count > 0
+        and 0 < compatible_human_count < verified_human_count
+    ):
+        study_word = "study" if compatible_human_count == 1 else "studies"
+        clauses.append(
+            f"{compatible_human_count} of {verified_human_count} verified outcome-specific human "
+            f"{study_word} directly matched the requested preparation and route; the remaining "
+            "verified human evidence is transferability-limited for this product form."
+        )
 
     for compat_key, label in (
         ("Preparation_Compatibility", "preparation"),

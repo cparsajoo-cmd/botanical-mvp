@@ -100,6 +100,12 @@ def test_verified_direct_human_with_ai_agreement_can_reach_go():
         "Direct_Indication_Evidence_Count": 3,
         "Outcome_Specific_Direct_Evidence_Count": 2,
         "Outcome_Specific_Human_Evidence_Count": 2,
+        # PROBLEM 5 FIX: this positive control is about verified-vs-
+        # unverified evidence (Problem 2), not formulation compatibility
+        # (Problem 5) -- both verified records are formulation-compatible
+        # here, so the sequential Problem-5 gate must not additionally
+        # block this genuinely-actionable GO.
+        "Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count": 2,
         "Evidence_Adjudication_Evidence_Count": 3,
     }
     result = srd._reconcile_final_decision_status(row)

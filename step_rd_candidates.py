@@ -399,20 +399,107 @@ def _evidence_sufficiency_gate_triggered(pre_gate_status: str, row) -> bool:
     )
 
 
+def _verified_formulation_compatible_outcome_specific_human_evidence_count(row) -> int:
+    """PROBLEM 5 FIX -- the ONE authoritative reading of how many of the
+    VERIFIED, outcome-specific HUMAN evidence records counted by
+    ``_verified_outcome_specific_human_evidence_count()`` are ALSO
+    preparation- AND route-compatible with the requested product form.
+
+    Reads only ``Verified_Formulation_Compatible_Outcome_Specific_Human_
+    Evidence_Count``, candidate_shortlisting.py's canonical, compatibility-
+    aware subset of that same record set (built by
+    ``_row_formulation_compatible()`` there -- reusing the existing
+    Dimension_Status preparation/route vocabulary, never a parallel
+    formulation ontology). This is deliberately NOT the same thing as
+    ``Preparation_Applicability_Class``/``Preparation_Compatibility``/
+    ``Route_Compatibility`` elsewhere on the row: those summarize the
+    single PRIMARY (strongest) evidence tier as a whole and can read
+    "compatible" from a record that is not even one of the human,
+    outcome-specific records this gate cares about. Never inferred from
+    those broader fields, and never recomputed here.
+
+    Fails closed exactly like its Problem-2 counterpart above: missing,
+    blank, non-numeric, non-integer, or negative values all read as zero
+    -- an inconsistent or partial pipeline result must not silently keep
+    an actionable recommendation alive for the requested formulation.
+    """
+    value = (
+        row.get("Verified_Formulation_Compatible_Outcome_Specific_Human_Evidence_Count", None)
+        if hasattr(row, "get") else None
+    )
+    try:
+        if value is None:
+            return 0
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return 0
+        numeric = float(text)
+        if not numeric.is_integer():
+            return 0
+        count = int(numeric)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, count)
+
+
+def _formulation_compatibility_gate_triggered(pre_gate_status: str, row) -> bool:
+    """PROBLEM 5 FIX -- the sequential formulation/route-compatibility gate.
+
+    Applied only AFTER Problem 2's evidence-sufficiency gate has already
+    been checked (see ``_reconcile_final_decision_status()``/
+    ``_merge_and_sync_final_decision_status()`` below), and only ever to
+    an otherwise-actionable-positive pre-gate status that Problem 2's own
+    gate did NOT already trip. A candidate may not receive an actionable
+    positive efficacy recommendation for the REQUESTED product form when
+    it has verified outcome-specific human evidence (Problem 2's gate
+    passed) but every one of those verified records comes from a
+    preparation or route that does not match the requested form. This is
+    a distinct, additional scientific question from Problem 2's ("is
+    there verified human evidence at all" vs. "does the verified human
+    evidence apply to what was actually requested") and is tracked with
+    its own flag (``Formulation_Compatibility_Gate_Triggered``) precisely
+    so the two cases are never collapsed into the same rationale sentence
+    (see evidence_adjudication_engine.build_final_rationale()) -- human
+    evidence existing but being formulation-mismatched is scientifically
+    different from no human evidence existing at all, and must never be
+    reported as either "no human evidence exists" or "human evidence
+    supports the requested formulation".
+
+    Like Problem 2's gate, this never touches, weakens, or reclassifies a
+    genuine safety/regulatory NO-GO, an existing EXPERT REVIEW REQUIRED,
+    or an existing INSUFFICIENT EVIDENCE -- those are already non-
+    actionable. It is also a necessary condition only: having compatible
+    verified evidence never forces a positive status by itself.
+    """
+    if pre_gate_status not in {"GO", "GO WITH CAUTION"}:
+        return False
+    if _verified_outcome_specific_human_evidence_count(row) <= 0:
+        # Problem 2's own gate already owns (and will trigger on) this
+        # case -- this gate only ever fires when verified human evidence
+        # genuinely exists but is formulation-mismatched.
+        return False
+    return _verified_formulation_compatible_outcome_specific_human_evidence_count(row) <= 0
+
+
 def _reconcile_final_decision_status(row) -> str:
     """Authoritative final scientific decision for one report-ready row.
 
     Delegates to ``_pre_gate_final_decision_status()`` for the existing,
     extensively-tested decision tree, then applies the PROBLEM 2 hard
     evidence-sufficiency gate (``_evidence_sufficiency_gate_triggered()``)
-    as the very last, lowest-level step -- so every downstream consumer of
+    and, sequentially after it, the PROBLEM 5 formulation-compatibility
+    gate (``_formulation_compatibility_gate_triggered()``) as the very
+    last, lowest-level steps -- so every downstream consumer of
     Final_Decision_Status (CSV export, Stage-6 UI, decision-record
-    persistence, rationale) inherits it automatically without needing its
-    own copy of this rule. See ``_evidence_sufficiency_gate_triggered()``'s
-    docstring for exactly what it does and does not affect.
+    persistence, rationale) inherits both automatically without needing
+    its own copy of either rule. See each gate function's own docstring
+    for exactly what it does and does not affect; Problem 5's gate is
+    only ever consulted when Problem 2's gate did not already trigger.
     """
     pre_gate_status = _pre_gate_final_decision_status(row)
     if _evidence_sufficiency_gate_triggered(pre_gate_status, row):
+        return "EXPERT REVIEW REQUIRED"
+    if _formulation_compatibility_gate_triggered(pre_gate_status, row):
         return "EXPERT REVIEW REQUIRED"
     return pre_gate_status
 
@@ -519,11 +606,29 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
             _evidence_sufficiency_gate_triggered(status, row)
             for status, (_, row) in zip(_pre_gate_statuses, _rows)
         ]
+        # PROBLEM 5 FIX: sequential formulation-compatibility gate, computed
+        # with the SAME two canonical functions
+        # _pre_gate_final_decision_status()/_formulation_compatibility_gate_
+        # triggered() used by _reconcile_final_decision_status() itself, so
+        # this synchronization point cannot drift into a second, competing
+        # definition here either. Tracked as its own flag
+        # (Formulation_Compatibility_Gate_Triggered), separate from
+        # Evidence_Sufficiency_Gate_Triggered, so build_final_rationale()
+        # can distinguish "no verified human evidence" from "verified human
+        # evidence exists but is formulation-mismatched" -- see that
+        # function's own PROBLEM 5 note.
+        _formulation_gate_triggered = [
+            _formulation_compatibility_gate_triggered(status, row)
+            for status, (_, row) in zip(_pre_gate_statuses, _rows)
+        ]
         merged["Final_Decision_Status"] = [
-            "EXPERT REVIEW REQUIRED" if triggered else status
-            for status, triggered in zip(_pre_gate_statuses, _gate_triggered)
+            "EXPERT REVIEW REQUIRED" if (triggered or formulation_triggered) else status
+            for status, triggered, formulation_triggered in zip(
+                _pre_gate_statuses, _gate_triggered, _formulation_gate_triggered
+            )
         ]
         merged["Evidence_Sufficiency_Gate_Triggered"] = _gate_triggered
+        merged["Formulation_Compatibility_Gate_Triggered"] = _formulation_gate_triggered
         merged["Evidence_Coherence_Status"] = [
             _evidence_coherence_status(row) for _, row in merged.iterrows()
         ]

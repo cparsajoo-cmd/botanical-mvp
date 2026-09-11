@@ -720,3 +720,131 @@ def test_critical_e2e_unverified_record_stays_unverified_full_round_trip(monkeyp
     assert bool(reloaded["Candidate_Attribution_Verified"]) is False
     assert _row_has_verified_candidate_attribution(reloaded) is False
     assert _row_has_indication_specific_outcome(reloaded, "sleep") is False
+
+# =======================================================================
+# 9. Final deterministic assertion-verification boundary hardening
+# =======================================================================
+
+def _positive_llm_payload(span, confidence=0.95):
+    return {
+        "candidate_intervention_role": "studied_intervention",
+        "candidate_intervention_polarity": "positive",
+        "candidate_intervention_temporality": "current_study",
+        "candidate_intervention_supporting_text": span,
+        "candidate_intervention_confidence": confidence,
+    }
+
+
+def test_final_gate_rejects_real_but_unrelated_verbatim_span():
+    source = "Participants received placebo. Ficticus alpinum was mentioned in the background."
+    assertion = assertion_from_llm_extraction(
+        _positive_llm_payload("Participants received placebo."),
+        source_text=source,
+        scientific_name="Ficticus alpinum",
+    )
+    assert assertion.verified is False
+
+
+def test_final_gate_accepts_verbatim_span_that_anchors_candidate():
+    source = "Participants received Ficticus alpinum extract daily."
+    assertion = assertion_from_llm_extraction(
+        _positive_llm_payload(source),
+        source_text=source,
+        scientific_name="Ficticus alpinum",
+    )
+    assert assertion.verified is True
+
+
+def test_final_gate_does_not_rescue_span_from_candidate_mention_elsewhere():
+    source = "Ficticus alpinum is commonly used traditionally. Participants received CBT."
+    assertion = assertion_from_llm_extraction(
+        _positive_llm_payload("Participants received CBT."),
+        source_text=source,
+        scientific_name="Ficticus alpinum",
+    )
+    assert assertion.verified is False
+
+
+def test_final_gate_common_name_verifies_only_with_reliable_mapping():
+    source = "Participants received lemon balm extract twice daily."
+    payload = _positive_llm_payload(source)
+    with_mapping = assertion_from_llm_extraction(
+        payload,
+        source_text=source,
+        scientific_name="Melissa officinalis",
+        common_name="lemon balm",
+    )
+    without_mapping = assertion_from_llm_extraction(
+        payload,
+        source_text=source,
+        scientific_name="Melissa officinalis",
+    )
+    assert with_mapping.verified is True
+    assert without_mapping.verified is False
+
+
+def test_final_gate_zero_confidence_affirmative_payload_fails_closed():
+    source = "Participants received Ficticus alpinum extract daily."
+    assertion = assertion_from_llm_extraction(
+        _positive_llm_payload(source, confidence=0.0),
+        source_text=source,
+        scientific_name="Ficticus alpinum",
+    )
+    assert assertion.verified is False
+
+
+def test_final_gate_invalid_confidence_affirmative_payload_fails_closed():
+    source = "Participants received Ficticus alpinum extract daily."
+    payload = _positive_llm_payload(source)
+    payload["candidate_intervention_confidence"] = "not-a-number"
+    assertion = assertion_from_llm_extraction(
+        payload,
+        source_text=source,
+        scientific_name="Ficticus alpinum",
+    )
+    assert assertion.verified is False
+
+
+def test_standardizer_transports_reliable_common_name_to_assertion_gate(monkeypatch):
+    sentence = "Participants received lemon balm extract twice daily."
+    fake_result = _positive_llm_payload(sentence)
+    # Supply the other schema fields the standardizer may read; missing values
+    # intentionally remain empty and do not alter candidate attribution.
+    monkeypatch.setattr(llm_extractor.llm_client, "call_structured_json", lambda **kwargs: fake_result)
+
+    standardized = evidence_standardizer.standardize_extracted_record(
+        extracted={
+            "Scientific_Name": "Melissa officinalis",
+            "Common_Name": "lemon balm",
+            "Notes": sentence,
+            "Primary_Outcome": "sleep quality",
+            "Result_Direction": "Positive",
+        },
+        source_metadata={
+            "source_type": "PubMed", "source_title": "A randomized trial",
+            "source_url": "", "source_organization": "NCBI PubMed", "source_year": "2024",
+        },
+        allow_llm=True,
+    )
+    assert standardized["Candidate_Attribution_Verified"] is True
+
+
+def test_standardizer_common_name_only_text_fails_closed_without_mapping(monkeypatch):
+    sentence = "Participants received lemon balm extract twice daily."
+    fake_result = _positive_llm_payload(sentence)
+    monkeypatch.setattr(llm_extractor.llm_client, "call_structured_json", lambda **kwargs: fake_result)
+
+    standardized = evidence_standardizer.standardize_extracted_record(
+        extracted={
+            "Scientific_Name": "Melissa officinalis",
+            "Notes": sentence,
+            "Primary_Outcome": "sleep quality",
+            "Result_Direction": "Positive",
+        },
+        source_metadata={
+            "source_type": "PubMed", "source_title": "A randomized trial",
+            "source_url": "", "source_organization": "NCBI PubMed", "source_year": "2024",
+        },
+        allow_llm=True,
+    )
+    assert standardized["Candidate_Attribution_Verified"] is False

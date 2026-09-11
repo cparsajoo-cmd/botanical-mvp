@@ -163,14 +163,16 @@ def assertion_from_llm_extraction(
     data: dict,
     source_text: str,
     scientific_name: str = "",
+    common_name: str = "",
     evidence_record_id: str = "",
     source_url: str = "",
 ) -> CandidateInterventionAssertion:
     """Build an assertion from one LLM structured-extraction result.
 
     FAIL-CLOSED: an assertion whose supporting_text is empty, does not
-    exist verbatim in ``source_text``, or whose role/polarity/temporality
-    is missing/unrecognized/UNKNOWN can never verify -- see
+    exist verbatim in ``source_text``, does not explicitly anchor the candidate
+    botanical in that exact span, has zero/invalid confidence, or whose
+    role/polarity/temporality is missing/unrecognized/UNKNOWN can never verify -- see
     CandidateInterventionAssertion.verified.  The model is deliberately
     never trusted to have identified a real intervention unless its own
     quoted span can be found, character-for-character, in the real source
@@ -180,6 +182,21 @@ def assertion_from_llm_extraction(
     data = data or {}
     span = str(data.get("candidate_intervention_supporting_text") or "").strip()
     if not validate_supporting_span(source_text, span):
+        return _unverified("llm_semantic_extraction", evidence_record_id, source_url)
+
+    # Final deterministic provenance gate: verbatimness proves that the quoted
+    # span exists in the source, but not that the span is ABOUT the candidate.
+    # Reuse the existing high-precision botanical name matcher on the exact
+    # supporting span.  The semantic role/polarity/temporality remain the
+    # structured extractor's job; this check merely prevents an unrelated
+    # verbatim sentence (e.g. "Participants received placebo") from being
+    # accepted as candidate-specific evidence.  A reliable common-name mapping
+    # may establish the anchor; without one, common-name-only text fails closed.
+    from candidate_attribution import verify_intervention_attribution
+    candidate_anchor = verify_intervention_attribution(
+        span, scientific_name=scientific_name, common_name=common_name
+    )
+    if not candidate_anchor.get("verified"):
         return _unverified("llm_semantic_extraction", evidence_record_id, source_url)
 
     role_raw = str(data.get("candidate_intervention_role") or "unknown").strip().lower()
@@ -194,6 +211,14 @@ def assertion_from_llm_extraction(
         confidence = max(0.0, min(1.0, float(data.get("candidate_intervention_confidence", 0.0))))
     except (TypeError, ValueError):
         confidence = 0.0
+
+    # Confidence is diagnostic rather than a calibrated decision threshold.
+    # We therefore do not invent an arbitrary cutoff.  An explicit/invalid zero,
+    # however, is internally inconsistent with an affirmative verified semantic
+    # assertion and fails closed.  Positive confidence does not override any of
+    # the role/polarity/temporality/provenance gates above.
+    if confidence <= 0.0:
+        return _unverified("llm_semantic_extraction", evidence_record_id, source_url)
 
     return CandidateInterventionAssertion(
         candidate_role=role,

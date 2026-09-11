@@ -153,6 +153,7 @@ def standardize_extracted_record(extracted, source_metadata, allow_llm=True):
                     llm,
                     source_text=_source_text_for_span,
                     scientific_name=normalized.get("Scientific_Name", ""),
+                    common_name=(normalized.get("Common_Name", "") or record.get("Common_Name", "")),
                 )
                 normalized["Candidate_Attribution_Verified"] = _cia.verified
                 normalized["Candidate_Attribution_Basis"] = (

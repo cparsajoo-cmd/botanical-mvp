@@ -163,6 +163,15 @@ def test_final_decision_reconciliation_never_leaves_ai_no_evidence_green():
     assert src._reconcile_final_decision_status(pd.Series({
         **common, "Evidence_Adjudication_Status": "AI_ADJUDICATION_NO_EVIDENCE"
     })) == "EXPERT REVIEW REQUIRED"
+    # PROBLEM 2 FIX: this row carries no Outcome_Specific_Human_Evidence_
+    # Count at all (defaults to 0 -- fail closed), i.e. zero VERIFIED
+    # outcome-specific human evidence; only the generic Human_Evidence_
+    # Strength="MODERATE" label backs it. This is exactly the required-
+    # behavior Case B from the Problem 2 cahier ("Human_Evidence_Strength
+    # = Moderate" with zero verified count must still be non-actionable),
+    # so the hard evidence-sufficiency gate now correctly downgrades what
+    # used to reach GO WITH CAUTION via the bottom decision_class/gate
+    # fallback to EXPERT REVIEW REQUIRED.
     assert src._reconcile_final_decision_status(pd.Series({
         **common,
         "Evidence_Adjudication_Status": "AI_ADJUDICATION_OK",
@@ -170,6 +179,18 @@ def test_final_decision_reconciliation_never_leaves_ai_no_evidence_green():
         "Human_Evidence_Strength": "MODERATE",
         "Scientific_Evidence_Confidence": "MODERATE",
         "Evidence_Conflict_Level": "LOW",
+    })) == "EXPERT REVIEW REQUIRED"
+    # Positive control: the identical row PLUS one genuinely verified
+    # outcome-specific human record reaches GO WITH CAUTION exactly as
+    # before -- the gate is a necessary condition, not a sufficient one.
+    assert src._reconcile_final_decision_status(pd.Series({
+        **common,
+        "Evidence_Adjudication_Status": "AI_ADJUDICATION_OK",
+        "Indication_Evidence_Direction": "MOSTLY_POSITIVE",
+        "Human_Evidence_Strength": "MODERATE",
+        "Scientific_Evidence_Confidence": "MODERATE",
+        "Evidence_Conflict_Level": "LOW",
+        "Outcome_Specific_Human_Evidence_Count": 1,
     })) == "GO WITH CAUTION"
     assert src._reconcile_final_decision_status(pd.Series({
         **common, "Final_Decision_Status": "NO GO REGULATORY",

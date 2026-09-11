@@ -24,8 +24,28 @@ def _base(**kw):
     return d
 
 
-def test_unverified_outcome_context_does_not_erase_multi_record_positive_direct_body():
-    assert s._reconcile_final_decision_status(_base()) == "GO WITH CAUTION"
+def test_unverified_outcome_context_no_longer_reaches_actionable_status():
+    # PROBLEM 2 FIX (hard evidence-sufficiency gate): this row has zero
+    # verified outcome-specific human evidence (Outcome_Specific_Human_
+    # Evidence_Count == 0) and only reached "GO WITH CAUTION" pre-Problem-2
+    # via the outcome_context_unverified_but_supported escape hatch inside
+    # _pre_gate_final_decision_status -- i.e. exactly the scientifically
+    # unacceptable case Problem 2 closes: an actionable positive
+    # recommendation backed only by a large adjudication-evidence count and
+    # a consistent-positive AI direction, with no verified outcome-specific
+    # human record behind it. The correct, current behavior is EXPERT
+    # REVIEW REQUIRED, not GO WITH CAUTION.
+    assert s._reconcile_final_decision_status(_base()) == "EXPERT REVIEW REQUIRED"
+
+
+def test_verified_outcome_context_multi_record_positive_direct_body_remains_cautious():
+    # Positive control for the test above: the SAME row, but with one
+    # genuinely verified outcome-specific human record, reaches GO WITH
+    # CAUTION exactly as before -- the hard gate is a necessary condition,
+    # not a sufficient one, and never blocks a genuinely verified body.
+    assert s._reconcile_final_decision_status(
+        _base(Outcome_Specific_Human_Evidence_Count=1, Human_Evidence_Strength="WEAK")
+    ) == "GO WITH CAUTION"
 
 
 def test_single_direct_record_with_no_human_outcome_context_stays_expert_review():

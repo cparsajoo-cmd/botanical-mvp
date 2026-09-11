@@ -1206,7 +1206,33 @@ def build_final_rationale(row) -> str:
     row. Never raises -- a field that is missing/UNKNOWN simply omits its
     clause rather than fabricating a claim. Called once per row when the
     report-ready frame is built (see step_rd_candidates.py's
-    _merge_and_sync_final_decision_status)."""
+    _merge_and_sync_final_decision_status).
+
+    PROBLEM 2 FIX (rationale consistency): step_rd_candidates.py's hard
+    evidence-sufficiency gate can downgrade an otherwise-actionable
+    GO/GO WITH CAUTION to EXPERT REVIEW REQUIRED when there is zero
+    verified outcome-specific human evidence for the requested
+    indication. When that happens, the normal clauses below (built from
+    Evidence_Adjudication_Rationale, which can still describe AI-
+    estimated/mechanistic/related-indication evidence in encouraging
+    terms) must not be used -- they would overstate evidence the gate
+    has just determined is not verified/outcome-specific. This is read
+    from the Evidence_Sufficiency_Gate_Triggered flag that
+    _merge_and_sync_final_decision_status() computes with the exact same
+    gate function the status itself is derived from, so this rationale
+    can never disagree with why the status is what it is.
+    """
+    try:
+        gate_triggered = bool(row.get("Evidence_Sufficiency_Gate_Triggered"))
+    except AttributeError:
+        gate_triggered = bool(row["Evidence_Sufficiency_Gate_Triggered"]) if "Evidence_Sufficiency_Gate_Triggered" in row else False
+    if gate_triggered:
+        return (
+            "No verified outcome-specific human evidence was identified for the "
+            "requested indication; expert review is required before an "
+            "actionable recommendation."
+        )
+
     clauses = []
 
     adjudication_rationale = _get_field(row, "Evidence_Adjudication_Rationale")

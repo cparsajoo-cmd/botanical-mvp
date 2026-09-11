@@ -110,10 +110,19 @@ def test_final_priority_requires_ai_verified_direct_outcome_when_v2_schema_prese
 
 
 def test_final_priority_can_remain_cautious_with_verified_direct_human_outcome():
+    # PROBLEM 2 FIX: Direct_Outcome_Evidence_IDs/Direct_Human_Outcome_
+    # Evidence_IDs are AI-adjudication-derived (schema v2) counts, not the
+    # candidate-attribution-verified, outcome-specific human count the
+    # hard evidence-sufficiency gate reads (Outcome_Specific_Human_
+    # Evidence_Count). This test is specifically about a "verified"
+    # outcome surviving to GO WITH CAUTION, so it must also carry a
+    # genuinely verified record or the new gate would (correctly) block
+    # it for an unrelated, evidence-sufficiency reason.
     row = _decision_row(
         Direct_Outcome_Evidence_IDs=["E1"],
         Direct_Human_Outcome_Evidence_IDs=["E1"],
         Human_Evidence_Strength="WEAK",
         Scientific_Evidence_Confidence="LOW",
+        Outcome_Specific_Human_Evidence_Count=1,
     )
     assert step._reconcile_final_decision_status(row) == "GO WITH CAUTION"

@@ -124,7 +124,7 @@ def _final_canonical_evidence_direction(evidence_consistency_class, ai_direction
     return "UNKNOWN", "UNKNOWN"
 
 
-def _reconcile_final_decision_status(row) -> str:
+def _pre_gate_final_decision_status(row) -> str:
     """Produce one populated scientific decision from deterministic + AI facts.
 
     The AI may only make the result more conservative.  Hard safety/regulatory
@@ -330,6 +330,93 @@ def _reconcile_final_decision_status(row) -> str:
     return current or "EXPERT REVIEW REQUIRED"
 
 
+def _verified_outcome_specific_human_evidence_count(row) -> int:
+    """PROBLEM 2 FIX -- the ONE authoritative reading of how many VERIFIED,
+    outcome-specific HUMAN evidence records support this candidate for the
+    requested indication.
+
+    This deliberately reads only ``Outcome_Specific_Human_Evidence_Count``,
+    which is candidate_shortlisting.py's canonical, already-gated count: it
+    is built exclusively from primary-tier rows that pass
+    ``_row_has_indication_specific_outcome()`` (which itself fails closed
+    through ``_row_has_verified_candidate_attribution()`` -- Problem 1's
+    Candidate_Attribution_Verified gate -- before a row can count as
+    outcome-specific at all) and are additionally classified HUMAN by
+    ``_evidence_context_row()``. It never falls back to AI-estimated
+    counts (``Direct_Human_Outcome_Evidence_IDs``/AI adjudication human
+    counts), ``Human_Evidence_Strength`` prose, generic/direct-indication
+    mode labels, related-indication evidence, mechanistic evidence, or
+    legacy direct-human counters -- see the module-level PROBLEM 2 note on
+    ``_reconcile_final_decision_status`` for why those are explicitly
+    excluded from this gate.
+
+    Fails closed: a missing, blank, non-numeric, or otherwise ambiguous
+    value is treated as zero, never as "unknown therefore permit". This is
+    intentional -- a legacy row or an inconsistent/partial pipeline result
+    must not silently keep an actionable recommendation alive.
+    """
+    value = row.get("Outcome_Specific_Human_Evidence_Count", None) if hasattr(row, "get") else None
+    try:
+        if value is None:
+            return 0
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return 0
+        numeric = float(text)
+        # A count is an integer scientific fact.  Fractional / non-finite
+        # values indicate a corrupted or ambiguous transport value and must
+        # fail closed rather than being truncated into a positive count.
+        if not numeric.is_integer():
+            return 0
+        count = int(numeric)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, count)
+
+
+def _evidence_sufficiency_gate_triggered(pre_gate_status: str, row) -> bool:
+    """PROBLEM 2 FIX -- the single hard evidence-sufficiency gate.
+
+    A candidate may not receive an actionable positive efficacy
+    recommendation (GO / GO WITH CAUTION) when it has zero verified
+    outcome-specific human evidence for the requested indication, no
+    matter how strong AI-estimated human counts, mechanistic evidence,
+    Human_Evidence_Strength prose, a "Direct human/clinical" indication
+    mode, or a positive adjudication look. This is an evidence-
+    SUFFICIENCY gate, not a safety gate: it is deliberately applied only
+    to an otherwise-actionable-positive pre-gate status, so it never
+    touches, weakens, or reclassifies a genuine safety/regulatory NO-GO,
+    an existing EXPERT REVIEW REQUIRED, or an existing INSUFFICIENT
+    EVIDENCE -- those are already non-actionable and remain exactly as
+    the existing gates produced them. It is also a necessary condition
+    only: having verified outcome-specific human evidence (count >= 1)
+    never forces a positive status by itself -- the normal existing
+    scoring/decision logic above continues to decide that.
+    """
+    return (
+        pre_gate_status in {"GO", "GO WITH CAUTION"}
+        and _verified_outcome_specific_human_evidence_count(row) <= 0
+    )
+
+
+def _reconcile_final_decision_status(row) -> str:
+    """Authoritative final scientific decision for one report-ready row.
+
+    Delegates to ``_pre_gate_final_decision_status()`` for the existing,
+    extensively-tested decision tree, then applies the PROBLEM 2 hard
+    evidence-sufficiency gate (``_evidence_sufficiency_gate_triggered()``)
+    as the very last, lowest-level step -- so every downstream consumer of
+    Final_Decision_Status (CSV export, Stage-6 UI, decision-record
+    persistence, rationale) inherits it automatically without needing its
+    own copy of this rule. See ``_evidence_sufficiency_gate_triggered()``'s
+    docstring for exactly what it does and does not affect.
+    """
+    pre_gate_status = _pre_gate_final_decision_status(row)
+    if _evidence_sufficiency_gate_triggered(pre_gate_status, row):
+        return "EXPERT REVIEW REQUIRED"
+    return pre_gate_status
+
+
 def _evidence_coherence_status(row) -> str:
     """Deterministic cross-layer consistency diagnostic for the final report.
 
@@ -416,9 +503,27 @@ def _merge_and_sync_final_decision_status(result_df, plant_summary_df):
         # deterministic decision.  This is the final decision authority used by
         # Stage 6; it is conservative and never relaxes hard safety/regulatory
         # outcomes.
-        merged["Final_Decision_Status"] = [
-            _reconcile_final_decision_status(row) for _, row in merged.iterrows()
+        #
+        # PROBLEM 2 FIX: compute the pre-gate status and the hard evidence-
+        # sufficiency gate flag via the SAME two canonical functions
+        # _pre_gate_final_decision_status()/_evidence_sufficiency_gate_
+        # triggered() used by _reconcile_final_decision_status() itself, so
+        # this synchronization point cannot drift into a second, competing
+        # definition of when the gate applies. The flag is persisted
+        # (Evidence_Sufficiency_Gate_Triggered) so build_final_rationale()
+        # can render the correct, non-overstating rationale for a gated row
+        # without re-deriving the gate decision itself.
+        _rows = list(merged.iterrows())
+        _pre_gate_statuses = [_pre_gate_final_decision_status(row) for _, row in _rows]
+        _gate_triggered = [
+            _evidence_sufficiency_gate_triggered(status, row)
+            for status, (_, row) in zip(_pre_gate_statuses, _rows)
         ]
+        merged["Final_Decision_Status"] = [
+            "EXPERT REVIEW REQUIRED" if triggered else status
+            for status, triggered in zip(_pre_gate_statuses, _gate_triggered)
+        ]
+        merged["Evidence_Sufficiency_Gate_Triggered"] = _gate_triggered
         merged["Evidence_Coherence_Status"] = [
             _evidence_coherence_status(row) for _, row in merged.iterrows()
         ]

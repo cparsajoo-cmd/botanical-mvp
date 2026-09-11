@@ -54,16 +54,31 @@ def test_display_remains_neutral_when_no_safety_evidence_exists():
 
 
 def _load_reconcile_function_without_importing_streamlit():
-    """Compile only the pure reconciliation function from the Streamlit module."""
+    """Compile only the pure reconciliation function(s) from the Streamlit
+    module, without importing streamlit itself.
+
+    PROBLEM 2 FIX: _reconcile_final_decision_status() now delegates to
+    _pre_gate_final_decision_status() and applies the hard evidence-
+    sufficiency gate via _evidence_sufficiency_gate_triggered() (which in
+    turn calls _verified_outcome_specific_human_evidence_count()) -- all
+    four function defs must be present in the isolated exec namespace, not
+    just the top-level one, or the extracted function raises NameError as
+    soon as it tries to call them.
+    """
     path = Path(__file__).with_name("step_rd_candidates.py")
     tree = ast.parse(path.read_text())
-    target = None
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "_reconcile_final_decision_status":
-            target = node
-            break
-    assert target is not None
-    module = ast.Module(body=[target], type_ignores=[])
+    needed = {
+        "_pre_gate_final_decision_status",
+        "_verified_outcome_specific_human_evidence_count",
+        "_evidence_sufficiency_gate_triggered",
+        "_reconcile_final_decision_status",
+    }
+    targets = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in needed
+    ]
+    assert {node.name for node in targets} == needed
+    module = ast.Module(body=targets, type_ignores=[])
     ast.fix_missing_locations(module)
     ns = {"json": json}
     exec(compile(module, str(path), "exec"), ns)
@@ -78,13 +93,25 @@ def _actionable_row(**overrides):
         "Preparation_Applicability_Class": "direct_match",
         "Evidence_Adjudication_Status": "AI_ADJUDICATION_OK",
         "Indication_Evidence_Direction": "CONSISTENT_POSITIVE",
-        "Human_Evidence_Strength": "NONE",
+        # PROBLEM 2 FIX: paired with Outcome_Specific_Human_Evidence_Count=1
+        # below -- "NONE" would trigger a pre-existing (pre-Problem-2)
+        # verified-record/strength-label contradiction check unrelated to
+        # what this fixture is for.
+        "Human_Evidence_Strength": "WEAK",
         "Evidence_Conflict_Level": "NONE",
         "Scientific_Evidence_Confidence": "LOW",
         "Indication_Evidence_Mode": "Direct human/clinical",
         "Direct_Indication_Evidence_Count": 5,
-        "Outcome_Specific_Human_Evidence_Count": 0,
-        "Outcome_Specific_Direct_Evidence_Count": 0,
+        # PROBLEM 2 FIX: this fixture models a plausibly-actionable
+        # candidate for SAFETY-focused assertions below (serious/
+        # conflicting/moderate interaction) -- it is not testing the
+        # evidence-sufficiency gate at all, so it must carry a genuinely
+        # verified outcome-specific human record. Left at 0 (its
+        # pre-Problem-2 value), the new hard gate would itself force
+        # EXPERT REVIEW REQUIRED on the moderate-interaction case for an
+        # unrelated reason, masking exactly what that test checks.
+        "Outcome_Specific_Human_Evidence_Count": 1,
+        "Outcome_Specific_Direct_Evidence_Count": 1,
         "Evidence_Adjudication_Evidence_Count": 25,
         "Safety_Flags": "No attributable adverse-event narrative was extracted.",
         "Safety_Assertion_Status": "NO_SAFETY_EVIDENCE_RETRIEVED",

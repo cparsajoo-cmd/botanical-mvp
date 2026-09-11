@@ -3563,6 +3563,40 @@ def build_plant_candidate_shortlist(
             outcome_profile = sci_evidence["Primary_Tier_Outcome_Profile"]
             primary_record_count = int(sci_evidence["Evidence_Direction_Profile"]["Primary_Tier_Record_Count"])
             primary_traceable_count = len(set(sci_evidence["Scientific_Evidence_Source_Record_IDs"]))
+            # DIAGNOSTIC (2026-09-11, investigating an empty Priority table
+            # with a populated Expert Review bucket): the UNVERIFIED_DIRECT_
+            # HUMAN_SIGNAL provisional-shortlist gate below tests four
+            # conditions, but until now none of the four individual values
+            # (nor which one failed) was exposed anywhere on the output row
+            # -- only the final Exploratory/Shortlist outcome was visible.
+            # This is presentation-only: it changes no score, gate, or
+            # status, and is computed for every plant (not only
+            # UNVERIFIED_DIRECT_HUMAN_SIGNAL rows) so it is always available
+            # for inspection regardless of which indication_mode a candidate
+            # ends up in.
+            _gate_indication_points_ok = indication_points >= 20.0
+            _gate_evq_points_ok = evq_points >= 12.0
+            _gate_primary_record_ok = primary_record_count >= 1
+            _gate_primary_traceable_ok = primary_traceable_count >= 1
+            _unverified_signal_gate_failing = [
+                label for label, ok in (
+                    ("Indication_Relevance_Score < 20", _gate_indication_points_ok),
+                    ("Evidence_Quality_Score < 12", _gate_evq_points_ok),
+                    ("Primary_Tier_Record_Count < 1", _gate_primary_record_ok),
+                    ("Primary_Tier_Traceable_Source_Count < 1", _gate_primary_traceable_ok),
+                ) if not ok
+            ]
+            unverified_signal_gate_detail = {
+                "Indication_Relevance_Score": indication_points,
+                "Evidence_Quality_Score": evq_points,
+                "Primary_Tier_Record_Count": primary_record_count,
+                "Primary_Tier_Traceable_Source_Count": primary_traceable_count,
+                "Gate_Passed": (
+                    _gate_indication_points_ok and _gate_evq_points_ok
+                    and _gate_primary_record_ok and _gate_primary_traceable_ok
+                ),
+                "Failing_Conditions": _unverified_signal_gate_failing,
+            }
             dosage_statuses = set(group["Dosage_Form_Compatibility"].tolist())
             dosage_summary = (
                 "Compatible" if "Compatible" in dosage_statuses
@@ -4212,6 +4246,7 @@ def build_plant_candidate_shortlist(
                 "Indication_Supporting_Source_Count": indication_source_count,
                 "Candidate_Specific_Empirical_Row_Count": empirical_rows,
                 "Evidence_Quality_Score": evq_points,
+                "Unverified_Signal_Provisional_Shortlist_Gate_Detail": unverified_signal_gate_detail,
                 "All_Tier_Evidence_Quality_Diagnostic": {
                     "Score": all_tier_evq_points,
                     "Tier": all_tier_evq_tier,
@@ -4824,6 +4859,12 @@ def merge_authoritative_scores(raw_df: pd.DataFrame, plant_summary: pd.DataFrame
         "Safety_Assertion_Status", "Safety_Concern_Level", "Safety_Evidence_IDs",
         "Safety_Status_Rationale",
         "Evidence_Quality_Score",
+        # DIAGNOSTIC (2026-09-11): must be listed here or it silently
+        # disappears before reaching rd_report_ready_df/Stage 6, the same
+        # computed-but-invisible-field trap as RD_Discovery_Lane/
+        # Mechanistic_Evidence_Record_IDs/Verified_Formulation_Compatible_
+        # Outcome_Specific_Human_Evidence_Count before it.
+        "Unverified_Signal_Provisional_Shortlist_Gate_Detail",
         "Compound_Quality_Score", "Mechanism_Support_Score",
         "Safety_Regulatory_Score", "Novelty_Market_Score", "Novelty_Market_Tier",
         "Already_In_Internal_Catalogue", "Plant_Hard_Stop", "Regulatory_Prohibition_Present",

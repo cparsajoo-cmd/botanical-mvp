@@ -2778,6 +2778,14 @@ def _recommendation_block(
                 "Outcome_Specific_Direct_Evidence_Count",
                 "Outcome_Specific_Human_Evidence_Count",
                 "Preparation_Applicability_Class",
+                # DIAGNOSTIC (2026-09-11): surfaces exactly which of the four
+                # UNVERIFIED_DIRECT_HUMAN_SIGNAL provisional-shortlist gate
+                # conditions (Indication_Relevance_Score/Evidence_Quality_
+                # Score/Primary_Tier_Record_Count/Primary_Tier_Traceable_
+                # Source_Count) failed for a candidate -- see
+                # candidate_shortlisting.py's plant-level loop. Presentation
+                # only; no score/gate/decision logic reads this column.
+                "Unverified_Signal_Provisional_Shortlist_Gate_Detail",
                 "Relevance_Gate_Result",
                 "R&D_Opportunity_Score",
                 "Final_Decision_Status",

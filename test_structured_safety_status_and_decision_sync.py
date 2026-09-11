@@ -184,6 +184,17 @@ def test_merge_and_sync_helper_fixes_a_contradictory_input_state():
 # Part 10 -- deterministic final rationale
 # ---------------------------------------------------------------------
 def test_final_rationale_reflects_structured_facts_not_generic_text():
+    # PROBLEM 3 UPDATE: this test previously asserted that
+    # Evidence_Adjudication_Rationale (AI prose) was concatenated
+    # verbatim into the final rationale -- "moderate human evidence
+    # mostly supports..." is precisely the overclaiming pattern Problem 3
+    # requires build_final_rationale() to stop producing whenever the
+    # canonical Outcome_Specific_Human_Evidence_Count does not actually
+    # support it (no count is given here, so it fails closed to 0). The
+    # non-evidence-claim clauses (preparation, safety, commercial, final
+    # decision) are unchanged and still asserted below; only the
+    # evidence-claim clause's source changed, from AI prose to the
+    # deterministic Problem-3 policy.
     row = {
         "Evidence_Adjudication_Rationale": "Moderate human evidence mostly supports the requested indication.",
         "Preparation_Compatibility": "MISMATCH",
@@ -195,7 +206,8 @@ def test_final_rationale_reflects_structured_facts_not_generic_text():
         "Decision_Class_AH": "C — Alternative-source R&D candidate",
     }
     rationale = ea.build_final_rationale(row)
-    assert "moderate human evidence" in rationale.lower()
+    assert "no verified outcome-specific human evidence" in rationale.lower()
+    assert "moderate human evidence" not in rationale.lower()
     assert "preparation" in rationale.lower() and "does not match" in rationale.lower()
     assert "safety concern" in rationale.lower()
     assert "novel" in rationale.lower()
@@ -203,8 +215,17 @@ def test_final_rationale_reflects_structured_facts_not_generic_text():
 
 
 def test_final_rationale_never_fabricates_missing_fields():
+    # PROBLEM 3 UPDATE: an empty row now still yields a real, non-
+    # fabricating clause -- the evidence-claim clause is always present
+    # (it fails closed to "no verified outcome-specific human evidence"
+    # rather than being an optional clause that can leave the clause list
+    # empty), so the old all-fields-missing fallback sentence is only
+    # reachable when even the (now-mandatory) evidence-claim clause is
+    # absent, which cannot happen. This still never fabricates a claim --
+    # "no verified evidence" is the accurate statement for a row with no
+    # count field at all (fails closed to 0, same as an explicit 0).
     rationale = ea.build_final_rationale({})
-    assert rationale == "Insufficient structured evidence was available to generate a detailed rationale."
+    assert rationale == "No verified outcome-specific human evidence was identified for the requested indication."
 
 
 def test_merge_and_sync_helper_adds_final_rationale_column():

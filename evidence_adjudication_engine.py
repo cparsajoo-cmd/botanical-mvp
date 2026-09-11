@@ -1201,6 +1201,180 @@ def _get_field(row, *keys) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------
+# PROBLEM 3 FIX -- deterministic scientific evidence-claim policy.
+#
+# ROOT CAUSE: build_final_rationale() below used to append
+# Evidence_Adjudication_Rationale (AI prose, built by _build_rationale()
+# above from the AI-adjudicated Human_Evidence_Strength/Indication_
+# Evidence_Direction fields) as its first, unconditional clause whenever
+# the Problem-2 gate had not fired. Human_Evidence_Strength/Indication_
+# Evidence_Direction are per-call AI estimates, not verified counts --
+# they can say "Moderate human evidence consistently supports..." even
+# when Outcome_Specific_Human_Evidence_Count == 0 (any row where the
+# Problem-2 gate does not happen to fire on this particular pre-gate
+# status -- e.g. it was already EXPERT REVIEW REQUIRED for an unrelated
+# reason -- fell through with the AI sentence intact). That is Problem 3.
+#
+# FIX: the final rationale's evidence-claim clause is now built ONLY from
+# canonical, already-verified fields -- Outcome_Specific_Human_Evidence_
+# Count (candidate_shortlisting.py's fail-closed, attribution-gated
+# count -- see step_rd_candidates._verified_outcome_specific_human_
+# evidence_count's docstring, whose parsing _int_field() below mirrors)
+# and Final_Canonical_Evidence_Direction/_Source (step_rd_candidates.
+# _final_canonical_evidence_direction's documented authority hierarchy --
+# level 2/verified only; AI-fallback direction is never treated as
+# verified here). Evidence_Adjudication_Rationale (AI prose) is no longer
+# concatenated into the final rationale at all -- per the root principle
+# this fixes ("the rationale must describe facts already established by
+# the canonical deterministic evidence pipeline"; "do not try to repair
+# unsafe AI prose with word replacement -- build the final scientific
+# statement from authoritative structured facts"), the safest way to
+# guarantee deterministic verified evidence always wins over AI prose is
+# to never merge freeform AI text into this clause, rather than
+# attempting to detect/neutralize conflicting AI wording after the fact.
+# Human_Evidence_Strength / Indication_Evidence_Direction / AI_Direct_
+# Human_Outcome_Evidence_Count / Direct_Human_Outcome_Evidence_IDs /
+# Evidence_Adjudication_Rationale may still be read, but only to decide
+# WHETHER to add a clearly-labeled, non-elevating "indirect/mechanistic
+# evidence exists" mention -- never to describe them as human/clinical
+# support for the requested indication.
+# ---------------------------------------------------------------------
+
+def _int_field(row, key) -> int:
+    """Fails-closed integer read of a canonical count field: missing,
+    blank, non-numeric, non-integer, or negative values all read as 0.
+    Mirrors step_rd_candidates._verified_outcome_specific_human_evidence_
+    count's parsing so the two modules can never disagree about the same
+    field's value; duplicated (not imported) because step_rd_candidates
+    imports FROM this module, so importing it back here would be
+    circular."""
+    try:
+        value = row.get(key, None) if hasattr(row, "get") else (row[key] if key in row else None)
+    except Exception:
+        value = None
+    if value is None:
+        return 0
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return 0
+    try:
+        numeric = float(text)
+    except (TypeError, ValueError):
+        return 0
+    if not numeric.is_integer():
+        return 0
+    return max(0, int(numeric))
+
+
+def _canonical_evidence_direction(row) -> tuple:
+    """Reads the row's already-computed Final_Canonical_Evidence_Direction
+    / _Source pair (step_rd_candidates._final_canonical_evidence_direction)
+    when present -- that function's own documented rule is that a
+    "VERIFIED" source means the value came from Evidence_Consistency_Class
+    (deterministic, record-derived), never from AI adjudication. Falls
+    back to reading Evidence_Consistency_Class directly (same level-2 rule
+    applied locally) only when the canonical pair itself is absent from
+    the row -- e.g. a row built directly for a unit test rather than
+    through the full merge pipeline. Never falls back to Indication_
+    Evidence_Direction (AI) as VERIFIED -- an AI-only direction is always
+    reported as ("UNKNOWN", "UNKNOWN") here, matching Problem 3's rule
+    that AI direction alone may not upgrade the rationale's claim."""
+    direction = _get_field(row, "Final_Canonical_Evidence_Direction")
+    source = _get_field(row, "Final_Canonical_Evidence_Direction_Source")
+    if direction and source:
+        return direction.upper(), source.upper()
+    consistency = _get_field(row, "Evidence_Consistency_Class").upper()
+    if consistency and consistency not in {"INSUFFICIENT", "INSUFFICIENT_DIRECTION_DATA"}:
+        return consistency, "VERIFIED"
+    return "UNKNOWN", "UNKNOWN"
+
+
+def _has_indirect_or_mechanistic_signal(row) -> bool:
+    """True when there is SOME non-authoritative signal worth mentioning,
+    in clearly-labeled non-substituting terms, alongside a zero-verified-
+    count rationale -- structured AI-estimated human/outcome counts,
+    mechanistic evidence IDs, or other indication-relevant evidence whose
+    human/outcome context was not verified. Free-form AI prose alone is
+    intentionally insufficient. Never itself read as human or
+    clinical support for the requested indication -- see
+    _evidence_claim_clause()'s Case-0 branch, which only ever adds a
+    "does not substitute for verified evidence" qualifier from this."""
+    # Free-form AI prose is intentionally NOT evidence of an indirect or
+    # mechanistic signal.  It may itself say "no evidence", describe a
+    # contradiction, or simply summarize context.  Only structured signal
+    # fields can trigger the neutral indirect-evidence clause below.
+    for key in ("Direct_Indication_Evidence_Count", "AI_Direct_Human_Outcome_Evidence_Count", "AI_Direct_Outcome_Evidence_Count"):
+        if _int_field(row, key) > 0:
+            return True
+    for key in ("Mechanistic_Evidence_Record_IDs", "Direct_Human_Outcome_Evidence_IDs"):
+        try:
+            value = row.get(key, None) if hasattr(row, "get") else (row[key] if key in row else None)
+        except Exception:
+            value = None
+        if isinstance(value, (list, tuple, set)) and len(value) > 0:
+            return True
+        elif value and not isinstance(value, (list, tuple, set)) and _clean(value):
+            return True
+    return False
+
+
+def _evidence_claim_clause(row) -> str:
+    """PROBLEM 3 -- the ONE deterministic sentence describing human
+    efficacy-evidence quantity/quality/direction for the final rationale.
+    Driven only by canonical verified fields (see module note above);
+    never by AI-only Human_Evidence_Strength/Indication_Evidence_
+    Direction/Evidence_Adjudication_Rationale text. Case numbers refer to
+    the Problem-3 request this implements."""
+    verified_count = _int_field(row, "Outcome_Specific_Human_Evidence_Count")
+    direction, source = _canonical_evidence_direction(row)
+    verified_direction = direction if source == "VERIFIED" else "UNKNOWN"
+
+    # Case 5: verified negative evidence outranks a positive AI summary or
+    # mechanistic signal, checked first regardless of count so it can
+    # never be masked by a later branch.
+    if verified_count >= 1 and verified_direction in {"CONSISTENT_NEGATIVE", "MOSTLY_NEGATIVE"}:
+        # Do not invent a positive mechanistic/AI signal merely to explain
+        # precedence.  The final rationale states only the verified fact.
+        return "Verified human evidence for this indication is predominantly negative."
+
+    if verified_count == 0:
+        # Case 1 / Case 6 / Case 11 / Case 12: absence of verified evidence
+        # is reported plainly and is never described as evidence of
+        # absence of effect (per the request's explicit instruction).
+        clause = "No verified outcome-specific human evidence was identified for the requested indication."
+        if _has_indirect_or_mechanistic_signal(row):
+            clause += (
+                " Other mechanistic or indirect evidence was identified, "
+                "but it does not substitute for verified outcome-specific human evidence."
+            )
+        return clause
+
+    if verified_count == 1:
+        # Case 2: one verified record is never described as "consistent"/
+        # "strong"/"established"/"multiple studies".
+        clause = "One verified outcome-specific human study was identified for the requested indication."
+        if verified_direction in {"MOSTLY_NULL", "CONSISTENT_NULL"}:
+            clause += " Its evidence direction does not indicate a positive effect."
+        return clause
+
+    # Case 3 / Case 4: verified_count >= 2.
+    if verified_direction == "MIXED":
+        return "Verified human evidence is mixed and does not support an unqualified efficacy conclusion."
+    if verified_direction in {"CONSISTENT_POSITIVE", "MOSTLY_POSITIVE"}:
+        # Deliberately no "strong"/"robust"/"established"/"proven" wording
+        # merely because count >= 2 -- strength beyond "multiple positive
+        # studies" would require an existing canonical evidence-hierarchy/
+        # study-quality classification this module does not re-derive.
+        return "Multiple verified outcome-specific human studies were identified, with a positive evidence direction."
+    if verified_direction in {"MOSTLY_NULL", "CONSISTENT_NULL"}:
+        return "Multiple verified outcome-specific human studies were identified, showing no clear positive effect."
+    return (
+        f"{verified_count} verified outcome-specific human studies were identified for the "
+        "requested indication; their evidence consistency has not been determined."
+    )
+
+
 def build_final_rationale(row) -> str:
     """Returns a deterministic final rationale string for one report-ready
     row. Never raises -- a field that is missing/UNKNOWN simply omits its
@@ -1212,15 +1386,24 @@ def build_final_rationale(row) -> str:
     evidence-sufficiency gate can downgrade an otherwise-actionable
     GO/GO WITH CAUTION to EXPERT REVIEW REQUIRED when there is zero
     verified outcome-specific human evidence for the requested
-    indication. When that happens, the normal clauses below (built from
-    Evidence_Adjudication_Rationale, which can still describe AI-
-    estimated/mechanistic/related-indication evidence in encouraging
-    terms) must not be used -- they would overstate evidence the gate
-    has just determined is not verified/outcome-specific. This is read
-    from the Evidence_Sufficiency_Gate_Triggered flag that
-    _merge_and_sync_final_decision_status() computes with the exact same
-    gate function the status itself is derived from, so this rationale
-    can never disagree with why the status is what it is.
+    indication. When that happens, the normal clauses below must not be
+    used -- they would overstate evidence the gate has just determined is
+    not verified/outcome-specific. This is read from the Evidence_
+    Sufficiency_Gate_Triggered flag that _merge_and_sync_final_decision_
+    status() computes with the exact same gate function the status itself
+    is derived from, so this rationale can never disagree with why the
+    status is what it is.
+
+    PROBLEM 3 FIX (rationale scientific accuracy): the normal-path clause
+    list below no longer concatenates Evidence_Adjudication_Rationale (AI
+    prose) at all. Its first clause is now always
+    _evidence_claim_clause(row) -- a deterministic sentence built only
+    from canonical verified fields (Outcome_Specific_Human_Evidence_Count,
+    Final_Canonical_Evidence_Direction/_Source), so the rationale can
+    never claim more evidence quantity/quality/consistency/direction than
+    the verified pipeline has established, in every case (not only the
+    Problem-2 gated ones). See the module-level PROBLEM 3 FIX note above
+    _int_field() for the full root-cause explanation.
     """
     try:
         gate_triggered = bool(row.get("Evidence_Sufficiency_Gate_Triggered"))
@@ -1233,11 +1416,7 @@ def build_final_rationale(row) -> str:
             "actionable recommendation."
         )
 
-    clauses = []
-
-    adjudication_rationale = _get_field(row, "Evidence_Adjudication_Rationale")
-    if adjudication_rationale:
-        clauses.append(adjudication_rationale)
+    clauses = [_evidence_claim_clause(row)]
 
     for compat_key, label in (
         ("Preparation_Compatibility", "preparation"),
